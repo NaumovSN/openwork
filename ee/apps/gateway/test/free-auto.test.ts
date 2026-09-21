@@ -4,7 +4,7 @@ import { test } from "node:test"
 import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferenceWindow, managedModelCatalog, readFreeInferenceConfig } from "@openwork/types/den/inference"
-import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
+import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, desktopFreeProofMessage, type DesktopFreeProofClaims } from "@openwork/types/desktop-free-access"
 import { readAutoConfig, freeRequestReservation } from "../src/free-config.js"
 import { desktopFreeHash, verifyDesktopFreeProof } from "../src/desktop-free-proof.js"
 import { createDesktopFreeVersionSource, desktopFreeVersionError } from "../src/desktop-free-version.js"
@@ -63,7 +63,7 @@ function fixture(overrides: Partial<import("../src/anonymous.js").FreeRouteDepen
   }
   const app = new Hono()
   registerAnonymousInferenceRoutes(app, { config, store, latestVersion: async () => "1.2.3", clientAddress: () => "127.0.0.1",
-    findMember: async (key) => key === memberKey ? member : null,
+    findMember: async (key) => key === memberKey ? member : null, defaultPinned: async () => true,
     fetch: async (url, init) => {
       calls.fetch++
       assert.equal(String(url), "https://openrouter.ai/api/v1/chat/completions")
@@ -143,6 +143,22 @@ test("member endpoint spends member allowance and guest endpoint remains device-
   const value = await guestStatus.json()
   assert.equal(value.allowance.limitUsd, 1)
   assert.deepEqual(value.catalog.map((item: { modelID: string }) => item.modelID), [INFERENCE_FREE_MODEL_ID])
+})
+
+test("member status carries org Auto pin policy while guests remain pinned and unpinning does not remove the model", async () => {
+  const f = fixture({ defaultPinned: async () => false })
+  const memberStatus = await f.app.fetch(signed(MEMBER_FREE_STATUS_PATH, `Bearer ${memberKey}`))
+  assert.equal(memberStatus.status, 200)
+  assert.equal((await memberStatus.json()).defaultPinned, false)
+  const guestStatus = await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))
+  assert.equal((await guestStatus.json()).defaultPinned, true)
+  const catalog = await f.app.fetch(signed(MEMBER_FREE_MODELS_PATH, `Bearer ${memberKey}`))
+  assert.equal(catalog.status, 200)
+  assert.equal((await catalog.json()).data[0].id, INFERENCE_FREE_MODEL_ID)
+  assert.equal(f.calls.fetch, 0)
+  assert.equal(f.principals.length, 0)
+  const failed = fixture({ defaultPinned: async () => { throw new Error("Policy unavailable") } })
+  assert.equal((await failed.app.fetch(signed(MEMBER_FREE_STATUS_PATH, `Bearer ${memberKey}`))).status, 503)
 })
 
 test("bad member credentials never become guest requests or paid requests", async () => {

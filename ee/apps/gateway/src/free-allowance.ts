@@ -168,7 +168,8 @@ export function createFreeAllowanceStore(config: AutoConfig, database = db) {
         const expiresAt = Math.min(deadlineAt, now.getTime() + config.requestTimeoutMs)
         if (Date.now() >= expiresAt) return { ok: false, code: "anonymous_unavailable" }
         await tx.insert(Reservation).values({ request_id: requestId, principal_hash: principalHash,
-          key_id: principal.kind === "member" ? principal.keyId : null, model_id: INFERENCE_FREE_MODEL_ID,
+          key_id: principal.kind === "member" ? principal.keyId : null,
+          organization_id: principal.kind === "member" ? principal.organizationId : null, model_id: INFERENCE_FREE_MODEL_ID,
           reserved_amount: amount, max_input_tokens: config.maxInputTokens, max_output_tokens: config.maxCompletionTokens,
           expires_at: new Date(expiresAt + 30000) })
         for (const row of rows) {

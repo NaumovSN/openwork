@@ -12,7 +12,7 @@ import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
 import { createAnonymousIdentities, issueAnonymousToken, resolveAnonymousClientAddress, verifyAnonymousToken } from "./anonymous-identity.js"
 import { createFreeAllowanceStore, type FreeAllowanceStore } from "./free-allowance.js"
 import { type AutoConfig } from "./free-config.js"
-import { findMemberFreePrincipal, type FreePrincipal } from "./free-principal.js"
+import { findMemberFreePrincipal, readFreePrincipalDefaultPinned, type FreePrincipal } from "./free-principal.js"
 import { checkDesktopFreeRequest, desktopFreeGateError, type DesktopFreeGateDependencies } from "./desktop-free-access.js"
 import { desktopFreeHash } from "./desktop-free-proof.js"
 import { createDesktopFreeVersionSource } from "./desktop-free-version.js"
@@ -28,12 +28,13 @@ export type FreeRouteDependencies = {
   latestVersion: DesktopFreeGateDependencies["latestVersion"];
   clientAddress: (c: Context) => string | null;
   findMember: typeof findMemberFreePrincipal;
+  defaultPinned: typeof readFreePrincipalDefaultPinned;
 }
 function defaults(): FreeRouteDependencies {
   const config = env.freeAuto
   return { config, store: createFreeAllowanceStore(config), fetch: createInferenceEgressFetch(),
     latestVersion: createDesktopFreeVersionSource({ url: config.versionUrl }),
-    clientAddress: (c) => resolveAnonymousClientAddress(c, config), findMember: findMemberFreePrincipal }
+    clientAddress: (c) => resolveAnonymousClientAddress(c, config), findMember: findMemberFreePrincipal, defaultPinned: readFreePrincipalDefaultPinned }
 }
 function bearer(request: Request) {
   if (["x-api-key", "x-goog-api-key", "api-key"].some((name) => request.headers.has(name))) return null
@@ -97,7 +98,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
       if (auth.error) return auth.error
       const status: DesktopFreeAccessStatus = { state: "unavailable", code: "anonymous_unavailable", currentVersion: auth.proof.appVersion,
         minimumVersion: auth.minimumVersion, providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID,
-        allowance: null, catalog: managedModelCatalog() }
+        allowance: null, catalog: managedModelCatalog(), defaultPinned: auth.principal.kind === "installation" ? true : await dependencies.defaultPinned(auth.principal) }
       if (auth.versionError) {
         status.state = auth.versionError.code === "desktop_update_required" ? "update_required" : "unavailable"
         status.code = auth.versionError.code

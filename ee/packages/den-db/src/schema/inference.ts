@@ -512,6 +512,7 @@ export const InferenceFreeReservationTable = mysqlTable("inference_free_reservat
   request_id: varchar("request_id", { length: 64 }).notNull().primaryKey(),
   principal_hash: varchar("principal_hash", { length: 64 }).notNull(),
   key_id: varchar("key_id", { length: 64 }),
+  organization_id: denTypeIdColumn("organization", "organization_id"),
   model_id: varchar("model_id", { length: 255 }).notNull(),
   status: mysqlEnum("status", ["held", "dispatched", "settled", "retained", "cancelled"]).notNull().default("held"),
   reserved_amount: bigint("reserved_amount", { mode: "number" }).notNull(),
@@ -523,6 +524,7 @@ export const InferenceFreeReservationTable = mysqlTable("inference_free_reservat
   created_at: timestamps.created_at,
 }, (table) => [index("inference_free_reservation_principal").on(table.principal_hash, table.status),
   index("inference_free_reservation_expiry").on(table.status, table.expires_at),
+  index("inference_free_reservation_org_created").on(table.organization_id, table.created_at),
   uniqueIndex("inference_free_reservation_event").on(table.external_event_id)])
 
 export const InferenceFreeReservationChargeTable = mysqlTable("inference_free_reservation_charges", {

@@ -1,15 +1,15 @@
-import { createHash } from "node:crypto"
+import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { InferenceFreeKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
 import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-policy"
-import { freeInferenceOrganizationAllowed } from "@openwork/types/den/inference"
+import { freeInferenceOrganizationAllowed, freeInferenceDefaultPinned } from "@openwork/types/den/inference"
 import { db } from "./db.js"
 
 type MemberPrincipal = { kind: "member"; id: NonNullable<typeof MemberTable.$inferSelect.userId>;
   keyId: string; memberId: typeof MemberTable.$inferSelect.id; organizationId: typeof OrganizationTable.$inferSelect.id }
 export type FreePrincipal = MemberPrincipal | { kind: "installation"; id: string }
 type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
-export function freeIdentityHash(kind: string, value: string) { return createHash("sha256").update(`${kind}:${value}`).digest("hex") }
+export const freeIdentityHash = freeInferenceDigest
 export function freePrincipalHash(principal: FreePrincipal) { return freeIdentityHash(principal.kind, principal.id) }
 
 export async function findMemberFreePrincipal(bearer: string, database: Database = db): Promise<MemberPrincipal | null> {
@@ -22,8 +22,7 @@ export async function findMemberFreePrincipal(bearer: string, database: Database
   return await memberFreePrincipalAllowed(principal, database) ? principal : null
 }
 
-export async function memberFreePrincipalAllowed(principal: FreePrincipal, database: Database = db): Promise<boolean> {
-  if (principal.kind !== "member") return true
+async function memberFreePrincipalRow(principal: MemberPrincipal, database: Database) {
   const [row] = await database.select({ metadata: OrganizationTable.metadata }).from(InferenceFreeKeyTable)
     .innerJoin(MemberTable, and(eq(MemberTable.id, InferenceFreeKeyTable.org_membership_id), eq(MemberTable.organizationId, InferenceFreeKeyTable.organization_id), eq(MemberTable.userId, InferenceFreeKeyTable.user_id)))
     .innerJoin(OrganizationTable, eq(OrganizationTable.id, MemberTable.organizationId))
@@ -31,7 +30,21 @@ export async function memberFreePrincipalAllowed(principal: FreePrincipal, datab
       eq(MemberTable.id, principal.memberId), eq(OrganizationTable.id, principal.organizationId),
       isNull(InferenceFreeKeyTable.revoked_at), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt),
       eq(InferenceFreeKeyTable.membership_joined_at, MemberTable.joinedAt))).limit(1)
+  return row
+}
+
+export async function memberFreePrincipalAllowed(principal: FreePrincipal, database: Database = db): Promise<boolean> {
+  if (principal.kind !== "member") return true
+  const row = await memberFreePrincipalRow(principal, database)
   if (!row || !freeInferenceOrganizationAllowed(row.metadata)) return false
   assertManagedModelsAllowed(row.metadata)
   return true
+}
+
+export async function readFreePrincipalDefaultPinned(principal: FreePrincipal, database: Database = db): Promise<boolean> {
+  if (principal.kind !== "member") return true
+  const row = await memberFreePrincipalRow(principal, database)
+  if (!row || !freeInferenceOrganizationAllowed(row.metadata)) throw new Error("free_principal_rejected")
+  assertManagedModelsAllowed(row.metadata)
+  return freeInferenceDefaultPinned(row.metadata)
 }

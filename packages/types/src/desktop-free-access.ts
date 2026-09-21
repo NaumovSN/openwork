@@ -46,6 +46,7 @@ export type DesktopFreeAccessStatus = {
     limitUsd: number; usedUsd: number; reservedUsd: number; remainingUsd: number; resetsAt: string;
   } | null;
   catalog?: ManagedModelRecommendation[];
+  defaultPinned?: boolean;
 };
 export type DesktopFreeVersionError = {
   code: "desktop_update_required" | "desktop_version_unavailable";

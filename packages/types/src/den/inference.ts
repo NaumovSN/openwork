@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { readOrganizationMetadata } from "./managed-models-policy.js";
 
 export const INFERENCE_USAGE_CONVERSION_FACTOR = 100_000_000;
 
@@ -174,16 +175,63 @@ export type InferenceAccess = {
   reason: InferenceAccessReason | null;
   canUpgrade?: boolean;
   catalog?: ManagedModelRecommendation[];
+  defaultPinned?: boolean;
 };
+
+export type FreeInferenceProviderSummary = {
+  state: "available" | "disabled" | "unavailable";
+  reason: InferenceAccessReason | null;
+  defaultPinned: boolean;
+  modelGroup: { id: "free"; name: "Free" };
+  catalog: ManagedModelRecommendation[];
+  allowance: {
+    usageScope: "organization";
+    allowanceScope: "person";
+    windowStartAt: string;
+    resetsAt: string;
+    weeklyLimitUsd: number;
+    joinedMembers: number;
+    eligibleMembers: number;
+    exhaustedMembers: number | null;
+    usedUsd: number | null;
+    reservedUsd: number | null;
+    retainedUsd: number | null;
+    requestCount: number | null;
+  };
+};
+
+export const freeInferenceProviderSummarySchema: z.ZodType<FreeInferenceProviderSummary> = z.object({
+  state: z.enum(["available", "disabled", "unavailable"]), reason: z.enum(INFERENCE_ACCESS_REASONS).nullable(),
+  defaultPinned: z.boolean(), modelGroup: z.object({ id: z.literal("free"), name: z.literal("Free") }),
+  catalog: z.array(z.object({ modelID: z.string(), displayName: z.string(), providerName: z.string(), summary: z.string(), recommended: z.boolean(), rank: z.number(), capabilities: z.array(z.string()) })),
+  allowance: z.object({
+    usageScope: z.literal("organization"), allowanceScope: z.literal("person"),
+    windowStartAt: z.string().datetime(), resetsAt: z.string().datetime(), weeklyLimitUsd: z.number().finite().nonnegative(),
+    joinedMembers: z.number().int().nonnegative(), eligibleMembers: z.number().int().nonnegative(), exhaustedMembers: z.number().int().nonnegative().nullable().describe("Current eligible members whose recorded weekly usage plus reservations reaches their person-wide limit; not a probe of Gateway request headroom. Null when accounting cannot be verified."),
+    usedUsd: z.number().finite().nonnegative().nullable(), reservedUsd: z.number().finite().nonnegative().nullable(),
+    retainedUsd: z.number().finite().nonnegative().nullable(), requestCount: z.number().int().nonnegative().nullable(),
+  }),
+});
+
+export function freeInferenceDefaultPinned(metadata: unknown): boolean {
+  const free = readOrganizationMetadata(metadata).inferenceFree;
+  return !(typeof free === "object" && free !== null && "defaultPinned" in free && free.defaultPinned === false);
+}
+
+export function withFreeInferenceDefaultPinned(metadata: Record<string, unknown>, defaultPinned: boolean): Record<string, unknown> {
+  const free = metadata.inferenceFree;
+  return { ...metadata, inferenceFree: { ...(typeof free === "object" && free !== null && !Array.isArray(free) ? free : {}), defaultPinned } };
+}
 
 export function managedModelCatalog(): ManagedModelRecommendation[] {
   return [{ modelID: INFERENCE_FREE_MODEL_ID, displayName: "Auto", providerName: "OpenWork",
     summary: "Free automatic model", recommended: true, rank: 1, capabilities: ["tools"] }];
 }
 
-export function freeInferenceOrganizationAllowed(metadata: Record<string, unknown> | null): boolean {
-  const inference = metadata?.inference;
-  const free = metadata?.inferenceFree;
+export function freeInferenceOrganizationAllowed(metadata: unknown): boolean {
+  const parsed = readOrganizationMetadata(metadata);
+  const inference = parsed.inference;
+  const free = parsed.inferenceFree;
   if (typeof inference === "object" && inference !== null && "enabled" in inference && inference.enabled === false) return false;
   if (typeof free === "object" && free !== null && "offerAllowed" in free && free.offerAllowed === false) return false;
   return true;
