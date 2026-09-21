@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import type { SandboxRepoSourceReceipt } from "@openwork/hosts";
 import { launchHeadlessWeb, resolveHeadlessWorldRuntimePaths } from "@openwork/world";
-import { resolveEvalEngine } from "./eval-engine.ts";
+import { resolveEvalEngine, type EvalEngine } from "./eval-engine.ts";
 import { seedSyntheticPreactivatedDen } from "./app-web-bootstrap.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
@@ -21,6 +21,7 @@ export interface AppWebRuntime {
 }
 
 export interface AppWebRuntimeOptions {
+  engine?: EvalEngine;
   den?: { apiUrl: string; webUrl: string };
   webPort?: number;
   syntheticPreactivatedDenOrigin?: string;
@@ -37,7 +38,7 @@ function executableEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return env;
 }
 
-export function isolatedRuntimeEnvironment(root: string): NodeJS.ProcessEnv {
+export function isolatedRuntimeEnvironment(root: string, engine: EvalEngine = resolveEvalEngine()): NodeJS.ProcessEnv {
   const home = join(root, "home");
   const data = join(root, "data");
   const config = join(root, "config");
@@ -55,7 +56,7 @@ export function isolatedRuntimeEnvironment(root: string): NodeJS.ProcessEnv {
     OPENCODE_CONFIG_DIR: join(config, "opencode"),
     OPENCODE_DB: join(data, "opencode", "opencode.db"),
     OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "0",
-    OPENWORK_ENGINE_V2_PREVIEW: resolveEvalEngine() === "v2" ? "1" : "0",
+    OPENWORK_ENGINE_V2_PREVIEW: engine === "v2" ? "1" : "0",
     OPENWORK_PORT: "0",
     OPENWORK_WEB_PORT: "0",
     OPENWORK_REMOTE_ACCESS: "0",
@@ -95,7 +96,7 @@ export async function startLocalRuntime(worldName: string, workspaceRoot: string
       state: "isolated",
       workspace: workspaceRoot,
       browserHostSuffix: options.browserHostSuffix,
-      env: { ...executableEnvironment(process.env), ...isolatedRuntimeEnvironment(fixtureRoot), ...options.env, ...(options.webPort ? { OPENWORK_WEB_PORT: String(options.webPort) } : {}), ...appWebDenEnvironment(options.den), ...bootstrapEnv },
+      env: { ...executableEnvironment(process.env), ...isolatedRuntimeEnvironment(fixtureRoot, options.engine), ...options.env, ...(options.webPort ? { OPENWORK_WEB_PORT: String(options.webPort) } : {}), ...appWebDenEnvironment(options.den), ...bootstrapEnv },
     });
     return { webUrl: runtime.manifest.webUrl, openworkUrl: runtime.manifest.openworkUrl, runtimeDirectory, fixtureRoot, source: null, stop: () => runtime.stop() };
   } catch (error) {
@@ -185,7 +186,7 @@ export async function startRemoteRuntime(sandbox: string, worldName: string, wor
   const output = await runRemoteModule(sandbox, launchModulePath, REMOTE_LAUNCH_SOURCE, {
     syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin,
     directories: [workspaceRoot, ...runtimeDirectories(fixtureRoot)],
-    env: { ...isolatedRuntimeEnvironment(fixtureRoot), ...options.env, ...(options.webPort ? { OPENWORK_WEB_PORT: String(options.webPort) } : {}), ...appWebDenEnvironment(options.den) },
+    env: { ...isolatedRuntimeEnvironment(fixtureRoot, options.engine), ...options.env, ...(options.webPort ? { OPENWORK_WEB_PORT: String(options.webPort) } : {}), ...appWebDenEnvironment(options.den) },
     executableEnvKeys: EXECUTABLE_ENV_KEYS,
     fixtureRoot, name: worldName, repoRoot: "/workspace", workspace: workspaceRoot, browserHostSuffix: options.browserHostSuffix,
   }, `launch remote app-web runtime ${worldName}`, 120_000);

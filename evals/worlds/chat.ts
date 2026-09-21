@@ -703,7 +703,7 @@ export async function modelPicker(seed: Seed) {
 
 /** Model picker contract through a real native engine and a synthetic provider. */
 export async function modelPickerEffortWeb(seed: Seed) {
-  const engine = resolveEvalEngine();
+  const engine = "v2";
   const fastProviderId = "fast-witness";
   const fastModelId = "gpt-5.4";
   const providerId = "effort-witness";
@@ -713,7 +713,7 @@ export async function modelPickerEffortWeb(seed: Seed) {
     promptMarker: prompt, latestUserTurn: true, finalReply: "Air scatters blue light more strongly.", steps: [],
   }] });
   const workspacePath = seed.tmpPath("model-picker-effort");
-  const app = await seed.appWeb({ name: "model-picker-effort", workspacePath, mocks: { agent: mock } });
+  const app = await seed.appWeb({ name: "model-picker-effort", workspacePath, engine, mocks: { agent: mock } });
   // Observe model references without consuming or changing the app's requests.
   await addInitScript(app.client, () => {
     window.__modelEffortRequests = [];

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { app as startApp, server as startServer, resolveEvalEngine } from "@openwork/env";
 import { SkipError } from "@openwork/env";
-import type { Place, Seed } from "@openwork/env";
+import type { EvalEngine, Place, Seed } from "@openwork/env";
 import { createAndSelectWorkspace, evalIn, go, waitFor as waitForBehavior } from "@openwork/behaviors";
 import { allocateFreePort } from "@openwork/cdp";
 import {
@@ -189,8 +189,8 @@ export async function sessionWorld(seed: Seed) {
  * sessionless New task route and the first Run task must create the session
  * and deliver the prompt through whichever engine (v1 or v2) is selected.
  */
-export async function sessionlessFirstSendWorld(seed: Seed, options: { mobileLayout?: boolean } = {}) {
-  const engine = resolveEvalEngine();
+export async function sessionlessFirstSendWorld(seed: Seed, options: { engine?: EvalEngine; mobileLayout?: boolean } = {}) {
+  const engine = options.engine ?? resolveEvalEngine();
   const providerId = "first-send-mock";
   const modelId = "first-send-model";
   const nonce = `${Date.now().toString(36)}-${process.pid}`;
@@ -208,7 +208,7 @@ export async function sessionlessFirstSendWorld(seed: Seed, options: { mobileLay
     ],
   });
   const workspacePath = seed.tmpPath("sessionless-first-send");
-  const app = await seed.appWeb({ name: "sessionless-first-send", workspacePath, headless: true, mocks: { agent: mockBoot } });
+  const app = await seed.appWeb({ name: "sessionless-first-send", workspacePath, engine, headless: true, mocks: { agent: mockBoot } });
   const mock = app.mocks.agent;
   if (!mock) throw new Error("Missing first-send model witness");
   const workspace = await seed.workspace(app, workspacePath);
@@ -268,8 +268,8 @@ export async function sessionlessFirstSendWorld(seed: Seed, options: { mobileLay
   };
 }
 
-export async function mobileChatInteractionWorld(seed: Seed) {
-  return sessionlessFirstSendWorld(seed, { mobileLayout: true });
+export async function mobileChatInteractionWorld(seed: Seed, options: { engine?: EvalEngine } = {}) {
+  return sessionlessFirstSendWorld(seed, { ...options, mobileLayout: true });
 }
 
 export async function parentChildPermissionWorld(seed: Seed) {

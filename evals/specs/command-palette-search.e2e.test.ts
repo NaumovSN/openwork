@@ -70,7 +70,7 @@ test("command palette searches settings by alias, navigates, records recents, an
       "No internal selected-model identifier or garbled model metadata is displayed in the Models row.",
     ]);
     await user.press("Enter");
-    await user.see({ placeholder: "Search models..." });
+    await user.see({ placeholder: "Search models…" });
     await user.press("Escape");
     await user.see(paletteInput);
     await user.press("Escape");
