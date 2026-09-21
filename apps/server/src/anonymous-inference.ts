@@ -154,6 +154,7 @@ export class AnonymousInferenceService {
   private activeControllers = new Set<AbortController>();
   private failures = new Map<string, { expiresAt: number; failure: RemoteFailure }>();
   private cachedStatus: { key: string; expiresAt: number; value: DesktopFreeAccessStatus } | null = null;
+  private preferenceQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly config: ServerConfig, private readonly logger: {
     log: (level: "info" | "warn" | "error", message: string, attributes?: Record<string, unknown>) => void;
@@ -299,6 +300,36 @@ export class AnonymousInferenceService {
     return changed;
   }
 
+  async preferences() {
+    const runtime = await readGlobalRuntimeOpencodeConfig(this.config);
+    const enabled = !runtimeDisabledProviderList(runtime).includes(ANONYMOUS_INFERENCE_PROVIDER_ID);
+    const canEnable = this.enabled && !this.stopped && runtime.managedPolicy?.allowCustomProviders !== false;
+    return { enabled, available: enabled && canEnable && this.available && !this.relayConfigFailed, canEnable };
+  }
+
+  setEnabled(enabled: boolean): Promise<Awaited<ReturnType<AnonymousInferenceService["preferences"]>>> {
+    const run = this.preferenceQueue.then(async () => {
+      if (this.config.readOnly) throw new ApiError(403, "read_only", "This device is read-only.");
+      if (enabled) {
+        await managedDesktopPolicy(this.config).assert("model", { providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID });
+        if (!(await this.preferences()).canEnable) throw new ApiError(403, "auto_blocked", "Auto is unavailable on this device or blocked by your administrator.");
+      } else {
+        this.disable();
+        this.localAccessToken = `owf_local_${randomBytes(32).toString("base64url")}`;
+        this.failures.clear();
+      }
+      await writeGlobalRuntimeOpencodeConfig(this.config, (runtime) => ({
+        ...runtime,
+        disabled_providers: [...new Set([...runtimeDisabledProviderList(runtime).filter((id) => id !== ANONYMOUS_INFERENCE_PROVIDER_ID), ...(enabled ? [] : [ANONYMOUS_INFERENCE_PROVIDER_ID])])],
+      }));
+      await this.initialize(this.boundPort ?? this.config.port);
+      await writeOpenworkRuntimeConfigFile(this.config);
+      return this.preferences();
+    });
+    this.preferenceQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
   private unavailable(code = "anonymous_unavailable"): DesktopFreeAccessStatus {
     return {
       state: "unavailable", code, currentVersion: this.config.anonymousInference?.desktop.currentVersion ?? "",
@@ -359,6 +390,8 @@ export class AnonymousInferenceService {
         minimumVersion: typeof payload.minimumVersion === "string" ? payload.minimumVersion : null,
         allowance: validatedAllowance,
         ...(Array.isArray(payload.catalog) ? { catalog: payload.catalog.filter(isRecommendation) } : {}),
+        // Den's organization Auto pin policy travels with status so an admin unpin reaches native pickers.
+        ...(typeof payload.defaultPinned === "boolean" ? { defaultPinned: payload.defaultPinned } : {}),
       };
       signal.throwIfAborted();
       if (authorization && this.memberCredential?.authorization !== authorization) throw new Error("Member Auto credential changed.");
