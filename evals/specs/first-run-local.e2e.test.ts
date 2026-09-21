@@ -37,7 +37,8 @@ test("first launch opens an empty signed-out workspace and runs the first prompt
     const sessions = await probe.desktopApi(`/workspace/${workspaceId}/opencode/session`);
     expect(sessions.status).toBe(200);
     expect(sessions.body).toEqual([]);
-    await user.see({ text: /Using the free starter model/ });
+    await user.see({ role: "button", label: "Change model" });
+    await user.see({ text: "Big Pickle" });
     expect(await probe.storage("openwork.defaultModel")).toBe("opencode/big-pickle");
   });
 

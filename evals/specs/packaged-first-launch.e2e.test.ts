@@ -9,7 +9,7 @@ import {
 } from "../worlds/packaged-first-launch.ts";
 import type { PackagedFlavor } from "../worlds/packaged-first-launch.ts";
 
-const test = spec.world(packagedFirstLaunchWorld, { timeout: 180_000 });
+const test = spec.world(packagedFirstLaunchWorld, { needs: { env: ["OPENWORK_EVAL_ELECTRON_BINARY"] }, timeout: 180_000 });
 
 const FIRST_LAUNCH_HEADING: Partial<Record<PackagedFlavor, string>> = {
   cloud: "What should we work on?",
