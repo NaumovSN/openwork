@@ -14,6 +14,42 @@ import { getModelBehaviorControls, getModelBehaviorOptions } from "../src/app/li
 import { catalogFastVariants, fastVariantId, nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { mentionPromptParts } from "../src/react-app/domains/session/sync/mention-parts";
 
+test("native reply identity survives snapshot and live translation without resolving the requested alias", async () => {
+  const { replyModelFromInfo, replyModelLabel, mergeReplyMetadata } = await import("../src/react-app/domains/session/sync/reply-model");
+  const originalFetch = globalThis.fetch;
+  const requested = { id: "openai/gpt-5.6-luna", providerID: "openwork-free", variant: "default" };
+  const resolvedModel = { id: "served-witness", providerID: "actual-provider", name: "Served witness" };
+  let resolved = false;
+  globalThis.fetch = async () => Response.json({ data: [{ id: "reply", type: "assistant", model: requested,
+    ...(resolved ? { resolvedModel } : {}), time: { created: 1, completed: 2 }, content: [{ type: "text", text: "Done" }] }] });
+  try {
+    const client = createClientV2("http://synthetic.invalid/opencode2", "/synthetic", {});
+    const first = await client.session.messages({ sessionID: "synthetic" });
+    expect(first.data?.[0]?.info.model).toEqual(requested);
+    const alias = replyModelFromInfo(first.data?.[0]?.info);
+    expect(alias).toMatchObject({ modelID: requested.id, providerID: requested.providerID, requestedModelID: requested.id });
+    expect(replyModelLabel({ id: "reply", role: "assistant", parts: [], metadata: { opencode: { replyModel: alias } } })).toBeNull();
+    resolved = true;
+    const snapshot = await client.session.messages({ sessionID: "synthetic" });
+    expect(snapshot.data?.[0]?.info).toMatchObject({ model: requested, resolvedModel });
+    const reply = replyModelFromInfo(snapshot.data?.[0]?.info);
+    expect(reply).toMatchObject({ modelID: resolvedModel.id, providerID: resolvedModel.providerID,
+      requestedModelID: requested.id, requestedProviderID: requested.providerID, resolved: true });
+    const state = createV2EventTranslationState();
+    const data = { sessionID: "synthetic", assistantMessageID: "reply", model: requested };
+    const started = translateV2Event({ type: "session.text.started", data }, state);
+    expect(started?.[0]?.properties.info).toMatchObject({ model: requested });
+    const ended = translateV2Event({ type: "session.text.ended", data: { ...data, resolvedModel, text: "Done" } }, state);
+    const live = replyModelFromInfo(ended?.find((event) => event.type === "message.updated")?.properties.info);
+    expect(live).toEqual(reply);
+    const lateResolution = replyModelFromInfo({ role: "assistant", resolvedModel });
+    const resolvedMetadata = mergeReplyMetadata({ opencode: { replyModel: alias } }, { opencode: { replyModel: lateResolution } });
+    expect(resolvedMetadata.opencode).toMatchObject({ replyModel: reply });
+    const metadata = mergeReplyMetadata(resolvedMetadata, { opencode: { replyModel: alias } });
+    expect(replyModelLabel({ id: "reply", role: "assistant", parts: [], metadata })).toBe("Served witness");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 describe("explicit native skill attachments", () => {
   test("preserves v1 instructions but attaches live native IDs on v2, deduplicated", async () => {
     const originalFetch = globalThis.fetch;
@@ -1718,6 +1754,9 @@ describe("OpenCode v2 client compatibility", () => {
           id: "msg_06e0e76b900178zSuF55n4XEPY",
           sessionID: "ses_tool",
           role: "assistant",
+          model: capturedV2ToolMessage.model,
+          modelID: "model",
+          providerID: "witness",
           time: { created: 1_788_552_837_299, completed: 1_788_552_838_186 },
         },
         parts: [
@@ -2293,9 +2332,9 @@ test("v2 provider catalog retains display names and advertised effort without ex
     const models = result.data?.all[0]?.models;
     expect(models?.coding?.variants).toEqual({ low: { reasoningEffort: "low" }, high: { reasoningEffort: "high" }, CustomExact: { thinking: { budgetTokens: 4096 } } });
     if (!models?.coding || !models.standard || !models.builtin) throw new Error("Missing mapped models");
-    expect(getModelBehaviorOptions("lpr_fixture", models.coding).map((option) => option.value)).toEqual(["low", "high", "CustomExact"]);
-    expect(getModelBehaviorOptions("lpr_fixture", models.standard)).toEqual([]);
-    expect(getModelBehaviorOptions("lpr_fixture", models.builtin)).toEqual([]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.coding).map((option) => option.value)).toEqual([null, "low", "high", "CustomExact"]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.standard).map((option) => option.value)).toEqual([null]);
+    expect(getModelBehaviorOptions("lpr_fixture", models.builtin).map((option) => option.value)).toEqual([null]);
     expect(JSON.stringify(result.data)).not.toContain("fixture-private");
   } finally {
     globalThis.fetch = originalFetch;

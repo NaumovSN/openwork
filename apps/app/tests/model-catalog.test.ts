@@ -15,7 +15,7 @@ const catalog = [local, orgA, auto, orgB];
 
 describe("model sources and pins", () => {
   test("organization pins precede personal pins, preserve order, and Auto is immutable only when available", () => {
-    expect(orderedModelPins(catalog, [local, orgA]).map((model) => model.modelID)).toEqual(["gwm_b", "gwm_a", "local", AUTO_MODEL_ID]);
+    expect(orderedModelPins(catalog, [local, orgA]).map((model) => model.modelID)).toEqual([AUTO_MODEL_ID, "gwm_b", "gwm_a", "local"]);
     expect(immutableModelPin(orgA)).toBe(true);
     expect(immutableModelPin(auto)).toBe(true);
     expect(immutableModelPin(local)).toBe(false);
@@ -89,9 +89,9 @@ describe("Auto submission walls", () => {
     expect(autoAccessWallFromError({ code: "model_sync_pending" }, auto)).toEqual({ state: "sync" });
     expect(autoAccessWallFromError({ code: "anonymous_limit_exceeded" }, local)).toBeNull();
     const copy = autoWallCopy({ state: "limit" }, false);
-    expect(copy.title).toBe("Your weekly free limit is used up");
+    expect(copy.title).toBe("This week’s free limit is used up");
     expect(copy.detail).toContain("resets Monday");
-    expect(copy.detail).toContain("larger free allowance");
+    expect(copy.detail).toContain("larger free limit");
     expect(autoWallCopy({ state: "limit" }, true).detail).not.toContain("Sign in");
     expect(JSON.stringify(copy)).not.toMatch(/\$|USD|upgrade|paid|automatically/i);
   });

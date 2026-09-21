@@ -32,10 +32,15 @@ import type { ModelOption, ModelRef } from "@/app/types";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { usePlatform } from "../kernel/platform";
 import { ModelSourceIcon } from "@/components/model-picker-list";
+import { ProviderIcon } from "../design-system/provider-icon";
+import { resolveExtensionIconSrc } from "../design-system/extension-icon-src";
+import { isAutoModel, modelTitle } from "../domains/session/models/model-catalog";
+import { useModelCollectionsStore } from "../domains/session/models/model-collections-store";
 import {
   buildCommandPaletteBehaviorItems,
   buildCommandPaletteModelItems,
   commandPaletteBackMode,
+  createCommandPaletteModelControls,
   type CommandPaletteMode,
 } from "./command-palette-models";
 import { buildCommandPaletteSplitSessions, type CommandPaletteSessionRef } from "./command-palette-sessions";
@@ -197,6 +202,15 @@ export function CommandPalette(props: CommandPaletteProps) {
   const sessionGroupCount = props.sessionGroups?.length ?? 0;
   const canMoveCurrentSessionToGroup = Boolean(props.currentSessionForGroupMove && props.onMoveCurrentSessionToGroup);
   const hasNestedModelPicker = props.modelOptions !== undefined && props.onSelectModel !== undefined;
+  const favorites = useModelCollectionsStore((state) => state.favorites);
+  const recentModels = useModelCollectionsStore((state) => state.recent);
+  const modelControls = createCommandPaletteModelControls({ options: props.modelOptions ?? [], current: props.selectedModel,
+    behavior: props.selectedModelBehavior, favorites, onSelect: (model, behavior) => {
+      useModelCollectionsStore.getState().recordRecent(model);
+      props.onSelectModel?.(model, behavior);
+    } });
+  const currentModelOption = props.modelOptions?.find((option) => option.providerID === props.selectedModel?.providerID && option.modelID === props.selectedModel.modelID);
+  const currentModelTitle = currentModelOption ? modelTitle(currentModelOption) : undefined;
   // Organization policy (`allowControlSettings`) can hide desktop settings;
   // the settings palette entries follow the same allow-list as the settings nav.
   const checkDesktopRestriction = useCheckDesktopRestriction();
@@ -240,14 +254,18 @@ export function CommandPalette(props: CommandPaletteProps) {
           },
         }]
       : []),
-    ...(props.onNextPinnedModel ? [{ id: "models.next-pinned", title: "Next pinned model", shortcut: "Ctrl+Shift+M", group: ACTIONS_GROUP,
-      action: () => { props.onNextPinnedModel?.(); props.onClose(); } }] : []),
-    ...(props.onCycleModelSource ? [{ id: "models.next-source", title: "Cycle model source", shortcut: "Ctrl+Alt+M", group: ACTIONS_GROUP,
-      action: () => { props.onCycleModelSource?.(); props.onClose(); } }] : []),
+    ...(hasNestedModelPicker || props.onNextPinnedModel ? [{ id: "models.next-pinned", title: "Next pinned model", shortcut: "Ctrl+Shift+M", group: ACTIONS_GROUP,
+      detail: modelControls.nextPinnedOption ? [currentModelTitle, modelTitle(modelControls.nextPinnedOption)].filter(Boolean).join(" → ") : "No alternative pinned model",
+      disabled: !modelControls.nextPinnedOption,
+      action: () => { (props.onNextPinnedModel ?? modelControls.onNextPinnedModel)(); props.onClose(); } }] : []),
+    ...(hasNestedModelPicker || props.onCycleModelSource ? [{ id: "models.next-source", title: "Cycle model source", shortcut: "Ctrl+Alt+M", group: ACTIONS_GROUP,
+      detail: modelControls.sourceCycleDetail || "No accessible model sources", disabled: !modelControls.nextSourceOption,
+      action: () => { (props.onCycleModelSource ?? modelControls.onCycleModelSource)(); props.onClose(); } }] : []),
     ...(hasNestedModelPicker || props.onOpenModelPicker
       ? [{
           id: "models",
           title: "Models",
+          meta: currentModelTitle,
           detail: "Choose the LLM that runs your next prompts",
           searchText: "model models llm provider openai anthropic claude gpt gemini switch pick select default",
           group: ACTIONS_GROUP,
@@ -328,7 +346,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         openUrl("https://openwork.dev/feedback");
       },
     },
-  ], [accessibleTargetCount, canMoveCurrentSessionToGroup, hasNestedModelPicker, props, sessionGroupCount]);
+  ], [accessibleTargetCount, canMoveCurrentSessionToGroup, hasNestedModelPicker, props, sessionGroupCount, currentModelTitle, modelControls]);
 
   const settingsItems = useMemo(
     () => buildCommandPaletteSettingsItems({
@@ -511,7 +529,7 @@ export function CommandPalette(props: CommandPaletteProps) {
   ), [props]);
 
   const modelItems = useMemo<PaletteItem[]>(() => (
-    buildCommandPaletteModelItems(props.modelOptions ?? [], props.selectedModel).map((item) => ({
+    buildCommandPaletteModelItems(props.modelOptions ?? [], props.selectedModel, favorites, recentModels).map((item) => ({
       id: item.id,
       title: item.title,
       detail: item.detail,
@@ -519,11 +537,12 @@ export function CommandPalette(props: CommandPaletteProps) {
       searchText: item.searchText,
       disabled: item.option.disabled,
       action: () => {
+        useModelCollectionsStore.getState().recordRecent(item.option);
         props.onSelectModel?.({ providerID: item.option.providerID, modelID: item.option.modelID });
         props.onClose();
       },
     }))
-  ), [props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel]);
+  ), [props.modelOptions, props.onClose, props.onSelectModel, props.selectedModel, favorites, recentModels]);
 
   const behaviorItems = useMemo<PaletteItem[]>(() => {
     if (!behaviorModel) return [];
@@ -610,7 +629,10 @@ export function CommandPalette(props: CommandPaletteProps) {
         item.action();
       }}
     >
-      {model ? <ModelSourceIcon model={model} /> : null}
+      {model ? <span data-slot="model-provider-mark" className="flex size-4 shrink-0 items-center justify-center">
+        {isAutoModel(model) ? <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="OpenWork" className="size-4" />
+          : <ProviderIcon providerId={model.providerID} providerName={model.description} size={16} />}
+      </span> : null}
       <div className="min-w-0 flex-1">
         <div className="truncate font-medium">{item.title}</div>
         {item.breadcrumb || item.detail ? (
@@ -627,6 +649,7 @@ export function CommandPalette(props: CommandPaletteProps) {
           <span className="sr-only">{item.searchText}</span>
         ) : null}
       </div>
+      {model && !isAutoModel(model) ? <span data-slot="model-source" className="flex size-4 shrink-0 items-center justify-center"><ModelSourceIcon model={model} /></span> : null}
       {item.shortcut || item.meta ? (
         <CommandShortcut>{item.shortcut ?? item.meta}</CommandShortcut>
       ) : null}
@@ -682,7 +705,7 @@ export function CommandPalette(props: CommandPaletteProps) {
                       : mode === "groups"
                         ? "Search groups..."
                         : mode === "models"
-                          ? "Search models..."
+                          ? "Search models…"
                           : mode === "model-behavior"
                             ? "Search thinking or effort..."
                         : t("session.palette_placeholder_actions")

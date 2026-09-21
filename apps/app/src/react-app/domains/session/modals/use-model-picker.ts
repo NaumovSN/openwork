@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Client, ModelOption } from "@/app/types";
 import type { CloudImportedProvider } from "@/app/cloud/import-state";
-import { withImportedModelMetadata } from "../models/model-catalog";
+import { withImportedModelMetadata, type ModelPickerCatalogState } from "../models/model-catalog";
 import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
@@ -172,7 +172,15 @@ export function useModelPicker(input: UseModelPickerInput) {
     });
   }, [checkDesktopRestriction, modelOptions]);
 
+  const catalogState: ModelPickerCatalogState = {
+    state: providerListQuery.isError ? "error" : client && providerListQuery.isPending ? "loading" : "ready",
+    lastVerifiedAt: providerListQuery.dataUpdatedAt || undefined,
+    refreshing: providerListQuery.isFetching,
+    onRetry: () => providerListQuery.refetch(),
+  };
+
   return {
+    catalogState,
     open,
     setOpen,
     compactOpen,

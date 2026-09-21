@@ -10,6 +10,7 @@ export const desktopFreeAccessStatusSchema = z.object({
   providerID: z.string(),
   modelID: z.string(),
   allowance: z.object({ resetsAt: z.string(), limitUsd: z.number().finite().nonnegative(), usedUsd: z.number().finite().nonnegative(), reservedUsd: z.number().finite().nonnegative(), remainingUsd: z.number().finite().nonnegative() }).nullable(),
+  defaultPinned: z.boolean().optional(),
 }).refine((status) => status.state !== "ready" || Boolean(status.minimumVersion?.trim() && status.allowance), "Ready Auto access requires a verified status");
 export type DesktopFreeAccessStatus = z.infer<typeof desktopFreeAccessStatusSchema>;
 export const autoAccessWallSchema = z.object({ state: z.enum(["limit", "update", "unavailable", "sync"]), resetsAt: z.string().optional(), minimumVersion: z.string().optional() });
@@ -70,9 +71,20 @@ export async function preflightAutoSubmission(input: {
   return wall ? { outcome: "blocked", reason: "auto-access", wall } : null;
 }
 
+export type AutoPickerState = "ready" | "exhausted" | "update_required" | "unavailable" | "sync";
+export function autoPickerCopy(state: AutoPickerState, signedIn: boolean) {
+  switch (state) {
+    case "exhausted": return { subtitle: "Free limit used up · resets Monday", detail: signedIn ? "This week’s free limit is used up. It resets Monday." : "This week’s free limit is used up. Sign in for a larger free limit.", action: signedIn ? null : "Sign in" };
+    case "update_required": return { subtitle: "Free · needs an OpenWork update", detail: "Update OpenWork to keep using Auto. Your draft is kept.", action: "Update" };
+    case "unavailable": return { subtitle: "Free · temporarily unavailable", detail: "Auto is having trouble right now. Other models still work.", action: "Retry" };
+    case "sync": return { subtitle: "Free · finishing setup", detail: "Auto is almost ready. Reload the workspace if it doesn’t appear.", action: "Reload" };
+    case "ready": return { subtitle: "Free · OpenWork picks the model", detail: "Free access ready", action: null };
+  }
+}
+
 export function autoWallCopy(wall: AutoAccessWall, signedIn: boolean) {
   switch (wall.state) {
-    case "limit": return { title: "Your weekly free limit is used up", detail: signedIn ? "Your free allowance resets Monday. Switch to another model to continue." : "Your free allowance resets Monday. Sign in for a larger free allowance, or switch to another model." };
+    case "limit": return { title: "This week’s free limit is used up", detail: signedIn ? "Auto is free for your account up to a weekly limit. It resets Monday. Switch model and send again." : "Auto is free on this device up to a weekly limit. It resets Monday. Sign in to OpenWork for a larger free limit, or switch model and send again." };
     case "update": return { title: "Update OpenWork to use Auto", detail: "Your message was not processed. Update the app or switch to another model." };
     case "sync": return { title: "Auto is still syncing", detail: "Your message was not processed. Wait for sync or switch to another model." };
     case "unavailable": return { title: "Auto is temporarily unavailable", detail: "Your message was not processed. Switch to another model or try again later." };

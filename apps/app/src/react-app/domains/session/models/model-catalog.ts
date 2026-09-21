@@ -2,6 +2,30 @@ import type { ModelOption, ModelRef } from "@/app/types";
 import type { CloudImportedProvider } from "@/app/cloud/import-state";
 import { modelRefKey, nextFavoriteModel } from "./model-collections-store";
 
+export type ModelPickerCatalogState = {
+  state: "loading" | "ready" | "error";
+  lastVerifiedAt?: number;
+  refreshing?: boolean;
+  onRetry?: () => void | Promise<unknown>;
+};
+export type RetainedModelSelection = {
+  model: ModelRef;
+  title?: string;
+  description?: string;
+  reason: "unavailable" | "policy" | "disabled" | "signed-out";
+};
+export function retainedModelCopy(reason: RetainedModelSelection["reason"]) {
+  switch (reason) {
+    case "policy": return { subtitle: "blocked by your organization", detail: "Your organization decides which providers are allowed here. Ask your workspace owner or admin." };
+    case "disabled": return { subtitle: "disabled in AI providers", detail: "Turn this provider back on in AI providers, or choose another model." };
+    case "signed-out": return { subtitle: "sign in to verify access", detail: "Sign in to verify access to your saved model, or choose a connected provider." };
+    case "unavailable": return { subtitle: "no longer available here", detail: "Your saved model isn’t available here anymore." };
+  }
+}
+export function nonDefaultModelSummary(model: ModelRef, value: string | null, label: string) {
+  return !isAutoModel(model) && value !== null ? label : null;
+}
+
 export const AUTO_MODEL_ID = "openai/gpt-5.6-luna";
 export const AUTO_PROVIDER_ID = "openwork-free";
 export const EXPLICIT_MODEL_CHOICE_KEY = "openwork.modelChoice.explicit";
@@ -32,7 +56,7 @@ export function modelTitle(model: ModelRef & { title?: string }) {
 }
 
 export function modelSubtitle(model: ModelOption, exhausted = false) {
-  if (isAutoModel(model)) return exhausted ? "Free · this week's limit used · resets Monday" : "Free · OpenWork picks the model";
+  if (isAutoModel(model)) return exhausted ? "Free limit used up · resets Monday" : "Free · OpenWork picks the model";
   return [model.description?.trim(), model.organizationPinOrder !== undefined ? "pinned by your org" : null].filter(Boolean).join(" · ");
 }
 
@@ -52,17 +76,23 @@ export function withImportedModelMetadata(options: readonly ModelOption[], impor
   }));
 }
 
-export function immutableModelPin(model: ModelOption) {
-  return isAutoModel(model) || model.organizationPinOrder !== undefined;
+export type ModelCatalogOption = ModelOption & { defaultPinned?: boolean };
+export function withAutoDefaultPin(options: readonly ModelOption[], status?: { providerID: string; modelID: string; defaultPinned?: boolean }): ModelCatalogOption[] {
+  return options.map((option) => isAutoModel(option) && status && typeof status.defaultPinned === "boolean" && modelRefKey(option) === modelRefKey(status)
+    ? { ...option, defaultPinned: status.defaultPinned } : option);
 }
 
-export function orderedModelPins(options: readonly ModelOption[], personal: readonly ModelRef[]) {
+export function immutableModelPin(model: ModelCatalogOption) {
+  return (isAutoModel(model) && model.defaultPinned !== false) || model.organizationPinOrder !== undefined;
+}
+
+export function orderedModelPins(options: readonly ModelCatalogOption[], personal: readonly ModelRef[]) {
   const available = options.filter((option) => !option.disabled);
   const byKey = new Map(available.map((option) => [modelRefKey(option), option]));
   const ordered = [
+    ...available.filter((option) => isAutoModel(option) && option.defaultPinned !== false),
     ...available.filter((option) => option.organizationPinOrder !== undefined).sort((a, b) => a.organizationPinOrder! - b.organizationPinOrder!),
     ...personal.flatMap((model) => { const option = byKey.get(modelRefKey(model)); return option ? [option] : []; }),
-    ...available.filter(isAutoModel),
   ];
   return [...new Map(ordered.map((option) => [modelRefKey(option), option])).values()];
 }

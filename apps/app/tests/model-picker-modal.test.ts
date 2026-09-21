@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, createElement, useState } from "react";
 import type { CreateAutomation } from "@openwork/types/automations";
@@ -12,6 +12,14 @@ Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: tr
 afterAll(async () => { await GlobalRegistrator.unregister(); });
 const { createRoot } = await import("react-dom/client");
 const auth = await import("../src/react-app/domains/cloud/den-auth-provider");
+const defaultPolicy = await import("../src/react-app/domains/cloud/desktop-config-provider");
+let restorePolicy = () => {};
+beforeEach(() => { const policy = spyOn(defaultPolicy, "useCheckDesktopRestriction").mockReturnValue(() => false); restorePolicy = () => policy.mockRestore(); });
+afterEach(() => restorePolicy());
+async function openAdvanced() {
+  const section = document.querySelector<HTMLDetailsElement>('[data-testid="model-advanced-options"], [data-testid="current-model-settings"]');
+  if (section && !section.open) await act(async () => section.querySelector<HTMLElement>("summary")?.click());
+}
 const { createDefaultPlatform, PlatformProvider } = await import("../src/react-app/kernel/platform");
 const { ModelPickerModal, MODEL_PICKER_DEFAULT_SUBTITLE, MODEL_PICKER_UNAVAILABLE_SUBTITLE, resolveModelPickerSubtitle } = await import("../src/react-app/domains/session/modals/model-picker-modal");
 import {
@@ -56,6 +64,7 @@ for (const surface of ["compact", "full"]) {
       expect(document.activeElement).not.toBe(input);
       expect(input?.className).toContain("text-base");
       if (surface === "compact") {
+        await openAdvanced();
         const effort = document.querySelector<HTMLButtonElement>('[data-testid="model-effort"]');
         await act(async () => effort?.click());
         expect(document.activeElement?.textContent).toBe("Back to models");
@@ -120,6 +129,7 @@ test("full picker preserves a stale effort until an explicit choice and never se
   const root = createRoot(host);
   try {
     await act(async () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children: createElement(Picker) })));
+    await openAdvanced();
     expect(document.querySelector('[data-testid="current-model-settings"]')?.textContent).toContain('"retired" (not in current catalog)');
     expect(document.querySelector('[data-testid="current-model-settings"] [aria-pressed="true"]')).toBeNull();
     for (const label of ["Default", "Low", "Default"]) {
@@ -163,6 +173,8 @@ test("compact picker leaves unadvertised effort unavailable but can clear a stal
   const effortButton = () => document.querySelector<HTMLButtonElement>('[data-testid="model-effort"]');
   try {
     await act(async () => render());
+    expect(document.querySelector('[data-testid="model-effort"]')).toBeNull();
+    await openAdvanced();
     expect(effortButton()?.disabled).toBe(true);
     expect(effortButton()?.textContent).toContain("Unavailable");
     value = "retired";
@@ -226,6 +238,7 @@ for (const surface of ["compact", "full"]) {
     };
     const settings = () => document.querySelector(surface === "compact" ? '[data-slot="model-thinking-submenu"]' : '[data-testid="current-model-settings"]');
     const openSettings = async () => {
+      await openAdvanced();
       if (surface !== "compact" || settings()) return;
       const button = document.querySelector<HTMLButtonElement>('[data-testid="model-effort"]');
       if (!button) throw new Error("Missing effort menu");
@@ -233,18 +246,19 @@ for (const surface of ["compact", "full"]) {
     };
     try {
       await act(async () => render());
+      if (surface === "compact") expect(document.querySelector('[aria-label="Change model"]')?.textContent).toContain("Synthetic model · High");
+      expect(document.querySelector('[aria-label="Fast mode"]')).toBeNull();
       for (const label of ["Fast", "Low", "Fast", "CustomExact", "Fast", "Default", "Fast"]) {
-        if (surface === "compact" && label === "Fast") {
-          const menu = document.querySelector('[data-testid="composer-model-picker"]');
+        await openAdvanced();
+        if (label === "Fast") {
+          const menu = document.querySelector(surface === "compact" ? '[data-testid="composer-model-picker"]' : '[data-testid="current-model-settings"]');
           const toggle = menu?.querySelector<HTMLButtonElement>('[role="switch"]');
           if (!toggle) throw new Error("Missing main-menu Fast mode switch");
           expect(toggle.closest('[title]')?.getAttribute("title") ?? "").not.toContain("pricing");
           const wasChecked = toggle.getAttribute("aria-checked") === "true";
           await act(async () => toggle.click());
-          expect(document.querySelector('[data-testid="composer-model-picker"] [role="switch"]')?.getAttribute("aria-checked")).toBe(String(!wasChecked));
-          expect(document.querySelector('[data-testid="composer-model-picker"]')).not.toBeNull();
-          const effort = document.querySelector('[data-testid="model-effort"]');
-          expect(effort?.textContent).not.toContain("Fast");
+          expect(menu?.querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe(String(!wasChecked));
+          if (surface === "compact") expect(document.querySelector('[data-testid="model-effort"]')?.textContent).not.toContain("Fast");
           continue;
         }
         await openSettings();
@@ -306,7 +320,7 @@ test("Fast Default and custom effort persist in the same session variant read by
 
 test("Automation preserves same-model settings, recovers Default and saves only on explicit submission", async () => {
   const { AutomationEditor } = await import("../src/react-app/domains/automations/automation-editor");
-  const authSpy = spyOn(auth, "useDenAuth").mockReturnValue({ status: "signed_out", user: null, verifiedIdentity: null, isSignedIn: false, error: null, refresh: async () => undefined });
+  const authSpy = spyOn(auth, "useDenAuth").mockReturnValue({ status: "signed_in", user: null, verifiedIdentity: { principalId: "fixture", organizationId: "fixture" }, isSignedIn: true, error: null, refresh: async () => undefined });
   const modelOptions: AutomationModelOption[] = ["first", "second"].map((modelId) => ({
     providerId: "lpr_fixture", modelId, providerName: "Fixture provider", modelName: modelId, accessKind: "authorized_custom",
   }));
@@ -343,6 +357,7 @@ test("Automation preserves same-model settings, recovers Default and saves only 
     await act(async () => control.click());
   };
   const effort = async (label: string) => {
+    await openAdvanced();
     const control = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-testid="current-model-settings"] button')).find((button) => button.textContent === label);
     if (!control) throw new Error(`Missing Automation effort: ${label}`);
     await act(async () => control.click());
@@ -356,6 +371,7 @@ test("Automation preserves same-model settings, recovers Default and saves only 
   };
   try {
     await act(async () => render());
+    await openAdvanced();
     expect(document.querySelector('[data-testid="current-model-settings"]')?.textContent).toContain('"retired" (not in current catalog)');
     await selectModel("first");
     expect(document.querySelector("#automation-model")?.textContent).toContain("retired");
@@ -372,6 +388,7 @@ test("Automation preserves same-model settings, recovers Default and saves only 
     await effort("High");
     await selectModel("second");
     await click("#automation-model");
+    await openAdvanced();
     expect(document.querySelector('[data-testid="current-model-settings"] [aria-pressed="true"]')?.textContent).toBe("Default");
     expect(initial.model.variant).toBe("retired");
     expect(saved).toEqual([]);
@@ -388,7 +405,7 @@ test("Automation preserves same-model settings, recovers Default and saves only 
 });
 
 test("long picker labels retain full hover text and select the complete model ID", async () => {
-  const authSpy = spyOn(auth, "useDenAuth").mockReturnValue({ status: "signed_out", user: null, verifiedIdentity: null, isSignedIn: false, error: null, refresh: async () => undefined });
+  const authSpy = spyOn(auth, "useDenAuth").mockReturnValue({ status: "signed_in", user: null, verifiedIdentity: { principalId: "fixture", organizationId: "fixture" }, isSignedIn: true, error: null, refresh: async () => undefined });
   const den = await import("../src/app/lib/den");
   const organization = "Synthetic organization with a very long display name";
   const settingsSpy = spyOn(den, "readDenSettings").mockReturnValue({ ...den.readDenSettings(), activeOrgName: organization });
@@ -486,8 +503,8 @@ test("Auto remains checked while recovery focuses an alternative pin, and immuta
     await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)); });
     expect(document.querySelector(`[data-model-key="${AUTO_PROVIDER_ID}:${AUTO_MODEL_ID}"]`)?.getAttribute("data-checked")).toBe("true");
     expect(document.activeElement?.getAttribute("data-model-key")).toBe("ipr_team:gwm_team");
-    expect(document.querySelector('button[aria-label="Unpin model: Auto"]')).toBeNull();
-    expect(document.querySelector('button[aria-label="Unpin model: Team model"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="Unpin: Auto"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="Unpin: Team model"]')).toBeNull();
     expect(host.textContent).toContain("Free · OpenWork picks the model");
     expect(host.querySelector("svg.lucide-star")).toBeNull();
     const autoRow = () => host.querySelector<HTMLElement>(`[data-model-key="${AUTO_PROVIDER_ID}:${AUTO_MODEL_ID}"]`);
@@ -497,7 +514,8 @@ test("Auto remains checked while recovery focuses an alternative pin, and immuta
       expect(row.lastElementChild?.getAttribute("data-slot")).toBe("model-selection");
       expect(row.lastElementChild?.previousElementSibling?.getAttribute("data-slot")).toBe("model-source");
     }
-    expect(autoRow()?.querySelector('[data-slot="model-provider-mark"] svg.lucide-sparkles')).not.toBeNull();
+    expect(autoRow()?.querySelector('[data-slot="model-provider-mark"] svg.lucide-sparkles')).toBeNull();
+    expect(autoRow()?.querySelector('[data-slot="model-provider-mark"] img[alt="OpenWork"]')).not.toBeNull();
     expect(autoRow()?.querySelector('[data-slot="model-source"] svg.lucide-cloud')).not.toBeNull();
     expect(orgRow?.querySelector('[data-slot="model-provider-mark"] svg')).not.toBeNull();
     expect(orgRow?.querySelector('[data-slot="model-provider-mark"] svg.lucide-cloud')).toBeNull();
@@ -507,7 +525,7 @@ test("Auto remains checked while recovery focuses an alternative pin, and immuta
     const statusKey = autoAccessStatusQueryKey(signedOut);
     expect(queryClient.getQueryState(statusKey)).toBeUndefined();
     await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), state: "exhausted" }));
-    expect(autoRow()?.textContent).toContain("Free · this week's limit used · resets Monday");
+    expect(autoRow()?.textContent).toContain("Free limit used up · resets Monday");
     expect(autoRow()?.getAttribute("data-checked")).toBe("true");
     await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), state: "exhausted", providerID: "another-provider" }));
     expect(autoRow()?.textContent).toContain("Free · OpenWork picks the model");

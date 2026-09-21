@@ -11,10 +11,17 @@ export function replyModelFromInfo(info: unknown) {
   const resolved = field(info, "resolvedModel");
   const model = field(info, "model");
   const resolvedModelID = text(field(resolved, "modelID")) ?? text(field(resolved, "id")) ?? text(field(info, "resolvedModelID"));
-  const modelID = resolvedModelID ?? text(field(info, "modelID")) ?? text(field(model, "id"));
-  const providerID = text(field(resolved, "providerID")) ?? text(field(info, "providerID")) ?? text(field(model, "providerID"));
+  const requestedModelID = text(field(info, "modelID")) ?? text(field(model, "id"));
+  const requestedProviderID = text(field(info, "providerID")) ?? text(field(model, "providerID"));
+  const modelID = resolvedModelID ?? requestedModelID;
+  const providerID = text(field(resolved, "providerID")) ?? text(field(info, "resolvedProviderID")) ?? requestedProviderID;
+  const name = text(field(resolved, "name"));
   if (!modelID) return undefined;
-  return { modelID, ...(providerID ? { providerID } : {}), ...(resolvedModelID ? { resolved: true } : {}) };
+  return { modelID, ...(providerID ? { providerID } : {}),
+    ...(requestedModelID ? { requestedModelID } : {}),
+    ...(requestedProviderID ? { requestedProviderID } : {}),
+    ...(resolvedModelID ? { resolved: true, ...(name ? { name } : {}) } : {}),
+  };
 }
 
 export function mergeReplyMetadata(previous: unknown, next: unknown) {
@@ -23,7 +30,9 @@ export function mergeReplyMetadata(previous: unknown, next: unknown) {
   const nextModel = field(field(next, "opencode"), "replyModel");
   return { ...record(previous), ...record(next), opencode: {
     ...record(field(previous, "opencode")), ...record(field(next, "opencode")),
-    ...(field(previousModel, "resolved") === true && field(nextModel, "resolved") !== true ? { replyModel: previousModel } : {}),
+    ...(previousModel || nextModel ? { replyModel: field(previousModel, "resolved") === true && field(nextModel, "resolved") !== true
+      ? { ...record(nextModel), ...record(previousModel) }
+      : { ...record(previousModel), ...record(nextModel) } } : {}),
   } };
 }
 
@@ -31,7 +40,7 @@ export function replyModelLabel(message: UIMessage) {
   const model = field(field(message.metadata, "opencode"), "replyModel");
   const modelID = text(field(model, "modelID"));
   const providerID = text(field(model, "providerID")) ?? "";
-  if (!modelID || (providerID.startsWith("ipr_") && modelID.startsWith("gwm_"))) return null;
-  if (modelID === AUTO_MODEL_ID) return field(model, "resolved") === true ? "GPT-5.6 Luna" : null;
-  return modelID;
+  if (!modelID || field(model, "resolved") !== true || (providerID.startsWith("ipr_") && modelID.startsWith("gwm_"))) return null;
+  if (modelID === AUTO_MODEL_ID) return "GPT-5.6 Luna";
+  return text(field(model, "name")) ?? modelID;
 }

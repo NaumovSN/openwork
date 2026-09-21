@@ -92,8 +92,8 @@ test("background Auto rejection is durable, actionable after restart and sign-in
     expect(restarted.get("local", owner.workspaceId, session.id)?.queued).toEqual(["Do not send the follower"]);
     expect(mergeRejectedTurns([], turns, owner)[0]).toMatchObject({ role: "user", metadata: { unprocessed: true, autoAccessWall: { state: "limit" } } });
     await act(async () => root.render(<><AutoRejectedTurnRecoveryBridge /><AutoAccessNotice wall={turns[0].wall} sessionId={session.id} recovery={{ owner, id: turns[0].id }} /></>));
-    expect(rootElement.textContent).toContain("Your weekly free limit is used up");
-    const signIn = [...rootElement.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Sign in for more free access");
+    expect(rootElement.textContent).toContain("This week’s free limit is used up");
+    const signIn = [...rootElement.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Sign in to OpenWork");
     await act(async () => signIn?.click());
     expect(window.location.hash).toContain("settings/cloud-account");
     expect(useComposerStateStore.getState().queuedDrafts[session.id]).toBeUndefined();

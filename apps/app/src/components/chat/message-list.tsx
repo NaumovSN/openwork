@@ -1158,7 +1158,7 @@ function getRenderableMessage(message: UIMessage) {
  * unprompted; once the answer is in, the reasoning is available but out
  * of the way.
  */
-function CompletedStepRun({ label, children }: { label: string; children: React.ReactNode }) {
+function CompletedStepRun({ label, modelLabel, children }: { label: string; modelLabel?: string | null; children: React.ReactNode }) {
   const [open, setOpen] = React.useState(false)
 
   return (
@@ -1166,9 +1166,9 @@ function CompletedStepRun({ label, children }: { label: string; children: React.
       <div className="mx-auto flex w-full max-w-3xl px-2 md:px-10">
         <CollapsibleTrigger
           className="group flex cursor-pointer items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-          aria-label={open ? `${label}. Hide steps` : `${label}. Show steps`}
+          aria-label={`${label}${modelLabel ? ` · ${modelLabel}` : ""}. ${open ? "Hide steps" : "Show steps"}`}
+          data-testid="completed-work-rail"
         >
-          <span>{label}</span>
           <ChevronRight
             aria-hidden="true"
             className={cn(
@@ -1176,6 +1176,8 @@ function CompletedStepRun({ label, children }: { label: string; children: React.
               open && "rotate-90"
             )}
           />
+          <span>{label}</span>
+          {modelLabel ? <span data-testid="reply-model"> · {modelLabel}</span> : null}
         </CollapsibleTrigger>
       </div>
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
@@ -1227,6 +1229,7 @@ function MessageGroup({
 
   const renderableItems = getRenderableMessages(items)
   const lastTextMessage = getLastTextPart(lastItem.message)
+  const resolvedReplyModel = lastRealItem?.message.role === "assistant" ? replyModelLabel(lastRealItem.message) : null
   const mcpAppParts = collectMcpAppParts(items)
 
   // Leading messages without prose (tool/reasoning steps) render inline and
@@ -1289,6 +1292,10 @@ function MessageGroup({
   // A short finished run reads fine as a list, so only long ones fold away.
   const collapseSteps =
     !isLiveGroup && stepItems.length > 0 && stepRowCount > COLLAPSED_STEP_RUN_MIN_ROWS
+  const replyStartedAt = stepsStartedAt ?? (lastRealItem ? getMessageCreated(lastRealItem.message) : null)
+  const replySummaryLabel = replyStartedAt !== null && stepsEndedAt !== null && stepsEndedAt > replyStartedAt
+    ? `Worked for ${formatToolCallDuration(stepsEndedAt - replyStartedAt)}${stepRowCount ? ` · ${stepRowCount} ${stepRowCount === 1 ? "step" : "steps"}` : ""}`
+    : stepRowCount ? stepRunLabel : ""
   const foldedReasoning = collapseSteps
     ? proseReasoning.map((reasoning) => (
       <Message
@@ -1356,9 +1363,12 @@ function MessageGroup({
       {/* The scroll area keeps the same 8px rhythm the parts inside a single
           message use, so a step row is spaced identically whether or not a
           message boundary happens to fall between it and the previous row. */}
+      {!isLiveGroup && resolvedReplyModel && !collapseSteps ? <div data-testid="completed-work-rail" className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-1 px-2 text-sm text-muted-foreground md:px-10">
+        {replySummaryLabel ? <span>{replySummaryLabel} · </span> : null}<span data-testid="reply-model">{resolvedReplyModel}</span>
+      </div> : null}
       {stepItems.length > 0 ? (
         collapseSteps ? (
-          <CompletedStepRun label={stepRunLabel}>
+          <CompletedStepRun label={resolvedReplyModel ? replySummaryLabel : stepRunLabel} modelLabel={resolvedReplyModel}>
             <div className="flex flex-col gap-2">
               {renderItems(stepItems, 0)}
               {foldedReasoning}
@@ -1412,7 +1422,6 @@ function MessageGroup({
               </>
             ) : null}
           </MessageActions>
-           {replyModelLabel(lastTextMessage) ? <span data-testid="reply-model" className="text-xs text-muted-foreground">{replyModelLabel(lastTextMessage)}</span> : null}
            <MessageTimestamp message={lastItem.message} />
           {/* <MessageSources messages={items.map((item) => item.message)} /> */}
         </div>
