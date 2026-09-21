@@ -12,7 +12,7 @@ import type { PackagedFlavor } from "../worlds/packaged-first-launch.ts";
 const test = spec.world(packagedFirstLaunchWorld, { timeout: 180_000 });
 
 const FIRST_LAUNCH_HEADING: Partial<Record<PackagedFlavor, string>> = {
-  cloud: "What do you need done?",
+  cloud: "What should we work on?",
   enterprise: "Link this app to your organization",
 };
 
