@@ -18,6 +18,7 @@ export default defineConfig({
     "den/connect-diagnostics": "src/den/connect-diagnostics.ts",
     "den/egress-diagnostics": "src/den/egress-diagnostics.ts",
     "den/gateway": "src/den/gateway.ts",
+    "desktop-free-access": "src/desktop-free-access.ts",
     "den/gateway-usage-limits": "src/den/gateway-usage-limits.ts",
     "den/inference": "src/den/inference.ts",
     "den/managed-models-policy": "src/den/managed-models-policy.ts",

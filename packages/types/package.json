@@ -130,7 +130,7 @@
     "./desktop-free-access": {
       "types": "./src/desktop-free-access.ts",
       "development": "./src/desktop-free-access.ts",
-      "default": "./src/desktop-free-access.ts"
+      "default": "./dist/desktop-free-access.js"
     },
     "./desktop-ipc": {
       "types": "./src/desktop-ipc.ts",
