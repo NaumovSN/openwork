@@ -31,8 +31,9 @@ export function modelTitle(model: ModelRef & { title?: string }) {
   return isAutoModel(model) ? "Auto" : model.title || model.modelID;
 }
 
-export function modelSubtitle(model: ModelOption) {
-  return isAutoModel(model) ? "Free · OpenWork picks the model" : `${model.description || model.providerID} · ${MODEL_SOURCE_LABELS[modelSource(model)]}`;
+export function modelSubtitle(model: ModelOption, exhausted = false) {
+  if (isAutoModel(model)) return exhausted ? "Free · this week's limit used · resets Monday" : "Free · OpenWork picks the model";
+  return [model.description?.trim(), model.organizationPinOrder !== undefined ? "pinned by your org" : null].filter(Boolean).join(" · ");
 }
 
 export function withImportedModelMetadata(options: readonly ModelOption[], imports: Record<string, CloudImportedProvider>) {

@@ -462,11 +462,15 @@ test("Auto remains checked while recovery focuses an alternative pin, and immuta
   const { ModelPickerList } = await import("../src/components/model-picker-list");
   const { AUTO_MODEL_ID, AUTO_PROVIDER_ID } = await import("../src/react-app/domains/session/models/model-catalog");
   const { useModelCollectionsStore } = await import("../src/react-app/domains/session/models/model-collections-store");
+  const { autoAccessStatusQueryKey } = await import("../src/react-app/domains/cloud/auto-access-ui");
+  const { unavailableDesktopFreeStatus } = await import("../src/app/lib/inference-access");
+  const signedOut: ReturnType<typeof auth.useDenAuth> = { status: "signed_out", user: null, verifiedIdentity: null, isSignedIn: false, error: null, refresh: async () => undefined };
+  const authSpy = spyOn(auth, "useDenAuth").mockReturnValue(signedOut);
   const current = { providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID };
   const base = { behaviorTitle: "Effort", behaviorLabel: "Default", behaviorDescription: "", behaviorValue: null, isFree: false };
   const auto = { ...base, ...current, title: "Luna" };
   const alternative = { ...base, providerID: "openai", modelID: "alternative", title: "Alternative" };
-  const org = { ...base, providerID: "ipr_team", modelID: "gwm_team", title: "Team model", organizationPinOrder: 0 };
+  const org = { ...base, providerID: "ipr_team", modelID: "gwm_team", title: "Team model", description: "Anthropic", organizationPinOrder: 0 };
   const previous = useModelCollectionsStore.getState();
   useModelCollectionsStore.setState({ favorites: [alternative], recent: [] });
   const selected: unknown[] = [];
@@ -486,13 +490,38 @@ test("Auto remains checked while recovery focuses an alternative pin, and immuta
     expect(document.querySelector('button[aria-label="Unpin model: Team model"]')).toBeNull();
     expect(host.textContent).toContain("Free · OpenWork picks the model");
     expect(host.querySelector("svg.lucide-star")).toBeNull();
+    const autoRow = () => host.querySelector<HTMLElement>(`[data-model-key="${AUTO_PROVIDER_ID}:${AUTO_MODEL_ID}"]`);
+    const orgRow = host.querySelector<HTMLElement>('[data-model-key="ipr_team:gwm_team"]');
+    for (const row of host.querySelectorAll('[data-model-key]')) {
+      expect(row.firstElementChild?.getAttribute("data-slot")).toBe("model-provider-mark");
+      expect(row.lastElementChild?.getAttribute("data-slot")).toBe("model-selection");
+      expect(row.lastElementChild?.previousElementSibling?.getAttribute("data-slot")).toBe("model-source");
+    }
+    expect(autoRow()?.querySelector('[data-slot="model-provider-mark"] svg.lucide-sparkles')).not.toBeNull();
+    expect(autoRow()?.querySelector('[data-slot="model-source"] svg.lucide-cloud')).not.toBeNull();
+    expect(orgRow?.querySelector('[data-slot="model-provider-mark"] svg')).not.toBeNull();
+    expect(orgRow?.querySelector('[data-slot="model-provider-mark"] svg.lucide-cloud')).toBeNull();
+    expect(orgRow?.textContent).toContain("Anthropic · pinned by your org");
+    expect(orgRow?.textContent).not.toContain("OpenWork Gateway");
+    expect(orgRow?.querySelector('[data-slot="model-selection"]')?.childElementCount).toBe(0);
+    const statusKey = autoAccessStatusQueryKey(signedOut);
+    expect(queryClient.getQueryState(statusKey)).toBeUndefined();
+    await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), state: "exhausted" }));
+    expect(autoRow()?.textContent).toContain("Free · this week's limit used · resets Monday");
+    expect(autoRow()?.getAttribute("data-checked")).toBe("true");
+    await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), state: "exhausted", providerID: "another-provider" }));
+    expect(autoRow()?.textContent).toContain("Free · OpenWork picks the model");
+    await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), state: "ready", minimumVersion: "1.0.0",
+      allowance: { limitUsd: 1, usedUsd: 1, reservedUsd: 0, remainingUsd: 0, resetsAt: "2026-09-28T00:00:00Z" } }));
+    expect(autoRow()?.textContent).toContain("Free · OpenWork picks the model");
+    expect(queryClient.getQueryState(statusKey)?.fetchStatus).toBe("idle");
     expect(selected).toEqual([]);
     const row = document.querySelector<HTMLElement>('[data-model-key="openai:alternative"]');
     await act(async () => { row?.focus(); row?.dispatchEvent(new KeyboardEvent("keydown", { key: "P", shiftKey: true, bubbles: true })); });
     expect(useModelCollectionsStore.getState().favorites).toEqual([]);
     expect(selected).toEqual([]);
   } finally {
-    await act(async () => root.unmount()); host.remove(); queryClient.clear();
+    await act(async () => root.unmount()); host.remove(); queryClient.clear(); authSpy.mockRestore();
     useModelCollectionsStore.setState({ favorites: previous.favorites, recent: previous.recent });
   }
 });

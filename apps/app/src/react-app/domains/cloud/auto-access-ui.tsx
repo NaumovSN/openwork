@@ -1,9 +1,9 @@
-import { useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
-import { autoAccessRefreshEvent, autoWallCopy, openAlternativeModelPicker, type AutoAccessWall } from "@/app/lib/inference-access";
+import { autoAccessRefreshEvent, autoWallCopy, openAlternativeModelPicker, type AutoAccessWall, type DesktopFreeAccessStatus } from "@/app/lib/inference-access";
 import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider";
-import { useDenAuth } from "./den-auth-provider";
+import { useDenAuth, type DenAuthStore } from "./den-auth-provider";
 import { isDesktopRuntime } from "@/app/utils";
 import { readDenSettings } from "@/app/lib/den";
 import { toast } from "@/components/ui/sonner";
@@ -35,6 +35,22 @@ export function openAutoSignIn(recovery?: { owner: RejectedTurnOwner; id: string
   window.location.hash = `${workspace}/settings/cloud-account`;
 }
 
+export function autoAccessStatusQueryKey(auth: Pick<DenAuthStore, "status" | "verifiedIdentity">, baseUrl?: string, workspaceId?: string) {
+  return ["auto-access", baseUrl, workspaceId, auth.status, auth.verifiedIdentity];
+}
+
+export function useObservedAutoAccessStatus() {
+  const workspace = useWorkspaceMaybe();
+  const auth = useDenAuth();
+  const client = useQueryClient();
+  const queryKey = autoAccessStatusQueryKey(auth, workspace?.openworkServerClient?.baseUrl, workspace?.workspaceId);
+  const subscribe = useCallback((onChange: () => void) => client.getQueryCache().subscribe(onChange), [client]);
+  return useSyncExternalStore(subscribe, () => {
+    const state = client.getQueryState<DesktopFreeAccessStatus>(queryKey);
+    return state?.status === "success" ? state.data : undefined;
+  }, () => undefined);
+}
+
 export function AutoAccessFooter(props: { available: boolean; syncing?: boolean }) {
   return props.available || props.syncing ? <AutoAccessFooterContent {...props} /> : null;
 }
@@ -44,7 +60,7 @@ function AutoAccessFooterContent({ available, syncing = false }: { available: bo
   const auth = useDenAuth();
   const client = workspace?.openworkServerClient;
   const query = useQuery({
-    queryKey: ["auto-access", client?.baseUrl, workspace?.workspaceId, auth.status, auth.verifiedIdentity],
+    queryKey: autoAccessStatusQueryKey(auth, client?.baseUrl, workspace?.workspaceId),
     enabled: available && isDesktopRuntime() && Boolean(client),
     queryFn: () => client!.desktopFreeStatus(),
     retry: false,

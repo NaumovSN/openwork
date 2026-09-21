@@ -72,7 +72,7 @@ export async function preflightAutoSubmission(input: {
 
 export function autoWallCopy(wall: AutoAccessWall, signedIn: boolean) {
   switch (wall.state) {
-    case "limit": return { title: "Your free limit is used up", detail: signedIn ? "Switch to another model to continue." : "Sign in for a larger free allowance, or switch to another model." };
+    case "limit": return { title: "Your weekly free limit is used up", detail: signedIn ? "Your free allowance resets Monday. Switch to another model to continue." : "Your free allowance resets Monday. Sign in for a larger free allowance, or switch to another model." };
     case "update": return { title: "Update OpenWork to use Auto", detail: "Your message was not processed. Update the app or switch to another model." };
     case "sync": return { title: "Auto is still syncing", detail: "Your message was not processed. Wait for sync or switch to another model." };
     case "unavailable": return { title: "Auto is temporarily unavailable", detail: "Your message was not processed. Switch to another model or try again later." };

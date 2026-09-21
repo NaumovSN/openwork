@@ -662,7 +662,7 @@ describe("session error technical details", () => {
       const html = renderErrorTranscript(null, false, [{ id: "not-sent", role: "user", metadata: { autoAccessWall: { state: "limit" }, unprocessed: true }, parts: [{ type: "text", text: "Unprocessed request" }] }])
       expect(html).toContain('data-unprocessed="true"')
       expect(html).toContain("opacity-50")
-      expect(html).toContain("Your free limit is used up")
+      expect(html).toContain("Your weekly free limit is used up")
       expect(html).toContain("Sign in for more free access")
       expect(html).toContain("Switch model")
       expect(html).not.toMatch(/Upgrade|USD|View plans|automatically retry/)
