@@ -6,7 +6,7 @@ import { mobileChatGeometry, simulateKeyboardViewport } from "../worlds/mobile-c
 import { setViewport } from "@openwork/cdp";
 import { localSendDenOutageWorld } from "../worlds/local-send-den-outage.ts";
 
-const test = spec.world(sessionlessFirstSendWorld, {
+const test = spec.world((seed) => sessionlessFirstSendWorld(seed), {
   timeout: 420_000,
   resources: { surfaces: ["appWeb"], services: ["mock"] },
   needs: { env: ["OPENWORK_EVAL_ENGINE"] },

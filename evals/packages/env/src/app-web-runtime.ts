@@ -21,6 +21,8 @@ export interface AppWebRuntime {
 }
 
 export interface AppWebRuntimeOptions {
+  den?: { apiUrl: string; webUrl: string };
+  webPort?: number;
   syntheticPreactivatedDenOrigin?: string;
   env?: Record<string, string>;
   browserHostSuffix?: string;
@@ -66,6 +68,17 @@ export function isolatedRuntimeEnvironment(root: string): NodeJS.ProcessEnv {
   };
 }
 
+export function appWebDenEnvironment(den?: AppWebRuntimeOptions["den"]): Record<string, string> {
+  if (!den) return {};
+  for (const address of [den.apiUrl, den.webUrl]) {
+    const url = new URL(address);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+      throw new Error("App-web Den addresses must be HTTP(S) URLs without credentials, query or fragment");
+    }
+  }
+  return { VITE_DEN_API_BASE_URL: den.apiUrl, VITE_DEN_BASE_URL: den.webUrl };
+}
+
 function runtimeDirectories(root: string): string[] {
   return ["home", "cache", "config/openwork", "config/opencode", "data/openwork", "data/opencode", "state"].map((path) => join(root, path));
 }
@@ -82,7 +95,7 @@ export async function startLocalRuntime(worldName: string, workspaceRoot: string
       state: "isolated",
       workspace: workspaceRoot,
       browserHostSuffix: options.browserHostSuffix,
-      env: { ...executableEnvironment(process.env), ...isolatedRuntimeEnvironment(fixtureRoot), ...options.env, ...bootstrapEnv },
+      env: { ...executableEnvironment(process.env), ...isolatedRuntimeEnvironment(fixtureRoot), ...options.env, ...(options.webPort ? { OPENWORK_WEB_PORT: String(options.webPort) } : {}), ...appWebDenEnvironment(options.den), ...bootstrapEnv },
     });
     return { webUrl: runtime.manifest.webUrl, openworkUrl: runtime.manifest.openworkUrl, runtimeDirectory, fixtureRoot, source: null, stop: () => runtime.stop() };
   } catch (error) {
@@ -172,7 +185,7 @@ export async function startRemoteRuntime(sandbox: string, worldName: string, wor
   const output = await runRemoteModule(sandbox, launchModulePath, REMOTE_LAUNCH_SOURCE, {
     syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin,
     directories: [workspaceRoot, ...runtimeDirectories(fixtureRoot)],
-    env: { ...isolatedRuntimeEnvironment(fixtureRoot), ...options.env },
+    env: { ...isolatedRuntimeEnvironment(fixtureRoot), ...options.env, ...(options.webPort ? { OPENWORK_WEB_PORT: String(options.webPort) } : {}), ...appWebDenEnvironment(options.den) },
     executableEnvKeys: EXECUTABLE_ENV_KEYS,
     fixtureRoot, name: worldName, repoRoot: "/workspace", workspace: workspaceRoot, browserHostSuffix: options.browserHostSuffix,
   }, `launch remote app-web runtime ${worldName}`, 120_000);
