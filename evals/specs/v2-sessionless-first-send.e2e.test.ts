@@ -445,7 +445,7 @@ test(`${engine}: Run task on the sessionless New task route creates the session 
   await using transition = await world.transition(evidence.dir);
   evidence.recordJsonArtifact("Sessionless transition recording", { engine, path: transition.filmPath });
   await user.looks([
-    "The 'What do you need done?' hero heading is visible above a composer containing the prompt beginning 'Summarize this workspace in one sentence.'.",
+    "The 'What should we work on?' hero heading is visible above a composer containing the prompt beginning 'Summarize this workspace in one sentence.'.",
     "There is no creation error, Starting indicator, or submitted user-message bubble above the populated composer.",
   ]);
   await user.press("Enter");
@@ -464,7 +464,7 @@ test(`${engine}: Run task on the sessionless New task route creates the session 
       evidence.recordJsonArtifact("Immediate sessionless RAF and mutation observations", await transition.samples());
     });
     await user.looks([
-      "The 'What do you need done?' hero remains visible above the stationary empty composer showing 'Describe your task...', with a visible busy spinner in its send control.",
+      "The 'What should we work on?' hero remains visible above the stationary empty composer showing 'Describe your task...', with a visible busy spinner in its send control.",
       "There is no submitted user-message bubble, Starting indicator, or Working indicator between the hero heading and the composer.",
     ]);
     expect(transition.read()).toMatchObject({ creation: 1, prompt: 0, held: 1, expired: false });
@@ -564,7 +564,7 @@ test(`${engine}: Run task on the sessionless New task route creates the session 
       "The created thread has exactly one user row, first in transcript order, followed by the engine reply; the prompt is neither duplicated nor rendered below its answer.", true);
     await user.looks([
       `The conversation transcript shows exactly one user-message bubble containing the prompt beginning 'Summarize this workspace in one sentence.' and an assistant reply reading '${world.reply}'.`,
-      "An empty composer is visible below the transcript; the 'What do you need done?' hero and Starting indicator are absent.",
+      "An empty composer is visible below the transcript; the 'What should we work on?' hero and Starting indicator are absent.",
     ]);
     const handoff = await transition.samples();
     evidence.recordJsonArtifact("Hero to persisted session DOM ownership", handoff);
