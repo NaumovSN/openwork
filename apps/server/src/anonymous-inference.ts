@@ -272,10 +272,12 @@ export class AnonymousInferenceService {
     if (this.stopped || this.config.readOnly) return false;
     const runtime = await readGlobalRuntimeOpencodeConfig(this.config);
     let permitted = this.enabled && runtime.managedPolicy?.allowCustomProviders !== false;
+    let reason = !this.enabled ? "disabled by environment" : !permitted ? "custom providers blocked by policy" : null;
     if (permitted) {
       try { await this.config.anonymousInference!.desktop.identity(); }
-      catch { permitted = false; }
+      catch (error) { permitted = false; reason = error instanceof Error ? error.message : "identity unavailable"; }
     }
+    if (reason) this.logger.log("warn", `Auto is not registered: ${reason}`);
     let changed = false;
     await writeGlobalRuntimeOpencodeConfig(this.config, (snapshot) => {
       const current = snapshot.provider?.[ANONYMOUS_INFERENCE_PROVIDER_ID];
