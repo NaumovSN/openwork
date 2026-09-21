@@ -277,11 +277,11 @@ export class AnonymousInferenceService {
       try { await this.config.anonymousInference!.desktop.identity(); }
       catch (error) { permitted = false; reason = error instanceof Error ? error.message : "identity unavailable"; }
     }
-    if (reason) this.logger.log("warn", `Auto is not registered: ${reason}`);
     let changed = false;
     await writeGlobalRuntimeOpencodeConfig(this.config, (snapshot) => {
       const current = snapshot.provider?.[ANONYMOUS_INFERENCE_PROVIDER_ID];
-      permitted = permitted && !runtimeDisabledProviderList(snapshot).includes(ANONYMOUS_INFERENCE_PROVIDER_ID);
+      if (permitted && runtimeDisabledProviderList(snapshot).includes(ANONYMOUS_INFERENCE_PROVIDER_ID)) { permitted = false; reason = "turned off in this workspace"; }
+      if (permitted && current !== undefined && !isOwnedProvider(current)) reason = "a user-defined provider already uses its id";
       if (!permitted || (current !== undefined && !isOwnedProvider(current))) {
         this.disable();
         if (!isOwnedProvider(current)) return snapshot;
@@ -297,6 +297,7 @@ export class AnonymousInferenceService {
       changed = JSON.stringify(current) !== JSON.stringify(provider);
       return changed ? { ...snapshot, provider: mergeRuntimeProviderUpdate(snapshot.provider, { [ANONYMOUS_INFERENCE_PROVIDER_ID]: provider }) } : snapshot;
     });
+    if (reason) this.logger.log("warn", `Auto is not registered: ${reason}`);
     if (changed || this.relayConfigFailed) await writeOpenworkRuntimeConfigFile(this.config);
     this.relayConfigFailed = false;
     return changed;
