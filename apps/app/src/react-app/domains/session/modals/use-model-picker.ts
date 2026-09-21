@@ -5,6 +5,8 @@
 // this hook next.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Client, ModelOption } from "@/app/types";
+import type { CloudImportedProvider } from "@/app/cloud/import-state";
+import { withImportedModelMetadata } from "../models/model-catalog";
 import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
@@ -34,6 +36,7 @@ export type UseModelPickerInput = {
   fallbackOptions?: readonly ModelOption[];
   /** Account-scoped providers are hidden immediately after cloud sign-out. */
   cloudProvidersEnabled?: boolean;
+  importedProviders?: Record<string, CloudImportedProvider>;
 };
 
 export function useModelPicker(input: UseModelPickerInput) {
@@ -112,7 +115,7 @@ export function useModelPicker(input: UseModelPickerInput) {
 
   const modelOptions = useMemo(() => {
     const data = providerListQuery.data;
-    if (!data?.all) return [];
+    const imports = input.importedProviders ?? {};
 
     // Flag models from recently-added providers so they appear in the
     // "Recently added" section at the top of the picker.
@@ -150,10 +153,10 @@ export function useModelPicker(input: UseModelPickerInput) {
       }
     }
     return filterCloudManagedModelOptions(
-      mergeModelOptions(next, fallbackOptions),
+      withImportedModelMetadata(mergeModelOptions(next, fallbackOptions), imports),
       cloudProvidersEnabled,
     );
-  }, [cloudProvidersEnabled, fallbackOptions, providerListQuery.data, recentProviderIds]);
+  }, [cloudProvidersEnabled, fallbackOptions, input.importedProviders, providerListQuery.data, recentProviderIds]);
 
   // Apply org-level restrictions (dev #1505) on top of the raw model list
   // so the picker never surfaces blocked options:

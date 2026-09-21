@@ -1,4 +1,5 @@
 import type { ModelBehaviorOption, ModelOption, ModelRef } from "@/app/types";
+import { modelTitle, modelSubtitle } from "../domains/session/models/model-catalog";
 
 export type CommandPaletteMode =
   | "root"
@@ -45,10 +46,10 @@ export function buildCommandPaletteModelItems(
     const provider = option.description?.trim() || option.providerID;
     return {
       id: `model:${option.providerID}:${option.modelID}`,
-      title: option.title,
-      detail: `${provider} · ${option.modelID}`,
+      title: modelTitle(option),
+      detail: modelSubtitle(option),
       meta: isSameModel(current, option) ? "Current" : undefined,
-      searchText: `${option.title} ${provider} ${option.providerID} ${option.modelID}`,
+      searchText: `${modelTitle(option)} ${modelSubtitle(option)} ${option.title} ${provider} ${option.providerID} ${option.modelID}`,
       option,
     };
   });

@@ -31,6 +31,7 @@ import { ChevronLeftIcon } from "lucide-react";
 import type { ModelOption, ModelRef } from "@/app/types";
 import { useCheckDesktopRestriction } from "../domains/cloud/desktop-config-provider";
 import { usePlatform } from "../kernel/platform";
+import { ModelSourceIcon } from "@/components/model-picker-list";
 import {
   buildCommandPaletteBehaviorItems,
   buildCommandPaletteModelItems,
@@ -111,7 +112,9 @@ export type CommandPaletteProps = {
   modelOptions?: ModelOption[];
   selectedModel?: ModelRef;
   selectedModelBehavior?: string | null;
-  onSelectModel?: (model: ModelRef, behavior: string | null) => void;
+  onSelectModel?: (model: ModelRef, behavior?: string | null) => void;
+  onNextPinnedModel?: () => void;
+  onCycleModelSource?: () => void;
   /** Optional — open a URL in the user's browser. Falls back to window.open. */
   onOpenUrl?: (url: string) => void;
   /** Optional: current session servers/artifacts exposed through Cmd/Ctrl+K. */
@@ -237,6 +240,10 @@ export function CommandPalette(props: CommandPaletteProps) {
           },
         }]
       : []),
+    ...(props.onNextPinnedModel ? [{ id: "models.next-pinned", title: "Next pinned model", shortcut: "Ctrl+Shift+M", group: ACTIONS_GROUP,
+      action: () => { props.onNextPinnedModel?.(); props.onClose(); } }] : []),
+    ...(props.onCycleModelSource ? [{ id: "models.next-source", title: "Cycle model source", shortcut: "Ctrl+Alt+M", group: ACTIONS_GROUP,
+      action: () => { props.onCycleModelSource?.(); props.onClose(); } }] : []),
     ...(hasNestedModelPicker || props.onOpenModelPicker
       ? [{
           id: "models",
@@ -512,15 +519,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       searchText: item.searchText,
       disabled: item.option.disabled,
       action: () => {
-        if ((item.option.behaviorOptions?.length ?? 0) > 0) {
-          setBehaviorModel(item.option);
-          setMode("model-behavior");
-          return;
-        }
-        props.onSelectModel?.(
-          { providerID: item.option.providerID, modelID: item.option.modelID },
-          null,
-        );
+        props.onSelectModel?.({ providerID: item.option.providerID, modelID: item.option.modelID });
         props.onClose();
       },
     }))
@@ -598,8 +597,10 @@ export function CommandPalette(props: CommandPaletteProps) {
               ? behaviorItems
           : [];
 
-  const renderPaletteItem = (item: PaletteItem) => (
-    <CommandItem
+  const paletteModels = useMemo(() => new Map((props.modelOptions ?? []).map((option) => [`model:${option.providerID}:${option.modelID}`, option])), [props.modelOptions]);
+  const renderPaletteItem = (item: PaletteItem) => {
+    const model = paletteModels.get(item.id);
+    return <CommandItem
       key={item.id}
       value={mode === "root" ? item.id : item}
       data-command-palette-item={item.id}
@@ -609,6 +610,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         item.action();
       }}
     >
+      {model ? <ModelSourceIcon model={model} /> : null}
       <div className="min-w-0 flex-1">
         <div className="truncate font-medium">{item.title}</div>
         {item.breadcrumb || item.detail ? (
@@ -628,8 +630,8 @@ export function CommandPalette(props: CommandPaletteProps) {
       {item.shortcut || item.meta ? (
         <CommandShortcut>{item.shortcut ?? item.meta}</CommandShortcut>
       ) : null}
-    </CommandItem>
-  );
+    </CommandItem>;
+  };
 
   return (
     <CommandDialog open={props.open} onOpenChange={handleOpenChange}>

@@ -34,6 +34,10 @@ import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
 import { presentOpencodeSessionError, sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
 import { TaskRecovery } from "./task-recovery"
+import { messageAutoAccessWall } from "@/app/lib/inference-access"
+import { AutoAccessNotice } from "@/react-app/domains/cloud/auto-access-ui"
+import { rejectedRecoveryFromMessage } from "@/react-app/domains/session/sync/rejected-turn"
+import { replyModelLabel } from "@/react-app/domains/session/sync/reply-model"
 import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
@@ -347,9 +351,9 @@ function FileMessage({ part, tone }: FileMessageProps) {
   const openArtifactPath = useOpenArtifactPath()
   const title = getFileTitle(part)
   const badge = getMediaBadge(part)
-  const isImage = part.mediaType.startsWith("image/") && Boolean(part.url)
-  const downloadUrl = getSafeFileDownloadUrl(part)
   const revealPath = getSafeFileRevealPath(part)
+  const isImage = part.mediaType.startsWith("image/") && Boolean(part.url) && !revealPath
+  const downloadUrl = getSafeFileDownloadUrl(part)
   const canReveal = isElectronRuntime() && Boolean(revealPath)
 
   const handleDownload = React.useCallback(() => {
@@ -786,6 +790,8 @@ const UserMessage = React.memo(
     const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
     const references = useSessionReferencesMaybe()
     const branching = forkingMessageId === message.id
+    const wall = messageAutoAccessWall(message.metadata)
+    const { sessionId, workspaceId } = useMessageList()
     const { onOpenTarget } = useOpenTargets()
     const openLink = (event: React.MouseEvent) => {
       if (event.defaultPrevented || !onOpenTarget || !(event.target instanceof Element)) return
@@ -803,10 +809,10 @@ const UserMessage = React.memo(
     const hasContent = inlineParts.length > 0
     const menuActions: MenuAction[] = []
     if (messageText) menuActions.push(
-      { type: "item", id: "edit", label: "Edit message", icon: <Pencil className="size-4" />, disabled: readOnly, onSelect: () => onEditUserMessage(message.id, messageText) },
+      { type: "item", id: "edit", label: "Edit message", icon: <Pencil className="size-4" />, disabled: readOnly || Boolean(wall), onSelect: () => onEditUserMessage(message.id, messageText) },
       { type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />, onSelect: () => navigator.clipboard.writeText(messageText) },
     )
-    menuActions.push(
+    if (!wall) menuActions.push(
       { type: "item", id: "branch", label: branching ? "Branching..." : "Branch in new chat", icon: <Split className="size-4 rotate-90" />, disabled: Boolean(forkingMessageId), onSelect: () => onForkAtMessage(message.id) },
       { type: "item", id: "revert", label: "Revert", icon: <Undo2 className="size-4" />, disabled: readOnly, onSelect: () => onRevertToUserMessage(message.id) },
     )
@@ -825,7 +831,8 @@ const UserMessage = React.memo(
             className="!select-text"
             render={
               <div
-                className="group flex w-full flex-col items-end gap-1 !select-text"
+                className={cn("group flex w-full flex-col items-end gap-1 !select-text", wall && "opacity-50")}
+                data-unprocessed={wall ? "true" : undefined}
                 style={{ userSelect: "text" }}
               >
                 {hasContent ? (
@@ -863,7 +870,7 @@ const UserMessage = React.memo(
                     })}
                   </MessageContent>
                 ) : null}
-                {!isStreaming && (
+                {!isStreaming && !wall && (
                   <MessageActions
                     className={cn(
                       "flex items-center gap-0 transition-opacity duration-150 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100",
@@ -914,6 +921,7 @@ const UserMessage = React.memo(
               </div>
             }
           />
+          {wall ? <div className="w-full"><AutoAccessNotice wall={wall} sessionId={sessionId} workspaceId={workspaceId} recovery={rejectedRecoveryFromMessage(message)} /></div> : null}
       </Message>
     )
   }
@@ -933,6 +941,7 @@ const MessageComponent = React.memo(
   ({ message, isLastMessage, isStreaming, isLastStep, hideReasoning }: MessageComponentProps) => {
     if (isSessionErrorMessage(message)) {
       const presentation = sessionErrorPresentationFromUIMessage(message)
+      if (presentation?.autoAccessWall) return <TranscriptAutoAccessNotice wall={presentation.autoAccessWall} />
       return (
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
@@ -972,6 +981,11 @@ const MessageComponent = React.memo(
     )
   }
 )
+
+function TranscriptAutoAccessNotice({ wall }: { wall: NonNullable<ReturnType<typeof messageAutoAccessWall>> }) {
+  const { sessionId, workspaceId } = useMessageList()
+  return <div className="mx-auto w-full max-w-3xl px-2 md:px-10"><AutoAccessNotice wall={wall} sessionId={sessionId} workspaceId={workspaceId} /></div>
+}
 
 MessageComponent.displayName = "MessageComponent"
 
@@ -1398,7 +1412,8 @@ function MessageGroup({
               </>
             ) : null}
           </MessageActions>
-          <MessageTimestamp message={lastItem.message} />
+           {replyModelLabel(lastTextMessage) ? <span data-testid="reply-model" className="text-xs text-muted-foreground">{replyModelLabel(lastTextMessage)}</span> : null}
+           <MessageTimestamp message={lastItem.message} />
           {/* <MessageSources messages={items.map((item) => item.message)} /> */}
         </div>
       )}

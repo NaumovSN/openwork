@@ -147,8 +147,8 @@ import { getSessionAgentSelection, useSessionAgentSelection, useSessionAgentStor
 import { useWorkbenchStore } from "@/react-app/domains/session/chat/workbench-store";
 import { resolveWorkbenchPaneEndpoint } from "@/react-app/domains/session/chat/pane-runtime";
 import {
-  nextFavoriteModel,
   useModelCollectionsStore,
+  useModelPickerCatalogStore,
 } from "@/react-app/domains/session/models/model-collections-store";
 import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
 import {
@@ -168,6 +168,7 @@ import {
   resolveGatewayProviderIds,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { assignedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
+import { withImportedModelMetadata, nextPinnedModel, nextModelSource, orderedModelPins, modelTitle, isAutoModel, shouldSelectInitialAuto, EXPLICIT_MODEL_CHOICE_KEY } from "@/react-app/domains/session/models/model-catalog";
 import {
   filterEntitledModelOptions,
   resolveOrgDefaultModelReplacement,
@@ -974,8 +975,8 @@ export function SessionRoute() {
     setDisabledProviderIds,
   });
   const organizationAssignedModelOptions = useMemo(
-    () => assignedModelOptions(sessionProviderAuthSnapshot.cloudOrgProviders),
-    [sessionProviderAuthSnapshot.cloudOrgProviders],
+    () => withImportedModelMetadata(assignedModelOptions(sessionProviderAuthSnapshot.cloudOrgProviders), sessionProviderAuthSnapshot.importedCloudProviders),
+    [sessionProviderAuthSnapshot.cloudOrgProviders, sessionProviderAuthSnapshot.importedCloudProviders],
   );
   useEffect(() => {
     if (!denAuth.isSignedIn) {
@@ -1101,6 +1102,18 @@ export function SessionRoute() {
     providerListQuery.data,
     restrictToCloudProviders,
   ]);
+  useEffect(() => {
+    if (!isDesktopRuntime() || loading || selectedSessionId || workspaceSessionGroups.some((group) => group.status !== "ready")) return;
+    const available = providerListModelEntitlementOptions(cloudProviderList ?? providerListQuery.data);
+    try {
+      if (!shouldSelectInitialAuto({ available, current: local.prefs.defaultModel ?? null,
+        empty: !Object.values(sessionsByWorkspaceId).some((sessions) => sessions.length > 0),
+        explicit: localStorage.getItem(EXPLICIT_MODEL_CHOICE_KEY) !== null,
+      })) return;
+      const auto = available.find(isAutoModel);
+      if (auto) local.setPrefs((previous) => ({ ...previous, defaultModel: auto, modelVariant: null }));
+    } catch {}
+  }, [cloudProviderList, providerListQuery.data, loading, selectedSessionId, sessionsByWorkspaceId, workspaceSessionGroups, local]);
   const openWorkModelsAvailable = hasOpenWorkModelsAvailable({
     providerConnectedIds,
     providers,
@@ -1124,6 +1137,7 @@ export function SessionRoute() {
     workspaceRoot: selectedWorkspaceRoot,
     onOpen: handleModelPickerOpen,
     fallbackOptions: organizationAssignedModelOptions,
+    importedProviders: sessionProviderAuthSnapshot.importedCloudProviders,
     cloudProvidersEnabled: denAuth.isSignedIn,
   });
   // Which session the open model picker targets. Selecting a model while a
@@ -1478,6 +1492,7 @@ export function SessionRoute() {
       gatewayProviderIds,
       gatewayUsageProviderScope: sessionProviderAuthSnapshot.gatewayUsageProviderScope ?? null,
       modelPickerOpen: modelPicker.compactOpen,
+      modelOptions: modelPicker.options,
       // Legacy fallback only; each surface resolves availability for its own
       // effective session model through `resolveModelAvailability`.
       modelUnavailable: selectedModelUnavailable,
@@ -1494,16 +1509,7 @@ export function SessionRoute() {
           void refreshCloudProviderSync("model_picker_open");
         }
       },
-      onModelChange: (model: ModelRef, variant?: string | null) => {
-        local.setPrefs((previous) => ({
-          ...previous,
-          defaultModel: model,
-          modelVariant: variant !== undefined
-            ? variant
-            : previous.defaultModel?.providerID === model.providerID && previous.defaultModel.modelID === model.modelID
-              ? previous.modelVariant
-              : null,
-        }));
+      onModelChange: () => {
         modelPicker.setCompactOpen(false);
       },
       providerConnectedCount: hasUsableModel ? 1 : providerConnectedIds.length,
@@ -1614,6 +1620,7 @@ export function SessionRoute() {
                     messageID: draft.messageId,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
+                    ...(sendModel && isAutoModel(sendModel) ? { model: `${sendModel.providerID}/${sendModel.modelID}` } : {}),
                   });
                   if (result.error) {
                     throw new Error(serializeSDKError(result.error));
@@ -1768,6 +1775,7 @@ export function SessionRoute() {
     };
   }, [
     client,
+    modelPicker.options,
     modelPicker.compactOpen,
     handleOpenExtensions,
     handleOpenSettings,
@@ -1973,6 +1981,7 @@ export function SessionRoute() {
                     messageID: draft.messageId,
                     command: draft.command.name,
                     arguments: draft.command.arguments,
+                    ...(sendModel && isAutoModel(sendModel) ? { model: `${sendModel.providerID}/${sendModel.modelID}` } : {}),
                   });
                   if (result.error) throw new Error(serializeSDKError(result.error));
                   return;
@@ -2617,36 +2626,39 @@ export function SessionRoute() {
   }), [cycleThinkingMode]);
   useControlAction(cycleThinkingModeControlAction);
 
-  const cycleFavoriteModel = useCallback(() => {
+  const cycleFavoriteModel = useCallback((source = false) => {
     const workbench = useWorkbenchStore.getState();
     const activeSessionId = workbench.focusedPane === "secondary" && workbench.secondary
       ? workbench.secondary.sessionId
       : selectedSessionId;
     const selection = activeSessionId ? getSessionModelSelection(activeSessionId) : null;
     const currentModel = selection?.model ?? local.prefs.defaultModel ?? null;
-    const next = nextFavoriteModel(useModelCollectionsStore.getState().favorites, currentModel);
+    const favorites = useModelCollectionsStore.getState().favorites;
+    const catalog = activeSessionId ? useModelPickerCatalogStore.getState().bySession[activeSessionId]?.options : null;
+    const available = catalog ?? (workbench.focusedPane === "secondary" ? [] : modelPicker.options.filter((option) => !disabledProviderIds.includes(option.providerID)));
+    const next = source ? nextModelSource(available, orderedModelPins(available, favorites), currentModel)
+      : nextPinnedModel(available, favorites, currentModel);
     if (!next) return null;
 
-    const providerModel = providerCatalog?.[next.providerID]?.[next.modelID];
-    const variant = providerModel
-      ? sanitizeModelBehaviorValue(next.providerID, providerModel, selection ? selection.variant : modelVariantValue)
-      : null;
+    const nextOption = available.find((option) => option.providerID === next.providerID && option.modelID === next.modelID);
+    const currentVariant = selection ? selection.variant : modelVariantValue;
+    const variant = nextOption?.behaviorOptions?.some((option) => option.value === currentVariant) ? currentVariant : null;
     if (activeSessionId) {
       useSessionModelStore.getState().setModel(activeSessionId, next, variant);
     }
     useModelCollectionsStore.getState().recordRecent(next);
-    local.setPrefs((previous) => ({ ...previous, defaultModel: next, modelVariant: variant }));
-    return providerModel?.name ?? next.modelID;
-  }, [local, modelVariantValue, providerCatalog, selectedSessionId]);
+    if (!activeSessionId) local.setPrefs((previous) => ({ ...previous, defaultModel: next, modelVariant: variant }));
+    return modelTitle(nextOption ?? next);
+  }, [local, modelVariantValue, providerCatalog, selectedSessionId, modelPicker.options, disabledProviderIds]);
 
   const cycleFavoriteModelControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.favorite_model.cycle",
-    label: "Cycle favorite model",
-    description: "Switch the focused conversation to its next favorite model.",
+    label: "Next pinned model",
+    description: "Switch the focused conversation to its next accessible pinned model.",
     sideEffect: "mutation",
     execute: () => {
       const label = cycleFavoriteModel();
-      return label ? { ok: true, label } : { ok: false, error: "Add a favorite model before cycling favorites." };
+      return label ? { ok: true, label } : { ok: false, error: "No alternative pinned model is available." };
     },
   }), [cycleFavoriteModel]);
   useControlAction(cycleFavoriteModelControlAction);
@@ -2667,6 +2679,7 @@ export function SessionRoute() {
     onPrevSessionTab: goToPrevSessionTab,
     onCycleThinkingMode: cycleThinkingMode,
     onCycleFavoriteModel: cycleFavoriteModel,
+    onCycleModelSource: () => { cycleFavoriteModel(true); },
   });
   useReactRenderWatchdog("SessionRoute", {
     selectedSessionId,
@@ -2961,9 +2974,9 @@ export function SessionRoute() {
     [sessionsByWorkspaceId, selectedWorkspaceId, workspaces],
   );
 
-  const paletteSessionModelSelection = selectedSessionId
-    ? getSessionModelSelection(selectedSessionId)
-    : null;
+  const paletteTargetSessionId = useWorkbenchStore((state) => state.focusedPane === "secondary" && state.secondary ? state.secondary.sessionId : selectedSessionId);
+  const paletteSessionModelSelection = useSessionModelStore((state) => paletteTargetSessionId ? state.bySessionId[paletteTargetSessionId] ?? null : null);
+  const paletteModelCatalog = useModelPickerCatalogStore((state) => paletteTargetSessionId ? state.bySession[paletteTargetSessionId]?.options : undefined);
   const paletteSelectedModel = paletteSessionModelSelection?.model
     ?? local.prefs.defaultModel
     ?? undefined;
@@ -2993,7 +3006,7 @@ export function SessionRoute() {
       sessionStore.setModel(targetSessionId, next, explicitBehavior ? behavior.value : undefined);
       if (explicitBehavior) sessionStore.setVariant(targetSessionId, behavior.value);
     }
-    local.setPrefs((previous) => ({
+    if (!targetSessionId) local.setPrefs((previous) => ({
       ...previous,
       defaultModel: next,
       modelVariant: explicitBehavior
@@ -3973,11 +3986,15 @@ export function SessionRoute() {
       onOpenAutomations={() => navigate(automationsRoute())}
       onOpenDashboard={() => navigate(dashboardRoute())}
       onCreateWorkspace={handleOpenCreateWorkspace}
-      modelOptions={modelPicker.options}
+      modelOptions={paletteModelCatalog ? [...paletteModelCatalog] : paletteTargetSessionId === selectedSessionId ? modelPicker.options : []}
       selectedModel={paletteSelectedModel}
       selectedModelBehavior={paletteSelectedModelBehavior}
+      onNextPinnedModel={() => { cycleFavoriteModel(); }}
+      onCycleModelSource={() => { cycleFavoriteModel(true); }}
       onSelectModel={(next, behavior) => {
-        applySessionRouteModelSelection(next, selectedSessionId || null, { value: behavior });
+        const workbench = useWorkbenchStore.getState();
+        const target = workbench.focusedPane === "secondary" && workbench.secondary ? workbench.secondary.sessionId : selectedSessionId;
+        applySessionRouteModelSelection(next, target || null, behavior === undefined ? undefined : { value: behavior });
       }}
       accessibleTargets={paletteAccessibleTargets}
       onOpenAccessibleTarget={(target) => {

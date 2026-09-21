@@ -13,7 +13,7 @@ afterAll(async () => { await GlobalRegistrator.unregister(); });
 const { createRoot } = await import("react-dom/client");
 const auth = await import("../src/react-app/domains/cloud/den-auth-provider");
 const { createDefaultPlatform, PlatformProvider } = await import("../src/react-app/kernel/platform");
-const { ModelPickerModal, MODEL_PICKER_DEFAULT_SUBTITLE, MODEL_PICKER_UNAVAILABLE_SUBTITLE, resolveModelPickerSubtitle, resolveProviderGroupBadges } = await import("../src/react-app/domains/session/modals/model-picker-modal");
+const { ModelPickerModal, MODEL_PICKER_DEFAULT_SUBTITLE, MODEL_PICKER_UNAVAILABLE_SUBTITLE, resolveModelPickerSubtitle } = await import("../src/react-app/domains/session/modals/model-picker-modal");
 import {
   connectGatewayProvider,
   gatewayConnectCopy,
@@ -21,6 +21,74 @@ import {
   resolveGatewayConnectProviders,
   resolveGatewayProviderIds,
 } from "../src/react-app/domains/connections/provider-auth/cloud-provider-config";
+
+for (const surface of ["compact", "full"]) {
+  test(`${surface} picker preserves mobile non-editable focus and explicit effort focus`, async () => {
+    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+    const { WorkspaceProvider } = await import("../src/react-app/shell/workspace-provider");
+    const { ModelSelect } = await import("../src/components/model-select");
+    const mobile = await import("../src/hooks/use-mobile");
+    const policy = await import("../src/react-app/domains/cloud/desktop-config-provider");
+    const mobileSpy = spyOn(mobile, "useIsMobile").mockReturnValue(true);
+    const policySpy = spyOn(policy, "useCheckDesktopRestriction").mockReturnValue(() => false);
+    const authSpy = spyOn(auth, "useDenAuth").mockReturnValue({ status: "signed_out", user: null, verifiedIdentity: null, isSignedIn: false, error: null, refresh: async () => undefined });
+    const current = { providerID: "fixture", modelID: "reasoner" };
+    const options: ModelOption[] = [{ ...current, title: "Friendly model", description: "Fixture", isFree: false,
+      behaviorTitle: "Effort", behaviorLabel: "Low", behaviorDescription: "", behaviorValue: "low",
+      behaviorOptions: [{ value: null, label: "Default", description: "" }, { value: "low", label: "Low", description: "" }] }];
+    const client = new QueryClient();
+    const host = document.createElement("div"); document.body.append(host);
+    const root = createRoot(host);
+    function Picker() {
+      const [open, setOpen] = useState(true);
+      const [query, setQuery] = useState("");
+      return surface === "compact" ? createElement(ModelSelect, { open, value: current, fallbackOptions: options, behaviorValue: "low",
+        onOpenChange: setOpen, onChange: () => undefined, onBehaviorChange: () => undefined })
+        : createElement(ModelPickerModal, { open, current, options, query, setQuery, target: "session", onSelect: () => undefined,
+          onBehaviorChange: () => undefined, onOpenSettings: () => undefined, onClose: () => setOpen(false) });
+    }
+    try {
+      await act(async () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children:
+        createElement(QueryClientProvider, { client, children: createElement(WorkspaceProvider, { client: null, selectedWorkspaceRoot: "/fixture", children: createElement(Picker) }) }) })));
+      await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)); });
+      const input = document.querySelector<HTMLInputElement>('[aria-label="Search all models"]');
+      expect(input).not.toBeNull();
+      expect(document.activeElement).not.toBe(input);
+      expect(input?.className).toContain("text-base");
+      if (surface === "compact") {
+        const effort = document.querySelector<HTMLButtonElement>('[data-testid="model-effort"]');
+        await act(async () => effort?.click());
+        expect(document.activeElement?.textContent).toBe("Back to models");
+        await act(async () => document.querySelector<HTMLButtonElement>('[data-slot="model-thinking-submenu"] button')?.click());
+        expect(document.activeElement?.getAttribute("data-testid")).toBe("model-effort");
+      } else {
+        expect(document.activeElement?.textContent).toBe("Models");
+      }
+    } finally {
+      await act(async () => root.unmount()); host.remove(); client.clear(); mobileSpy.mockRestore(); policySpy.mockRestore(); authSpy.mockRestore();
+    }
+  });
+}
+
+test("closed compact trigger hides a missing catalog model ID", async () => {
+  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+  const { WorkspaceProvider } = await import("../src/react-app/shell/workspace-provider");
+  const { ModelSelect } = await import("../src/components/model-select");
+  const policy = await import("../src/react-app/domains/cloud/desktop-config-provider");
+  const policySpy = spyOn(policy, "useCheckDesktopRestriction").mockReturnValue(() => false);
+  const authSpy = spyOn(auth, "useDenAuth").mockReturnValue({ status: "signed_out", user: null, verifiedIdentity: null, isSignedIn: false, error: null, refresh: async () => undefined });
+  const client = new QueryClient();
+  const host = document.createElement("div"); document.body.append(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children:
+      createElement(QueryClientProvider, { client, children: createElement(WorkspaceProvider, { client: null, selectedWorkspaceRoot: "/fixture", children:
+        createElement(ModelSelect, { open: false, value: { providerID: "ipr_hidden", modelID: "gwm_hidden" }, onOpenChange: () => undefined, onChange: () => undefined }) }) }) })));
+    expect(host.querySelector('[aria-label="Change model"]')?.textContent).toBe("Select model");
+    expect(host.textContent).not.toContain("gwm_hidden");
+    expect(host.textContent).not.toContain("ipr_hidden");
+  } finally { await act(async () => root.unmount()); host.remove(); client.clear(); policySpy.mockRestore(); authSpy.mockRestore(); }
+});
 
 describe("model picker subtitle", () => {
   test("keeps the normal session subtitle by default", () => {
@@ -92,8 +160,7 @@ test("compact picker leaves unadvertised effort unavailable but can clear a stal
         createElement(ModelSelect, { open: true, value: current, fallbackOptions: options, behaviorValue: value,
           onOpenChange: () => undefined, onChange: (model) => selected.push(model),
           onBehaviorChange: (next) => { value = next; changed.push(next); render(); } }) }) }) }));
-  const effortButton = () => Array.from(document.querySelectorAll<HTMLButtonElement>('[data-slot="model-select-root"] button'))
-    .find((button) => button.textContent?.includes("Effort"));
+  const effortButton = () => document.querySelector<HTMLButtonElement>('[data-testid="model-effort"]');
   try {
     await act(async () => render());
     expect(effortButton()?.disabled).toBe(true);
@@ -160,7 +227,7 @@ for (const surface of ["compact", "full"]) {
     const settings = () => document.querySelector(surface === "compact" ? '[data-slot="model-thinking-submenu"]' : '[data-testid="current-model-settings"]');
     const openSettings = async () => {
       if (surface !== "compact" || settings()) return;
-      const button = Array.from(document.querySelectorAll<HTMLButtonElement>('[data-slot="model-select-root"] button')).find((entry) => entry.textContent?.includes("Effort"));
+      const button = document.querySelector<HTMLButtonElement>('[data-testid="model-effort"]');
       if (!button) throw new Error("Missing effort menu");
       await act(async () => button.click());
     };
@@ -168,20 +235,20 @@ for (const surface of ["compact", "full"]) {
       await act(async () => render());
       for (const label of ["Fast", "Low", "Fast", "CustomExact", "Fast", "Default", "Fast"]) {
         if (surface === "compact" && label === "Fast") {
-          const menu = document.querySelector('[data-slot="model-select-root"]');
+          const menu = document.querySelector('[data-testid="composer-model-picker"]');
           const toggle = menu?.querySelector<HTMLButtonElement>('[role="switch"]');
           if (!toggle) throw new Error("Missing main-menu Fast mode switch");
-          expect(toggle.closest('[title]')?.getAttribute("title")).toContain("higher pricing");
+          expect(toggle.closest('[title]')?.getAttribute("title") ?? "").not.toContain("pricing");
           const wasChecked = toggle.getAttribute("aria-checked") === "true";
           await act(async () => toggle.click());
-          expect(toggle.getAttribute("aria-checked")).toBe(String(!wasChecked));
-          expect(document.querySelector('[data-slot="model-select-root"]')).not.toBeNull();
-          const effort = Array.from(menu?.querySelectorAll("button") ?? []).find((entry) => entry.textContent?.includes("Effort"));
+          expect(document.querySelector('[data-testid="composer-model-picker"] [role="switch"]')?.getAttribute("aria-checked")).toBe(String(!wasChecked));
+          expect(document.querySelector('[data-testid="composer-model-picker"]')).not.toBeNull();
+          const effort = document.querySelector('[data-testid="model-effort"]');
           expect(effort?.textContent).not.toContain("Fast");
           continue;
         }
         await openSettings();
-        if (surface === "full") expect(settings()?.textContent).toContain("higher pricing");
+        if (surface === "full") expect(settings()?.textContent).not.toContain("higher pricing");
         else expect(settings()?.querySelector('[role="switch"]')).toBeNull();
         const button = Array.from(settings()?.querySelectorAll<HTMLButtonElement>("button") ?? [])
           .find((entry) => label === "Fast" ? entry.textContent?.startsWith("Fast") : entry.textContent === label);
@@ -196,8 +263,8 @@ for (const surface of ["compact", "full"]) {
       value = "high";
       await act(async () => render());
       if (surface === "compact") {
-        expect(document.querySelector('[data-slot="model-select-root"] [role="switch"]')).toBeNull();
-        expect(document.querySelector('[data-slot="model-select-root"]')?.textContent).not.toContain("Fast mode");
+        expect(document.querySelector('[data-testid="composer-model-picker"] [role="switch"]')).toBeNull();
+        expect(document.querySelector('[data-testid="composer-model-picker"]')?.textContent).not.toContain("Fast mode");
       }
       await openSettings();
       expect(settings()?.textContent).not.toContain("Fast");
@@ -283,7 +350,7 @@ test("Automation preserves same-model settings, recovers Default and saves only 
     expect(saved).toEqual([]);
   };
   const selectModel = async (name: string) => {
-    const control = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent === `${name}${name}`);
+    const control = Array.from(document.querySelectorAll<HTMLElement>('[data-model-key]')).find((row) => row.dataset.modelKey?.endsWith(`:${name}`));
     if (!control) throw new Error(`Missing model ${name}`);
     await act(async () => control.click());
   };
@@ -353,21 +420,15 @@ test("long picker labels retain full hover text and select the complete model ID
   };
   try {
     await act(async () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children: createElement(Picker) })));
-    for (const text of [providerName, organization, "via OpenWork Gateway", title, modelID]) {
-      expect(label(text)?.textContent).toBe(text);
-    }
-    const header = label(providerName)?.closest("button");
-    expect(header?.textContent).toMatch(/1 model\b/);
-    expect(header?.querySelectorAll('[data-slot="badge"]')).toHaveLength(4);
-    await toggle("Enabled");
-    expect(label(modelID)).toBeUndefined();
-    expect(selected).toEqual([]);
-    await toggle("Enable");
-    const modelButton = label(modelID)?.closest("button");
-    if (!modelButton) throw new Error("The gateway model did not return after enabling its provider");
+    expect(label(title)?.textContent).toBe(title);
+    expect(document.querySelectorAll('[data-slot="badge"]')).toHaveLength(0);
+    expect(document.querySelector("svg.lucide-cloud")).not.toBeNull();
+    const modelButton = document.querySelector<HTMLElement>('[data-model-key]');
+    expect(modelButton?.dataset.modelKey).toBe(`${providerID}:${modelID}`);
+    if (!modelButton) throw new Error("Missing accessible gateway model");
     await act(async () => modelButton.click());
     expect(selected).toEqual([current]);
-    expect(toggled).toEqual([{ id: providerID, enabled: false }, { id: providerID, enabled: true }]);
+    expect(toggled).toEqual([]);
   } finally {
     await act(async () => root.unmount());
     host.remove();
@@ -376,13 +437,11 @@ test("long picker labels retain full hover text and select the complete model ID
   }
 });
 
-describe("model picker provider badges", () => {
+describe("model picker source provenance", () => {
   const importedCloudProviders = {
     ipr_gateway: { providerId: "ipr_gateway", source: "openwork_gateway" },
     lpr_team: { providerId: "lpr_team", source: "custom" },
   };
-  const labels = (group: Parameters<typeof resolveProviderGroupBadges>[0]) =>
-    resolveProviderGroupBadges(group, "Acme").map((badge) => badge.label);
 
   test("treats inference gateway rows as cloud-managed provider keys", () => {
     expect(isCloudManagedProviderKey("ipr_gateway")).toBe(true);
@@ -390,27 +449,52 @@ describe("model picker provider badges", () => {
     expect(isCloudManagedProviderKey("anthropic")).toBe(false);
   });
 
-  test("badges only providers whose sync status source is the OpenWork gateway", () => {
+  test("identifies only providers whose sync status source is the OpenWork gateway", () => {
     const gatewayProviderIds = resolveGatewayProviderIds(importedCloudProviders);
     expect([...gatewayProviderIds]).toEqual(["ipr_gateway"]);
 
-    const gateway = labels({
-      isNew: false,
-      isCloud: true,
-      isGateway: gatewayProviderIds.has("ipr_gateway"),
-      hasCurrent: false,
-    });
-    expect(gateway).toEqual(["Acme", "via OpenWork Gateway"]);
-
-    const organization = labels({
-      isNew: false,
-      isCloud: true,
-      isGateway: gatewayProviderIds.has("lpr_team"),
-      hasCurrent: true,
-    });
-    expect(organization).toEqual(["Acme", "Current"]);
-    expect(organization).not.toContain("via OpenWork Gateway");
+    expect(gatewayProviderIds.has("lpr_team")).toBe(false);
   });
+});
+
+test("Auto remains checked while recovery focuses an alternative pin, and immutable pins have no toggle", async () => {
+  const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+  const { ModelPickerList } = await import("../src/components/model-picker-list");
+  const { AUTO_MODEL_ID, AUTO_PROVIDER_ID } = await import("../src/react-app/domains/session/models/model-catalog");
+  const { useModelCollectionsStore } = await import("../src/react-app/domains/session/models/model-collections-store");
+  const current = { providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID };
+  const base = { behaviorTitle: "Effort", behaviorLabel: "Default", behaviorDescription: "", behaviorValue: null, isFree: false };
+  const auto = { ...base, ...current, title: "Luna" };
+  const alternative = { ...base, providerID: "openai", modelID: "alternative", title: "Alternative" };
+  const org = { ...base, providerID: "ipr_team", modelID: "gwm_team", title: "Team model", organizationPinOrder: 0 };
+  const previous = useModelCollectionsStore.getState();
+  useModelCollectionsStore.setState({ favorites: [alternative], recent: [] });
+  const selected: unknown[] = [];
+  const host = document.createElement("div"); document.body.append(host);
+  const root = createRoot(host);
+  const queryClient = new QueryClient();
+  try {
+    await act(async () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children:
+      createElement(QueryClientProvider, { client: queryClient, children: createElement(ModelPickerList, {
+        options: [auto, alternative, org], current, query: "", onQueryChange: () => undefined,
+        onSelect: (model) => selected.push(model), focusAlternative: true,
+      }) }) })));
+    await act(async () => { await new Promise((resolve) => requestAnimationFrame(resolve)); });
+    expect(document.querySelector(`[data-model-key="${AUTO_PROVIDER_ID}:${AUTO_MODEL_ID}"]`)?.getAttribute("data-checked")).toBe("true");
+    expect(document.activeElement?.getAttribute("data-model-key")).toBe("ipr_team:gwm_team");
+    expect(document.querySelector('button[aria-label="Unpin model: Auto"]')).toBeNull();
+    expect(document.querySelector('button[aria-label="Unpin model: Team model"]')).toBeNull();
+    expect(host.textContent).toContain("Free · OpenWork picks the model");
+    expect(host.querySelector("svg.lucide-star")).toBeNull();
+    expect(selected).toEqual([]);
+    const row = document.querySelector<HTMLElement>('[data-model-key="openai:alternative"]');
+    await act(async () => { row?.focus(); row?.dispatchEvent(new KeyboardEvent("keydown", { key: "P", shiftKey: true, bubbles: true })); });
+    expect(useModelCollectionsStore.getState().favorites).toEqual([]);
+    expect(selected).toEqual([]);
+  } finally {
+    await act(async () => root.unmount()); host.remove(); queryClient.clear();
+    useModelCollectionsStore.setState({ favorites: previous.favorites, recent: previous.recent });
+  }
 });
 
 describe("gateway member sign-in", () => {

@@ -1,22 +1,15 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowRight, X, Zap } from "lucide-react";
-
-import { DEFAULT_MODEL } from "@/app/constants";
+import { Zap } from "lucide-react";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { DescriptiveButton, DescriptiveButtonTitle } from "@/components/descriptive-button";
+import { Button } from "@/components/ui/button";
+import { AutoAccessFooter } from "../../cloud/auto-access-ui";
+import { isAutoModel } from "../models/model-catalog";
 import type { ComposerAttachment } from "@/app/types";
 import { resolveOrganizationPromptCardContent } from "@/components/chat/task-suggestions";
 import { useCheckDesktopRestriction, useOrgRestrictions } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
-import {
-  getOpenWorkModelsActionUrl,
-  hideOpenWorkModelsPromo,
-  isOpenWorkModelsPromoHidden,
-  openWorkModelsPromoChangedEvent,
-  useOpenWorkModelsPromoEligibility,
-} from "@/react-app/domains/cloud/openwork-models-promo";
-import { usePlatform } from "@/react-app/kernel/platform";
 import { persistableComposerDraftText, useComposerStateStore } from "@/react-app/domains/session/surface/composer-state-store";
 import { useNewTaskDraftState } from "@/react-app/domains/session/sync/draft-store";
 import {
@@ -125,16 +118,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
   const orgRestrictions = useOrgRestrictions();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const canAddProviders = !checkDesktopRestriction({ restriction: "allowCustomProviders" });
-  const platform = usePlatform();
   const denAuth = useDenAuth();
-  const openWorkModelsPromoEligible = useOpenWorkModelsPromoEligibility();
-  const [modelsPromoHidden, setModelsPromoHidden] = useState(isOpenWorkModelsPromoHidden);
-
-  useEffect(() => {
-    const handlePromoChanged = () => setModelsPromoHidden(isOpenWorkModelsPromoHidden());
-    window.addEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-    return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
-  }, []);
 
   // A chat deep link (Den's connector "Chat" action) seeds the composer with
   // the connector chip and its starter prompt; the person reviews and sends.
@@ -150,15 +134,7 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     return () => window.removeEventListener(pendingChatSeedEvent, seed);
   }, []);
 
-  // Quiet inline lead to OpenWork Models: replaces the old startup dialog
-  // interrupt. Shown only while the session runs on the free starter model
-  // (the built-in `opencode` provider) and the hosted offering applies.
-  const onFreeStarterModel = props.composer?.selectedModel.providerID === DEFAULT_MODEL.providerID;
-  const showModelsHint =
-    openWorkModelsPromoEligible &&
-    !modelsPromoHidden &&
-    !props.composer?.openWorkModelsEntitled &&
-    onFreeStarterModel;
+  const showAutoStatus = denAuth.status === "signed_out" && isAutoModel(props.composer?.selectedModel) && !props.composer?.modelUnavailable;
 
   const organizationPrompts = orgRestrictions.onboardingPrompts;
   const suggestions: HeroSuggestion[] = organizationPrompts !== undefined
@@ -220,32 +196,12 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
       />
       </div>
 
-      {showModelsHint ? (
-        <div
-          className="flex items-center justify-center gap-2 text-[12px] text-muted-foreground"
-          data-testid="openwork-models-hint"
-        >
-          <span>Using the free starter model.</span>
-          <button
-            type="button"
-            className="flex items-center gap-1 font-medium text-blue-10 transition-colors hover:text-blue-11"
-            onClick={() => platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"))}
-          >
-            Get frontier models with no API keys
-            <ArrowRight className="size-3" />
-          </button>
-          <button
-            type="button"
-            className="flex size-5 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:text-foreground"
-            onClick={hideOpenWorkModelsPromo}
-            aria-label="Hide OpenWork Models hint"
-          >
-            <X className="size-3" />
-          </button>
-        </div>
-      ) : null}
+      {showAutoStatus ? <div data-testid="auto-first-use" className="text-center">
+        <AutoAccessFooter available syncing={props.composer?.openWorkModelsSyncing} />
+        {canAddProviders && props.onOpenProviderAuth ? <Button variant="ghost" size="sm" onClick={props.onOpenProviderAuth}>Use my own provider</Button> : null}
+      </div> : null}
 
-      {!showModelsHint && canAddProviders && props.providerCount === 0 && props.onOpenProviderAuth ? (
+      {!showAutoStatus && canAddProviders && props.providerCount === 0 && props.onOpenProviderAuth ? (
         <button
           type="button"
           className="flex w-full items-start gap-3 rounded-xl border border-blue-7/50 bg-blue-2/40 p-3.5 text-left transition-colors hover:bg-blue-3/50"

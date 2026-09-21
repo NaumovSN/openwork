@@ -22,6 +22,7 @@ import {
   type ThinkingModeShortcutDirection,
 } from "./thinking-mode-shortcut";
 import { isFavoriteModelShortcut } from "./favorite-model-shortcut";
+import { isCycleModelSourceShortcut } from "../domains/session/models/model-catalog";
 
 export type UseShellShortcutsInput = {
   canCreateTask: boolean;
@@ -31,6 +32,7 @@ export type UseShellShortcutsInput = {
   onPrevSessionTab?: () => void;
   onCycleThinkingMode?: (direction: ThinkingModeShortcutDirection) => void;
   onCycleFavoriteModel?: () => void;
+  onCycleModelSource?: () => void;
 };
 
 export function useCommandPaletteShortcut(enabled = true) {
@@ -118,6 +120,12 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
   //   Ctrl+Shift+M      -> next favorite model
   //   Cmd/Ctrl+1–9      -> matching visible sidebar session
   const handleGlobalShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (event.defaultPrevented) return;
+    if (isCycleModelSourceShortcut(event)) {
+      event.preventDefault();
+      if (!event.repeat) input.onCycleModelSource?.();
+      return;
+    }
     if (isFavoriteModelShortcut(event)) {
       event.preventDefault();
       if (!event.repeat) onCycleFavoriteModel?.();

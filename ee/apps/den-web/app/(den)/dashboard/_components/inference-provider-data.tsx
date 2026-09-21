@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { InferenceAccess } from "@openwork/types/den/inference";
 import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite, GatewayModelGroupWrite } from "@openwork/types/den/gateway";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
@@ -9,10 +10,41 @@ import {
   readInferenceProviderFromPayload,
   readInferenceProvidersFromPayload,
   readInferenceProviderDetails,
+  readOpenWorkModelAccess,
   type DenInferenceProviderDetails,
   type DenInferenceProvider,
   type InferenceProviderRequestBody,
 } from "./inference-provider-request";
+
+export function useOpenWorkModelAccess(orgId: string | null) {
+  const generation = useRef(0);
+  const [state, setState] = useState<{ orgId: string; access: InferenceAccess } | null>(null);
+  const [busy, setBusy] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const reload = useCallback(async () => {
+    const request = ++generation.current;
+    setError(null);
+    if (!orgId) { setState(null); setBusy(false); return; }
+    setBusy(true);
+    try {
+      const { response, payload } = await requestJson("/v1/inference/access", { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId } }, 15000);
+      if (request !== generation.current) return;
+      if (!response.ok) throw new Error("Could not verify OpenWork Models. Refresh to try again.");
+      const access = readOpenWorkModelAccess(payload);
+      if (!access) throw new Error("OpenWork model access is unavailable from this server. Refresh after the server is updated.");
+      setState({ orgId, access });
+    } catch (cause) {
+      if (request === generation.current) setError(cause instanceof Error ? cause.message : "Could not verify OpenWork Models.");
+    } finally {
+      if (request === generation.current) setBusy(false);
+    }
+  }, [orgId]);
+  useEffect(() => {
+    void reload();
+    return () => { generation.current += 1; };
+  }, [reload]);
+  return { access: state?.orgId === orgId ? state.access : null, busy, error, reload };
+}
 
 export function useOrgInferenceProviders(orgId: string | null) {
   const generation = useRef(0);

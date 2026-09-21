@@ -129,7 +129,7 @@ export function buildDashboardNavSections({
             ? [{ href: getGatewayProvidersRoute(orgSlug), label: "Gateway", badge: "New" }]
             : []),
           ...(showOpenWorkModels
-            ? [{ href: getInferenceRoute(orgSlug), label: "OpenWork Models" }]
+            ? [{ href: getInferenceRoute(orgSlug), label: "Usage & billing" }]
             : []),
           { href: getCustomLlmProvidersRoute(orgSlug), label: "Bring Your Own Keys (Legacy)" },
         ],
@@ -221,7 +221,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Models: ["llm", "provider", "byok", "api key"],
   "My Automations": ["schedule", "recurring", "tasks"],
   "My Library": ["skills", "plugins", "connections"],
-  "OpenWork Models": ["llm", "provider", "managed", "inference"],
+  "Usage & billing": ["openwork", "models", "allowance", "usage", "billing", "inference"],
   "OpenWork Web": ["cloud", "sessions"],
   "Plugin Directory": ["skills", "plugins", "marketplace"],
   SCIM: ["provisioning", "directory", "users"],

@@ -44,7 +44,7 @@ describe("composer model controls", () => {
     expect(modelSelect).toContain("disabled={props.steering}");
     expect(modelSelect).not.toContain("disabled={props.busy}");
     expect(modelSelect).toContain("behaviorOptions={props.modelBehaviorOptions}");
-    expect(modelSelectSource).toContain("setThinkingFor(option)");
+    expect(modelSelectSource).toContain("setEffort(true)");
     expect(modelSelectSource).not.toContain("setThinkingOpen(true)");
     expect(modelSelectSource).toContain('data-slot="model-thinking-submenu"');
     expect(modelSelectSource).not.toContain("onMouseEnter");
@@ -57,7 +57,9 @@ describe("composer model controls", () => {
     expect(behaviorCallback).toContain("modelVariant: value");
     expect(behaviorCallback).not.toContain("defaultModel:");
     const favoriteCycle = sessionRouteSource.slice(sessionRouteSource.indexOf("const cycleFavoriteModel ="), sessionRouteSource.indexOf("const cycleFavoriteModelControlAction"));
-    expect(favoriteCycle).toContain("sanitizeModelBehaviorValue(next.providerID, providerModel, selection ? selection.variant : modelVariantValue)");
+    expect(favoriteCycle).toContain("nextOption?.behaviorOptions?.some((option) => option.value === currentVariant)");
+    expect(favoriteCycle).toContain("useModelPickerCatalogStore.getState().bySession[activeSessionId]?.options");
+    expect(favoriteCycle).toContain("if (!activeSessionId) local.setPrefs");
     expect(favoriteCycle).not.toContain("getModelBehaviorSummary");
   });
 

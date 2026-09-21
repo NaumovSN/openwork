@@ -263,6 +263,7 @@ export function GatewayAccessMatrix({ provider, reload }: { provider: DenInferen
       <p className="my-4 text-gray-500">Create reusable sets of models, then assign them to teams or people with an upstream key.</p>
       {!provider.modelGroups.length ? <p>No groups yet.</p> : <div className="grid gap-4 md:grid-cols-2">{provider.modelGroups.map((group) => <div key={group.id} className="flex min-w-0 flex-col gap-4 rounded-2xl border border-gray-200 bg-white p-5">
         <div className="flex flex-wrap items-start justify-between gap-2"><h3 className="min-w-0 break-words font-semibold">{modelGroupName(group.name)}</h3><DenBadge tone={group.status === "active" ? "success" : "neutral"}>{group.status}</DenBadge></div>
+        <p className="text-sm text-gray-500">{group.modelIds.filter((id) => provider.pinnedModelIds.includes(id)).length} pinned</p>
         {group.description ? <p className="break-words text-sm text-gray-500">{group.description}</p> : null}
         {group.modelIds.length ? <ul className="flex flex-wrap gap-2">
           {group.modelIds.slice(0, 7).map((id) => <li key={id} className="min-w-0 max-w-full"><DenBadge className="max-w-full whitespace-normal break-all">{provider.catalogModels.find((model) => model.id === id)?.name ?? id}</DenBadge></li>)}

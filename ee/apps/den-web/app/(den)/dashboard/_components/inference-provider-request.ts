@@ -9,9 +9,41 @@ import type {
   InferenceProviderCredentialKind,
   InferenceProviderCredentialMode,
   InferenceProviderStatus,
+  InferenceAccess,
 } from "@openwork/types/den/inference";
+import { INFERENCE_ACCESS_REASONS } from "@openwork/types/den/inference";
 import type { GatewayAccessGrant, GatewayCredentialSet, GatewayModelGroup, GatewayAuthorizationRequest, GatewayUsableModel } from "@openwork/types/den/gateway";
 import { z } from "zod";
+
+const inferenceAccessSchema: z.ZodType<InferenceAccess> = z.object({
+  kind: z.enum(["paid", "free", "exhausted", "unavailable"]),
+  modelID: z.string().nullable(),
+  weeklyLimitUsd: z.number().finite().nonnegative().nullable(),
+  usedUsd: z.number().finite().nonnegative().nullable(),
+  reservedUsd: z.number().finite().nonnegative().nullable(),
+  remainingUsd: z.number().finite().nonnegative().nullable(),
+  resetsAt: z.string().nullable(),
+  reason: z.enum(INFERENCE_ACCESS_REASONS).nullable(),
+  canUpgrade: z.boolean().optional(),
+  catalog: z.array(z.object({
+    modelID: z.string(), displayName: z.string(), providerName: z.string(), summary: z.string(),
+    recommended: z.boolean(), rank: z.number(), capabilities: z.array(z.string()),
+  })).optional(),
+});
+
+export function readOpenWorkModelAccess(payload: unknown): InferenceAccess | null {
+  const result = z.object({ access: inferenceAccessSchema }).safeParse(payload);
+  return result.success ? result.data.access : null;
+}
+
+export function getOpenWorkModelAccessLabel(access: InferenceAccess | null) {
+  if (!access) return "Could not verify";
+  if (access.kind === "free") return "Included";
+  if (access.kind === "paid") return "Available";
+  if (access.kind === "exhausted") return "Allowance exhausted";
+  if (access.reason === "admin_disabled") return "Disabled by organization";
+  return "Unavailable";
+}
 
 export type InferenceCredentialStatus = "ready" | "member_auth_required" | "org_credential_missing";
 
@@ -36,6 +68,7 @@ export type DenInferenceProvider = {
   providerConfig: Record<string, unknown>;
   /** Empty follows the catalog; null means an older response omitted the policy. */
   modelIds: string[] | null;
+  pinnedModelIds: string[];
   catalogWarning: string | null;
   settings: Record<string, string>;
   models: Array<{ id: string; name: string; config: Record<string, unknown> } & Partial<Pick<GatewayUsableModel, "upstreamModelId" | "modelGroupId" | "modelGroupName" | "credentialSetId" | "credentialSetName">>>;
@@ -212,6 +245,7 @@ export function asInferenceProvider(value: unknown): DenInferenceProvider | null
     updatedAt: asString(value.updatedAt),
     providerConfig: asJsonRecord(value.providerConfig),
     modelIds: value.modelIds === undefined ? null : z.array(z.string()).parse(value.modelIds),
+    pinnedModelIds: value.pinnedModelIds === undefined ? [] : z.array(z.string()).parse(value.pinnedModelIds),
     catalogWarning: asString(value.catalogWarning),
     settings,
     models: Array.isArray(value.models)
@@ -335,6 +369,7 @@ export type InferenceProviderRequestBody = {
   name: string;
   providerId: string;
   modelIds: string[];
+  pinnedModelIds?: string[];
   credentialMode: InferenceProviderCredentialMode;
   status: InferenceProviderStatus;
   settings?: Record<string, string>;

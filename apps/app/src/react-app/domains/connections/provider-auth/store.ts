@@ -1931,6 +1931,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           source: provider.source,
           updatedAt: provider.updatedAt ?? null,
           modelIds: getProviderModelIds(provider),
+          pinnedModelIds: provider.pinnedModelIds?.filter((id) => getProviderModelIds(provider).includes(id)) ?? [],
           modelConfigVersion: CLOUD_MODEL_CONFIG_VERSION,
           importedAt: Date.now(),
         },

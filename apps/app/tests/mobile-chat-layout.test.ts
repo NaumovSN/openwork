@@ -82,5 +82,6 @@ test("empty prompt suggestions keep a visible responsive affordance", () => {
   expect(hero).toContain("min-h-10 items-center rounded-xl bg-background");
   expect(hero).toContain("hover:border-foreground/20 hover:bg-muted/60");
   expect(hero).toContain("max-lg:min-h-11");
-  expect(hero).not.toContain('variant="ghost"');
+  const suggestion = hero.slice(hero.indexOf("<DescriptiveButton\n"), hero.indexOf("</DescriptiveButton>"));
+  expect(suggestion).not.toContain('variant="ghost"');
 });

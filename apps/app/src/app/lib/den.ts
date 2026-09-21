@@ -344,6 +344,7 @@ export type DenOrgLlmProvider = {
    */
   hasMyCredential?: boolean;
   models: DenOrgLlmProviderModel[];
+  pinnedModelIds?: string[];
   createdAt: string | null;
   updatedAt: string | null;
 };
@@ -2109,6 +2110,7 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     providerConfig: parseJsonRecord(value.providerConfig),
     hasApiKey: value.hasApiKey === true,
     runtimeEnvKeys: parseStringList(value.runtimeEnvKeys),
+    pinnedModelIds: [...new Set(parseStringList(value.pinnedModelIds))],
     ...(typeof value.hasMyCredential === "boolean" ? { hasMyCredential: value.hasMyCredential } : {}),
     models: Array.isArray(value.models)
       ? value.models.flatMap((model) => {

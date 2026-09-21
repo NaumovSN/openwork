@@ -262,7 +262,7 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     return "Diagnostics";
   }
   if (pathname.startsWith(getInferenceRoute(orgSlug))) {
-    return "OpenWork Models";
+    return "Usage & billing";
   }
   if (pathname.startsWith(getWebRoute(orgSlug))) {
     return "OpenWork Web";
