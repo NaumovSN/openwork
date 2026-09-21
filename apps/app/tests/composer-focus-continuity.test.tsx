@@ -1738,7 +1738,7 @@ test("new-task composer keeps stable presentation and preserves submission owner
     expect(container.querySelector('[data-loading-message="starting"]')).toBeNull();
     expect(container.textContent).not.toContain("Starting");
     expect(container.querySelector('[data-loading-message="working"]')).toBeNull();
-    expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector('button[aria-label="Send"]')?.getAttribute("aria-busy")).toBe("true");
   };
   const expectSettled = () => {
     expect(container.querySelector('[data-loading-message="starting"]')).toBeNull();
@@ -1777,7 +1777,7 @@ test("new-task composer keeps stable presentation and preserves submission owner
     expect(heroEditor.getAttribute("contenteditable")).toBe("true");
     expect(capturedHandoff?.submitted.draft).toBe("First hero message");
     expectPendingHero();
-    expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector('button[aria-label="Send"]')?.getAttribute("aria-busy")).toBe("true");
     expect(container.querySelector('button[aria-label="Preparing connected service tools…"]')).toBeNull();
     await act(async () => updateHeroDraft("Newer hero draft"));
     expect(capturedHandoff?.getContinuation().draft).toBe("Newer hero draft");
@@ -1814,7 +1814,7 @@ test("new-task composer keeps stable presentation and preserves submission owner
     expect(creations).toBe(2);
     expect(container.querySelector('[data-lexical-editor="true"]')).toBe(heroEditor);
     expect(heroEditor.getAttribute("contenteditable")).toBe("true");
-    expect(container.querySelector('button[aria-label="Creating conversation..."]')?.getAttribute("aria-busy")).toBe("true");
+    expect(container.querySelector('button[aria-label="Send"]')?.getAttribute("aria-busy")).toBe("true");
     expect(container.querySelector('button[aria-label="Preparing connected service tools…"]')).toBeNull();
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("");
     expect(container.querySelector('[data-message-role="user"]')).toBeNull();
