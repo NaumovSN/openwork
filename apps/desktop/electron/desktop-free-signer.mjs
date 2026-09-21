@@ -6,13 +6,27 @@ import {
   DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH, desktopFreeProofMessage,
 } from "@openwork/types/desktop-free-access";
 
-export function desktopFreeBootstrapEligible(distribution, bootstrap) {
+/**
+ * Developer-only: a loopback control plane named explicitly in
+ * OPENWORK_DEV_FREE_CONTROL_PLANE counts as hosted while OPENWORK_DEV_MODE=1,
+ * so a local Den and Gateway can exercise Auto. Packaged builds never set it.
+ */
+function devFreeControlPlaneOrigin(environment = process.env) {
+  if (environment.OPENWORK_DEV_MODE !== "1") return null;
+  try {
+    const url = new URL(environment.OPENWORK_DEV_FREE_CONTROL_PLANE?.trim() || "");
+    return ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) && url.protocol === "http:" ? url.origin : null;
+  } catch { return null; }
+}
+
+export function desktopFreeBootstrapEligible(distribution, bootstrap, environment = process.env) {
   if (distribution.flavor !== "public" || bootstrap.requireSignin === true || bootstrap.requireActivation === true) return false;
   try {
+    const devOrigin = devFreeControlPlaneOrigin(environment);
     const hosted = (value) => {
       const url = new URL(value);
       return !url.username && !url.password && !url.search && !url.hash
-        && ["https://app.openworklabs.com", "https://api.openworklabs.com", "https://api.app.openworklabs.com"].includes(url.origin);
+        && (url.origin === devOrigin || ["https://app.openworklabs.com", "https://api.openworklabs.com", "https://api.app.openworklabs.com"].includes(url.origin));
     };
     return hosted(bootstrap.baseUrl) && (!bootstrap.apiBaseUrl || hosted(bootstrap.apiBaseUrl));
   } catch { return false; }
