@@ -994,6 +994,10 @@ export type InferenceAccessResponse = {
       | "free_request_in_progress"
       | "upstream_unavailable"
       | null;
+    /**
+     * Organization-managed Auto pin for this membership. False removes only the organization pin; model access and personal pins are unchanged. Pins never grant access.
+     */
+    defaultPinned?: boolean;
     canUpgrade: false;
     catalog?: Array<{
       modelID: string;
@@ -1472,6 +1476,42 @@ export type GatewayProviderDetails = {
   settings: {
     [key: string]: unknown;
   };
+  /**
+   * Management-only active grant scopes with organization-scoped audience labels. Member credential sets remain conditional on each member signing in.
+   */
+  modelScopes?: Array<{
+    modelId: string;
+    /**
+     * Den TypeID with 'gmg_' prefix and a 26-character base32 suffix.
+     */
+    modelGroupId: string;
+    modelGroupName: string;
+    /**
+     * Den TypeID with 'gcs_' prefix and a 26-character base32 suffix.
+     */
+    credentialSetId: string;
+    credentialSetName: string;
+    audience:
+      | {
+          type: "organization";
+        }
+      | {
+          type: "team";
+          /**
+           * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+           */
+          teamId: string;
+        }
+      | {
+          type: "member";
+          /**
+           * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+           */
+          memberId: string;
+        };
+    audienceName: string;
+    requiresMemberSignIn: boolean;
+  }>;
   modelGroups: Array<{
     name: string;
     description: string | null;
@@ -9997,6 +10037,131 @@ export type PutV1DiagnosticsEgressTokenResponses = {
 export type PutV1DiagnosticsEgressTokenResponse =
   PutV1DiagnosticsEgressTokenResponses[keyof PutV1DiagnosticsEgressTokenResponses];
 
+export type GetV1InferenceFreeProviderData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/provider";
+};
+
+export type GetV1InferenceFreeProviderErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Workspace admin permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * Free provider summary unavailable.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type GetV1InferenceFreeProviderError = GetV1InferenceFreeProviderErrors[keyof GetV1InferenceFreeProviderErrors];
+
+export type GetV1InferenceFreeProviderResponses = {
+  /**
+   * Free provider summary returned.
+   */
+  200: {
+    provider: {
+      state: "available" | "disabled" | "unavailable";
+      reason:
+        | "admin_disabled"
+        | "not_eligible"
+        | "free_disabled"
+        | "accounting_unavailable"
+        | "free_allowance_exhausted"
+        | "free_request_in_progress"
+        | "upstream_unavailable"
+        | null;
+      defaultPinned: boolean;
+      modelGroup: {
+        id: "free";
+        name: "Free";
+      };
+      catalog: Array<{
+        modelID: string;
+        displayName: string;
+        providerName: string;
+        summary: string;
+        recommended: boolean;
+        rank: number;
+        capabilities: Array<string>;
+      }>;
+      allowance: {
+        usageScope: "organization";
+        allowanceScope: "person";
+        windowStartAt: string;
+        resetsAt: string;
+        weeklyLimitUsd: number;
+        joinedMembers: number;
+        eligibleMembers: number;
+        /**
+         * Current eligible members whose recorded weekly usage plus reservations reaches their person-wide limit; not a probe of Gateway request headroom. Null when accounting cannot be verified.
+         */
+        exhaustedMembers: number | null;
+        usedUsd: number | null;
+        reservedUsd: number | null;
+        retainedUsd: number | null;
+        requestCount: number | null;
+      };
+    };
+  };
+};
+
+export type GetV1InferenceFreeProviderResponse =
+  GetV1InferenceFreeProviderResponses[keyof GetV1InferenceFreeProviderResponses];
+
+export type PatchV1InferenceFreePinsData = {
+  body: {
+    defaultPinned: boolean;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/pins";
+};
+
+export type PatchV1InferenceFreePinsErrors = {
+  /**
+   * Provide only defaultPinned.
+   */
+  400: InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Fresh workspace admin permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * Organization policy unavailable.
+   */
+  503: {
+    error: "managed_models_disabled_for_dpa" | "managed_models_policy_unavailable";
+    message: string;
+  };
+};
+
+export type PatchV1InferenceFreePinsError = PatchV1InferenceFreePinsErrors[keyof PatchV1InferenceFreePinsErrors];
+
+export type PatchV1InferenceFreePinsResponses = {
+  /**
+   * Auto pin saved.
+   */
+  200: {
+    defaultPinned: boolean;
+  };
+};
+
+export type PatchV1InferenceFreePinsResponse =
+  PatchV1InferenceFreePinsResponses[keyof PatchV1InferenceFreePinsResponses];
+
 export type GetV1InferenceAccessData = {
   body?: never;
   path?: never;
@@ -13761,6 +13926,154 @@ export type PostV1GatewayUsageLimitResetRequestsByIdDenyResponses = {
 
 export type PostV1GatewayUsageLimitResetRequestsByIdDenyResponse =
   PostV1GatewayUsageLimitResetRequestsByIdDenyResponses[keyof PostV1GatewayUsageLimitResetRequestsByIdDenyResponses];
+
+export type GetV1InferenceProvidersShareLocalKeyEligibilityData = {
+  body?: never;
+  path?: never;
+  query: {
+    providerId: string;
+  };
+  url: "/v1/inference-providers/share-local-key/eligibility";
+};
+
+export type GetV1InferenceProvidersShareLocalKeyEligibilityErrors = {
+  /**
+   * Invalid sharing request.
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Fresh session and current owner/admin membership required.
+   */
+  403: ForbiddenError;
+  /**
+   * Transfer conflicts with an earlier request or provider configuration.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Sharing unavailable or outcome unconfirmed.
+   */
+  503: {
+    error: string;
+    message: string;
+  };
+};
+
+export type GetV1InferenceProvidersShareLocalKeyEligibilityError =
+  GetV1InferenceProvidersShareLocalKeyEligibilityErrors[keyof GetV1InferenceProvidersShareLocalKeyEligibilityErrors];
+
+export type GetV1InferenceProvidersShareLocalKeyEligibilityResponses = {
+  /**
+   * Check device API-key sharing eligibility
+   */
+  200: {
+    /**
+     * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+     */
+    organizationId: string;
+    /**
+     * Den TypeID with 'om_' prefix and a 26-character base32 suffix.
+     */
+    memberId: string;
+    organizationName: string;
+    teams: Array<{
+      /**
+       * Den TypeID with 'tem_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      name: string;
+    }>;
+    eligible: boolean;
+    reason: string | null;
+  };
+};
+
+export type GetV1InferenceProvidersShareLocalKeyEligibilityResponse =
+  GetV1InferenceProvidersShareLocalKeyEligibilityResponses[keyof GetV1InferenceProvidersShareLocalKeyEligibilityResponses];
+
+export type PostV1InferenceProvidersShareLocalKeyData = {
+  body: {
+    requestId: string;
+    providerId: string;
+    name: string;
+    credential: {
+      kind: "api_key";
+      secret: string;
+    };
+    allMembers: boolean;
+    teamIds: Array<string>;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference-providers/share-local-key";
+};
+
+export type PostV1InferenceProvidersShareLocalKeyErrors = {
+  /**
+   * Invalid sharing request.
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Fresh session and current owner/admin membership required.
+   */
+  403: ForbiddenError;
+  /**
+   * Transfer conflicts with an earlier request or provider configuration.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Sharing unavailable or outcome unconfirmed.
+   */
+  503: {
+    error: string;
+    message: string;
+  };
+};
+
+export type PostV1InferenceProvidersShareLocalKeyError =
+  PostV1InferenceProvidersShareLocalKeyErrors[keyof PostV1InferenceProvidersShareLocalKeyErrors];
+
+export type PostV1InferenceProvidersShareLocalKeyResponses = {
+  /**
+   * Share a device API key with an organization
+   */
+  200: {
+    share: {
+      requestId: string;
+      /**
+       * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+       */
+      organizationId: string;
+      providerId: string;
+      /**
+       * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
+       */
+      inferenceProviderId: string;
+    };
+  };
+};
+
+export type PostV1InferenceProvidersShareLocalKeyResponse =
+  PostV1InferenceProvidersShareLocalKeyResponses[keyof PostV1InferenceProvidersShareLocalKeyResponses];
 
 export type GetV1InferenceProvidersData = {
   body?: never;

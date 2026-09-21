@@ -10,9 +10,9 @@ import { getBillingRoute, getCustomLlmProvidersRoute, getGatewayProviderRoute, g
 import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { getGatewayDashboardAccess } from "../_lib/gateway-dashboard-access";
-import { useOpenWorkModelAccess } from "./inference-provider-data";
+import { useOpenWorkFreeProvider } from "./inference-provider-data";
 import { OpenWorkModelAllowance } from "./inference-provider-detail-screen";
-import { getOpenWorkModelAccessLabel } from "./inference-provider-request";
+import { getFreeInferenceProviderLabel } from "./inference-provider-request";
 
 export function InferenceScreen() {
   const router = useRouter();
@@ -44,19 +44,19 @@ export function InferenceScreen() {
 
 function InferenceContent() {
   const dashboard = useOrgDashboard();
-  const { access, busy, error, reload } = useOpenWorkModelAccess(dashboard.orgId);
+  const { provider, busy, error, reload } = useOpenWorkFreeProvider(dashboard.orgId);
   const gatewayEnabled = getGatewayDashboardAccess(dashboard) === "enabled";
   return <div className="mx-auto grid w-full max-w-[960px] gap-6 px-4 py-8 sm:px-6 lg:px-8">
     <DenPageHeader title="Usage & billing" action={<DenButton variant="secondary" href={getBillingRoute(dashboard.orgSlug)}>Open billing</DenButton>} />
     {error ? <DenNotice tone="error" message={error} /> : null}
     <section className="border-b border-gray-200 pb-6">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold">Your OpenWork Models allowance</h2>
+        <h2 className="text-xl font-semibold">Organization Free allowance</h2>
         <DenButton variant="secondary" loading={busy} onClick={() => void reload()}>Refresh</DenButton>
       </div>
-      {busy && !access ? <div role="status" aria-label="Loading allowance" className="h-24 animate-pulse rounded bg-gray-100" /> : <>
-        <p className="mb-4 text-sm text-gray-500">{getOpenWorkModelAccessLabel(error ? null : access)}</p>
-        <OpenWorkModelAllowance access={access} />
+      {busy && !provider ? <div role="status" aria-label="Loading allowance" className="h-24 animate-pulse rounded bg-gray-100" /> : <>
+        <p className="mb-4 text-sm text-gray-500">{getFreeInferenceProviderLabel(error ? null : provider)}</p>
+        <OpenWorkModelAllowance provider={provider} />
       </>}
     </section>
     {gatewayEnabled ? <Link href={getGatewayProviderRoute(dashboard.orgSlug, "openwork")} className="text-sm underline">Open OpenWork Models provider</Link> : null}

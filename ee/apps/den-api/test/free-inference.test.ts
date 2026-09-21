@@ -1,10 +1,10 @@
 import { afterAll, beforeEach, expect, mock, test } from "bun:test"
-import { createHash } from "node:crypto"
+import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { InferenceFreeKeyTable } from "@openwork-ee/den-db/schema"
-import { readFreeInferenceConfig } from "@openwork/types/den/inference"
+import { readFreeInferenceConfig, freeInferenceDefaultPinned, withFreeInferenceDefaultPinned, freeInferenceOrganizationAllowed, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
 
-type Query = { from: () => Query; innerJoin: () => Query; where: () => Query; limit: () => Query;
+type Query = { from: () => Query; innerJoin: () => Query; leftJoin: () => Query; where: () => Query; limit: () => Query;
   for: () => Promise<unknown[]>; then: Promise<unknown[]>["then"] }
 let results: unknown[][] = []
 let failRead = false
@@ -14,7 +14,7 @@ function select(): Query {
   const value = results.shift()
   if (!value) throw new Error("Unexpected fixture query")
   const promise = Promise.resolve(value)
-  const query: Query = { from: () => query, innerJoin: () => query, where: () => query,
+  const query: Query = { from: () => query, innerJoin: () => query, leftJoin: () => query, where: () => query,
     limit: () => query, for: () => promise, then: promise.then.bind(promise) }
   return query
 }
@@ -27,7 +27,7 @@ const database = { ...transaction, transaction: async <T>(callback: (tx: typeof 
 const configuration = { inferenceFree: readFreeInferenceConfig({ INFERENCE_FREE_ENABLED: "true" }), modelsPublicBaseUrl: "https://inference.example.test" }
 mock.module("../src/db.js", () => ({ db: database }))
 mock.module("../src/env.js", () => ({ env: configuration }))
-const { getMemberInferenceAccess, ensureMemberFreeInferenceCredential } = await import("../src/inference.js")
+const { getMemberInferenceAccess, ensureMemberFreeInferenceCredential, getFreeInferenceProviderSummary } = await import("../src/inference.js")
 const input = { organizationId: createDenTypeId("organization"), memberId: createDenTypeId("member"), userId: createDenTypeId("user") }
 const joinedAt = new Date("2026-09-01T00:00:00.000Z")
 const person = { id: input.memberId, organizationId: input.organizationId, userId: input.userId, joinedAt, removedAt: null }
@@ -63,7 +63,7 @@ test("credential issuance preserves a valid member key and rotates an old join e
   const apiKey = `ow_auto_${"a".repeat(43)}`
   const existing = { id: "existing-free-key", user_id: input.userId, organization_id: input.organizationId,
     org_membership_id: input.memberId, membership_joined_at: joinedAt, encrypted_key: apiKey,
-    key_hash: createHash("sha256").update(`credential:${apiKey}`).digest("hex"), revoked_at: null }
+    key_hash: freeInferenceDigest("credential", apiKey), revoked_at: null }
   results = [[{ metadata: {} }], [person], [existing]]
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toBe(apiKey)
   expect(writes).toEqual([])
@@ -96,6 +96,64 @@ test("member status includes cross-week pending state and never offers a paid mo
   const access = await getMemberInferenceAccess(input)
   expect(access).toMatchObject({ kind: "free", reason: "free_request_in_progress", canUpgrade: false, weeklyLimitUsd: 5 })
   expect(access.catalog?.map((model) => model.modelID)).toEqual(["openai/gpt-5.6-luna"])
+  expect(writes).toEqual([])
+})
+
+test("Auto pin policy defaults on and updates only its metadata leaf", () => {
+  const metadata = { dpaSigned: true, inference: { enabled: false }, inferenceFree: { offerAllowed: false, other: "retained" }, capabilities: { gatewayDashboard: false } }
+  expect(freeInferenceDefaultPinned(null)).toBe(true)
+  expect(freeInferenceDefaultPinned({})).toBe(true)
+  const unpinned = withFreeInferenceDefaultPinned(metadata, false)
+  expect(unpinned).toEqual({ ...metadata, inferenceFree: { ...metadata.inferenceFree, defaultPinned: false } })
+  expect(freeInferenceDefaultPinned(unpinned)).toBe(false)
+  expect(freeInferenceDefaultPinned(JSON.stringify(unpinned))).toBe(false)
+  expect(() => freeInferenceDefaultPinned("{")).toThrow()
+  expect(freeInferenceOrganizationAllowed(unpinned)).toBe(false)
+  expect(freeInferenceOrganizationAllowed(JSON.stringify(unpinned))).toBe(false)
+  expect(withFreeInferenceDefaultPinned(unpinned, true)).toEqual({ ...metadata, inferenceFree: { ...metadata.inferenceFree, defaultPinned: true } })
+  expect(metadata.inferenceFree).not.toHaveProperty("defaultPinned")
+})
+
+test("member pin policy is authoritative without changing model availability", async () => {
+  results = [[{ metadata: { inferenceFree: { defaultPinned: false } }, nowMs: now.getTime() }], [], [], []]
+  expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: false, kind: "free", modelID: "openai/gpt-5.6-luna" })
+  results = [[{ metadata: { dpaSigned: true, inferenceFree: { defaultPinned: true } }, nowMs: now.getTime() }]]
+  expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: true, kind: "unavailable", reason: "admin_disabled" })
+  expect(writes).toEqual([])
+})
+
+test("organization summary uses recorded org usage, not members' person-wide balances", async () => {
+  const otherUserId = createDenTypeId("user")
+  const identity = freeInferenceDigest("member", input.userId)
+  const unit = INFERENCE_USAGE_CONVERSION_FACTOR
+  results = [[{ metadata: { inferenceFree: { defaultPinned: false } }, nowMs: now.getTime() }],
+    [{ userId: input.userId }, { userId: otherUserId }, { userId: input.userId }],
+    [{ identity_hash: identity, limit_amount: 5 * unit, used_amount: 5 * unit, reserved_amount: 0, blocked: false }],
+    [{ blocked: false }], [{ usedAmount: String(unit), retainedAmount: "0", reservedAmount: String(unit / 2), requestCount: "3", invalidRows: "0" }]]
+  const summary = await getFreeInferenceProviderSummary(input.organizationId)
+  expect(summary).toMatchObject({ state: "available", defaultPinned: false, modelGroup: { id: "free", name: "Free" },
+    allowance: { usageScope: "organization", allowanceScope: "person", joinedMembers: 2, eligibleMembers: 2, exhaustedMembers: 1, usedUsd: 1, reservedUsd: 0.5, retainedUsd: 0, requestCount: 3 } })
+  expect(JSON.stringify(summary)).not.toContain(input.userId)
+  expect(JSON.stringify(summary)).not.toContain(otherUserId)
+  expect(writes).toEqual([])
+})
+
+test("disabled org summary preserves restrictions and does not read free accounting", async () => {
+  results = [[{ metadata: { dpaSigned: true, inferenceFree: { defaultPinned: false } }, nowMs: now.getTime() }], [{ userId: input.userId }]]
+  expect(await getFreeInferenceProviderSummary(input.organizationId)).toMatchObject({ state: "disabled", reason: "admin_disabled", defaultPinned: false,
+    allowance: { joinedMembers: 1, eligibleMembers: 0, exhaustedMembers: null, usedUsd: null } })
+  expect(results).toEqual([])
+  expect(writes).toEqual([])
+})
+
+test("organization accounting uncertainty stays unknown instead of appearing unused", async () => {
+  for (const usage of [
+    { usedAmount: -1, retainedAmount: 0, reservedAmount: 0, requestCount: 1, invalidRows: 0 },
+    { usedAmount: 0, retainedAmount: 0, reservedAmount: 0, requestCount: 1, invalidRows: 1 },
+  ]) {
+    results = [[{ metadata: {}, nowMs: now.getTime() }], [{ userId: input.userId }], [], [], [usage]]
+    expect(await getFreeInferenceProviderSummary(input.organizationId)).toMatchObject({ state: "unavailable", reason: "accounting_unavailable", allowance: { usedUsd: null, exhaustedMembers: null } })
+  }
   expect(writes).toEqual([])
 })
 

@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { serializeSignedCookie } from "better-call"
+import { createHash, randomUUID } from "node:crypto"
+import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferenceWindow } from "@openwork/types/den/inference"
 
 const API_ORIGIN = "http://127.0.0.1:8790"
 const PROXY_BASE_URL = "https://inference.example.test"
@@ -1241,6 +1243,8 @@ test("ordered pins preserve the matrix and expose only caller-usable aliases", a
   expect(saved.pinnedModelIds).toEqual(configuredPins)
   for (const field of ["name", "modelIds", "modelGroups", "credentialSets", "accessGrants", "settings"]) expect(saved[field]).toEqual(created[field])
   expect(saved.models).toEqual([])
+  expect(readRows(saved, "modelScopes")).toHaveLength(2)
+  expect(firstRow(saved, "modelScopes")).toMatchObject({ modelGroupId: groupId, audience: { type: "member", memberId }, audienceName: "Gateway Member", requiresMemberSignIn: false })
   expect((await request(ownerCookie, `${base}/connect`)).status).toBe(403)
 
   const connected = readProvider(await (await request(memberCookie, `${base}/connect`)).json())
@@ -1251,9 +1255,11 @@ test("ordered pins preserve the matrix and expose only caller-usable aliases", a
     return readString(model, "id")
   })
   expect(connected.pinnedModelIds).toEqual(expectedPins)
+  expect(connected.modelScopes).toBeUndefined()
   expect(usableModels.map((model) => model.name)).toEqual(["Claude Haiku 4", "Claude Sonnet 4"])
   const listed = readProviderList(await (await request(memberCookie, "/v1/inference-providers")).json()).find((provider) => provider.id === id)
   expect(listed?.pinnedModelIds).toEqual(expectedPins)
+  expect(listed?.modelScopes).toBeUndefined()
   for (const body of [
     { pinnedModelIds: ["claude-sonnet-4", "claude-sonnet-4"] },
     { pinnedModelIds: [], modelIds: [] },
@@ -1278,9 +1284,73 @@ test("ordered pins preserve the matrix and expose only caller-usable aliases", a
   expect((await request(ownerCookie, `${base}/access-grants/${grantId}`, { method: "DELETE" })).status).toBe(204)
   expect(readProviderList(await (await request(memberCookie, "/v1/inference-providers")).json()).some((provider) => provider.id === id)).toBe(false)
   expect((await request(memberCookie, `${base}/connect`)).status).toBe(403)
+  expect(readProvider(await (await request(ownerCookie, base)).json()).modelScopes).toEqual([])
   const cleared = await request(ownerCookie, base, { method: "PATCH", body: JSON.stringify({ pinnedModelIds: [] }) })
   expect(cleared.status).toBe(200)
   expect(readProvider(await cleared.json()).pinnedModelIds).toEqual([])
+})
+
+test("Free provider summaries isolate organization usage and Auto pin writes preserve eligibility and metadata", async () => {
+  const { env } = await import("../src/env.js")
+  const previousFree = env.inferenceFree
+  const orgA = createDenTypeId("organization"), orgB = createDenTypeId("organization")
+  const members = [createDenTypeId("member"), createDenTypeId("member"), createDenTypeId("member"), createDenTypeId("member")]
+  const requestIds = Array.from({ length: 6 }, () => randomUUID())
+  const keyId = randomUUID(), bucketId = randomUUID()
+  const now = new Date()
+  const unit = INFERENCE_USAGE_CONVERSION_FACTOR
+  const hash = createHash("sha256").update(`member:${ownerUserId}`).digest("hex")
+  const headers = { "x-openwork-org-id": orgA }
+  const metadata = { inferenceFree: { offerAllowed: true, defaultPinned: true }, unrelated: "preserved" }
+  env.inferenceFree = { ...previousFree, enabled: true, weeklyBudgetUsd: 5, weeklyLimitAmount: 5 * unit }
+  try {
+    await db.insert(schema.OrganizationTable).values([{ id: orgA, name: "Free summary A", slug: orgA, metadata }, { id: orgB, name: "Free summary B", slug: orgB }])
+    await db.insert(schema.MemberTable).values([
+      { id: members[0], organizationId: orgA, userId: ownerUserId, role: "owner", joinedAt: now },
+      { id: members[1], organizationId: orgA, userId: memberUserId, role: "member", joinedAt: now },
+      { id: members[2], organizationId: orgA, userId: outsiderUserId, role: "member", joinedAt: now },
+      { id: members[3], organizationId: orgB, userId: ownerUserId, role: "member", joinedAt: now },
+    ])
+    await db.insert(schema.InferenceFreeKeyTable).values({ id: keyId, organization_id: orgA, org_membership_id: members[0], user_id: ownerUserId,
+      membership_joined_at: now, key_hash: createHash("sha256").update(keyId).digest("hex"), encrypted_key: "test-only-summary-key" })
+    await db.insert(schema.InferenceFreeUsageBucketTable).values({ id: bucketId, scope: "member", identity_hash: hash, window_type: "weekly",
+      window_start_at: freeInferenceWindow(now).start, window_end_at: freeInferenceWindow(now).end, limit_amount: 5 * unit, used_amount: 5 * unit, reserved_amount: 0 })
+    await db.insert(schema.InferenceFreeReservationTable).values([
+      { request_id: requestIds[0], organization_id: orgA, principal_hash: hash, model_id: INFERENCE_FREE_MODEL_ID, status: "settled", reserved_amount: unit, actual_amount: unit, max_input_tokens: 1, max_output_tokens: 1, expires_at: now },
+      { request_id: requestIds[1], organization_id: orgB, principal_hash: hash, model_id: INFERENCE_FREE_MODEL_ID, status: "settled", reserved_amount: 9 * unit, actual_amount: 9 * unit, max_input_tokens: 1, max_output_tokens: 1, expires_at: now },
+      { request_id: requestIds[2], principal_hash: "a".repeat(64), model_id: INFERENCE_FREE_MODEL_ID, status: "settled", reserved_amount: unit, actual_amount: unit, max_input_tokens: 1, max_output_tokens: 1, expires_at: now },
+      { request_id: requestIds[3], key_id: keyId, principal_hash: hash, model_id: INFERENCE_FREE_MODEL_ID, status: "settled", reserved_amount: unit / 2, actual_amount: unit / 2, max_input_tokens: 1, max_output_tokens: 1, expires_at: now },
+      { request_id: requestIds[4], organization_id: orgA, principal_hash: hash, model_id: INFERENCE_FREE_MODEL_ID, status: "retained", reserved_amount: unit, actual_amount: unit, max_input_tokens: 1, max_output_tokens: 1, expires_at: now },
+      { request_id: requestIds[5], organization_id: orgA, principal_hash: hash, model_id: INFERENCE_FREE_MODEL_ID, status: "held", reserved_amount: unit / 4, max_input_tokens: 1, max_output_tokens: 1, expires_at: new Date(now.getTime() + 60_000) },
+    ])
+    const summaryResponse = await request(ownerCookie, "/v1/inference/free/provider", { headers })
+    expect(summaryResponse.status).toBe(200)
+    const summary = readResource(await summaryResponse.json(), "provider")
+    expect(summary).toMatchObject({ defaultPinned: true, allowance: { joinedMembers: 3, eligibleMembers: 3, exhaustedMembers: 1, usedUsd: 2.5, reservedUsd: 0.25, retainedUsd: 1, requestCount: 4, usageScope: "organization" } })
+    expect(JSON.stringify(summary)).not.toContain(ownerUserId)
+    expect((await request(memberCookie, "/v1/inference/free/provider", { headers })).status).toBe(403)
+    expect((await request(ownerCookie, "/v1/inference/free/provider", { headers: { "x-openwork-org-id": orgB } })).status).toBe(403)
+    expect((await request(memberCookie, "/v1/inference/free/pins", { method: "PATCH", headers, body: JSON.stringify({ defaultPinned: false }) })).status).toBe(403)
+    const pinned = await request(ownerCookie, "/v1/inference/free/pins", { method: "PATCH", headers, body: JSON.stringify({ defaultPinned: false }) })
+    expect(pinned.status).toBe(200)
+    expect(await pinned.json()).toEqual({ defaultPinned: false })
+    const memberAccess = readResource(await (await request(memberCookie, "/v1/inference/access", { headers })).json(), "access")
+    expect(memberAccess).toMatchObject({ defaultPinned: false, kind: "free", modelID: INFERENCE_FREE_MODEL_ID })
+    const [saved] = await db.select({ metadata: schema.OrganizationTable.metadata }).from(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, orgA))
+    expect(saved.metadata).toEqual({ ...metadata, inferenceFree: { offerAllowed: true, defaultPinned: false } })
+    await db.update(schema.OrganizationTable).set({ metadata: { ...saved.metadata, dpaSigned: true } }).where(drizzle.eq(schema.OrganizationTable.id, orgA))
+    expect((await request(ownerCookie, "/v1/inference/free/pins", { method: "PATCH", headers, body: JSON.stringify({ defaultPinned: true }) })).status).toBe(200)
+    expect(readResource(await (await request(memberCookie, "/v1/inference/access", { headers })).json(), "access")).toMatchObject({ defaultPinned: true, kind: "unavailable", reason: "admin_disabled" })
+    expect(readResource(await (await request(ownerCookie, "/v1/inference/free/provider", { headers })).json(), "provider")).toMatchObject({ state: "disabled", allowance: { eligibleMembers: 0, usedUsd: null } })
+  } finally {
+    env.inferenceFree = previousFree
+    await db.delete(schema.InferenceFreeReservationTable).where(drizzle.inArray(schema.InferenceFreeReservationTable.request_id, requestIds))
+    await db.delete(schema.InferenceFreeUsageBucketTable).where(drizzle.eq(schema.InferenceFreeUsageBucketTable.id, bucketId))
+    await db.delete(schema.InferenceFreeKeyTable).where(drizzle.eq(schema.InferenceFreeKeyTable.id, keyId))
+    await db.delete(schema.OrganizationRoleTable).where(drizzle.inArray(schema.OrganizationRoleTable.organizationId, [orgA, orgB]))
+    await db.delete(schema.MemberTable).where(drizzle.inArray(schema.MemberTable.id, members))
+    await db.delete(schema.OrganizationTable).where(drizzle.inArray(schema.OrganizationTable.id, [orgA, orgB]))
+  }
 })
 
 test("explicit group/set grants reduce by specificity within the pair and choose a stable equivalent grant", async () => {

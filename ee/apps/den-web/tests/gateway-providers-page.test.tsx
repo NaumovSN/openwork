@@ -155,6 +155,20 @@ describe("Gateway provider detail", () => {
     expect(matrix).toContain("provider.pinnedModelIds.includes(id)");
   });
 
+  test("pin table shows model IDs, groups and only server-derived audiences", () => {
+    const base = { models: [{ id: "catalog-model", name: "Model", config: {} }], pinnedModelIds: ["catalog-model"], onChange: () => {} };
+    const missing = renderToStaticMarkup(createElement(GatewayPinnedModelsTable, base));
+    expect(missing).toContain("Audience not reported");
+    expect(missing).not.toContain("Everyone");
+    const html = renderToStaticMarkup(createElement(GatewayPinnedModelsTable, { ...base,
+      modelGroups: [{ id: "group", name: "Research", description: null, status: "active", modelIds: ["catalog-model"] }],
+      modelScopes: [{ modelId: "catalog-model", modelGroupId: "group", modelGroupName: "Research", credentialSetId: "set", credentialSetName: "Member key", audience: { type: "team", teamId: "team" }, audienceName: "Engineering", requiresMemberSignIn: true }],
+    }));
+    for (const value of ["catalog-model", "Research", "Engineering (sign-in required)", "Who sees it", "disabled"]) expect(html).toContain(value);
+    expect(html).not.toContain("Everyone");
+    expect(matrix).toContain('<details key={group.id}');
+  });
+
   test("pins can be added, moved and removed with accessible controls in draft order", async () => {
     GlobalRegistrator.register();
     Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
@@ -167,16 +181,19 @@ describe("Gateway provider detail", () => {
       current = ids;
       return <GatewayPinnedModelsTable models={[
         { id: "alpha", name: "Alpha", config: {} }, { id: "beta", name: "Beta", config: {} }, { id: "gamma", name: "Gamma", config: {} },
-      ]} pinnedModelIds={ids} onChange={setIds} />;
+      ]} pinnedModelIds={ids} canManage modelGroups={[]} modelScopes={[]} onChange={setIds} />;
     }
     const button = (label: string) => container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
     try {
       await act(async () => root.render(<Harness />));
       expect(button("Move Beta up")?.disabled).toBe(true);
       expect(button("Move Alpha down")?.disabled).toBe(true);
-      expect(container.textContent).toContain("Members with access");
+      expect(container.textContent).toContain("No active audience");
+      expect(container.textContent).toContain("Model group");
+      expect(container.textContent).toContain("Who sees it");
       await act(async () => button("Move Alpha up")?.click());
       expect(current).toEqual(["alpha", "beta"]);
+      expect(container.querySelector('[role="status"]')?.textContent).toBe("Alpha moved to position 1 in the draft.");
       await act(async () => button("Move Alpha down")?.click());
       expect(current).toEqual(["beta", "alpha"]);
       await act(async () => button("Unpin Beta")?.click());
