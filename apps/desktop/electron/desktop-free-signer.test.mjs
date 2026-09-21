@@ -99,4 +99,6 @@ test("a loopback control plane is eligible only when developer mode names it exp
   assert.equal(desktopFreeBootstrapEligible(distribution, { ...local, baseUrl: "http://localhost:3015" }, { OPENWORK_DEV_MODE: "1", OPENWORK_DEV_FREE_CONTROL_PLANE: "http://localhost:3005" }), false);
   assert.equal(desktopFreeBootstrapEligible(distribution, { ...local, baseUrl: "http://den.example.test" }, { OPENWORK_DEV_MODE: "1", OPENWORK_DEV_FREE_CONTROL_PLANE: "http://den.example.test" }), false);
   assert.equal(desktopFreeBootstrapEligible({ flavor: "enterprise" }, local, { OPENWORK_DEV_MODE: "1", OPENWORK_DEV_FREE_CONTROL_PLANE: "http://localhost:3005" }), false);
+  assert.equal(desktopFreeBootstrapEligible(distribution, { ...local, apiBaseUrl: "http://localhost:8788" }, { OPENWORK_DEV_MODE: "1", OPENWORK_DEV_FREE_CONTROL_PLANE: "http://localhost:3005" }), true);
+  assert.equal(desktopFreeBootstrapEligible(distribution, { ...local, apiBaseUrl: "https://api.example.test" }, { OPENWORK_DEV_MODE: "1", OPENWORK_DEV_FREE_CONTROL_PLANE: "http://localhost:3005" }), false);
 });
