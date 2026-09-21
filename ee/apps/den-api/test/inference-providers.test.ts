@@ -255,6 +255,8 @@ afterAll(async () => {
   await db.delete(schema.InferenceOrgUsageBucketTable).where(drizzle.eq(schema.InferenceOrgUsageBucketTable.organization_id, organizationId))
   await db.delete(schema.InferenceOrgLimitPolicyTable).where(drizzle.eq(schema.InferenceOrgLimitPolicyTable.organization_id, organizationId))
 
+  const { cache } = await import("../src/cache.js")
+  await Promise.all([ownerSessionToken, memberSessionToken, outsiderSessionToken].map((token) => cache.auth.deleteSession(token)))
   await db.delete(schema.AuthSessionTable).where(drizzle.inArray(schema.AuthSessionTable.id, [ownerSessionId, memberSessionId, outsiderSessionId]))
   await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, organizationId))
   await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, organizationId))
@@ -402,6 +404,7 @@ test("org-credential provider: create, scoped lists, connect with member key and
 })
 
 test("all gateway management boundaries deny nonadmin creators, require fresh admin writes, and isolate organizations", async () => {
+  const { cache } = await import("../src/cache.js")
   const input = { name: "Management boundary", providerId: "anthropic", modelIds: ["claude-sonnet-4"], credential: { kind: "api_key", secret: "fake-boundary-upstream-key" }, memberIds: [memberId] }
   const created = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify(input) })
   expect(created.status).toBe(201)
@@ -485,6 +488,7 @@ test("all gateway management boundaries deny nonadmin creators, require fresh ad
     for (const role of ["admin", "super-admin", "owner", "provider-manager,admin"]) {
       await db.update(schema.MemberTable).set({ role }).where(drizzle.eq(schema.MemberTable.id, memberId))
       await db.update(schema.AuthSessionTable).set({ createdAt: new Date(Date.now() - 60 * 60 * 1000) }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+      await cache.auth.deleteSession(memberSessionToken)
       for (const path of reads) expect((await request(memberCookie, path)).status).toBe(200)
       for (const attempt of writes) {
         const response = await request(memberCookie, attempt.path, { method: attempt.method, ...(attempt.body ? { body: JSON.stringify(attempt.body) } : {}) })
@@ -492,7 +496,9 @@ test("all gateway management boundaries deny nonadmin creators, require fresh ad
         expect(await response.json()).toMatchObject({ error: "reauth", reason: "fresh_auth_required" })
       }
       await db.update(schema.AuthSessionTable).set({ createdAt: new Date() }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+      await cache.auth.deleteSession(memberSessionToken)
       expect((await request(memberCookie, base, { method: "PATCH", body: JSON.stringify({ name: `Allowed ${role}` }) })).status).toBe(200)
+      expect((await request(memberCookie, base, { method: "PATCH", body: JSON.stringify({ pinnedModelIds: input.modelIds }) })).status).toBe(200)
     }
     expect((await request(memberCookie, `${base}/credential-sets/${setId}`, { method: "PATCH", body: JSON.stringify({ name: "Admin edit" }) })).status).toBe(200)
     expect((await request(memberCookie, `${base}/model-groups/${groupId}`, { method: "PATCH", body: JSON.stringify({ name: "Admin group" }) })).status).toBe(200)
@@ -505,6 +511,7 @@ test("all gateway management boundaries deny nonadmin creators, require fresh ad
   } finally {
     await db.update(schema.MemberTable).set({ role: "member" }).where(drizzle.eq(schema.MemberTable.id, memberId))
     await db.update(schema.AuthSessionTable).set({ createdAt: new Date() }).where(drizzle.eq(schema.AuthSessionTable.id, memberSessionId))
+    await cache.auth.deleteSession(memberSessionToken)
     await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.id, foreignMember))
     await db.delete(schema.OrganizationRoleTable).where(drizzle.eq(schema.OrganizationRoleTable.organizationId, foreignOrg))
     await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, foreignOrg))

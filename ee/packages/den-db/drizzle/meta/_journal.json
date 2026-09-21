@@ -750,6 +750,13 @@
       "when": 1789686477369,
       "tag": "0107_gateway_usage_durable_capture",
       "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "5",
+      "when": 1790012078365,
+      "tag": "0108_free_auto_and_provider_pins",
+      "breakpoints": true
     }
   ]
 }

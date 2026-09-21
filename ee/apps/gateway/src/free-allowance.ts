@@ -182,7 +182,8 @@ export function createFreeAllowanceStore(config: AutoConfig, database = db) {
       return database.transaction(async (tx) => {
         const { blocked, now } = await lock(tx)
         const [reservation] = await tx.select().from(Reservation).where(eq(Reservation.request_id, requestId)).limit(1).for("update")
-        if (!reservation || reservation.status !== "held" || reservation.principal_hash !== freePrincipalHash(principal)) return false
+        if (!reservation || reservation.status !== "held" || reservation.principal_hash !== freePrincipalHash(principal)
+          || reservation.key_id !== (principal.kind === "member" ? principal.keyId : null)) return false
         if (blocked || now.getTime() >= deadlineAt || !await memberFreePrincipalAllowed(principal, tx)) {
           await finish(tx, reservation, null, true)
           return false
