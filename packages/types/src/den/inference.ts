@@ -200,8 +200,8 @@ export type FreeInferenceProviderSummary = {
   };
 };
 
-export const freeInferenceProviderSummarySchema: z.ZodType<FreeInferenceProviderSummary> = z.object({
-  state: z.enum(["available", "disabled", "unavailable"]), reason: z.enum(INFERENCE_ACCESS_REASONS).nullable(),
+export const freeInferenceProviderSummarySchema = z.object({
+  state: z.enum(["available", "disabled", "unavailable"]), reason: z.union([z.enum(INFERENCE_ACCESS_REASONS), z.null()]),
   defaultPinned: z.boolean(), modelGroup: z.object({ id: z.literal("free"), name: z.literal("Free") }),
   catalog: z.array(z.object({ modelID: z.string(), displayName: z.string(), providerName: z.string(), summary: z.string(), recommended: z.boolean(), rank: z.number(), capabilities: z.array(z.string()) })),
   allowance: z.object({

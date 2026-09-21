@@ -1,4 +1,4 @@
-import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
+import { freeCredentialDigest, freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { InferenceFreeKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db"
 import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-policy"
@@ -15,7 +15,7 @@ export function freePrincipalHash(principal: FreePrincipal) { return freeIdentit
 export async function findMemberFreePrincipal(bearer: string, database: Database = db): Promise<MemberPrincipal | null> {
   if (!/^ow_auto_[A-Za-z0-9_-]{43}$/.test(bearer)) return null
   const [key] = await database.select().from(InferenceFreeKeyTable)
-    .where(and(eq(InferenceFreeKeyTable.key_hash, freeIdentityHash("credential", bearer)), isNull(InferenceFreeKeyTable.revoked_at))).limit(1)
+    .where(and(eq(InferenceFreeKeyTable.key_hash, await freeCredentialDigest(bearer)), isNull(InferenceFreeKeyTable.revoked_at))).limit(1)
   if (!key) return null
   const principal: MemberPrincipal = { kind: "member", id: key.user_id, keyId: key.id,
     memberId: key.org_membership_id, organizationId: key.organization_id }

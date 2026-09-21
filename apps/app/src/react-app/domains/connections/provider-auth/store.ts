@@ -744,8 +744,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           gatewayUsageProviderScope: status.hasSession && verifiedGatewayUsageContext === contextKey
             ? refreshOptions?.verifiedScope ?? current.gatewayUsageProviderScope : null,
           cloudProviderServerSync: {
-            lastRun: status.lastRun,
-            lastVerifiedAt: status.lastRun && (status.lastRun.status === "applied" || status.lastRun.status === "noop") ? status.lastRun.at : current.cloudProviderServerSync?.lastVerifiedAt,
+            ...(status.lastRun === undefined || status.lastRun === null ? {} : { lastRun: status.lastRun }),
+            ...(() => {
+              const verifiedAt = status.lastRun && (status.lastRun.status === "applied" || status.lastRun.status === "noop") ? status.lastRun.at : current.cloudProviderServerSync?.lastVerifiedAt;
+              return verifiedAt === undefined ? {} : { lastVerifiedAt: verifiedAt };
+            })(),
             reloadPending: status.reloadPending,
             skippedProviders: Object.fromEntries(status.skippedProviders.map((provider) => [provider.credentialSetId ? `${provider.cloudProviderId}:${provider.credentialSetId}` : provider.cloudProviderId, provider])),
           },

@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, expect, mock, test } from "bun:test"
-import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
+import { freeCredentialDigest, freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { InferenceFreeKeyTable } from "@openwork-ee/den-db/schema"
 import { readFreeInferenceConfig, freeInferenceDefaultPinned, withFreeInferenceDefaultPinned, freeInferenceOrganizationAllowed, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
@@ -63,7 +63,7 @@ test("credential issuance preserves a valid member key and rotates an old join e
   const apiKey = `ow_auto_${"a".repeat(43)}`
   const existing = { id: "existing-free-key", user_id: input.userId, organization_id: input.organizationId,
     org_membership_id: input.memberId, membership_joined_at: joinedAt, encrypted_key: apiKey,
-    key_hash: freeInferenceDigest("credential", apiKey), revoked_at: null }
+    key_hash: await freeCredentialDigest(apiKey), revoked_at: null }
   results = [[{ metadata: {} }], [person], [existing]]
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toBe(apiKey)
   expect(writes).toEqual([])

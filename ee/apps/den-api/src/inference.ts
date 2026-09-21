@@ -37,7 +37,7 @@ import { assertManagedModelsAllowed, ManagedModelsPolicyError } from "@openwork/
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { assertOrganizationManagedModelsAllowed, updateOrganizationMetadata } from "./organization-metadata.js"
-import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
+import { freeCredentialDigest, freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js"
 
@@ -155,10 +155,10 @@ export async function ensureMemberFreeInferenceCredential(input: FreeMemberInput
     let apiKey = existing?.encrypted_key
     if (!existing || existing.revoked_at || existing.user_id !== input.userId || existing.organization_id !== input.organizationId
       || existing.membership_joined_at.getTime() !== member.joinedAt.getTime() || !apiKey || !/^ow_auto_[A-Za-z0-9_-]{43}$/.test(apiKey)
-      || freeHash("credential", apiKey) !== existing.key_hash) {
+      || (await freeCredentialDigest(apiKey)) !== existing.key_hash) {
       apiKey = `ow_auto_${randomBytes(32).toString("base64url")}`
       const values = { id: randomUUID(), organization_id: input.organizationId, org_membership_id: input.memberId,
-        user_id: input.userId, membership_joined_at: member.joinedAt, key_hash: freeHash("credential", apiKey), encrypted_key: apiKey, revoked_at: null }
+        user_id: input.userId, membership_joined_at: member.joinedAt, key_hash: await freeCredentialDigest(apiKey), encrypted_key: apiKey, revoked_at: null }
       if (existing) await tx.update(InferenceFreeKeyTable).set(values).where(eq(InferenceFreeKeyTable.id, existing.id))
       else await tx.insert(InferenceFreeKeyTable).values(values)
     }
