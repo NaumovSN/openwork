@@ -82,6 +82,7 @@ import {
 } from "./brand-icon-windows.mjs";
 import { resetMacDockIcon } from "./brand-icon-darwin.mjs";
 import { createDesktopVaultKeyProvider } from "./secure-vault-key.mjs";
+import { createDesktopFreeSigner, desktopFreeBootstrapEligible } from "./desktop-free-signer.mjs";
 import {
   clearOpenworkSentrySession,
   initOpenworkSentry,
@@ -1335,6 +1336,16 @@ const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
+  anonymousInference: {
+    desktop: createDesktopFreeSigner({
+      filePath: path.join(app.getPath("userData"), "desktop-free-identity.bin"),
+      loadSafeStorage: () => require("electron").safeStorage,
+      appVersion: app.getVersion(),
+      platform: process.platform,
+      arch: process.arch,
+      isEligible: () => desktopFreeBootstrapEligible(DESKTOP_DISTRIBUTION, workspaceStore.readDesktopBootstrapConfigSync()),
+    }),
+  },
   // When OPENWORK_ENCRYPTION_KEY is set, skip the safeStorage provider so it does not shadow the documented env override used by CI/headless/enterprise.
   localManagedMcpVaultKey: process.env.OPENWORK_ENCRYPTION_KEY?.trim()
     ? undefined

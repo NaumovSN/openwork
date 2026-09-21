@@ -1,4 +1,5 @@
 import type { WorkspaceWire } from "@openwork/types/workspace";
+import type { DesktopFreeProofClaims } from "@openwork/types/desktop-free-access";
 
 export type WorkspaceType = "local" | "remote";
 
@@ -83,6 +84,12 @@ export interface ApprovalConfig {
 
 export type LocalManagedMcpVaultKeyProvider = () => Promise<Uint8Array>;
 
+export type DesktopFreeSigner = {
+  currentVersion: string;
+  identity: () => Promise<Pick<DesktopFreeProofClaims, "publicKey" | "appVersion" | "platform" | "arch"> & { installationId: string }>;
+  sign: (request: { method: string; path: string; body: Uint8Array; authorization: string }) => Promise<string>;
+};
+
 export interface ServerConfig {
   host: string;
   port: number;
@@ -107,6 +114,7 @@ export interface ServerConfig {
   localManagedMcpVaultKey?: LocalManagedMcpVaultKeyProvider;
   /** Desktop-owned managed engines only; never enabled by remote clients. */
   resumeInterruptedTasks?: boolean;
+  anonymousInference?: { desktop: DesktopFreeSigner };
 }
 
 export interface Capabilities {

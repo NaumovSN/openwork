@@ -84,6 +84,7 @@ import {
   syncDesktopCloudResources,
 } from "./desktop-cloud-sync.js";
 import { installCloudPlugin, readCloudPluginResolved, readInstalledCloudPlugins, removeCloudPlugin } from "./cloud-plugins.js";
+import { AnonymousInferenceService } from "./anonymous-inference.js";
 import { resolveClaudePluginBundle } from "./claude-plugin-bundle.js";
 import { resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
 import { listPortableFiles } from "./portable-files.js";
@@ -811,7 +812,11 @@ export async function startServer(
     },
     logger: toManagedProviderAuthLogger(logger),
   });
+  const anonymousInference = new AnonymousInferenceService(config, logger);
   managedDesktopPolicy(config).onChange = () => {
+    void anonymousInference.initialize(config.port).then((changed) => {
+      if (changed && config.workspaces.length > 0) cloudProviderSync.markReloadPending();
+    }).catch(() => undefined);
     // Sign-in can precede the first workspace. Its future engine reads the
     // persisted policy at startup; there is no running workspace to reload.
     if (config.workspaces.length > 0) cloudProviderSync.markReloadPending();
@@ -828,6 +833,7 @@ export async function startServer(
     cloudProviderSync,
     engineV2Preview,
     () => managedEngineReady,
+    anonymousInference,
   );
 
   const serverOptions: {
@@ -895,6 +901,7 @@ export async function startServer(
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           await validateEngineRequestBody(request);
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
+          await anonymousInference.assertTaskAccess(request, mount.restPath);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           const ownership = assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, mount.restPath, false,
             request.method === "GET" ? request.signal : undefined);
@@ -927,6 +934,7 @@ export async function startServer(
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           await validateEngineRequestBody(request);
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
+          await anonymousInference.assertTaskAccess(request, mount.restPath);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           const connection = engineV2Preview.connection();
           if (!connection) {
@@ -1015,6 +1023,7 @@ export async function startServer(
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
           await validateEngineRequestBody(request);
           await managedDesktopPolicy(config).assertRequest(request, url.pathname, true);
+          await anonymousInference.assertTaskAccess(request, url.pathname);
           proxyService = "opencode";
           const workspace = config.workspaces[0];
           const ownership = workspace
@@ -1118,6 +1127,7 @@ export async function startServer(
   } catch (error) {
     await taskRecovery?.stop().catch(() => undefined);
     captureServerException(error, { method: "START", route: "startServer" });
+    anonymousInference.stop();
     cloudProviderSync.stop();
     await engineV2Preview.stop().catch(() => undefined);
     engineInstanceReaper.close();
@@ -1137,6 +1147,12 @@ export async function startServer(
         error: error instanceof Error ? error.message : "unknown",
       });
     }
+  }
+  try {
+    if (await anonymousInference.initialize(server.port)) await writeOpenworkRuntimeConfigFile(config);
+  } catch {
+    anonymousInference.stop();
+    logger.log("warn", "Desktop free access could not be initialized.");
   }
   // Policy hooks must receive the listener that actually bound, including
   // ephemeral ports and retries after a port collision.
@@ -1187,6 +1203,7 @@ export async function startServer(
       let recoveryError: unknown;
       try { await taskRecovery?.stop(); } catch (error) { recoveryError = error; }
       managedDesktopPolicy(config).onChange = undefined;
+      anonymousInference.stop();
       cloudProviderSync.stop();
       await engineV2Preview.stop().catch(() => undefined);
       engineInstanceReaper.close();
@@ -2421,8 +2438,21 @@ function createRoutes(
   cloudProviderSync: CloudProviderSync,
   engineV2Preview: EngineV2Preview,
   isReady: () => boolean,
+  anonymousInference: AnonymousInferenceService,
 ): Route[] {
   const routes: Route[] = [];
+  addRoute(routes, "GET", "/anonymous-inference/status", "client", async () =>
+    jsonResponse(await anonymousInference.status()));
+  for (const action of ["preflight", "refresh"]) {
+    addRoute(routes, "POST", `/anonymous-inference/${action}`, "client", async (ctx) => {
+      requireClientScope(ctx, "collaborator");
+      return jsonResponse(await anonymousInference.status(true));
+    });
+  }
+  addRoute(routes, "GET", "/anonymous-inference/v1/models", "none", (ctx) =>
+    anonymousInference.handle(ctx.request, "models"));
+  addRoute(routes, "POST", "/anonymous-inference/v1/chat/completions", "none", (ctx) =>
+    anonymousInference.handle(ctx.request, "chat/completions"));
   // A rollover-capable pool can apply this immediately without disposing
   // the generation that owns live sessions. Legacy/external engines keep
   // the established busy deferral.
@@ -3076,6 +3106,7 @@ function createRoutes(
     ensureWritable(config);
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
     if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
+    anonymousInference.setMemberSession(session);
     const suspended = cloudProviderSync.suspend();
     try {
       await managedDesktopPolicy(config).setSession(session);
@@ -3089,6 +3120,7 @@ function createRoutes(
     ensureWritable(config);
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
     if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
+    anonymousInference.setMemberSession(session);
     await managedDesktopPolicy(config).setSession(session);
     await cloudProviderSync.setSession(session);
     return new Response(null, { status: 204 });
@@ -3096,8 +3128,10 @@ function createRoutes(
 
   addRoute(routes, "DELETE", "/den-session", "host-token", async () => {
     ensureWritable(config);
+    anonymousInference.setMemberSession(null);
     await managedDesktopPolicy(config).clearSession();
     await cloudProviderSync.clearSession();
+    await anonymousInference.initialize(config.port);
     return new Response(null, { status: 204 });
   });
 
