@@ -34,7 +34,7 @@ import { usePlatform } from "../kernel/platform";
 import { ModelSourceIcon } from "@/components/model-picker-list";
 import { ProviderIcon } from "../design-system/provider-icon";
 import { resolveExtensionIconSrc } from "../design-system/extension-icon-src";
-import { isAutoModel, modelTitle } from "../domains/session/models/model-catalog";
+import { isAutoModel, modelTitle, publicModelTitle } from "../domains/session/models/model-catalog";
 import { useModelCollectionsStore } from "../domains/session/models/model-collections-store";
 import {
   buildCommandPaletteBehaviorItems,
@@ -210,7 +210,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       props.onSelectModel?.(model, behavior);
     } });
   const currentModelOption = props.modelOptions?.find((option) => option.providerID === props.selectedModel?.providerID && option.modelID === props.selectedModel.modelID);
-  const currentModelTitle = currentModelOption ? modelTitle(currentModelOption) : undefined;
+  const currentModelTitle = currentModelOption ? publicModelTitle(currentModelOption) : undefined;
   // Organization policy (`allowControlSettings`) can hide desktop settings;
   // the settings palette entries follow the same allow-list as the settings nav.
   const checkDesktopRestriction = useCheckDesktopRestriction();

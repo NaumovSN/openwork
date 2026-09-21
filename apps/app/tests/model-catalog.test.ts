@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ModelOption } from "../src/app/types";
 import { readWorkspaceCloudImports } from "../src/app/cloud/import-state";
 import { mergeModelOptions } from "../src/react-app/domains/connections/provider-auth/assigned-model-options";
-import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, immutableModelPin, isCycleModelSourceShortcut, isPinModelShortcut, modelGroups, modelSource, modelTitle, modelSubtitle, nextModelSource, nextPinnedModel, orderedModelPins, shouldSelectInitialAuto, withImportedModelMetadata } from "../src/react-app/domains/session/models/model-catalog";
+import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, immutableModelPin, publicModelTitle, isCycleModelSourceShortcut, isPinModelShortcut, modelGroups, modelSource, modelTitle, modelSubtitle, nextModelSource, nextPinnedModel, orderedModelPins, shouldSelectInitialAuto, withImportedModelMetadata } from "../src/react-app/domains/session/models/model-catalog";
 import { autoAccessWallFromError, autoWallCopy, preflightAutoSubmission, unavailableDesktopFreeStatus } from "../src/app/lib/inference-access";
 import { mergeReplyMetadata, replyModelFromInfo, replyModelLabel } from "../src/react-app/domains/session/sync/reply-model";
 
@@ -110,4 +110,11 @@ describe("Auto submission walls", () => {
     const metadata = mergeReplyMetadata({ opencode: { replyModel: reply, created: 1 } }, { opencode: { completed: 2 } });
     expect(replyModelLabel({ id: "reply", role: "assistant", parts: [], metadata })).toBe("actual-witness");
   });
+});
+
+test("public model titles never expose opaque gateway ids", () => {
+  expect(publicModelTitle({ providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID })).toBe("Auto");
+  expect(publicModelTitle({ providerID: "ipr_org", modelID: "gwm_01abc", title: "gwm_01abc" })).toBeUndefined();
+  expect(publicModelTitle({ providerID: "ipr_org", modelID: "gwm_01abc" })).toBeUndefined();
+  expect(publicModelTitle({ providerID: "anthropic", modelID: "claude-opus-4-6", title: "Claude Opus 4.6" })).toBe("Claude Opus 4.6");
 });

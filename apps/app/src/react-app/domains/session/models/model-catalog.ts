@@ -55,6 +55,14 @@ export function modelTitle(model: ModelRef & { title?: string }) {
   return isAutoModel(model) ? "Auto" : model.title || model.modelID;
 }
 
+/** A name safe to show as a value: the public title, never an opaque provider/model id. */
+export function publicModelTitle(model: ModelRef & { title?: string }): string | undefined {
+  if (isAutoModel(model)) return "Auto";
+  const title = model.title?.trim();
+  if (!title || title === model.modelID || /^(gwm|ipr)_/.test(title)) return undefined;
+  return title;
+}
+
 export function modelSubtitle(model: ModelOption, exhausted = false) {
   if (isAutoModel(model)) return exhausted ? "Free limit used up · resets Monday" : "Free · OpenWork picks the model";
   return [model.description?.trim(), model.organizationPinOrder !== undefined ? "pinned by your org" : null].filter(Boolean).join(" · ");
