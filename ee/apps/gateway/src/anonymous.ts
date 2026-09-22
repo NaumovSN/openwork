@@ -144,7 +144,11 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
           upstreamHost: "openrouter.ai", upstreamPath: "/api/v1/chat/completions", method: "POST",
           requestedModel: INFERENCE_FREE_MODEL_ID, upstreamModel: INFERENCE_FREE_MODEL_ID, stream: prepared.stream, signal,
         })
-        await usageLog.whenStarted?.()
+        // Write-ahead like every Gateway route: no durable accounting record, no upstream call.
+        if (await usageLog.whenStarted?.() === false) {
+          await store.cancelUndispatched(requestId).catch(() => undefined)
+          return desktopFreeGateError(503, "request_log_unavailable", "Inference accounting is temporarily unavailable. No allowance was consumed.")
+        }
       }
       let dispatched = false
       try {
@@ -170,7 +174,8 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
           settle: async (receipt) => {
             await store.settle(requestId, receipt)
             if (!usageLog) return
-            if (receipt) usageLog.setUsage({ usageSource: prepared.stream ? "stream" : "json", inputTokens: receipt.inputTokens, outputTokens: receipt.outputTokens, costUsd: receipt.amount / INFERENCE_USAGE_CONVERSION_FACTOR })
+            if (receipt) usageLog.setUsage({ complete: true, usageSource: prepared.stream ? "stream" : "json", inputTokens: receipt.inputTokens, outputTokens: receipt.outputTokens,
+              costUsd: receipt.amount / INFERENCE_USAGE_CONVERSION_FACTOR, upstreamRequestId: receipt.eventId })
             await usageLog.finish(receipt ? { status: 200, outcome: "ok" } : { status: 200, outcome: "upstream_error", errorCode: "free_usage_unconfirmed" })
           } })
         return new Response(body, { headers: { "content-type": contentType, "cache-control": "no-store", "x-openwork-request-id": requestId } })
