@@ -9,7 +9,7 @@ import { ModelPickerList } from "@/components/model-picker-list";
 import { getModelBehaviorControls, getModelBehaviorSelection } from "@/app/lib/model-behavior";
 import { gatewayConnectCopy, gatewayConnectProviderKey, isCloudManagedProviderKey, type GatewayConnectProvider } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { filterCloudManagedModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
-import { filterEntitledModelOptions, isProviderAllowedByDesktopPolicy } from "@/react-app/domains/connections/provider-auth/provider-policy";
+import { filterEntitledModelOptions, isProviderAllowedByDesktopPolicy, hideBuiltInZenFallback } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import type { ModelOption, ModelRef } from "@/app/types";
@@ -76,7 +76,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   }));
   const saved = props.retainedSelection && modelRefKey(props.retainedSelection.model) === modelRefKey(props.current) ? props.retainedSelection : undefined;
   const explicitBlock = saved && ["policy", "disabled"].includes(saved.reason);
-  const options = filterEntitledModelOptions(filterCloudManagedModelOptions(rawOptions, auth.isSignedIn), { restrictToCloud, checkRestriction })
+  const options = hideBuiltInZenFallback(filterEntitledModelOptions(filterCloudManagedModelOptions(rawOptions, auth.isSignedIn), { restrictToCloud, checkRestriction }))
     .filter((option) => !explicitBlock || modelRefKey(option) !== modelRefKey(props.current));
   const selected = options.find((option) => modelRefKey(option) === modelRefKey(props.current));
   const known = rawOptions.find((option) => modelRefKey(option) === modelRefKey(props.current));

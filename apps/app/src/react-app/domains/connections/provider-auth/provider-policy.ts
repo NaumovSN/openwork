@@ -72,18 +72,18 @@ export function hideBuiltInZenFallback<T extends Pick<ModelOption, "providerID">
   return options.some((option) => !fallback(option)) ? options.filter((option) => !fallback(option)) : [...options];
 }
 
-export function filterEntitledModelOptions<T extends Pick<ModelOption, "providerID"> & { disabled?: boolean; isFree?: boolean }>(
+export function filterEntitledModelOptions<T extends Pick<ModelOption, "providerID"> & { disabled?: boolean }>(
   options: readonly T[],
   input: FilterEntitledModelOptionsInput,
 ): T[] {
-  return hideBuiltInZenFallback(options.filter((option) => {
+  return options.filter((option) => {
     if (option.disabled) return false;
     return isProviderAllowedByDesktopPolicy({
       providerId: option.providerID,
       restrictToCloud: input.restrictToCloud,
       checkRestriction: input.checkRestriction,
     });
-  }));
+  });
 }
 
 export function resolveEntitledOrgDefaultModel(

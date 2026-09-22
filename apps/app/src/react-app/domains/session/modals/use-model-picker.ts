@@ -10,7 +10,7 @@ import { withImportedModelMetadata, type ModelPickerCatalogState } from "../mode
 import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
-import { filterEntitledModelOptions } from "@/react-app/domains/connections/provider-auth/provider-policy";
+import { filterEntitledModelOptions, hideBuiltInZenFallback } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import {
   filterCloudManagedModelOptions,
   mergeModelOptions,
@@ -166,10 +166,10 @@ export function useModelPicker(input: UseModelPickerInput) {
     const restrictToCloud = checkDesktopRestriction({
       restriction: "allowCustomProviders",
     });
-    return filterEntitledModelOptions(modelOptions, {
+    return hideBuiltInZenFallback(filterEntitledModelOptions(modelOptions, {
       restrictToCloud,
       checkRestriction: checkDesktopRestriction,
-    });
+    }));
   }, [checkDesktopRestriction, modelOptions]);
 
   const catalogState: ModelPickerCatalogState = {

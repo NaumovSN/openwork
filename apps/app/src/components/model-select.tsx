@@ -16,7 +16,7 @@ import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { AutoAccessFooter, openAutoProviderSettings, useObservedAutoAccessSnapshot } from "@/react-app/domains/cloud/auto-access-ui";
 import { filterCloudManagedModelOptions, mergeModelOptions } from "@/react-app/domains/connections/provider-auth/assigned-model-options";
 import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
-import { filterEntitledModelOptions, isProviderAllowedByDesktopPolicy } from "@/react-app/domains/connections/provider-auth/provider-policy";
+import { filterEntitledModelOptions, hideBuiltInZenFallback, isProviderAllowedByDesktopPolicy } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import { openModelPickerEvent, openProviderAuthEvent } from "@/react-app/shell/new-providers-listener";
 import { newProvidersEvent } from "@/app/lib/provider-events";
@@ -97,7 +97,7 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
   const autoSnapshot = useObservedAutoAccessSnapshot();
   const autoStatus = autoSnapshot?.data;
   const explicitBlock = savedSelection && modelRefKey(savedSelection.model) === modelRefKey(value) && ["policy", "disabled"].includes(savedSelection.reason);
-  const options = React.useMemo(() => withAutoDefaultPin(filterEntitledModelOptions(rawOptions, { restrictToCloud, checkRestriction })
+  const options = React.useMemo(() => withAutoDefaultPin(hideBuiltInZenFallback(filterEntitledModelOptions(rawOptions, { restrictToCloud, checkRestriction }))
     .filter((option) => !explicitBlock || modelRefKey(option) !== modelRefKey(value)), autoStatus), [rawOptions, restrictToCloud, checkRestriction, autoStatus, explicitBlock, value]);
   const policyBlocked = Boolean(value.providerID) && !isProviderAllowedByDesktopPolicy({ providerId: value.providerID, restrictToCloud, checkRestriction });
   const catalogState: ModelPickerCatalogState = { state: providers.isError ? "error" : workspace.client && providers.isPending ? "loading" : "ready",
