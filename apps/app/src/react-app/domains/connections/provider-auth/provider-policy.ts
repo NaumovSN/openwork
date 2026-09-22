@@ -58,18 +58,32 @@ export function isProviderAddRestrictedByDesktopPolicy(input: ProviderAddRestric
   });
 }
 
-export function filterEntitledModelOptions<T extends Pick<ModelOption, "providerID"> & { disabled?: boolean }>(
+const BUILT_IN_ZEN_PROVIDER_ID = "opencode";
+
+/**
+ * The engine's built-in OpenCode Zen models are a silent fallback, not a
+ * provider people chose: they stay listed only while nothing else is
+ * available. Zen models unlocked with a pasted API key are connected models
+ * and always stay listed. Matches the picker designs, which show Zen only
+ * under Connect a provider.
+ */
+export function hideBuiltInZenFallback<T extends Pick<ModelOption, "providerID"> & { isFree?: boolean }>(options: readonly T[]): T[] {
+  const fallback = (option: T) => option.providerID === BUILT_IN_ZEN_PROVIDER_ID && option.isFree === true;
+  return options.some((option) => !fallback(option)) ? options.filter((option) => !fallback(option)) : [...options];
+}
+
+export function filterEntitledModelOptions<T extends Pick<ModelOption, "providerID"> & { disabled?: boolean; isFree?: boolean }>(
   options: readonly T[],
   input: FilterEntitledModelOptionsInput,
 ): T[] {
-  return options.filter((option) => {
+  return hideBuiltInZenFallback(options.filter((option) => {
     if (option.disabled) return false;
     return isProviderAllowedByDesktopPolicy({
       providerId: option.providerID,
       restrictToCloud: input.restrictToCloud,
       checkRestriction: input.checkRestriction,
     });
-  });
+  }));
 }
 
 export function resolveEntitledOrgDefaultModel(
