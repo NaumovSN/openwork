@@ -22,6 +22,7 @@ export type UpdateRequestLog = (row: GatewayRequestLogRow) => Promise<boolean>
 
 export type RequestLogStartInput = {
   identity: Pick<InferenceContext, "kind" | "organizationId" | "orgMembershipId" | "inferenceKeyId"> | GatewayContext
+    | { kind: "free"; organizationId: GatewayRequestLogRow["organization_id"]; orgMembershipId: NonNullable<GatewayRequestLogRow["org_membership_id"]> }
   openworkRequestId: string
   route: GatewayRequestRoute
   protocol: GatewayRequestProtocol

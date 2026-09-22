@@ -280,7 +280,7 @@ describe("Gateway usage", () => {
     expect(usage).toContain("https://openworklabs.com/docs/ai-gateway/token-costs");
     expect(usage).toContain('unknownCost ? "Unknown" : formatUsageCost(usage.totalCostMicroUsd)');
     expect(usage).toContain('valueFormat={isCost ? "usd" : "tokens"}');
-    expect(usage).toContain("Gateway providers only. OpenWork Models not included.");
+    expect(usage).toContain("All Gateway providers, including OpenWork Models.");
     expect(usage).toContain("query.isPending || query.isFetching || query.isPlaceholderData");
     expect(usage).toContain('"Usage unavailable"');
   });

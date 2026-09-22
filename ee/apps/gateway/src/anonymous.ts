@@ -19,6 +19,9 @@ import { createDesktopFreeVersionSource } from "./desktop-free-version.js"
 import { prepareFreeRequest, readFreeRequest, FreeRequestError } from "./free-request.js"
 import { meterFreeResponse } from "./free-response.js"
 import { env } from "./env.js"
+import { createRequestLogRecorder, insertRequestLogIntoDb, updateRequestLogInDb, type InsertRequestLog, type UpdateRequestLog } from "./request-log.js"
+import { safeInferenceReporter, sentryInferenceReporter, type InferenceReporter } from "./inference-reporting.js"
+import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
 
 const sessionSchema = z.strictObject({ installationId: z.string().uuid() })
 export type FreeRouteDependencies = {
@@ -29,12 +32,15 @@ export type FreeRouteDependencies = {
   clientAddress: (c: Context) => string | null;
   findMember: typeof findMemberFreePrincipal;
   defaultPinned: typeof readFreePrincipalDefaultPinned;
+  /** Member Auto requests join the organization's Gateway usage; guests stay per device and are never logged here. */
+  usageLog?: { insert: InsertRequestLog; update?: UpdateRequestLog; reporter?: InferenceReporter };
 }
 function defaults(): FreeRouteDependencies {
   const config = env.freeAuto
   return { config, store: createFreeAllowanceStore(config), fetch: createInferenceEgressFetch(),
     latestVersion: createDesktopFreeVersionSource({ url: config.versionUrl }),
-    clientAddress: (c) => resolveAnonymousClientAddress(c, config), findMember: findMemberFreePrincipal, defaultPinned: readFreePrincipalDefaultPinned }
+    clientAddress: (c) => resolveAnonymousClientAddress(c, config), findMember: findMemberFreePrincipal, defaultPinned: readFreePrincipalDefaultPinned,
+    usageLog: { insert: insertRequestLogIntoDb, update: updateRequestLogInDb } }
 }
 function bearer(request: Request) {
   if (["x-api-key", "x-goog-api-key", "api-key"].some((name) => request.headers.has(name))) return null
@@ -127,6 +133,19 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
       const requestId = randomBytes(16).toString("hex")
       const admission = await store.reserve(auth.principal, auth.ipHash, requestId, deadlineAt)
       if (!admission.ok) return desktopFreeGateError(admission.code === "free_request_in_progress" ? 423 : 429, admission.code)
+      const usageLog = auth.principal.kind === "member" && dependencies.usageLog ? createRequestLogRecorder({
+        insertRequestLog: dependencies.usageLog.insert, updateRequestLog: dependencies.usageLog.update,
+        reporter: safeInferenceReporter(dependencies.usageLog.reporter ?? sentryInferenceReporter),
+      }) : null
+      if (usageLog && auth.principal.kind === "member") {
+        usageLog.start({
+          identity: { kind: "free", organizationId: auth.principal.organizationId, orgMembershipId: auth.principal.memberId },
+          openworkRequestId: requestId, route: "openwork_openrouter", protocol: "openai_chat", upstreamProviderId: "openrouter",
+          upstreamHost: "openrouter.ai", upstreamPath: "/api/v1/chat/completions", method: "POST",
+          requestedModel: INFERENCE_FREE_MODEL_ID, upstreamModel: INFERENCE_FREE_MODEL_ID, stream: prepared.stream, signal,
+        })
+        await usageLog.whenStarted?.()
+      }
       let dispatched = false
       try {
         signal.throwIfAborted()
@@ -143,15 +162,23 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
           controller.abort()
           await response.body?.cancel().catch(() => undefined)
           await store.settle(requestId, null)
+          await usageLog?.finish({ status: response.status, outcome: "upstream_error", errorCode: "free_inference_upstream_error" })
           return desktopFreeGateError(502, "free_inference_upstream_error", "Auto did not finish. Unconfirmed usage is retained conservatively.")
         }
+        usageLog?.markFirstByte()
         const body = meterFreeResponse(response.body, { streaming: prepared.stream, maxBytes: config.maxResponseBytes, signal,
-          settle: async (receipt) => { await store.settle(requestId, receipt) } })
+          settle: async (receipt) => {
+            await store.settle(requestId, receipt)
+            if (!usageLog) return
+            if (receipt) usageLog.setUsage({ usageSource: prepared.stream ? "stream" : "json", inputTokens: receipt.inputTokens, outputTokens: receipt.outputTokens, costUsd: receipt.amount / INFERENCE_USAGE_CONVERSION_FACTOR })
+            await usageLog.finish(receipt ? { status: 200, outcome: "ok" } : { status: 200, outcome: "upstream_error", errorCode: "free_usage_unconfirmed" })
+          } })
         return new Response(body, { headers: { "content-type": contentType, "cache-control": "no-store", "x-openwork-request-id": requestId } })
       } catch {
         controller.abort()
         const cancelled = !dispatched && await store.cancelUndispatched(requestId).catch(() => false)
         if (!cancelled) await store.settle(requestId, null).catch(() => undefined)
+        await usageLog?.finish({ status: null, outcome: cancelled ? "rejected" : "upstream_unreachable", errorCode: "free_inference_upstream_error" }).catch(() => undefined)
         return desktopFreeGateError(502, "free_inference_upstream_error", cancelled
           ? "Auto was not dispatched. No allowance was consumed." : "Auto did not finish. Unconfirmed usage is retained conservatively.")
       }
