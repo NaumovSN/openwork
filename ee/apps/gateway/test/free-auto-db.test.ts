@@ -8,7 +8,7 @@ import {
   InferenceFreeUsageBucketTable as Bucket, InferenceFreeReservationTable as Reservation,
   InferenceFreeReservationChargeTable as Charge, InferenceFreeControlTable as Control,
   AnonymousInferenceUsageBucketTable as GuestBucket, AnonymousInferenceReservationChargeTable as GuestCharge,
-  InferenceOrgUsageBucketTable, InferenceUsageLedgerEntryTable, OrgSubscriptionTable,
+  InferenceOrgUsageBucketTable, InferenceUsageLedgerEntryTable, OrgSubscriptionTable, DesktopPolicyTable,
 } from "@openwork-ee/den-db"
 import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
@@ -99,7 +99,7 @@ test("free Auto SQL and 0114 upgrade in an owned random database", { skip: !admi
   const rows = async (statement: string, values: unknown[] = []) => records((await connection.query(statement, values))[0])
   const before = snapshotSchema.parse(JSON.parse(await readFile(new URL("../../../packages/den-db/drizzle/meta/0113_snapshot.json", import.meta.url), "utf8")))
   const after = snapshotSchema.parse(JSON.parse(await readFile(new URL("../../../packages/den-db/drizzle/meta/0114_snapshot.json", import.meta.url), "utf8")))
-  const baseline = ["user", "organization", "member", "org_subscriptions", "gateway_providers", "inference_keys", "inference_org_limit_policies", "inference_org_usage_buckets", "inference_usage_ledger_entries", "inference_usage_ledger_bucket_charges", "gateway_request_logs", "gateway_usage_rollups"]
+  const baseline = ["user", "organization", "member", "org_subscriptions", "gateway_providers", "inference_keys", "inference_org_limit_policies", "inference_org_usage_buckets", "inference_usage_ledger_entries", "inference_usage_ledger_bucket_charges", "gateway_request_logs", "gateway_usage_rollups", "desktop_policy", "desktop_policy_member", "team", "team_member"]
   for (const name of baseline) await connection.query(baselineSql(before.tables[name]))
   await connection.query("INSERT INTO gateway_providers (id,organization_id,created_by_org_membership_id,provider_id,name,model_ids,provider_config,settings) VALUES ('old-provider','org-fixture','member-fixture','fixture','Existing provider',JSON_ARRAY('kept-model'),JSON_OBJECT(),JSON_OBJECT())")
   await t.test("0114 executes over 0113 table shapes and preserves old rows with empty default pins", async () => {
@@ -329,6 +329,16 @@ test("free Auto SQL and 0114 upgrade in an owned random database", { skip: !admi
     const next = await admit(member.principal)
     assert.equal((await reservation(broken.requestId)).status, "retained", "the next admission set the broken hold aside")
     assert.equal(await store.cancelUndispatched(next.requestId), true)
+  })
+
+  await t.test("an organization whose default desktop policy allows only managed providers is not offered free Auto", async () => {
+    const member = await person(), policyId = createDenTypeId("desktopPolicy")
+    await db.insert(DesktopPolicyTable).values({ id: policyId, organizationId: member.input.organizationId, policyName: "Managed only",
+      isDefault: true, isEnabled: true, policy: { allowCustomProviders: false, allowZenModel: false }, createdByOrgMemberId: member.input.memberId })
+    assert.equal(await ensureMemberFreeInferenceCredential(member.input), null)
+    assert.equal((await getMemberInferenceAccess(member.input)).reason, "admin_disabled")
+    await db.update(DesktopPolicyTable).set({ policy: { allowCustomProviders: true, allowZenModel: false } }).where(eq(DesktopPolicyTable.id, policyId))
+    assert.ok(await ensureMemberFreeInferenceCredential(member.input), "custom providers allowed again: Auto is offered again")
   })
 
   await t.test("an organization Stripe still collects for is refused free Auto even when its Models flag is lost", async () => {
