@@ -21,7 +21,7 @@ const pricingSchema = {
       url: "https://app.openworklabs.com?mode=sign-up",
       availability: "https://schema.org/InStock",
       description:
-        "Free for up to 5 users. Open source desktop app with bring-your-own-keys; self-host the full platform."
+        "First 5 seats free on OpenWork Cloud. Open source desktop app with bring-your-own-keys; self-host the full platform free for organizations up to 5 users."
     },
     {
       "@type": "Offer",
@@ -42,26 +42,26 @@ const pricingSchema = {
     {
       "@type": "Offer",
       name: "Enterprise",
-      price: "40",
+      price: "20",
       priceCurrency: "USD",
       url: "https://openworklabs.com/enterprise",
       availability: "https://schema.org/InStock",
       priceSpecification: {
         "@type": "UnitPriceSpecification",
-        price: "40",
+        price: "20",
         priceCurrency: "USD",
         unitText: "user per month"
       },
       description:
-        "$40 per user per month billed annually, cloud or self-hosted. SSO/SAML and SCIM, desktop policies, audit log, spend observability, standard SLA support. Volume pricing above 250 users."
+        "$20 per user per month billed annually, cloud or self-hosted. SSO/SAML and SCIM, desktop policies, audit log, spend observability, standard SLA support. Volume pricing above 250 users."
     }
   ]
 };
 
 export const metadata = withSocialMetadata({
-  title: "OpenWork Pricing — Free up to 5 users, $10 Team, $40 Enterprise",
+  title: "OpenWork Pricing — First 5 Cloud seats free, $10 Team, $20 Enterprise",
   description:
-    "OpenWork is free for up to 5 users. Team is $10 per seat per month. Enterprise is $40 per user per month, billed annually, with SSO, desktop policies, and spend observability — same price cloud or self-hosted, volume pricing above 250 users. Add-ons: OpenWork Cloud Computer and OpenWork models.",
+    "First 5 seats free on OpenWork Cloud, then Team $10 per seat/month; self-hosting is free for organizations up to 5 users. Enterprise $20 per user/month with SSO and desktop policies.",
   alternates: {
     canonical: "/pricing"
   },

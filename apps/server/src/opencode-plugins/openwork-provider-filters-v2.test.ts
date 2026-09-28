@@ -32,6 +32,37 @@ test("v1 allow and deny lists filter built-in models and explicit overrides toge
   expect(disposed).toBe(true);
 });
 
+test("v1 disabled_providers hide built-in and mirrored providers in v2, and re-enabling restores them", async () => {
+  const { specs } = mapRuntimeProvidersToV2Specs({ openai: {
+    npm: "@ai-sdk/openai", options: { apiKey: "synthetic-key" }, models: { gpt: {} },
+  } });
+  const disabled = renderOpencodeV2Config({
+    providers: specs,
+    disabledProviderIds: ["opencode", "openai"],
+    skills: [],
+    providerFiltersPluginDirectory: "/runtime/filters",
+  });
+  expect(disabled.providers).toEqual({});
+  expect(disabled.plugins).toEqual([{ package: "file:///runtime/filters", options: {
+    providers: { opencode: { whitelist: [] }, openai: { whitelist: [] } },
+  } }]);
+  const removed: string[] = [];
+  await filters.setup({ options: { providers: { opencode: { whitelist: [] } } }, catalog: {
+    async transform(callback) {
+      callback({ provider: { list: () => [
+        { provider: { id: "opencode" }, models: new Map([["big-pickle", {}], ["nemotron-free", {}]]) },
+        { provider: { id: "ollama" }, models: new Map([["llama", {}]]) },
+      ] }, model: { remove: (provider, model) => { removed.push(`${provider}/${model}`); } } });
+      return { async dispose() {} };
+    },
+  } });
+  expect(removed).toEqual(["opencode/big-pickle", "opencode/nemotron-free"]);
+
+  const enabled = renderOpencodeV2Config({ providers: specs, disabledProviderIds: [], skills: [], providerFiltersPluginDirectory: "/runtime/filters" });
+  expect(enabled.providers).toMatchObject({ openai: { models: { gpt: { name: "gpt" } } } });
+  expect(enabled.plugins).toBeUndefined();
+});
+
 test("an empty v1 whitelist stays empty rather than becoming unrestricted", () => {
   const { specs } = mapRuntimeProvidersToV2Specs({ openai: { npm: "@ai-sdk/openai", whitelist: [], models: { excluded: {} } } });
   expect(specs[0]?.whitelist).toEqual([]);

@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto"
+import { requiresAdminError } from "../../agent-error-envelope.js"
 import { and, desc, eq, gt, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, LlmProviderAccessTable, LlmProviderMemberCredentialTable, LlmProviderModelTable, LlmProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -14,7 +15,7 @@ import { env } from "../../env.js"
 import { gatewayManagementUnavailable, gatewayManagementUnavailableSchema } from "../../gateway-deployment.js"
 import { ensureMemberGatewayKey } from "../../gateway-keys.js"
 import { gatewayMemberConnections } from "../../llm/gateway-member-connections.js"
-import { GatewayWriteError, enableGatewayGroupModels, gatewayCatalog, gatewayGrantSummary, gatewaySummary, refreshGatewayCatalog, resolveGatewayCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
+import { GatewayWriteError, reusableAwsCredential, enableGatewayGroupModels, gatewayCatalog, gatewayGrantSummary, gatewaySummary, refreshGatewayCatalog, resolveGatewayCatalog, validateGatewaySettings, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "../../llm/gateway-matrix.js"
 import { gatewayConfigurationError, gatewayModelConfigurationError, isSupportedGatewayNpm, nonSecretProviderConfig, publicProviderSettings, readProviderConfigNpm } from "../../llm/inference-provider-config.js"
 import { buildGoogleAuthorizeUrl, exchangeGoogleAuthorizationCode, googleOAuthClientBinding, googleOAuthNonce, readGoogleOAuthAttempt, revokeGoogleToken, verifyGoogleIdentity } from "../../llm/inference-provider-google-oauth.js"
 import { effectiveGatewayGrants, lockMemberOAuthAuthorization, memberGatewayTeams, revokeGoogleCredentials } from "../../llm/inference-provider-lifecycle.js"
@@ -53,7 +54,8 @@ const grantWrite = z.object({ modelGroupId: denTypeIdSchema("gatewayModelGroup")
 const settingsSchema = z.object({ project: z.string().trim().max(255).optional(), location: z.string().trim().max(63).optional(), resourceName: z.string().trim().max(63).optional(), apiVersion: z.string().trim().max(64).optional(), region: z.string().trim().max(63).optional(), upstreamBaseUrl: z.string().trim().max(2048).optional() }).strict()
 const legacyFields = { credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES).optional(), credential: credentialSchema.optional(), apiKeys: apiKeysSchema.optional(), ...oauthFields, allMembers: z.boolean().optional(), memberIds: z.array(denTypeIdSchema("member")).max(500).optional(), teamIds: z.array(denTypeIdSchema("team")).max(500).optional() }
 const universeSchema = modelIdsSchema.describe("Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.")
-const createSchema = z.object({ name: nameSchema, providerId: nameSchema, modelIds: universeSchema.default([]), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields }).strict().superRefine(singleCredential)
+const reuseCredentialFromSchema = denTypeIdSchema("inferenceProvider").describe("Amazon Bedrock only: copy the organization AWS keys of another Amazon Bedrock provider in this organization, server-side. Mutually exclusive with credential and apiKeys.")
+const createSchema = z.object({ name: nameSchema, providerId: nameSchema, modelIds: universeSchema.default([]), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields, reuseCredentialFrom: reuseCredentialFromSchema.optional() }).strict().superRefine(singleCredential)
 const patchSchema = z.object({ name: nameSchema.optional(), providerId: nameSchema.optional(), modelIds: universeSchema.optional(), pinnedModelIds: pinnedModelIdsSchema.optional(), settings: settingsSchema.optional(), status: z.enum(GATEWAY_PROVIDER_STATUSES).optional(), ...legacyFields }).strict().superRefine((input, ctx) => {
   singleCredential(input, ctx)
   if (input.pinnedModelIds !== undefined && Object.keys(input).length !== 1) {
@@ -61,8 +63,11 @@ const patchSchema = z.object({ name: nameSchema.optional(), providerId: nameSche
   }
 })
 const oauthQuery = z.object({ credentialSetId: denTypeIdSchema("gatewayCredentialSet").optional(), redirectTo: z.string().trim().min(1).max(2048).optional() }).strict()
-function singleCredential(input: { credential?: unknown; apiKeys?: unknown }, ctx: z.RefinementCtx) {
+function singleCredential(input: { credential?: unknown; apiKeys?: unknown; reuseCredentialFrom?: unknown; credentialMode?: unknown }, ctx: z.RefinementCtx) {
   if (input.credential !== undefined && input.apiKeys !== undefined) ctx.addIssue({ code: "custom", message: "Provide credential or apiKeys, not both." })
+  if (input.reuseCredentialFrom !== undefined && (input.credential !== undefined || input.apiKeys !== undefined || input.credentialMode === "member")) {
+    ctx.addIssue({ code: "custom", message: "reuseCredentialFrom replaces credential and apiKeys and requires organization credentials." })
+  }
 }
 
 const groupSchema = groupWrite.extend({ id: denTypeIdSchema("gatewayModelGroup"), description: z.string().nullable(), status: z.enum(GATEWAY_PROVIDER_STATUSES) })
@@ -113,7 +118,7 @@ async function liveMember(database: GatewayTx | typeof db, actor: Actor, lock: b
   const [member] = await (lock ? query.for("update") : query)
   if (!member?.userId) throw new GatewayWriteError(403, "forbidden")
   if (manage && !ensureOrganizationAdminRole({ get: () => ({ ...actor, currentMember: { ...actor.currentMember, role: member.role, isOwner: memberHasRole(member.role, "owner") } }) }, managementMessage).ok) {
-    throw new GatewayWriteError(403, "forbidden")
+    throw new GatewayWriteError(403, "forbidden", managementMessage)
   }
   return member
 }
@@ -125,7 +130,13 @@ async function getProvider(database: GatewayTx | typeof db, actor: Actor, id: st
   return provider
 }
 function respond(c: { json: (body: unknown, status: 400 | 403 | 404 | 409) => Response }, error: unknown) {
-  if (error instanceof GatewayWriteError) return c.json({ error: error.code, message: error.message }, error.status)
+  if (error instanceof GatewayWriteError) {
+    // Management needs an owner or admin: say so in the shared agent envelope.
+    if (error.status === 403 && error.message === managementMessage) {
+      return c.json({ error: error.code, ...requiresAdminError(managementMessage, "/dashboard/ai-gateway") }, error.status)
+    }
+    return c.json({ error: error.code, message: error.message }, error.status)
+  }
   throw error
 }
 function publicBase(request: Request) {
@@ -309,7 +320,8 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         const member = await liveMember(tx, actor, true, true)
         await tx.insert(GatewayProviderTable).values(provider)
         await writeGatewayModels(tx, provider, catalog.models)
-        await defaultMatrix(tx, provider, input, member.id)
+        const credential = input.reuseCredentialFrom === undefined ? input.credential : await reusableAwsCredential(tx, provider, input.reuseCredentialFrom)
+        await defaultMatrix(tx, provider, { ...input, credential }, member.id)
       })
       return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true) }, 201)
     } catch (error) { return respond(c, error) }
@@ -799,7 +811,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
         if (source.source !== "models_dev" || source.credentialMode === "per_member" || memberCredentials.length) throw invalid("Only shared models.dev providers can be converted.")
         const npm = readProviderConfigNpm(source.providerConfig)
         if (!isSupportedGatewayNpm(npm) || !trusted || trusted.id !== source.providerId || trusted.npm !== npm) throw invalid("The provider SDK does not match the trusted catalog.")
-        if (["@ai-sdk/azure", "@ai-sdk/google-vertex", "@ai-sdk/google-vertex/anthropic"].includes(npm)) throw invalid("Azure/Vertex needs explicit gateway configuration.")
+        if (["@ai-sdk/azure", "@ai-sdk/google-vertex", "@ai-sdk/google-vertex/anthropic", "@ai-sdk/amazon-bedrock", "@ai-sdk/amazon-bedrock/mantle"].includes(npm)) throw invalid("Azure/Vertex/Bedrock needs explicit gateway configuration.")
         const config = nonSecretProviderConfig(source.providerConfig)
         if (JSON.stringify(config) !== JSON.stringify(source.providerConfig) || gatewayConfigurationError(config, {})) throw invalid("Inline secrets or unresolved provider configuration cannot be migrated.")
         const options = typeof config.options === "object" && config.options !== null ? config.options : {}

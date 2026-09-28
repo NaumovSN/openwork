@@ -1,3 +1,4 @@
+import { peopleMemberCondition } from "./setup-agent-members.js"
 import Stripe from "stripe"
 import { and, eq, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
@@ -209,7 +210,7 @@ async function activeMemberCount(organizationId: OrgId) {
   const [row] = await db
     .select({ count: sql<number>`count(*)` })
     .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
+    .where(and(eq(MemberTable.organizationId, organizationId), peopleMemberCondition()))
   return Math.max(0, Number(row?.count ?? 0))
 }
 
@@ -220,7 +221,7 @@ async function joinedMemberCount(organizationId: OrgId) {
     .where(and(
       eq(MemberTable.organizationId, organizationId),
       isNotNull(MemberTable.joinedAt),
-      isNull(MemberTable.removedAt),
+      peopleMemberCondition(),
     ))
   return normalizeSeatCount(Number(row?.count ?? 0))
 }

@@ -250,6 +250,42 @@ test("key dispatch leaves native codes to Chrome and retains explicit editing co
   ]);
 });
 
+test("Enter dispatch includes text for native button activation without adding it to shortcuts", async () => {
+  for (const key of ["Enter", "Shift+Enter", "Control+Enter", "Meta+Enter", "Alt+Enter"]) {
+    const surface = surfaceReturning(null);
+    const events: unknown[] = [];
+    surface.client.send = async (method, params) => {
+      assert.equal(method, "Input.dispatchKeyEvent");
+      events.push(params);
+      return {};
+    };
+    await pressKey(surface, key);
+    const descriptor = mapKey(key);
+    const text = key === "Enter" || key === "Shift+Enter" ? { text: "\r" } : {};
+    assert.deepEqual(events, [
+      { type: "keyDown", ...descriptor, ...text },
+      { type: "keyUp", ...descriptor },
+    ]);
+  }
+});
+
+test("paste shortcuts dispatch Chromium's native paste command", async () => {
+  for (const [key, modifiers] of [["Meta+V", 4], ["Control+V", 2]] satisfies [string, number][]) {
+    const surface = surfaceReturning(null);
+    const events: unknown[] = [];
+    surface.client.send = async (method, params) => {
+      assert.equal(method, "Input.dispatchKeyEvent");
+      events.push(params);
+      return {};
+    };
+    await pressKey(surface, key);
+    assert.deepEqual(events, [
+      { type: "keyDown", key: "V", code: "KeyV", windowsVirtualKeyCode: 86, modifiers, commands: ["paste"] },
+      { type: "keyUp", key: "V", code: "KeyV", windowsVirtualKeyCode: 86, modifiers },
+    ]);
+  }
+});
+
 test("click readiness waits for stable geometry rather than hitting a moving menu option", async () => {
   const surface = surfaceReturning(null);
   let inspections = 0;

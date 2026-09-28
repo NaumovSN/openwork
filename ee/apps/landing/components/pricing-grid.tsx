@@ -112,18 +112,18 @@ export function PricingGrid(props: PricingGridProps) {
       id: "free",
       title: "Free",
       price: "$0",
-      priceSub: "up to 5 users",
+      priceSub: "first 5 Cloud seats",
       ctaLabel: "Get Started for free",
       href: CLOUD_SIGNUP_URL,
       external: true,
       features: [
         { text: "Open source desktop app (MIT)", icon: Code2 },
-        { text: "Self-host the full platform, including the org control plane", icon: Server },
+        { text: "Self-host the full platform, free for organizations up to 5 users", icon: Server },
         { text: "Bring your own keys", icon: KeyRound },
         { text: "macOS, Windows, and Linux downloads", icon: Download },
         { text: "Community support", icon: Plug },
       ],
-      footer: "Free forever for up to 5 users",
+      footer: "First 5 Cloud seats free, any team size",
     },
     {
       id: "team",
@@ -147,7 +147,7 @@ export function PricingGrid(props: PricingGridProps) {
     {
       id: "enterprise",
       title: "Enterprise",
-      price: "$40",
+      price: "$20",
       priceSub: "per user / month, billed annually",
       ctaLabel: "Talk to us",
       href: props.callUrl,
@@ -221,11 +221,11 @@ export function PricingGrid(props: PricingGridProps) {
       </div>
 
       <p className="text-center text-[12px] font-medium text-gray-500">
-        Add-ons are available on Team and Enterprise. Prices exclude taxes. Same pricing for OpenWork Cloud
+        Add-ons are available on Team and Enterprise. Prices exclude taxes. Paid plans cost the same on OpenWork Cloud
         and self-hosted. No deployment fees.
       </p>
       <p className="text-center text-[12px] font-medium text-gray-500">
-        Self-hosting the control plane is free for up to 5 users (excluding Enterprise Features such as
+        Self-hosting the control plane is free for organizations with up to 5 users (excluding Enterprise Features such as
         SSO, analytics, desktop policies, and white-labeling), free for development and testing, and
         free to evaluate for 30 days at any size with all features — see the{" "}
         <a
