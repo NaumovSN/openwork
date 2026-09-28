@@ -96,14 +96,14 @@ test("an organization Stripe still collects for is never downgraded to free Auto
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toMatch(/^ow_inf_/)
 })
 
-test("an organization whose desktop policy allows only its managed providers gets no free Auto", async () => {
-  desktopPolicy = { allowCustomProviders: false, allowZenModel: true }
+test("an organization that turns off the free starter model gets no free Auto", async () => {
+  desktopPolicy = { allowCustomProviders: true, allowZenModel: false }
   expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
   results = [[{ metadata: {}, nowMs: now.getTime() }], []]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "unavailable", reason: "admin_disabled" })
   expect(writes).toEqual([])
-  // The same organization with custom providers allowed is offered Auto as before.
-  desktopPolicy = { allowCustomProviders: true, allowZenModel: false }
+  // Only models the organization provides, with the free starter model on, still offers Auto.
+  desktopPolicy = { allowCustomProviders: false, allowZenModel: true }
   results = [[{ metadata: {} }], [], [person], []]
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toMatch(/^ow_inf_/)
 })
