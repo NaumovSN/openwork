@@ -105,7 +105,9 @@ export async function startNativeSlackFixture() {
         const id = randomUUID();
         pending.set(id, { state, redirectUri });
         const button = (choice: string, label: string) => `<form action="/consent"><input type="hidden" name="flow" value="${id}"><button name="choice" value="${choice}">${label}</button></form>`;
-        response.writeHead(200, { "content-type": "text/html", "cache-control": "no-store", "content-security-policy": "default-src 'none'; form-action 'self'" });
+        // Chrome applies form-action to the redirect chain as well. Permit only
+        // the already validated, test-owned callback origin—not arbitrary hosts.
+        response.writeHead(200, { "content-type": "text/html", "cache-control": "no-store", "content-security-policy": `default-src 'none'; form-action 'self' ${new URL(redirectUri).origin}` });
         response.end(`<!doctype html><html><title>Synthetic Slack consent</title><h1>Synthetic Slack consent</h1><p>Read synthetic conversations using your own member identity. No messages will be sent.</p>${button("first", "Authorize member one")}${button("second", "Authorize member two")}${button("public", "Authorize public access only")}${button("blocked", "Authorize blocked workspace")}</html>`);
         return;
       }
