@@ -380,6 +380,16 @@ test("the release tag must come from the secret of the claimed version, the prev
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${devGuest.token}`, undefined, { version: "0.0.0-dev", source: devGuest.source, secret: devSecret }))).status, 401, "but only when the gateway is in dev mode")
 })
 
+test("switched-off guest Auto says free_disabled, not unavailable, on every guest route and touches nothing", async () => {
+  const f = fixture({ config: { ...config, anonymousEnabled: false } })
+  for (const request of [signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`), signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt)]) {
+    const response = await f.app.fetch(request)
+    assert.equal(response.status, 503)
+    assert.equal((await response.json()).error.code, "free_disabled")
+  }
+  assert.equal(f.requests.length, 0)
+})
+
 test("an untagged (v2) proof is always refused with the update wall, since no released build sends one", async () => {
   const f = fixture()
   const response = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))
