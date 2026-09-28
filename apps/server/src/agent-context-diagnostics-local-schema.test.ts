@@ -129,6 +129,7 @@ describe("agent context diagnostics server-local schema parity", () => {
           needsReconnect: false,
           missingFeatureCount: 0,
           policyBlocked: true,
+          policyOwner: "openwork",
           limitedAccess: false,
         },
         {
@@ -161,6 +162,9 @@ describe("agent context diagnostics server-local schema parity", () => {
     for (const unsafeFields of [
       { policyBlocked: "true" },
       { limitedAccess: "true" },
+      { policyOwner: "organization-admin" },
+      { policyOwner: "unknown" },
+      { policyOwner: { name: "private-controller-canary" } },
       { policyMessage: "Private policy details" },
       { externalAccountId: "private-account-canary" },
       { grantedScopes: ["private-scope-canary"] },

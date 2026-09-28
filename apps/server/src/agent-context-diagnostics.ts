@@ -1014,6 +1014,9 @@ function organizationCheck(request: AgentContextDiagnosticsRequest): AgentContex
     });
   }
   const policyBlockedCount = request.organizationConnections.filter((connection) => connection.policyBlocked).length;
+  const allPolicyBlocksOwnedByOpenwork = policyBlockedCount > 0 && request.organizationConnections.every((connection) =>
+    !connection.policyBlocked || connection.policyOwner === "openwork",
+  );
   const limitedAccessCount = request.organizationConnections.filter((connection) =>
     connection.limitedAccess
     && !connection.policyBlocked
@@ -1069,9 +1072,11 @@ function organizationCheck(request: AgentContextDiagnosticsRequest): AgentContex
       ? "member-and-organization-admin"
       : memberActionCount > 0
         ? "member"
-        : organizationAdminActionCount > 0 || policyBlockedCount > 0
+        : organizationAdminActionCount > 0
           ? "organization-admin"
-          : "openwork-client",
+          : policyBlockedCount > 0
+            ? allPolicyBlocksOwnedByOpenwork ? "openwork-support" : "member"
+            : "openwork-client",
     action: truncated
       ? "Review organization connection readiness in Den for the complete inventory."
       : memberAndAdminAction
@@ -1087,7 +1092,9 @@ function organizationCheck(request: AgentContextDiagnosticsRequest): AgentContex
             ? "Ask an organization administrator to repair only shared connections marked as not ready in Den, then rerun diagnostics."
             : "Ask an organization administrator to repair the listed shared connections in Den, then rerun diagnostics."
           : policyBlockedCount > 0
-            ? "Ask an administrator to review connection availability. Signing in again cannot remove a policy block."
+            ? allPolicyBlocksOwnedByOpenwork
+              ? "Ask an OpenWork administrator to review connection availability. Signing in again cannot remove a policy block."
+              : "The policy controller was not identified for every blocked connection. Review each blocked connection's availability explanation in Settings > Connect to find who can change access. Signing in again cannot remove a policy block."
             : "No action is required.",
     details: {
       connectionCount: request.organizationConnectionsProbe.totalCount,

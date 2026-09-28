@@ -44,6 +44,7 @@ export type NativeProviderConnectionEntry = {
   /** Account-management visibility only; blocked rows never enter capability discovery. */
   policyBlocked?: boolean
   policyMessage?: string
+  policyOwner?: "openwork"
   /** Which service this connector fronts ("google-workspace"), so an admin-named card ("Acme Labs") can still say what it signs in to. */
   nativeProviderKey: string
   externalAccountId?: string | null
@@ -262,6 +263,7 @@ export async function listBlockedNativeProviderAccountEntries(input: {
     nativeProviderKey: "slack",
     policyBlocked: true,
     policyMessage: message,
+    policyOwner: "openwork",
     requiredBy: [],
     access: null,
   }]

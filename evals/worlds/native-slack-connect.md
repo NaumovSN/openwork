@@ -63,7 +63,7 @@ return `policy_blocked`, while the existing account remains removable.
 
 The local app-web stack boots a V1 compatibility primary even when chat is routed to V2. Supply both repository-pinned binaries through `OPENWORK_OPENCODE_BIN` and `OPENWORK_OPENCODE2_BIN`; a V2 binary on the generic `opencode` PATH cannot satisfy the V1 launcher. Prepare verified sidecars with the repository's `prepare:sidecar` script rather than relaxing startup parsing or changing the machine's OpenCode installation.
 
-With `--engine v2`, the journey checks both public V2 runtime statuses against the build manifest, distinct process IDs, and native message history for the actual UI conversation. The CLI selection alone is not the runtime witness.
+With `--engine v2`, the journey checks both public V2 runtime statuses against the build manifest, distinct process IDs, and native message history for the actual UI conversation. The CLI selection alone is not the runtime witness. Set `CHROME_BIN` to an isolated Chrome-for-Testing executable when system Chrome is absent; the harness owns its temporary browser profiles. MySQL and Redis can be supplied by `packaging/docker/docker-compose.web-local.yml`, with a loopback-only port override for the test runtime.
 
 ## Placement and outstanding proof
 

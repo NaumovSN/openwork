@@ -54,6 +54,7 @@ describe("organization connection diagnostic observations", () => {
         needsReconnect: false,
         missingFeatures: [],
         policyBlocked: true,
+        policyOwner: "openwork",
         policyMessage: "Private policy reason canary",
         externalAccountId: "private-account-canary",
         tenantId: "private-workspace-canary",
@@ -70,9 +71,33 @@ describe("organization connection diagnostic observations", () => {
       needsReconnect: false,
       missingFeatureCount: 0,
       policyBlocked: true,
+      policyOwner: "openwork",
     }]);
     expect(agentContextDiagnosticsRequestSchema.safeParse(request).success).toBe(true);
     expect(JSON.stringify(request)).not.toContain("canary");
+  });
+
+  test("leaves an older blocked account's controller unknown instead of inferring it from policy text", () => {
+    const request = collectAgentContextDiagnosticObservations({
+      workspaceType: "local",
+      organizationConnectionsProbe: { status: "observed", code: null, totalCount: 0, truncated: false },
+      organizationConnections: [{
+        ...connection,
+        id: "slack",
+        name: "Slack",
+        nativeProviderKey: "slack",
+        connected: false,
+        missingFeatures: [],
+        policyBlocked: true,
+        policyMessage: "Ask an OpenWork administrator about private-policy-canary.",
+      }],
+    });
+
+    expect(request.organizationConnections).toHaveLength(1);
+    expect(request.organizationConnections[0]?.policyOwner).toBeUndefined();
+    expect(agentContextDiagnosticsRequestSchema.safeParse(request).success).toBe(true);
+    expect(JSON.stringify(request)).not.toContain("policyOwner");
+    expect(JSON.stringify(request)).not.toContain("private-policy-canary");
   });
 
   test.each([

@@ -379,6 +379,7 @@ export type DenExternalMcpConnection = {
   /** Stored account retained for management while organization policy blocks use. */
   policyBlocked?: boolean;
   policyMessage?: string;
+  policyOwner?: "openwork";
   issuerReviewRequired?: boolean;
   reconnectActionOwner?: "member" | "organization_admin" | null;
   missingFeatures?: string[];
@@ -2206,6 +2207,7 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
     ...(typeof value.needsReconnect === "boolean" ? { needsReconnect: value.needsReconnect } : {}),
     ...(typeof value.policyBlocked === "boolean" ? { policyBlocked: value.policyBlocked } : {}),
     ...(typeof value.policyMessage === "string" ? { policyMessage: value.policyMessage } : {}),
+    ...(value.policyOwner === "openwork" ? { policyOwner: value.policyOwner } : {}),
     ...(typeof value.issuerReviewRequired === "boolean" ? { issuerReviewRequired: value.issuerReviewRequired } : {}),
     ...(value.reconnectActionOwner === "member" || value.reconnectActionOwner === "organization_admin" || value.reconnectActionOwner === null
       ? { reconnectActionOwner: value.reconnectActionOwner }

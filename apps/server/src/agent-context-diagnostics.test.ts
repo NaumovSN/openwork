@@ -1966,21 +1966,46 @@ describe("agent context diagnostics analyzer", () => {
     });
   });
 
-  test("reports a blocked stored account without declaring readiness or requesting another sign-in", async () => {
+  test.each([
+    {
+      scenario: "explicit OpenWork owner",
+      policyOwners: ["openwork"],
+      owner: "openwork-support",
+      action: "Ask an OpenWork administrator to review connection availability. Signing in again cannot remove a policy block.",
+    },
+    {
+      scenario: "older row with unknown controller",
+      policyOwners: [undefined],
+      owner: "member",
+      action: "The policy controller was not identified for every blocked connection. Review each blocked connection's availability explanation in Settings > Connect to find who can change access. Signing in again cannot remove a policy block.",
+    },
+    {
+      scenario: "mixed explicit and unknown controllers",
+      policyOwners: ["openwork", undefined],
+      owner: "member",
+      action: "The policy controller was not identified for every blocked connection. Review each blocked connection's availability explanation in Settings > Connect to find who can change access. Signing in again cannot remove a policy block.",
+    },
+  ] satisfies {
+    scenario: string;
+    policyOwners: Array<AgentContextDiagnosticsRequest["organizationConnections"][number]["policyOwner"]>;
+    owner: "openwork-support" | "member";
+    action: string;
+  }[])("reports blocked stored accounts without guessing policy control: $scenario", async ({ policyOwners, owner, action }) => {
     const fixture = await createFixture();
     const fetchCalls: CatalogFetchCall[] = [];
     const request: AgentContextDiagnosticsRequest = {
-      organizationConnectionsProbe: { status: "observed", code: null, totalCount: 1, truncated: false },
-      organizationConnections: [{
-        id: "slack",
-        name: "Slack",
+      organizationConnectionsProbe: { status: "observed", code: null, totalCount: policyOwners.length, truncated: false },
+      organizationConnections: policyOwners.map((policyOwner, index) => ({
+        id: `blocked.account.${index}`,
+        name: "Blocked account",
         credentialMode: "per_member",
         connected: false,
         connectedForMe: true,
         needsReconnect: false,
         missingFeatureCount: 0,
         policyBlocked: true,
-      }],
+        ...(policyOwner ? { policyOwner } : {}),
+      })),
     };
     const report = await runAgentContextDiagnostics({
       config: fixture.config,
@@ -1994,9 +2019,9 @@ describe("agent context diagnostics analyzer", () => {
     expect(checkById(report, "organization-connections")).toMatchObject({
       status: "skipped",
       code: "organization_connections_policy_blocked",
-      owner: "organization-admin",
-      action: "Ask an administrator to review connection availability. Signing in again cannot remove a policy block.",
-      details: { notReadyCount: 1, policyBlockedCount: 1, memberActionCount: 0, organizationAdminActionCount: 0 },
+      owner,
+      action,
+      details: { notReadyCount: policyOwners.length, policyBlockedCount: policyOwners.length, memberActionCount: 0, organizationAdminActionCount: 0 },
     });
   });
 
@@ -2048,6 +2073,7 @@ describe("agent context diagnostics analyzer", () => {
           needsReconnect: true,
           missingFeatureCount: 1,
           policyBlocked: true,
+          policyOwner: "openwork",
           limitedAccess: true,
         },
         {
@@ -2082,6 +2108,7 @@ describe("agent context diagnostics analyzer", () => {
     expect(checkById(report, "organization-connections")).toMatchObject({
       status: "warning",
       code: "organization_member_action_required",
+      owner: "member",
       action: "Connect or reconnect only per-member connections marked as needing sign-in or reconnection in Settings > Connect.",
       details: { notReadyCount: 2, policyBlockedCount: 1, limitedAccessCount: 1, memberActionCount: 1, organizationAdminActionCount: 0 },
     });

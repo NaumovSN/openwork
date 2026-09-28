@@ -458,6 +458,7 @@ const connectionResponseSchema = z.object({
   /** A saved account is shown for management only, not capability execution. */
   policyBlocked: z.boolean().optional(),
   policyMessage: z.string().optional(),
+  policyOwner: z.literal("openwork").optional(),
   /** Native provider account label when the provider supplied one. Never a token. */
   externalAccountId: z.string().nullable().optional(),
   /** Delegated scopes the calling member granted to a native provider. */

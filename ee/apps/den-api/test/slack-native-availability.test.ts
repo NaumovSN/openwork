@@ -113,7 +113,7 @@ test("a disabled existing Slack account remains manageable but never usable by c
   expect(managed).toHaveLength(1)
   expect(managed[0]).toMatchObject({
     id: "slack", nativeProviderKey: "slack", connected: false, connectedForMe: true,
-    policyBlocked: true, needsReconnect: false,
+    policyBlocked: true, policyOwner: "openwork", needsReconnect: false,
   })
   expect(managed[0]?.policyMessage).toContain("OpenWork administrator")
   expect(JSON.stringify(managed)).not.toContain("synthetic-user-token")

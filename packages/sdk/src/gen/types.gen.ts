@@ -2446,6 +2446,7 @@ export type ExternalMcpConnectionResponse = {
   nativeProviderKey?: string | null;
   policyBlocked?: boolean;
   policyMessage?: string;
+  policyOwner?: "openwork";
   externalAccountId?: string | null;
   grantedScopes?: Array<string>;
   tenantId?: string | null;
@@ -2713,6 +2714,7 @@ export type ExternalMcpConnectionCreatedResponse = {
   nativeProviderKey?: string | null;
   policyBlocked?: boolean;
   policyMessage?: string;
+  policyOwner?: "openwork";
   externalAccountId?: string | null;
   grantedScopes?: Array<string>;
   tenantId?: string | null;
@@ -2787,6 +2789,7 @@ export type ExternalMcpConnectionUpdatedResponse = {
   nativeProviderKey?: string | null;
   policyBlocked?: boolean;
   policyMessage?: string;
+  policyOwner?: "openwork";
   externalAccountId?: string | null;
   grantedScopes?: Array<string>;
   tenantId?: string | null;

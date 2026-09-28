@@ -292,7 +292,28 @@ describe("AgentContextDiagnosticsReportView", () => {
     expect(serialized).not.toContain("stack trace");
   });
 
-  test("renders a blocked stored account with a neutral lock instead of readiness or sign-in", () => {
+  test.each([
+    {
+      scenario: "explicit OpenWork policy owner",
+      policyOwner: "openwork",
+      owner: "openwork-support",
+      ownerLabel: "OpenWork support",
+      explanation: "Access is blocked by policy. Ask an OpenWork administrator to review availability.",
+    },
+    {
+      scenario: "unknown controller in an older report",
+      policyOwner: undefined,
+      owner: "member",
+      ownerLabel: "Member",
+      explanation: "Review the availability explanation for this connection in Settings &gt; Connect to find who can change access.",
+    },
+  ] satisfies {
+    scenario: string;
+    policyOwner: AgentContextDiagnosticsReport["organizationConnections"][number]["policyOwner"];
+    owner: AgentContextDiagnosticCheck["owner"];
+    ownerLabel: string;
+    explanation: string;
+  }[])("renders a neutral blocked account without guessing its controller: $scenario", ({ policyOwner, owner, ownerLabel, explanation }) => {
     const report = healthyReport();
     const connection = {
       id: "slack",
@@ -303,8 +324,12 @@ describe("AgentContextDiagnosticsReportView", () => {
       needsReconnect: false,
       missingFeatureCount: 0,
       policyBlocked: true,
+      ...(policyOwner ? { policyOwner } : {}),
     } satisfies AgentContextDiagnosticsReport["organizationConnections"][number];
     report.organizationConnections = [connection];
+    const organizationCheck = report.checks.find((check) => check.id === "organization-connections");
+    if (!organizationCheck) throw new Error("Expected an organization-connections check fixture.");
+    organizationCheck.owner = owner;
 
     expect(organizationConnectionState(connection)).toEqual({ label: "Blocked", status: "blocked" });
     const html = renderToStaticMarkup(
@@ -313,7 +338,11 @@ describe("AgentContextDiagnosticsReportView", () => {
     expect(html).toContain("Blocked");
     expect(html).toContain("lucide-lock");
     expect(html).toContain("bg-gray-2 text-gray-11");
-    expect(html).toContain("Access is blocked by policy. Ask an administrator to review availability.");
+    expect(html).toContain(explanation);
+    expect(html).toContain(ownerLabel);
+    expect(html).not.toContain("Organization administrator");
+    expect(html).not.toContain("Ask an administrator");
+    if (!policyOwner) expect(html).not.toContain("Ask an OpenWork administrator");
     expect(html).not.toContain("Needs reconnect");
     expect(html).not.toContain("Needs sign-in");
     expect(serializeAgentContextDiagnosticsReport(report)).toContain('"policyBlocked": true');

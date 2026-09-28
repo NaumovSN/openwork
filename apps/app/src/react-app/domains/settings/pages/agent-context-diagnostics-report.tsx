@@ -588,7 +588,9 @@ function OrganizationConnections(props: { report: AgentContextDiagnosticsReport 
                   </div>
                   {connection.policyBlocked ? (
                     <div className="text-xs text-dls-secondary">
-                      Access is blocked by policy. Ask an administrator to review availability.
+                      {connection.policyOwner === "openwork"
+                        ? "Access is blocked by policy. Ask an OpenWork administrator to review availability."
+                        : "Access is blocked by policy. Review the availability explanation for this connection in Settings > Connect to find who can change access."}
                     </div>
                   ) : null}
                 </div>

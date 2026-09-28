@@ -49,6 +49,9 @@ function summarizeOrganizationConnection(
     connectedForMe: connection.connectedForMe,
     needsReconnect: connection.needsReconnect === true,
     ...(connection.policyBlocked === true ? { policyBlocked: true } : {}),
+    ...(connection.policyBlocked === true && connection.policyOwner === "openwork"
+      ? { policyOwner: connection.policyOwner }
+      : {}),
     ...(limitedAccess ? { limitedAccess: true } : {}),
     missingFeatureCount,
   } satisfies AgentContextOrganizationConnectionSummary;
