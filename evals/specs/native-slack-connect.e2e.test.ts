@@ -111,12 +111,23 @@ test("an internal member connects their own Slack, reads linked excerpts, and ca
     expect(excerpt).toMatchObject({ partial: true, hasMore: true, nextCursor: "synthetic-thread-next" });
     expect(excerpt?.messages).toHaveLength(2);
     if (world.engine === "v2") {
-      const sessionId = (await probe.hash()).match(/\/session\/([^/?#]+)/)?.[1];
-      if (!sessionId) throw new Error("The visible conversation has no session route for the native-history witness");
-      const nativeHistory = await world.appRequest("first", `/workspace/${encodeURIComponent(world.workspaceId)}/opencode2/api/session/${encodeURIComponent(decodeURIComponent(sessionId))}/message`);
-      expect(nativeHistory.status).toBe(200);
-      expect(JSON.stringify(nativeHistory.body)).toContain(world.prompt.first);
-      expect(JSON.stringify(nativeHistory.body)).toContain(world.slack.conversations[0].text);
+      // A newly created split-pane conversation can retain the session-home URL.
+      // Read actual native session IDs and find this unique prompt in persisted
+      // native history instead of inventing a session ID from that URL.
+      const mount = `/workspace/${encodeURIComponent(world.workspaceId)}/opencode2/api`;
+      const listed = await world.appRequest("first", `${mount}/session`);
+      expect(listed.status).toBe(200);
+      const candidates = world.objects(listed.body).filter(entry => typeof entry.id === "string").slice(0, 10);
+      let witnessed = false;
+      for (const candidate of candidates) {
+        if (typeof candidate.id !== "string") continue;
+        const nativeHistory = await world.appRequest("first", `${mount}/session/${encodeURIComponent(candidate.id)}/message`);
+        if (nativeHistory.status !== 200 || !JSON.stringify(nativeHistory.body).includes(world.prompt.first)) continue;
+        expect(JSON.stringify(nativeHistory.body)).toContain(world.slack.conversations[0].text);
+        witnessed = true;
+        break;
+      }
+      expect(witnessed).toBe(true);
     }
     const catalog = await world.mcp("first", "search_capabilities", { query: "slack", type: "api", limit: 20 });
     const match = world.objects(catalog.body).find(entry => typeof entry.name === "string" && entry.name.startsWith("native:") && /slacksearch$/i.test(entry.name));
