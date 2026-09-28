@@ -47,6 +47,8 @@ function errorResponse(error: unknown) {
   if (error instanceof FreeAutoBusyError) return desktopFreeGateError(error.status, error.code, error.message)
   return desktopFreeGateError(503, "anonymous_unavailable")
 }
+/** Guest Auto is turned off by configuration, not failing: the desktop hides Auto instead of calling it unavailable. */
+function switchedOff() { return desktopFreeGateError(503, "free_disabled", "Auto is not offered here.") }
 function versionResponse(error: DesktopFreeVersionError) {
   return Response.json({ error }, { status: error.code === "desktop_update_required" ? 426 : 503, headers: { "cache-control": "no-store" } })
 }
@@ -59,7 +61,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     try { return await handler(c) } catch (error) { return errorResponse(error) }
   }
   app.post(DESKTOP_FREE_SESSION_PATH, route(async (c) => {
-    if (!config.anonymousEnabled) return desktopFreeGateError(503, "anonymous_unavailable")
+    if (!config.anonymousEnabled) return switchedOff()
     if (c.req.raw.headers.has("authorization") || new URL(c.req.url).search) return desktopFreeGateError(401, "invalid_anonymous_token")
     const address = dependencies.clientAddress(c)
     if (!address) return desktopFreeGateError(503, "anonymous_unavailable")
@@ -82,7 +84,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
   // Every guest request needs a guest token bound to this IP, plus a fresh signed
   // proof from the same key and machine over the exact method, path, body and token.
   async function authenticate(c: Context, bodyHash: string) {
-    if (!config.anonymousEnabled) return { error: desktopFreeGateError(503, "anonymous_unavailable") }
+    if (!config.anonymousEnabled) return { error: switchedOff() }
     const token = bearer(c.req.raw)
     const address = dependencies.clientAddress(c)
     const guest = token && address ? verifyAnonymousToken(token, address, config) : null
@@ -115,7 +117,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     return c.json({ object: "list", data: [{ id: DESKTOP_FREE_MODEL_ID, object: "model", created: 0, owned_by: "openwork" }] }, 200, { "cache-control": "no-store" })
   }))
   app.post(DESKTOP_FREE_CHAT_PATH, route(async (c) => {
-    if (!config.anonymousEnabled) return desktopFreeGateError(503, "anonymous_unavailable")
+    if (!config.anonymousEnabled) return switchedOff()
     if (new URL(c.req.url).search) return desktopFreeGateError(400, "invalid_request")
     const deadlineAt = Date.now() + config.requestTimeoutMs
     const controller = new AbortController()
