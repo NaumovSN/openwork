@@ -10,7 +10,7 @@ import type {
   DenPluginCloudReadiness,
 } from "../../../app/lib/den";
 import type { McpServerEntry, SkillCard } from "../../../app/types";
-import { connectionNeedsReconnect } from "../connections/native-provider-connections";
+import { connectionNeedsReconnect, slackMissingAccess } from "../connections/native-provider-connections";
 import {
   resolveConnectRowGroup,
   resolveConnectionRowGroup,
@@ -129,7 +129,7 @@ function cloudPluginStatus(imported: CloudImportedPlugin | null, plugin: DenOrgP
   return "installed";
 }
 
-export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">) {
+export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "nativeProviderKey">) {
   return connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe && !connectionNeedsReconnect(connection);
 }
 
@@ -137,6 +137,7 @@ export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnectio
 export function nativeProviderDisplayName(nativeProviderKey: string | null | undefined): string | null {
   if (nativeProviderKey === "google-workspace") return "Google Workspace";
   if (nativeProviderKey === "microsoft-365") return "Microsoft 365";
+  if (nativeProviderKey === "slack") return "Slack";
   return null;
 }
 
@@ -146,8 +147,10 @@ export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConne
   if (connection.credentialMode === "shared") return `${prefix}One org account managed by your organization — the AI acts as it.`;
   if (connection.connectedForMe && connectionNeedsReconnect(connection)) return `${prefix}Reconnect your account to grant newly requested permissions.`;
   if (connection.connectedForMe) {
-    // Keep the base sentence intact as a prefix: specs and people both read it.
-    const account = connection.externalAccountId;
+    const missingAccess = slackMissingAccess(connection);
+    if (missingAccess.length > 0) return `Connected with limited access. Not authorized: ${missingAccess.join(", ")}.`;
+    // Slack stores an encoded workspace/user identity, not an account email.
+    const account = connection.nativeProviderKey === "slack" ? null : connection.externalAccountId;
     return account
       ? `${prefix}Connected with your own account. Signed in as ${account}.`
       : `${prefix}Connected with your own account.`;
@@ -155,12 +158,13 @@ export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConne
   return `${prefix}Available from your organization. Connect your own account to use it.`;
 }
 
-export function orgMcpConnectionActionLabel(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "externalAccountId">) {
+export function orgMcpConnectionActionLabel(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "nativeProviderKey" | "externalAccountId">) {
   if (connection.credentialMode === "shared") return "Managed by your organization";
   if (connection.connectedForMe && connectionNeedsReconnect(connection)) return "Reconnect";
   if (connection.connectedForMe) {
     // Show WHICH account: with several connectors for one service (two Google
     // domains), a bare "Connected" badge cannot tell the sign-ins apart.
+    if (connection.nativeProviderKey === "slack") return slackMissingAccess(connection).length > 0 ? "Connected with limited access" : "Connected";
     return connection.externalAccountId ? `Connected — ${connection.externalAccountId}` : "Connected";
   }
   return "Connect your account";

@@ -112,7 +112,7 @@ export function AdminConnectorsScreen() {
                           label={`More for ${connection.name}`}
                           entries={[
                             { label: "Open", href },
-                            ...(connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.id === MICROSOFT_365_QUICK_ADD_ID
+                            ...(connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.id === MICROSOFT_365_QUICK_ADD_ID || connection.nativeProviderKey === "slack"
                               ? []
                               : [removeEntry(connection.name, () => remove(connection))]),
                           ]}

@@ -9,7 +9,7 @@ import { getLibraryConnectorShareRoute, getLibraryRoute } from "../../_lib/den-o
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ownedAccessStatus } from "./access-summary";
 import { connectorChatDeepLink, connectorChatPrompt } from "./connector-catalog";
-import { connectorAccountReady } from "./connector-detail";
+import { connectorAccountLabel, connectorAccountReady, connectorLimitedAccess } from "./connector-detail";
 import { toolSummary, toolTitle, useMemberSignIn } from "./connector-setup";
 import { useDenToast } from "./den-toast";
 import { formatAddedDate } from "./item-dates";
@@ -20,6 +20,7 @@ import { libraryQueryKeys, useLibrary } from "./library-data";
 import { isOwnedByViewer, libraryItemDescription, receivedStatus } from "./library-view";
 import {
   type ExternalMcpTool,
+  isNativeProviderConnectionId,
   useDeleteMcpConnection,
   useDisconnectMyProviderAccount,
   useMcpConnections,
@@ -87,7 +88,8 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
   const connection = usable.data?.find((entry) => entry.id === connectionId) ?? null;
   const item = library.data?.find((entry) => entry.type === "connection" && entry.id === connectionId) ?? null;
   const signedIn = Boolean(connection && (connection.authType === "none" || connectorAccountReady(connection)));
-  const tools = useMcpConnectionTools(connectionId, signedIn);
+  const native = Boolean(connection && isNativeProviderConnectionId(connection.id, connection.nativeProviderKey));
+  const tools = useMcpConnectionTools(connectionId, signedIn && !native);
   const viewerId = orgContext?.currentMember.id ?? null;
   const mine = Boolean(connection?.access) || Boolean(item && isOwnedByViewer(item, viewerId, new Set()));
   const back = { href: getLibraryRoute(orgSlug), label: "My Library" };
@@ -103,6 +105,7 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
   }
 
   const name = connection.name;
+  const limitedAccess = connectorLimitedAccess(connection);
   const personEdge = item?.edges.find((edge) => edge.kind === "person");
   const added = formatAddedDate(personEdge?.kind === "person" ? personEdge.grantedAt : connection.connectedAt);
   const who = mine && orgContext
@@ -145,11 +148,14 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
                 Share
               </LinkButton>
             ) : null}
+            {limitedAccess ? (
+              <DenButton variant="secondary" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>Reconnect</DenButton>
+            ) : null}
             <ChatButton name={name} />
           </>
         )}
       />
-      <WhatYourAiCanDo tools={tools.data?.tools ?? []} loading={tools.isLoading} signedIn={signedIn} error={Boolean(tools.error)} />
+      {native ? null : <WhatYourAiCanDo tools={tools.data?.tools ?? []} loading={tools.isLoading} signedIn={signedIn} error={Boolean(tools.error)} />}
       <section className="flex flex-col gap-2.5">
         <SectionTitle title="Details" />
         <DetailRows
@@ -158,12 +164,19 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
             ...(connection.authType === "none" ? [] : [{
               label: "Signed in as",
               value: signedIn
-                ? connection.externalAccountId ?? "You"
-                : <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>Sign in</DenButton>,
+                ? connectorAccountLabel(connection) ?? "You"
+                : <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>{connection.needsReconnect ? "Reconnect" : "Sign in"}</DenButton>,
             }]),
+            ...(limitedAccess ? [{ label: "Access", value: (
+              <span className="flex flex-col gap-1 whitespace-normal">
+                <span>Connected with limited access</span>
+                <span>{limitedAccess}</span>
+              </span>
+            ) }] : []),
             ...(added ? [{ label: "Added", value: added }] : []),
           ]}
         />
+        {signIn.failure?.id === connectionId ? <p role="alert">{signIn.failure.message}</p> : null}
       </section>
     </ItemPage>
   );

@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { AlertTriangle, Check, Loader2, Plug, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
+import { DenBadge } from "../../_components/ui/badge";
+import { connectorAccountLabel, connectorLimitedAccess } from "./connector-detail";
 import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { getOrgAccessFlags, getToolTesterRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
@@ -196,6 +198,9 @@ function YourConnectionRow({
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
     : [];
   const requiredByLabel = formatRequiredBy(connection.requiredBy);
+  const limitedAccess = connectorLimitedAccess(connection);
+  const accountLabel = connectorAccountLabel(connection);
+  const tenantId = connection.nativeProviderKey === "slack" ? null : connection.tenantId;
 
   return (
     <div
@@ -223,6 +228,8 @@ function YourConnectionRow({
                   <AlertTriangle className="h-3 w-3" />
                   Reconnect required
                 </span>
+              ) : limitedAccess ? (
+                <DenBadge>Connected with limited access</DenBadge>
               ) : connection.connectedForMe ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                   <Check className="h-3 w-3" />
@@ -251,12 +258,13 @@ function YourConnectionRow({
             {requiredByLabel ? (
               <p className="mt-1 text-[12px] font-medium text-gray-700">{requiredByLabel}</p>
             ) : null}
-            {isNativeProvider && (connection.tenantId || connection.externalAccountId) ? (
+            {limitedAccess ? <p className="mt-1 text-sm text-muted-foreground">{limitedAccess}</p> : null}
+            {isNativeProvider && (tenantId || accountLabel) ? (
               <p className="mt-1 text-[11px] text-gray-500">
-                {connection.tenantId ? (
-                  <>Tenant <span className="font-mono text-gray-700">{connection.tenantId}</span>{connection.externalAccountId ? <> · {connection.externalAccountId}</> : null}</>
+                {tenantId ? (
+                  <>Tenant <span className="font-mono text-gray-700">{tenantId}</span>{accountLabel ? <> · {accountLabel}</> : null}</>
                 ) : (
-                  <span className="font-mono text-gray-700">{connection.externalAccountId}</span>
+                  <span>{accountLabel}</span>
                 )}
               </p>
             ) : null}
@@ -305,9 +313,9 @@ function YourConnectionRow({
               Disconnect
             </DenButton>
           ) : null}
-          {needsReconnect || needsMyConnect || needsAdminConnect ? (
+          {needsReconnect || limitedAccess || needsMyConnect || needsAdminConnect ? (
             <DenButton variant="primary" size="sm" loading={connecting || polling} onClick={onConnect} data-testid={`connect-my-mcp-account-${connection.id}`}>
-              {needsReconnect ? "Reconnect" : "Connect"}
+              {needsReconnect || limitedAccess ? "Reconnect" : "Connect"}
             </DenButton>
           ) : null}
         </div>

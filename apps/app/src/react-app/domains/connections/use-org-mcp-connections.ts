@@ -92,7 +92,7 @@ export function isOrgMcpPollScopeCurrent(
  * `connectedForMe` rather than the connection-wide `connected` flag.
  */
 export function resolveOrgMcpConnectionCardState(
-  connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">,
+  connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "nativeProviderKey">,
 ): OrgMcpConnectionCardState {
   if (connection.credentialMode === "shared") {
     return {
@@ -236,7 +236,9 @@ export function useOrgMcpConnections() {
     setError(null);
     try {
       const client = createDenClient({ baseUrl: settings.baseUrl, token });
-      if (options?.forceFreshAuthorization === true && previous?.connectedForMe) {
+      // Slack reauthorization may add optional access. Keep the usable grant if
+      // the member cancels or declines; the callback replaces it after consent.
+      if (options?.forceFreshAuthorization === true && previous?.connectedForMe && previous.nativeProviderKey !== "slack") {
         await disconnectMemberAccount(client, orgId, previous);
         if (!isActionScopeCurrent(pollScope)) return;
       }

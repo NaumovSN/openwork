@@ -2669,6 +2669,12 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
         if (!provider) {
           return c.json({ error: "invalid_request", message: `"${body.nativeProviderKey}" is not a known native OAuth provider.` }, 400)
         }
+        if (provider.providerId === "slack") {
+          return c.json({
+            error: "forbidden",
+            message: "The native Slack preview is managed by OpenWork. Organization administrators cannot create additional Slack preview accounts or supply its app credentials.",
+          }, 403)
+        }
         const unknownFeatures = (body.oauthClient.features ?? []).filter((feature) => !Object.hasOwn(provider.optionalFeatures ?? {}, feature))
         if (unknownFeatures.length > 0) {
           return c.json({ error: "invalid_request", message: `Unknown optional feature(s): ${unknownFeatures.join(", ")}.` }, 400)

@@ -247,7 +247,7 @@ export type CreatedMcpConnection = ExternalMcpConnection & {
 };
 
 export function isNativeProviderConnectionId(id: string, nativeProviderKey?: string | null): boolean {
-  return nativeProviderKey != null || id === "google-workspace" || id === "microsoft-365";
+  return nativeProviderKey != null || id === "google-workspace" || id === "microsoft-365" || id === "slack";
 }
 
 export function canDisconnectMyConnectionAccount(connection: Pick<ExternalMcpConnection, "id" | "nativeProviderKey" | "credentialMode" | "connectedForMe">): boolean {

@@ -1535,6 +1535,7 @@ export function McpView(props: McpViewProps) {
             presentation={detailPresentation}
             backLabel={t("extensions.title")}
             name={displayName}
+            iconSrc={connection.nativeProviderKey === "slack" ? "/ext-slack.svg" : undefined}
             description={(!ready && addedByMe ? ownPlugin?.description : null) ?? detailOrgMcpItem.description ?? orgMcpConnectionActionLabel(connection)}
             taxonomy="connection"
             connected={ready}
@@ -1831,7 +1832,9 @@ export function McpView(props: McpViewProps) {
           description={item.description?.trim() || t("extensions.row_shared_connection")}
           taxonomy="connection"
           url={connection.url}
+          iconSrc={connection.nativeProviderKey === "slack" ? "/ext-slack.svg" : undefined}
           connected={group === "ready"}
+          connectedLabel={orgMcpConnectionActionLabel(connection)}
           meta={orgCaption}
           statusChip={attention.statusChip}
           nextActionLabel={attention.actionLabel}

@@ -32,11 +32,29 @@ export function connectorAccountReady(connection: ExternalMcpConnection): boolea
     && (connection.credentialMode === "per_member" ? connection.connectedForMe : connection.connected);
 }
 
+/** Slack's stored account identity is encoded workspace/user data, not an email. */
+export function connectorAccountLabel(connection: ExternalMcpConnection): string | null {
+  if (connection.nativeProviderKey === "slack") return connection.connectedForMe ? "Your Slack account" : null;
+  return connection.externalAccountId ?? null;
+}
+
+export function connectorLimitedAccess(connection: ExternalMcpConnection): string | null {
+  if (connection.nativeProviderKey !== "slack" || !connectorAccountReady(connection)) return null;
+  const labels: Record<string, string> = {
+    privateChannels: "private channels",
+    directMessages: "direct messages",
+    groupMessages: "group direct messages",
+  };
+  const missing = (connection.missingFeatures ?? []).flatMap((feature) => labels[feature] ? [labels[feature]] : []);
+  return missing.length > 0 ? `Not authorized: ${missing.join(", ")}` : null;
+}
+
 /** Account readiness is personal, even on an organization management page. */
 export function connectorAccountStatus(connection: ExternalMcpConnection, setupRequired = false): string {
   if (setupRequired || connection.setupRequired || connectionNeedsOAuthClientConfiguration(connection)) return "Setup required";
   if (connection.issuerReviewRequired) return "OAuth settings need review";
   if (connection.needsReconnect || connection.credentialHealth === "reconnect_required") return "Reconnect required";
+  if (connectorLimitedAccess(connection)) return "Connected with limited access";
   if (connection.credentialMode === "per_member") return connection.connectedForMe ? "Connected as you" : "Needs your account";
   return connection.connected ? "Connected" : "Not connected";
 }
@@ -165,6 +183,9 @@ export function connectorDetailIdentity(subject: ConnectorDetailSubject): Connec
       if (subject.connection.id === MICROSOFT_365_QUICK_ADD_ID || subject.connection.nativeProviderKey === "microsoft-365") {
         return { ...MICROSOFT_365_IDENTITY, name: subject.connection.name || MICROSOFT_365_IDENTITY.name };
       }
+      if (subject.connection.nativeProviderKey === "slack") {
+        return { name: subject.connection.name, description: "Slack conversations", icon: { serviceUrl: "https://slack.com" } };
+      }
       return {
         name: subject.connection.name,
         description: subject.preset?.description ?? describeConnectionFallback(subject.connection),
@@ -257,7 +278,8 @@ export function connectorDetailFacts(
     const native = isNativeProviderConnectionId(connection.id, connection.nativeProviderKey);
     const host = apexDomain(connection.url);
     if (native) {
-      const provider = connection.id === MICROSOFT_365_QUICK_ADD_ID || connection.nativeProviderKey === "microsoft-365" ? "Microsoft" : "Google";
+      const provider = connection.nativeProviderKey === "slack" ? "Slack"
+        : connection.id === MICROSOFT_365_QUICK_ADD_ID || connection.nativeProviderKey === "microsoft-365" ? "Microsoft" : "Google";
       facts.push({ label: "Provider", value: provider });
       facts.push({ label: "Type", value: "Native OpenWork connector" });
     } else {

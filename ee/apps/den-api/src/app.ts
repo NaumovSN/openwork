@@ -11,7 +11,7 @@ import { describeRoute, generateSpecs, resolver } from "hono-openapi"
 import { z } from "zod"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import { publicRoute } from "./middleware/index.js"
+import { publicRoute, signedWebhookRoute } from "./middleware/index.js"
 import { registerAdminMcpRoutes } from "./mcp/admin.js"
 import { registerAgentMcpRoutes } from "./mcp/agent.js"
 import { registerExternalConnectionProxyRoutes } from "./mcp/external-connection-proxy.js"
@@ -42,6 +42,7 @@ import { registerOrgRoutes } from "./routes/org/index.js"
 import { registerTelemetryRoutes } from "./routes/telemetry/index.js"
 import { registerVersionRoutes } from "./routes/version/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
+import { registerSlackAppHomeRoutes } from "./routes/slack-app-home.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
 import { registerCloudWorkerCompatibilityPreflightRoute } from "./routes/workers/compatibility.js"
 import type { AuthContextVariables } from "./session.js"
@@ -277,6 +278,7 @@ registerAutomationRoutes(app, { enabled: env.automations.runtimeEnabled })
 registerOrgRoutes(app)
 registerVersionRoutes(app)
 registerWebhookRoutes(app)
+registerSlackAppHomeRoutes(app, signedWebhookRoute)
 registerWorkerRoutes(app)
 registerMcpTokenRoutes(app)
 registerMcpRoutes(app)

@@ -10,7 +10,9 @@ import {
   resolveProviderScopes,
   type NativeOAuthProviderConfig,
 } from "./provider-registry.js"
-import { getConnectedAccount, getOrgOAuthClient } from "./oauth-credentials.js"
+import { getConnectedAccount } from "./oauth-credentials.js"
+import { getNativeOAuthClient } from "./native-oauth-client.js"
+import { parseSlackAccountIdentity, slackPreviewPolicyError, slackWorkspaceAllowed } from "./slack-preview.js"
 import { readProviderTenantId } from "./oauth-tenant.js"
 import { listExternalMcpConnections, listUsableNativeProviderConnections } from "./external-mcp-connections.js"
 import { memberFacingMcpConnectionsEnabled } from "./external-mcp-rollout.js"
@@ -57,12 +59,14 @@ export function resolveNativeProviderReconnectState(
   clientExtra: Record<string, unknown> | null,
   grantedScopes: string[] | null,
 ): NativeProviderReconnectState {
-  if (!grantedScopes || grantedScopes.length === 0) {
+  if ((!grantedScopes || grantedScopes.length === 0) && !provider.allowsPartialConsent) {
     return { needsReconnect: false, missingFeatures: [] }
   }
 
   const selectedFeatures = clientSelectedFeatures(provider, clientExtra)
-  const expectedScopes = resolveProviderScopes(provider, selectedFeatures)
+  const expectedScopes = provider.allowsPartialConsent
+    ? provider.defaultScopes
+    : resolveProviderScopes(provider, selectedFeatures)
   const needsReconnect = expectedScopes.some((scope) => !providerScopesSatisfy(provider, grantedScopes, scope))
   const missingFeatures = selectedFeatures.filter((feature) => {
     const featureScopes = provider.optionalFeatures?.[feature] ?? []
@@ -112,7 +116,11 @@ export function buildNativeProviderEntry(
 
 export type NativeProviderPolicyError = { kind: "policy_blocked"; message: string }
 
-export async function nativeProviderConnectionPolicyError(organizationId: DenTypeId<"organization">): Promise<NativeProviderPolicyError | null> {
+export async function nativeProviderConnectionPolicyError(organizationId: DenTypeId<"organization">, nativeProviderKey?: string): Promise<NativeProviderPolicyError | null> {
+  if (nativeProviderKey === "slack") {
+    const slackPolicy = slackPreviewPolicyError(organizationId)
+    if (slackPolicy) return slackPolicy
+  }
   const [organization] = await db
     .select({ metadata: OrganizationTable.metadata })
     .from(OrganizationTable)
@@ -143,10 +151,11 @@ export async function listNativeProviderUsableEntries(input: {
     teamIds: input.teamIds ?? [],
   })
   for (const connection of connections) {
-    if (!connection.nativeProviderKey) continue
+    // The managed Slack preview uses its single literal account slot only.
+    if (!connection.nativeProviderKey || connection.nativeProviderKey === "slack") continue
     const provider = NATIVE_OAUTH_PROVIDERS[connection.nativeProviderKey]
     if (!provider) continue
-    const client = await getOrgOAuthClient(input.organizationId, connection.id)
+    const client = await getNativeOAuthClient(input.organizationId, connection.id)
     if (!client) continue
     const account = await getConnectedAccount({
       organizationId: input.organizationId,
@@ -175,13 +184,17 @@ export async function listNativeProviderUsableEntries(input: {
   // literal registry key visible org-wide without moving either credentials
   // or connected accounts.
   for (const provider of Object.values(NATIVE_OAUTH_PROVIDERS)) {
-    const client = await getOrgOAuthClient(input.organizationId, provider.providerId)
+    const client = await getNativeOAuthClient(input.organizationId, provider.providerId)
     if (!client) continue
-    const account = await getConnectedAccount({
+    const storedAccount = await getConnectedAccount({
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
       providerId: provider.providerId,
     })
+    const slackIdentity = parseSlackAccountIdentity(storedAccount?.externalAccountId ?? null)
+    const account = provider.providerId !== "slack" || (slackIdentity && slackWorkspaceAllowed(slackIdentity.workspaceId))
+      ? storedAccount
+      : null
     const entry = buildNativeProviderEntry(provider, {
       clientConfigured: true,
       connectedForMe: Boolean(account?.accessToken),
@@ -206,10 +219,15 @@ export async function resolveDefaultNativeProviderCredentialId(input: {
   nativeProviderKey: string
   teamIds: DenTypeId<"team">[]
 }): Promise<string | null> {
-  if (await nativeProviderConnectionPolicyError(input.organizationId)) return null
+  if (await nativeProviderConnectionPolicyError(input.organizationId, input.nativeProviderKey)) return null
+  // Slack has exactly one platform-managed account per member. Neither a saved
+  // BYO client nor an emc_ connector can bypass the preview or create a second slot.
+  if (input.nativeProviderKey === "slack") {
+    return await getNativeOAuthClient(input.organizationId, "slack") ? "slack" : null
+  }
   // The literal registry key is the legacy alias: it has no connector row or
   // access grants, so it intentionally remains implicitly org-wide.
-  if (await getOrgOAuthClient(input.organizationId, input.nativeProviderKey)) {
+  if (await getNativeOAuthClient(input.organizationId, input.nativeProviderKey)) {
     return input.nativeProviderKey
   }
   const legacyAccounts = await db
@@ -236,7 +254,11 @@ export async function resolveManageableNativeProviderCredentialId(input: {
   organizationId: DenTypeId<"organization">
   nativeProviderKey: string
 }): Promise<string | null> {
-  if (await getOrgOAuthClient(input.organizationId, input.nativeProviderKey)) {
+  if (input.nativeProviderKey === "slack") {
+    if (await nativeProviderConnectionPolicyError(input.organizationId, "slack")) return null
+    return await getNativeOAuthClient(input.organizationId, "slack") ? "slack" : null
+  }
+  if (await getNativeOAuthClient(input.organizationId, input.nativeProviderKey)) {
     return input.nativeProviderKey
   }
   const legacyAccounts = await db

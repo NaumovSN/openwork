@@ -3,7 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { connectorAccountReady } from "./connector-detail";
+import { connectorAccountLabel, connectorAccountReady } from "./connector-detail";
 import { type ConnectorSignInMethod, connectorSignInMethod, oauthClientSecretRequired, oauthRequestFields } from "./connector-sign-in-method";
 import { libraryQueryKeys } from "./library-data";
 import { resolveMcpAuthorizationPollOutcome } from "./mcp-account-authorization-state";
@@ -288,7 +288,9 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     if (signedIn) {
       if (connection?.authType === "none") return "Nothing to sign in to.";
       if (connection?.authType === "apikey") return "Uses the key you added.";
-      return connection?.externalAccountId ? `As ${connection.externalAccountId}.` : "You are signed in.";
+      const account = connection ? connectorAccountLabel(connection) : null;
+      if (connection?.nativeProviderKey === "slack") return "You are signed in to Slack.";
+      return account ? `As ${account}.` : "You are signed in.";
     }
     if (signIn.kind === "failed") return signIn.message;
     if (signIn.kind === "waiting") return `${name} opened in a new tab. Come back here when you are done.`;

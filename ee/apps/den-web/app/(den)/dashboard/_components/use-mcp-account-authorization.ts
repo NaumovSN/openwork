@@ -59,7 +59,7 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
     setError({ connectionId, message });
   }
 
-  function pollUntilConnected(connectionId: string, connectionName: string, authorizationTab: Window) {
+  function pollUntilConnected(connectionId: string, connectionName: string, authorizationTab: Window, previousConnectedAt: string | null) {
     stopPolling();
     setPollingConnectionId(connectionId);
     const startedAt = Date.now();
@@ -67,7 +67,8 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
       const result = await refetch();
       const connection = result.data?.find((entry) => entry.id === connectionId);
       const outcome = resolveMcpAuthorizationPollOutcome({
-        connected: Boolean(connection?.connectedForMe && connection.needsReconnect !== true),
+        connected: Boolean(connection?.connectedForMe && connection.needsReconnect !== true
+          && (!previousConnectedAt || (connection.connectedAt && connection.connectedAt !== previousConnectedAt))),
         authorizationWindowClosed: authorizationTab.closed,
         elapsedMs: Date.now() - startedAt,
         timeoutMs: OAUTH_POLL_TIMEOUT_MS,
@@ -84,7 +85,9 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
 
   async function connect(connectionId: string) {
     setError(null);
-    const connectionName = connections.find((connection) => connection.id === connectionId)?.name ?? "this provider";
+    const previous = connections.find((connection) => connection.id === connectionId);
+    const connectionName = previous?.name ?? "this provider";
+    const previousConnectedAt = previous?.nativeProviderKey === "slack" && previous.connectedForMe ? previous.connectedAt : null;
     let authorizationTab: Window | null = null;
     try {
       authorizationTab = openMcpAuthorizationTab({ connectionId, connectionName });
@@ -109,7 +112,7 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
         throw new Error("The MCP provider did not return an authorization URL.");
       }
       authorizationTab.location.href = safeMcpAuthorizationUrl(result.authorizeUrl);
-      pollUntilConnected(connectionId, connectionName, authorizationTab);
+      pollUntilConnected(connectionId, connectionName, authorizationTab, previousConnectedAt);
     } catch (connectError) {
       const message = connectError instanceof Error ? connectError.message : "Failed to connect account.";
       showMcpAuthorizationFailure(authorizationTab, {

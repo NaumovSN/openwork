@@ -9,7 +9,7 @@ import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessAddedToast } from "./access-summary";
 import { signInSentence } from "./admin-connectors";
-import { connectorAccountReady } from "./connector-detail";
+import { connectorAccountLabel, connectorAccountReady, connectorLimitedAccess } from "./connector-detail";
 import { ChatButton, WhatYourAiCanDo } from "./connector-page-screen";
 import { GOOGLE_WORKSPACE_QUICK_ADD_ID, isNativeProviderCatalogId, MICROSOFT_365_QUICK_ADD_ID } from "./connector-catalog";
 import { useMemberSignIn } from "./connector-setup";
@@ -143,8 +143,10 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
   const name = connection.name;
   const native = isNativeProviderConnectionId(connection.id, connection.nativeProviderKey);
   const nativeKey = native ? nativeKeyFor(connection) : null;
-  const aliasOnly = connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.id === MICROSOFT_365_QUICK_ADD_ID;
+  const aliasOnly = connection.id === GOOGLE_WORKSPACE_QUICK_ADD_ID || connection.id === MICROSOFT_365_QUICK_ADD_ID || connection.nativeProviderKey === "slack";
+  const canEditSettings = !native || nativeKey !== null;
   const signedIn = connection.authType === "none" || connectorAccountReady(connection);
+  const limitedAccess = connectorLimitedAccess(connection);
   const tools = useMcpConnectionTools(connectionId, signedIn && !native);
   const viewerId = orgContext?.currentMember.id ?? null;
   const draft: AccessDraft = connection.access
@@ -177,14 +179,20 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
   }
 
   const accountValue = signedIn
-    ? connection.authType === "none" ? "Not needed" : connection.externalAccountId ?? "Signed in"
+    ? connection.authType === "none" ? "Not needed" : connectorAccountLabel(connection) ?? "Signed in"
     : connection.issuerReviewRequired ? <DenButton variant="secondary" size="xs" onClick={() => setSettingsOpen(true)}>Review sign-in server</DenButton>
-    : <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>Sign in</DenButton>;
+    : <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>{connection.needsReconnect ? "Reconnect" : "Sign in"}</DenButton>;
 
   const details = [
     ...(connection.authType === "oauth"
       ? [{ label: connection.credentialMode === "shared" ? "Organization account" : "Your account", value: accountValue }]
       : []),
+    ...(limitedAccess ? [{ label: "Access", value: (
+      <span className="flex flex-col gap-1 whitespace-normal">
+        <span>Connected with limited access</span>
+        <span>{limitedAccess}</span>
+      </span>
+    ) }] : []),
     ...(addedBy ? [{ label: "Added by", value: addedBy }] : []),
   ];
 
@@ -200,7 +208,7 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
               size="md"
               label={`More for ${name}`}
               entries={[
-                { label: "Edit settings", onSelect: () => setSettingsOpen(true) },
+                ...(canEditSettings ? [{ label: "Edit settings", onSelect: () => setSettingsOpen(true) }] : []),
                 ...(!native && signedIn ? [{ label: "Test tools", href: `${getToolTesterRoute(orgSlug)}?connectionId=${encodeURIComponent(connectionId)}` }] : []),
                 ...(!native && connection.authType !== "none" && connection.connected ? [{
                   label: "Sign everyone out",
@@ -213,6 +221,9 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
                 ...(aliasOnly ? [] : [removeEntry(name, remove)]),
               ]}
             />
+            {limitedAccess ? (
+              <DenButton variant="secondary" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>Reconnect</DenButton>
+            ) : null}
             <ChatButton name={name} />
           </>
         )}
@@ -261,7 +272,7 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
         </section>
       ) : null}
 
-      <Disclosure label="Settings" open={settingsOpen} onToggle={() => setSettingsOpen((value) => !value)} testId="connector-settings-toggle">
+      {canEditSettings ? <Disclosure label="Settings" open={settingsOpen} onToggle={() => setSettingsOpen((value) => !value)} testId="connector-settings-toggle">
         {nativeKey ? (
           <div className="px-5 py-4">
             <NativeProviderSettings
@@ -279,7 +290,7 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
         ) : (
           <ConnectorSettingsForm key={connection.updatedAt ?? connection.id} connection={connection} onSaved={(message) => toast({ title: message })} />
         )}
-      </Disclosure>
+      </Disclosure> : null}
 
       {native ? null : <UseInAnotherApp connection={connection} />}
     </ItemPage>
