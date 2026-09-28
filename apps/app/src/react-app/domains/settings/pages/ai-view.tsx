@@ -50,6 +50,10 @@ export type AiSettingsViewProps = {
   onOpenProviderAuth: () => void | Promise<void>;
   onDisconnectProvider: (providerId: string) => void | Promise<void>;
   canDisconnectProvider: (provider: ConnectedProvider) => boolean;
+  /** Providers hidden by Disconnect (disabled_providers); each can be enabled again. */
+  disabledProviders?: { id: string; name: string }[];
+  enablingProviderId?: string | null;
+  onEnableProvider?: (providerId: string) => void | Promise<void>;
   canAddProviders: boolean;
   organizationName?: string;
   /** Set of local provider IDs that were imported from cloud. */
@@ -294,6 +298,44 @@ export function AiSettingsView(props: AiSettingsViewProps) {
                 </LayoutSectionItem>
               );
             })}
+          </div>
+        ) : null}
+
+        {props.onEnableProvider && props.disabledProviders?.length ? (
+          <div className="space-y-2" data-testid="disabled-providers">
+            {props.disabledProviders.map((provider) => (
+              <LayoutSectionItem
+                key={provider.id}
+                className="flex-row flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-dls-border px-4 py-3"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <ProviderIcon providerId={provider.id} providerName={provider.name} size={20} className="text-muted-foreground" />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-sm font-medium text-dls-text">{provider.name}</span>
+                      <Badge variant="outline" className="h-auto shrink-0 px-2 py-0.5 text-[10px] text-muted-foreground">
+                        {t("settings.provider_disabled_badge")}
+                      </Badge>
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">{t("settings.provider_disabled_hint")}</div>
+                  </div>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={() => void props.onEnableProvider?.(provider.id)}
+                  disabled={
+                    props.busy ||
+                    props.providerAuthBusy ||
+                    props.disconnectingProviderId !== null ||
+                    (props.enablingProviderId ?? null) !== null
+                  }
+                >
+                  {props.enablingProviderId === provider.id
+                    ? t("settings.enabling_provider")
+                    : t("settings.enable_provider")}
+                </Button>
+              </LayoutSectionItem>
+            ))}
           </div>
         ) : null}
 

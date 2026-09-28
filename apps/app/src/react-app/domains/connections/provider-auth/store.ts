@@ -88,7 +88,7 @@ import {
 } from "./cloud-provider-config";
 import { dispatchNewProviders } from "../../../../app/lib/provider-events";
 import { hasPendingGatewayModelSelection } from "./pending-gateway-model-selection";
-import { updateManagedDisabledProviders } from "../managed-engine-config";
+import { readManagedDisabledProviders, updateManagedDisabledProviders } from "../managed-engine-config";
 import {
   DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID,
   isDesktopProviderBlocked,
@@ -1646,7 +1646,19 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
 
   let providerRefreshGeneration = 0;
 
-  async function refreshProviders(optionsArg?: { dispose?: boolean; force?: boolean }, isCurrent = () => !disposed) {
+  async function refreshProviders(
+    optionsArg?: {
+      dispose?: boolean;
+      force?: boolean;
+      /**
+       * The caller just rewrote engine config (for example disabled_providers).
+       * Reload even inside the 10s dispose throttle; otherwise the read below
+       * returns the pre-change config and undoes the change in the UI.
+       */
+      configChanged?: boolean;
+    },
+    isCurrent = () => !disposed,
+  ) {
     const c = options.client();
     if (!c || !isCurrent()) return null;
     const generation = ++providerRefreshGeneration;
@@ -1665,7 +1677,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       : false;
     if (optionsArg?.dispose && !liveCatalog) {
       const now = Date.now();
-      const shouldDispose = now - lastGlobalProviderDisposeRefreshAt >= 10_000;
+      const shouldDispose = Boolean(optionsArg?.configChanged)
+        || now - lastGlobalProviderDisposeRefreshAt >= 10_000;
       const shouldUseServerReload = !(
         isDesktopRuntime() && options.selectedWorkspaceDisplay().workspaceType === "local"
       );
@@ -1723,11 +1736,13 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (!isRefreshCurrent()) return null;
     const activeClient = options.client() ?? c;
     try {
-      const config = unwrap(await activeClient.config.get());
+      const disabledProviders = await readManagedDisabledProviders({
+        opencodeClient: activeClient,
+        openworkClient: options.openworkServer.getSnapshot().openworkServerClient,
+        workspaceId: options.runtimeWorkspaceId(),
+        workspaceType: options.selectedWorkspaceDisplay().workspaceType,
+      });
       if (!isRefreshCurrent()) return null;
-      const disabledProviders = Array.isArray(config.disabled_providers)
-        ? config.disabled_providers
-        : [];
       const updated = filterProviderList(
         await ensureProviderListQuery(getReactQueryClient(), {
           client: activeClient,
@@ -2512,8 +2527,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           // Zen may have no stored credentials; disable still applies.
         }
         if (!isCurrentWorkspace()) throw new Error(t("providers.disconnect_unverified"));
-        await ensureProjectProviderDisabledState(resolved, true);
-        requireDiscovery(await refreshProviders({ dispose: true }, isCurrentWorkspace), true);
+        const configChanged = await ensureProjectProviderDisabledState(resolved, true);
+        requireDiscovery(await refreshProviders({ dispose: true, configChanged }, isCurrentWorkspace), true);
         removeProviderFromState(resolved);
         return `${t("providers.disconnected_prefix")} ${resolved}`;
       }
@@ -2528,8 +2543,8 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           // alone can never disconnect it. Disable it via disabled_providers,
           // exactly like the built-in OpenCode Zen branch above, instead of
           // leaving the Disconnect button a silent no-op.
-          await ensureProjectProviderDisabledState(resolved, true);
-          requireDiscovery(await refreshProviders({ dispose: true }, isCurrentWorkspace), true);
+          const configChanged = await ensureProjectProviderDisabledState(resolved, true);
+          requireDiscovery(await refreshProviders({ dispose: true, configChanged }, isCurrentWorkspace), true);
           removeProviderFromState(resolved);
           return `${t("providers.disconnected_prefix")} ${resolved}`;
         }
@@ -2542,6 +2557,34 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
       return `${t("providers.disconnected_prefix")} ${resolved}`;
     } catch (error) {
       const message = describeProviderError(error, t("providers.disconnect_failed"));
+      setStateField("providerAuthError", message);
+      throw error instanceof Error ? error : new Error(message);
+    }
+  }
+
+  /**
+   * Undo a Disconnect that hid a provider through `disabled_providers` (for
+   * example OpenCode Zen, which has no credentials to remove). Once hidden the
+   * engine drops it from every list, so this is the only way back in the UI.
+   */
+  async function enableProvider(providerId: string) {
+    setStateField("providerAuthError", null);
+    const resolved = providerId.trim();
+    if (!resolved) {
+      throw new Error(t("providers.provider_id_required"));
+    }
+    assertProviderAllowedByDesktopPolicy(resolved);
+    const workspaceKey = currentWorkspaceKey();
+    const baseUrl = options.providerBaseUrl();
+    const isCurrentWorkspace = () => !disposed
+      && workspaceKey === currentWorkspaceKey()
+      && baseUrl === options.providerBaseUrl();
+    try {
+      const configChanged = await ensureProjectProviderDisabledState(resolved, false);
+      await refreshProviders({ dispose: true, configChanged }, isCurrentWorkspace);
+      return `${t("providers.enabled_prefix")} ${resolved}`;
+    } catch (error) {
+      const message = describeProviderError(error, t("providers.enable_failed"));
       setStateField("providerAuthError", message);
       throw error instanceof Error ? error : new Error(message);
     }
@@ -2906,6 +2949,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     connectCloudProvider,
     removeCloudProvider,
     disconnectProvider,
+    enableProvider,
     ensureProjectProviderDisabledState,
     isProviderAddRestricted,
     openProviderAuthModal,

@@ -1,3 +1,4 @@
+import { peopleMemberCondition } from "./setup-agent-members.js"
 import { and, asc, eq, gt, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   InferenceKeyTable,
@@ -196,12 +197,12 @@ async function activeMemberCount(organizationId: OrgId) {
   const [row] = await db
     .select({ count: sql<number>`count(*)` })
     .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt)))
+    .where(and(eq(MemberTable.organizationId, organizationId), peopleMemberCondition()))
   return Math.max(0, Number(row?.count ?? 0))
 }
 
 async function listOrgMembers(organizationId: OrgId) {
-  return db.select({ id: MemberTable.id }).from(MemberTable).where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt), isNotNull(MemberTable.userId)))
+  return db.select({ id: MemberTable.id }).from(MemberTable).where(and(eq(MemberTable.organizationId, organizationId), peopleMemberCondition(), isNotNull(MemberTable.userId)))
 }
 
 function addWindow(start: Date, windowType: InferenceWindowType) {

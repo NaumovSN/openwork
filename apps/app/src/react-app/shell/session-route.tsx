@@ -183,7 +183,7 @@ import {
 } from "@/react-app/domains/connections/provider-auth/managed-models-recovery";
 import { useSessionProviderAuth } from "@/react-app/domains/connections/provider-auth/use-session-provider-auth";
 import {
-  disabledProvidersFromConfig,
+  readManagedDisabledProviders,
   updateManagedDisabledProviders,
 } from "@/react-app/domains/connections/managed-engine-config";
 import { useMcpConnectedCount } from "@/react-app/domains/connections/use-mcp-connected-count";
@@ -1345,6 +1345,9 @@ export function SessionRoute() {
     : selectedModelUnavailable
       ? t("models.model_unavailable_short")
       : null;
+  const disabledProvidersEndpointClient = selectedWorkspaceEndpoint?.client ?? null;
+  const disabledProvidersWorkspaceId = selectedWorkspaceEndpoint?.workspaceId ?? null;
+  const disabledProvidersWorkspaceType = selectedWorkspace?.workspaceType ?? "local";
   useEffect(() => {
     if (!opencodeClient) {
       setProviders([]);
@@ -1377,12 +1380,13 @@ export function SessionRoute() {
     void (async () => {
       let disabledProviders: string[] = [];
       try {
-        const config = unwrap(
-          await opencodeClient.config.get({
-            directory: selectedWorkspaceRoot || undefined,
-          }),
-        );
-        disabledProviders = disabledProvidersFromConfig(config);
+        disabledProviders = await readManagedDisabledProviders({
+          opencodeClient,
+          openworkClient: disabledProvidersEndpointClient,
+          workspaceId: disabledProvidersWorkspaceId,
+          workspaceType: disabledProvidersWorkspaceType,
+          directory: selectedWorkspaceRoot || undefined,
+        });
         if (!cancelled) setDisabledProviderIds(disabledProviders);
       } catch {
         // ignore config read failures and continue with provider discovery
@@ -1410,7 +1414,7 @@ export function SessionRoute() {
     return () => {
       cancelled = true;
     };
-  }, [opencodeBaseUrl, opencodeClient, selectedWorkspaceRoot, denSessionVersion]);
+  }, [opencodeBaseUrl, opencodeClient, selectedWorkspaceRoot, denSessionVersion, disabledProvidersEndpointClient, disabledProvidersWorkspaceId, disabledProvidersWorkspaceType]);
 
   const modelLabel = local.prefs.defaultModel
     ? resolveModelDisplayName(local.prefs.defaultModel.modelID)
@@ -4192,18 +4196,21 @@ export function SessionRoute() {
       onToggleProvider={async (providerId, enable) => {
         if (!opencodeClient) return;
         try {
-          const config = unwrap(await opencodeClient.config.get());
-          const current = disabledProvidersFromConfig(config);
+          const current = await readManagedDisabledProviders({
+            opencodeClient,
+            openworkClient: disabledProvidersEndpointClient,
+            workspaceId: disabledProvidersWorkspaceId,
+            workspaceType: disabledProvidersWorkspaceType,
+          });
           const next = enable
             ? current.filter((id: string) => id !== providerId)
             : [...current, providerId];
           const result = await updateManagedDisabledProviders({
             opencodeClient,
-            openworkClient: selectedWorkspaceEndpoint?.client ?? null,
-            workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? null,
-            workspaceType: selectedWorkspace?.workspaceType ?? "local",
+            openworkClient: disabledProvidersEndpointClient,
+            workspaceId: disabledProvidersWorkspaceId,
+            workspaceType: disabledProvidersWorkspaceType,
             disabledProviders: next,
-            currentConfig: config,
             markReloadRequired: () => {
               reloadCoordinator.markReloadRequired("config", {
                 type: "config",

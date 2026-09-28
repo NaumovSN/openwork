@@ -1,5 +1,6 @@
 export const supportedTargets = ["local/host"];
 
+import { allocateFreePort } from "../evals/packages/cdp/src/ports.ts";
 import { createOrgConnection, createPluginWithSkill, denFetch } from "../evals/packages/behaviors/src/index.ts";
 import type { DenSession } from "../evals/packages/behaviors/src/index.ts";
 import { app } from "../evals/packages/env/src/desktop-app.ts";
@@ -155,12 +156,19 @@ export async function bootAcmeDocs(
   stack: AsyncDisposableStack,
   place: Place,
 ): Promise<AcmeDocsWorld> {
+  // AI Gateway management is on so provider docs show the real AI Providers
+  // tab. No request reaches the gateway: locally the URLs only satisfy
+  // den-api's GATEWAY_ENABLED boot check and point at a closed port.
+  const gatewayUrl = `http://127.0.0.1:${await allocateFreePort()}`;
+  const gatewayEnv = place.kind === "local"
+    ? { GATEWAY_ENABLED: "true", DB_MODE: "mysql", GATEWAY_PROXY_BASE_URL: gatewayUrl, GATEWAY_PUBLIC_BASE_URL: gatewayUrl }
+    : {};
   const den = stack.use(await server({
     place,
     provision: false,
     web: true,
     mocks: { slack: mcpMock() },
-    env: { DEN_BOOTSTRAP_ADMIN_EMAILS: "alex@acme.dev" },
+    env: { DEN_BOOTSTRAP_ADMIN_EMAILS: "alex@acme.dev", ...gatewayEnv },
   }));
   const admin = await createAdmin(den, { name: "Alex Rivera", email: "alex@acme.dev" });
   const org = stack.use(await createOrg(den, ACME_DOCS_ORGANIZATION_NAME));

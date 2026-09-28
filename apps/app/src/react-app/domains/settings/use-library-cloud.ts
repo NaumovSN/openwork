@@ -7,6 +7,7 @@ import type {
   DenLibraryOrgDirectory,
   DenLibraryPluginItem,
 } from "../../../app/lib/den-library";
+import { clearCloudInventoryCache } from "../connections/cloud-inventory-cache";
 import { isOwnedLibraryPlugin, libraryAudienceFromGrants, type LibraryAudience } from "./library-sharing";
 import { parseSkillMarkdown, skillMarkdown } from "./library";
 
@@ -132,10 +133,14 @@ export function useLibraryCloud(input: {
         ["library-cloud-items", ...scope],
         (current) => current?.filter((item) => item.id !== pluginId),
       );
+      // Archiving can retire the plugin's connections; tell session upkeep to
+      // re-read the org catalog now instead of on its next interval.
+      clearCloudInventoryCache();
       await refresh();
     },
     restore: async (pluginId) => {
       await input.client.restorePlugin(input.organizationId, pluginId);
+      clearCloudInventoryCache();
       await refresh();
     },
     readSkill: async (pluginId) => {

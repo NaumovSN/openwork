@@ -44,7 +44,7 @@ const pricingSummary = {
       price: "$10",
       cadence: "per seat / month",
       highlights: [
-        "First 5 seats free",
+        "First 5 seats free on OpenWork Cloud",
         "API access",
         "Extension Marketplace",
         "Bring your own LLM keys, distributed to your team",

@@ -1885,6 +1885,12 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
           timeoutMs: timeouts.config,
         },
       ),
+    getRuntimeDisabledProviders: (workspaceId: string) =>
+      requestJson<OpenworkRuntimeDisabledProvidersResult>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/runtime-config/disabled-providers`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      ),
     setRuntimeDisabledProviders: (workspaceId: string, providers: string[]) =>
       requestJson<OpenworkRuntimeDisabledProvidersResult>(
         baseUrl,

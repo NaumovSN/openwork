@@ -530,6 +530,22 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
     ...base,
     tableMarkdown,
     fileLinkPath,
+    // Native Electron menus are OS widgets without DOM/CDP targets. Use the
+    // existing development bridge to observe and dismiss the real popup.
+    nativeMenu: () => seed.evalIn(base.app, () => window.__OPENWORK_ELECTRON__.contextMenu.inspect(), { awaitPromise: true }),
+    dismissMenu: () => seed.evalIn(base.app, () => window.__OPENWORK_ELECTRON__.contextMenu.dismiss(), { awaitPromise: true }),
+    // Pierre's token styles and render errors live inside its shadow root.
+    async artifactCodePresentation() {
+      return seed.evalIn(base.app, () => {
+        const shadow = document.querySelector("[data-artifact-code-view] diffs-container")?.shadowRoot;
+        const tokens = [...(shadow?.querySelectorAll("[data-line] span") ?? [])]
+          .filter((node) => node.textContent?.trim() && node.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }));
+        return {
+          colors: [...new Set(tokens.map((node) => getComputedStyle(node).color))],
+          error: shadow?.querySelector("[data-error-message]")?.textContent ?? null,
+        };
+      });
+    },
     async visibleArtifactCode() {
       return seed.evalIn(base.app, () => {
         const root = document.querySelector<HTMLElement>("[data-artifact-code-view]");
@@ -1507,8 +1523,8 @@ export async function backgroundUpdateWorld(seed: Seed) {
   };
 }
 
-/** A desktop signed in to a real Den with a saved version policy. Desktop
- * enforcement is suspended; the fake feed must not change the saved policy. */
+/** A desktop signed in to a real Den whose organization pins allowed desktop
+ * versions. The fake feed offers 9.9.9; the pin decides whether it installs. */
 export async function savedUpdatePolicyWorld(seed: Seed) {
   const den = await seed.den({
     org: { name: `Update policy ${Date.now()}`, admin: { name: "Update Policy Admin" } },
