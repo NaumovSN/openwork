@@ -3,7 +3,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { assertOrganizationManagedModelsAllowed } from "../../organization-metadata.js"
-import { allowFreeInferenceOffer, getInferenceStatus, setInferenceEnabled, getMemberInferenceAccess, ensureMemberFreeInferenceCredential } from "../../inference.js"
+import { allowFreeInferenceOffer, freeAutoBlockedByDesktopPolicy, getInferenceStatus, setInferenceEnabled, getMemberInferenceAccess, ensureMemberFreeInferenceCredential } from "../../inference.js"
 import { INFERENCE_ACCESS_REASONS } from "@openwork/types/den/inference"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
@@ -85,6 +85,9 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
     c.header("Cache-Control", "no-store")
     if (!env.inferenceFree.enabled) return c.json({ error: "free_disabled" }, 503)
     try {
+      if (await freeAutoBlockedByDesktopPolicy({ organizationId: context.organization.id, memberId: context.currentMember.id })) {
+        return c.json({ error: "free_not_offered", message: "Your organization allows only its assigned AI providers." }, 403)
+      }
       const credential = await ensureMemberFreeInferenceCredential({ organizationId: context.organization.id, memberId: context.currentMember.id,
         userId: normalizeDenTypeId("user", user.id) })
       return credential ? c.json({ credential }) : c.json({ error: "forbidden" }, 403)
