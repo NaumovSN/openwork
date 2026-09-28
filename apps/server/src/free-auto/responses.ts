@@ -67,7 +67,7 @@ export function parseMemberCredential(payload: unknown, origin: string): string 
     || credential.statusURL !== `${origin}${MEMBER_FREE_STATUS_PATH}`) throw new Error("Invalid member Auto credential.");
   return credential.apiKey;
 }
-const DEN_ERROR_CODES = ["free_disabled", "free_accounting_unavailable", "managed_models_disabled_for_dpa", "managed_models_policy_unavailable"];
+const DEN_ERROR_CODES = ["free_disabled", "free_not_offered", "free_accounting_unavailable", "managed_models_disabled_for_dpa", "managed_models_policy_unavailable"];
 /** Status and code for a refused credential exchange. */
 export function memberCredentialFailure(status: number, body: Uint8Array): { status: number; code: string } {
   const mapped = [401, 403, 429, 503].includes(status) ? status : 503;

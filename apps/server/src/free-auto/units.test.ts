@@ -61,6 +61,7 @@ test("guest sessions, extra work requests, and member credentials are validated 
   expect(() => parseMemberCredential({ credential: { ...credential, baseURL: "https://evil.example/api/v1" } }, origin)).toThrow();
   const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
   expect(memberCredentialFailure(403, encode({ error: "free_disabled" }))).toEqual({ status: 403, code: "free_disabled" });
+  expect(memberCredentialFailure(403, encode({ error: "free_not_offered" }))).toEqual({ status: 403, code: "free_not_offered" });
   expect(memberCredentialFailure(500, encode({ error: "whatever" }))).toEqual({ status: 503, code: "member_free_credentials_unavailable" });
 });
 
