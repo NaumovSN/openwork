@@ -77,7 +77,10 @@ test("an internal member connects their own Slack, reads linked excerpts, and ca
     const identity = world.slack.calls().find(call => call.path === "/api/auth.test");
     expect(identity).toMatchObject({ member: "first", workspace: "TSYNTHETIC", error: null });
     expect(await world.connection("second")).toMatchObject({ connectedForMe: false });
-    await user.notSee({ role: "button", label: "Connect Slack" }, { timeoutMs: 60_000 });
+    await probe.eventually(async () => (await probe.dom('button[aria-label="Connect Slack"]')).elements.length, {
+      within: 60_000, label: "the connection menu observes the completed authorization", until: count => count === 0,
+    });
+    await user.notSee({ role: "button", label: "Connect Slack" });
     evidence.recordAssertionEvidence("Own-member OAuth does not connect another member", "Slack received state and comma-separated read-only user scopes; auth.test used the nested user token for the first identity. The second member remains disconnected.", true);
     await user.screenshot();
     await user.press("Escape");
