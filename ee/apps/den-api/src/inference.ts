@@ -68,13 +68,13 @@ async function paidEntitlementMismatch(organizationId: OrgId, database: Database
 }
 
 /**
- * An organization whose desktop policy allows only its managed providers does not get free Auto: Auto is an
- * OpenWork provider, not one the organization assigned. Read from the member's effective policy in Den, so it
+ * Free Auto follows Den's "Free starter model (Auto)" switch, stored as `allowZenModel`: off means no free Auto,
+ * whether or not members may add their own providers. Read from the member's effective policy in Den, so it
  * holds whether or not the desktop app enforces the policy locally.
  */
 export async function freeAutoBlockedByDesktopPolicy(input: Pick<FreeMemberInput, "organizationId" | "memberId">): Promise<boolean> {
   const policy = await calculateDesktopPolicyForOrgMember({ organizationId: input.organizationId, orgMemberId: input.memberId })
-  return policy.allowCustomProviders === false
+  return policy.allowZenModel === false
 }
 
 export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<InferenceAccess> {

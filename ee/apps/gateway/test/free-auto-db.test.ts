@@ -331,14 +331,14 @@ test("free Auto SQL and 0114 upgrade in an owned random database", { skip: !admi
     assert.equal(await store.cancelUndispatched(next.requestId), true)
   })
 
-  await t.test("an organization whose default desktop policy allows only managed providers is not offered free Auto", async () => {
+  await t.test("an organization whose default desktop policy turns off the free starter model is not offered free Auto", async () => {
     const member = await person(), policyId = createDenTypeId("desktopPolicy")
     await db.insert(DesktopPolicyTable).values({ id: policyId, organizationId: member.input.organizationId, policyName: "Managed only",
       isDefault: true, isEnabled: true, policy: { allowCustomProviders: false, allowZenModel: false }, createdByOrgMemberId: member.input.memberId })
     assert.equal(await ensureMemberFreeInferenceCredential(member.input), null)
     assert.equal((await getMemberInferenceAccess(member.input)).reason, "admin_disabled")
-    await db.update(DesktopPolicyTable).set({ policy: { allowCustomProviders: true, allowZenModel: false } }).where(eq(DesktopPolicyTable.id, policyId))
-    assert.ok(await ensureMemberFreeInferenceCredential(member.input), "custom providers allowed again: Auto is offered again")
+    await db.update(DesktopPolicyTable).set({ policy: { allowCustomProviders: false, allowZenModel: true } }).where(eq(DesktopPolicyTable.id, policyId))
+    assert.ok(await ensureMemberFreeInferenceCredential(member.input), "managed only with the free starter model on: Auto is offered again")
   })
 
   await t.test("an organization Stripe still collects for is refused free Auto even when its Models flag is lost", async () => {

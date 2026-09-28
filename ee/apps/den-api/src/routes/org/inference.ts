@@ -86,7 +86,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
     if (!env.inferenceFree.enabled) return c.json({ error: "free_disabled" }, 503)
     try {
       if (await freeAutoBlockedByDesktopPolicy({ organizationId: context.organization.id, memberId: context.currentMember.id })) {
-        return c.json({ error: "free_not_offered", message: "Your organization allows only its assigned AI providers." }, 403)
+        return c.json({ error: "free_not_offered", message: "Your organization has turned off the free starter model." }, 403)
       }
       const credential = await ensureMemberFreeInferenceCredential({ organizationId: context.organization.id, memberId: context.currentMember.id,
         userId: normalizeDenTypeId("user", user.id) })
