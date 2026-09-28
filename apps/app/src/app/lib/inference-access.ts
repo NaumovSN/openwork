@@ -43,7 +43,7 @@ export function autoAccessWall(status: DesktopFreeAccessStatus): AutoAccessWall 
  * the app shows no trace of Auto: no picker row, no Settings row, no first-use caption.
  */
 export function freeAutoSwitchedOff(status: { code?: string | null } | null | undefined): boolean {
-  // free_not_offered: the organization allows only its assigned providers, so Den offers no free Auto.
+  // free_not_offered: the organization turned off the free starter model, so Den offers no free Auto.
   return status?.code === "free_disabled" || status?.code === "inference_disabled" || status?.code === "free_not_offered";
 }
 
