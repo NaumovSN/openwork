@@ -23,6 +23,29 @@ test("an internal member connects their own Slack, reads linked excerpts, and ca
   if (!privateConversation) throw new Error("The synthetic private conversation is missing");
   let retainedSearchName = "";
 
+  await step("given: both members have isolated, working agent runtimes", async () => {
+    await user.see("composer", { editable: true });
+    await second.see("composer", { editable: true });
+    if (world.engine === "v2") {
+      const runtimes = [];
+      for (const observer of [probe, secondProbe]) {
+        const result = await observer.eventually(() => observer.desktopApi("/experimental/engine-v2-preview/status"), {
+          within: 60_000, label: "the pinned V2 runtime is running", until: result => result.status === 200 && world.objects(result.body).some(entry => entry.running === true),
+        });
+        const runtime = world.objects(result.body).find(entry => entry.running === true);
+        expect(runtime).toMatchObject({ enabled: true, chatRouting: true, running: true, version: world.engineVersion, binSource: "env" });
+        expect(typeof runtime?.pid).toBe("number");
+        runtimes.push(runtime);
+      }
+      expect(runtimes[0]?.pid).not.toBe(runtimes[1]?.pid);
+      evidence.recordAssertionEvidence("The two app profiles use distinct pinned V2 runtimes", `Both public runtime status calls confirm ${world.engineVersion}, enabled chat routing, and distinct running process IDs. No engine settings were changed by the spec.`, true);
+    } else {
+      expect((await probe.desktopApi("/health")).status).toBe(200);
+      expect((await secondProbe.desktopApi("/health")).status).toBe(200);
+      evidence.recordAssertionEvidence("Both legacy app profiles are healthy", "Two independently launched app servers returned HTTP 200; no V2-specific runtime claim is made for this selection.", true);
+    }
+  });
+
   await step("before: internal Slack is available without asking the member for developer credentials", async () => {
     await user.see("composer", { editable: true });
     await openConnections(user);
@@ -83,6 +106,14 @@ test("an internal member connects their own Slack, reads linked excerpts, and ca
     const excerpt = world.objects(answer?.result).find(entry => entry.context === "thread_excerpt");
     expect(excerpt).toMatchObject({ partial: true, hasMore: true, nextCursor: "synthetic-thread-next" });
     expect(excerpt?.messages).toHaveLength(2);
+    if (world.engine === "v2") {
+      const sessionId = (await probe.hash()).match(/\/session\/([^/?#]+)/)?.[1];
+      if (!sessionId) throw new Error("The visible conversation has no session route for the native-history witness");
+      const nativeHistory = await probe.desktopApi(`/workspace/${encodeURIComponent(world.workspaceId)}/opencode2/api/session/${encodeURIComponent(decodeURIComponent(sessionId))}/message`);
+      expect(nativeHistory.status).toBe(200);
+      expect(JSON.stringify(nativeHistory.body)).toContain(world.prompt.first);
+      expect(JSON.stringify(nativeHistory.body)).toContain(world.slack.conversations[0].text);
+    }
     const catalog = await world.mcp("first", "search_capabilities", { query: "slack", type: "api", limit: 20 });
     const match = world.objects(catalog.body).find(entry => typeof entry.name === "string" && entry.name.startsWith("native:") && /slacksearch$/i.test(entry.name));
     if (!match || typeof match.name !== "string") throw new Error("The real catalog omitted the retained Slack search capability");
@@ -234,7 +265,8 @@ test("an internal member connects their own Slack, reads linked excerpts, and ca
       expect.objectContaining({ status: 403, body: expect.objectContaining({ error: "policy_blocked" }) }),
     ]);
     const retained = await world.mcp("blocked", "execute_capability", { name: retainedSearchName, query: { query: "Amber launch" } });
-    expect(world.objects(retained.body).some(entry => entry.isError === true || typeof entry.error === "string") || retained.status === 403).toBe(true);
+    expect(retained.status).toBe(200);
+    expect(world.objects(retained.body).some(entry => entry.error === "policy_blocked")).toBe(true);
     expect(world.slack.calls()).toHaveLength(before);
     evidence.recordAssertionEvidence("The organization gate is enforced below the UI", `Both OAuth start aliases, search and threads returned ${responses.map(response => response.status).join(" / ")}; replaying the first member's discovered capability was rejected. Provider call count stayed ${before}. All organizations are synthetic.`, true);
   });
@@ -256,12 +288,22 @@ test("an internal member connects their own Slack, reads linked excerpts, and ca
       expect.objectContaining({ status: 403, body: expect.objectContaining({ error: "policy_blocked" }) }),
     ]);
     const retained = await world.mcp("first", "execute_capability", { name: retainedSearchName, query: { query: "Amber launch" } }, true);
-    expect(world.objects(retained.body).some(entry => entry.isError === true || typeof entry.error === "string") || retained.status === 403).toBe(true);
+    expect(retained.status).toBe(200);
+    expect(world.objects(retained.body).some(entry => entry.error === "policy_blocked")).toBe(true);
+    expect(world.slack.calls()).toHaveLength(before);
+    const management = await world.memberRequest("first", "/v1/mcp-connections?scope=usable", "GET", undefined, true);
+    expect(world.objects(management.body).find(entry => entry.id === "slack")).toMatchObject({
+      policyBlocked: true, connected: false, connectedForMe: true,
+    });
+    const disconnected = await world.memberRequest("first", "/v1/oauth-providers/slack/disconnect", "POST", undefined, true);
+    expect(disconnected).toMatchObject({ status: 200, body: { ok: true } });
+    const afterDisconnect = await world.memberRequest("first", "/v1/mcp-connections?scope=usable", "GET", undefined, true);
+    expect(world.objects(afterDisconnect.body).some(entry => entry.id === "slack")).toBe(false);
     expect(world.slack.calls()).toHaveLength(before);
     expect(world.model.failures()).toEqual([]);
     const allowedMethods = ["/api/oauth.v2.access", "/api/auth.test", "/api/assistant.search.context", "/api/conversations.replies", "/api/chat.getPermalink"];
     expect(world.slack.calls().every(call => allowedMethods.includes(call.path))).toBe(true);
     expect(world.slack.calls().every(call => call.error === null || call.error === "channel_not_found")).toBe(true);
-    evidence.recordAssertionEvidence("Disabling availability stops retained authorization, not just discovery", `A second isolated Den process reads the same scratch database with Slack disabled. The already-issued member token and discovered capability cannot execute; OAuth aliases/search/threads returned ${responses.map(response => response.status).join(" / ")}, with zero additional provider calls. No actual environment or rollout flag changed.`, true);
+    evidence.recordAssertionEvidence("Disabling availability stops retained authorization, not just discovery", `A second isolated Den process reads the same scratch database with Slack disabled. Its audience-valid, read-only member token reaches policy_blocked for the retained capability; OAuth aliases/search/threads returned ${responses.map(response => response.status).join(" / ")}. The saved account stays visible as blocked and can still be disconnected. There were zero additional provider calls; no actual rollout flag changed.`, true);
   });
 });

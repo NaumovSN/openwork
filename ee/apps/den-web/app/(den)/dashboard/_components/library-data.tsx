@@ -42,7 +42,7 @@ export type LibraryConnectionItem = {
   description: string | null;
   transport: "mcp" | "native";
   provider: string | null;
-  state: "connected" | "needs_signin" | "needs_admin_setup" | "available";
+  state: "connected" | "needs_signin" | "needs_admin_setup" | "available" | "blocked";
   connectedAt: string | null;
   edges: LibraryAccessEdge[];
 };
@@ -101,7 +101,7 @@ function readTransport(value: unknown): LibraryConnectionItem["transport"] | nul
 }
 
 function readConnectionState(value: unknown): LibraryConnectionItem["state"] | null {
-  if (value === "connected" || value === "needs_signin" || value === "needs_admin_setup" || value === "available") {
+  if (value === "connected" || value === "needs_signin" || value === "needs_admin_setup" || value === "available" || value === "blocked") {
     return value;
   }
   return null;

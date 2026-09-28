@@ -34,6 +34,8 @@ const slack: DenExternalMcpConnection = {
   needsReconnect: false,
   missingFeatures: ["privateChannels", "directMessages", "groupMessages"],
 };
+const policyMessage = "An OpenWork administrator must enable Slack before you can use this account.";
+const blockedSlack = { ...slack, connected: false, missingFeatures: [], policyBlocked: true, policyMessage };
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) await cleanup();
@@ -117,7 +119,7 @@ async function mount(connection: DenExternalMcpConnection | null, detail = true)
 test("public-only Slack stays connected, names missing access, and offers optional reconnect", async () => {
   const view = await mount(slack);
   expect(view.host.textContent).toContain("Connected with limited access");
-  expect(view.host.textContent).toContain("Not authorized: private channels, direct messages, group direct messages");
+  expect(view.host.textContent).toContain("Limited permissions for: private channels, direct messages, group direct messages");
   expect(view.host.textContent).not.toContain("Reconnect your account to grant newly requested permissions");
   expect(view.host.textContent).not.toContain(slack.externalAccountId);
   expect(view.host.querySelector('img[src$="/ext-slack.svg"]')).not.toBeNull();
@@ -127,6 +129,22 @@ test("public-only Slack stays connected, names missing access, and offers option
   expect(view.disconnect).not.toHaveBeenCalled();
   await act(async () => view.button("Disconnect").click());
   expect(view.disconnect).toHaveBeenCalledWith("slack");
+});
+
+test("private search granted without private history is limited, not wholly unauthorized or unsearched", async () => {
+  const view = await mount({
+    ...slack,
+    missingFeatures: ["privateChannels"],
+    grantedScopes: [
+      "search:read.public", "channels:history", "search:read.private",
+      "search:read.im", "im:history", "search:read.mpim", "mpim:history",
+    ],
+  });
+  expect(view.host.textContent).toContain("Connected with limited access");
+  expect(view.host.textContent).toContain("Limited permissions for: private channels");
+  expect(view.host.textContent).not.toContain("Not authorized");
+  expect(view.host.textContent?.toLowerCase()).not.toContain("unsearched");
+  expect(view.button("Reconnect").disabled).toBe(false);
 });
 
 test("missing required Slack public access offers reconnect without a ready label", async () => {
@@ -164,6 +182,109 @@ test("the UI does not manufacture a native Slack connection when the server omit
   const view = await mount(null, false);
   expect(view.host.querySelector('[data-library-section="openwork"] [data-library-row="Slack"]')).toBeNull();
   expect(view.connect).not.toHaveBeenCalled();
+});
+
+test("a blocked account survives the API parser and keeps Disconnect without authorization or Chat", async () => {
+  const { createDenClient } = await import("../src/app/lib/den");
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ connections: [blockedSlack] }));
+  let connection: DenExternalMcpConnection | undefined;
+  try {
+    [connection] = await createDenClient({ baseUrl: "https://api.example.test", token: "synthetic-token" }).listMcpConnections("org-synthetic", "usable");
+  } finally { fetch.mockRestore(); }
+  if (!connection) throw new Error("The stored Slack account was omitted");
+  const view = await mount(connection);
+  expect(view.host.textContent).toContain("Blocked");
+  expect(view.host.textContent).toContain(policyMessage);
+  expect(view.host.querySelector(".lucide-lock") !== null).toBe(true);
+  expect(view.button("Chat").disabled).toBe(true);
+  await act(async () => view.button("Chat").click());
+  expect(view.host.querySelector('[data-extension-detail-page]') !== null).toBe(true);
+  expect([...view.host.querySelectorAll("button")].filter((button) => /^(Connect|Reconnect)/.test(button.textContent?.trim() ?? "") && !button.disabled)).toHaveLength(0);
+  expect(view.connect).not.toHaveBeenCalled();
+  expect(view.reconnect).not.toHaveBeenCalled();
+  await act(async () => view.button("Disconnect").click());
+  expect(view.disconnect).toHaveBeenCalledWith("slack");
+});
+
+test("a blocked account remains an openable Library row, not a ready source", async () => {
+  const view = await mount(blockedSlack, false);
+  const row = view.host.querySelector<HTMLButtonElement>('[data-library-section="openwork"] [data-library-row="Slack"]');
+  expect(row !== null).toBe(true);
+  expect(row?.disabled).toBe(false);
+  expect(row?.textContent).toContain("Blocked");
+  expect(row?.textContent).toContain(policyMessage);
+  expect(row?.querySelector(".lucide-lock") !== null).toBe(true);
+  expect(row?.querySelector("[data-library-ready]")).toBeNull();
+});
+
+test("blocked account lifecycle rejects a stale authorize action but still disconnects through the native API", async () => {
+  const den = await import("../src/app/lib/den");
+  const { useOrgMcpConnections } = await import("../src/react-app/domains/connections/use-org-mcp-connections");
+  const { clearCloudInventoryCache } = await import("../src/react-app/domains/connections/cloud-inventory-cache");
+  const { ExtensionDetailModal } = await import("../src/react-app/design-system/extension-detail-modal");
+  let accounts: DenExternalMcpConnection[] = [blockedSlack];
+  const requests: string[] = [];
+  let staleAuthorize = async () => {};
+  const settings = spyOn(den, "readDenSettings").mockReturnValue({
+    baseUrl: "https://api.example.test", authToken: "synthetic-token", activeOrgId: "org-synthetic",
+  });
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    requests.push(`${init?.method ?? "GET"} ${url.pathname}`);
+    if (url.pathname === "/v1/mcp-connections") return Response.json({ connections: accounts });
+    if (url.pathname === "/v1/oauth-providers/slack/disconnect") {
+      accounts = [];
+      return Response.json({ ok: true });
+    }
+    throw new Error(`Unexpected request: ${url.pathname}`);
+  });
+  const host = document.body.appendChild(document.createElement("div"));
+  const root = createRoot(host);
+  function Account() {
+    const connections = useOrgMcpConnections();
+    staleAuthorize = () => connections.connect("slack", { forceFreshAuthorization: true });
+    const connection = connections.connections[0];
+    if (!connection) return null;
+    return <ExtensionDetailModal
+      open presentation="page" name="Slack" onClose={() => {}}
+      description={orgMcpConnectionDescription(connection)}
+      disabledReason={connection.policyBlocked ? connection.policyMessage : undefined}
+      connected={isOrgMcpConnectionReady(connection)} disconnectedLabel="Blocked"
+      uninstallAvailable={connection.connectedForMe}
+      onUninstall={() => void connections.disconnect(connection.id)}
+      uninstallLabel="Disconnect" closeOnUninstall={false}
+    />;
+  }
+  try {
+    clearCloudInventoryCache();
+    await act(async () => root.render(<Account />));
+    expect(host.textContent).toContain("Blocked");
+    await act(staleAuthorize);
+    expect(requests.some((request) => request.includes("/connect/start"))).toBe(false);
+    const disconnect = [...host.querySelectorAll("button")].find((button) => button.textContent === "Disconnect");
+    if (!disconnect) throw new Error("Missing Disconnect action for the blocked account");
+    await act(async () => disconnect.click());
+    expect(requests).toContain("POST /v1/oauth-providers/slack/disconnect");
+    expect(host.textContent).not.toContain("Slack");
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    fetch.mockRestore();
+    settings.mockRestore();
+    clearCloudInventoryCache();
+  }
+});
+
+test("the composer excludes a blocked account and its stale duplicate, without touching external Slack", async () => {
+  const { mergeComposerConnectionInventory } = await import("../src/react-app/domains/session/surface/composer/composer-connections");
+  const inventory = mergeComposerConnectionInventory({
+    orgConnections: [blockedSlack],
+    mcpServers: [
+      { name: "slack", orgMcpConnectionId: "slack", config: { type: "remote", url: slack.url } },
+      { name: "External Slack", orgMcpConnectionId: "external-slack", config: { type: "remote", url: "https://mcp.slack.com/mcp" } },
+    ],
+  });
+  expect(inventory.servers.map((server) => server.name)).toEqual(["External Slack"]);
 });
 
 test("optional Slack reconnect preserves the usable grant on failure; explicit Disconnect uses the native route", async () => {

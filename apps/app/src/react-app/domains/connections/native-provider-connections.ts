@@ -7,6 +7,7 @@ export type NativeProviderDisconnectableConnection = {
 export type ReconnectableConnection = {
   nativeProviderKey?: string | null;
   needsReconnect?: boolean;
+  policyBlocked?: boolean;
   missingFeatures?: readonly string[];
 };
 
@@ -16,6 +17,7 @@ export type MemberLifecycleConnection = {
   credentialMode: "shared" | "per_member";
   connectedForMe: boolean;
   needsReconnect?: boolean;
+  policyBlocked?: boolean;
   missingFeatures?: readonly string[];
   reconnectActionOwner?: "member" | "organization_admin" | null;
 };
@@ -35,6 +37,7 @@ export function slackMissingAccess(connection: ReconnectableConnection): string[
 }
 
 export function connectionNeedsReconnect(connection: ReconnectableConnection): boolean {
+  if (connection.policyBlocked) return false;
   if (connection.needsReconnect === true) return true;
   // Optional Slack consent leaves public-channel access usable. Other providers
   // keep their existing missing-feature recovery behavior.
@@ -57,7 +60,7 @@ export function connectionNeedsAdminRepair(connection: Pick<MemberLifecycleConne
 
 /** The member may run the OAuth flow themselves (connect or reconnect). */
 export function canMemberAuthorizeConnection(connection: MemberLifecycleConnection): boolean {
-  return connection.credentialMode === "per_member" && connection.authType === "oauth" && !connectionNeedsAdminRepair(connection);
+  return !connection.policyBlocked && connection.credentialMode === "per_member" && connection.authType === "oauth" && !connectionNeedsAdminRepair(connection);
 }
 
 /** The member may remove their own stored account. */

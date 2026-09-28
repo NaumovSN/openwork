@@ -11,7 +11,7 @@ let redirectedRequests = 0
 const server = Bun.serve({
   hostname: "127.0.0.1",
   port: 0,
-  async fetch(request) {
+  async fetch(request): Promise<Response> {
     const path = new URL(request.url).pathname
     if (redirectTokenRequest && path === "/api/oauth.v2.access") {
       return new Response(null, { status: 307, headers: { location: `${server.url.origin}/redirected-token` } })
@@ -71,6 +71,8 @@ function exchange() {
 test.each([
   { ok: false, error: "invalid_auth", authed_user: { access_token: "must-not-use", token_type: "user" } },
   { ok: true, access_token: "bot-only", token_type: "bot" },
+  { ok: true, access_token: "top-level-user", token_type: "user", refresh_token: "refresh-only-grant", expires_in: 43200 },
+  { ok: true, access_token: "top-level-user", token_type: "user", authed_user: { access_token: "nested-bot", token_type: "bot" } },
   { ok: true, authed_user: { access_token: "nested-bot", token_type: "bot" } },
   { ok: true, authed_user: { access_token: "", token_type: "user" } },
   { ok: true, is_enterprise_install: true, authed_user: { access_token: "org-wide", token_type: "user" } },
@@ -104,6 +106,7 @@ test("standard Slack exchange uses only the nested member token and its actual g
   expect(tokens.access_token).toBe("synthetic-member-token")
   expect(tokens.token_type).toBe("user")
   expect(tokens.scope).toBe("search:read.public,channels:history")
+  expect(receivedParams.get("grant_type")).toBe("authorization_code")
   expect(receivedParams.get("code")).toBe("synthetic-code")
   expect(receivedParams.get("redirect_uri")).toBe("https://den.example.test/callback")
   expect(receivedParams.has("code_verifier")).toBe(false)

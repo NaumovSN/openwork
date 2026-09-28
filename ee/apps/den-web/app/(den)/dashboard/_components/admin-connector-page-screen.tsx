@@ -10,7 +10,7 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { type AccessDraft, accessAddedToast } from "./access-summary";
 import { signInSentence } from "./admin-connectors";
 import { connectorAccountLabel, connectorAccountReady, connectorLimitedAccess } from "./connector-detail";
-import { ChatButton, WhatYourAiCanDo } from "./connector-page-screen";
+import { ChatButton, ConnectionPolicyStatus, WhatYourAiCanDo } from "./connector-page-screen";
 import { GOOGLE_WORKSPACE_QUICK_ADD_ID, isNativeProviderCatalogId, MICROSOFT_365_QUICK_ADD_ID } from "./connector-catalog";
 import { useMemberSignIn } from "./connector-setup";
 import { ConnectorSettingsForm } from "./connector-settings";
@@ -25,6 +25,7 @@ import {
   isNativeProviderConnectionId,
   useDeleteMcpConnection,
   useDisconnectMcpConnection,
+  useDisconnectMyProviderAccount,
   useMcpConnectionTools,
   useUpdateMcpConnection,
 } from "./mcp-connections-data";
@@ -133,6 +134,7 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
   const saveAccess = useSaveConnectionAccess();
   const deleteConnection = useDeleteMcpConnection();
   const disconnect = useDisconnectMcpConnection();
+  const disconnectAccount = useDisconnectMyProviderAccount();
   const signIn = useMemberSignIn();
   const [saving, setSaving] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(Boolean(connection.setupRequired) || Boolean(connection.issuerReviewRequired)
@@ -178,7 +180,7 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
     router.push(getMcpConnectionsRoute(orgSlug));
   }
 
-  const accountValue = signedIn
+  const accountValue = signedIn || connection.policyBlocked
     ? connection.authType === "none" ? "Not needed" : connectorAccountLabel(connection) ?? "Signed in"
     : connection.issuerReviewRequired ? <DenButton variant="secondary" size="xs" onClick={() => setSettingsOpen(true)}>Review sign-in server</DenButton>
     : <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>{connection.needsReconnect ? "Reconnect" : "Sign in"}</DenButton>;
@@ -187,6 +189,7 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
     ...(connection.authType === "oauth"
       ? [{ label: connection.credentialMode === "shared" ? "Organization account" : "Your account", value: accountValue }]
       : []),
+    ...(connection.policyBlocked ? [{ label: "Access", value: <ConnectionPolicyStatus message={connection.policyMessage} /> }] : []),
     ...(limitedAccess ? [{ label: "Access", value: (
       <span className="flex flex-col gap-1 whitespace-normal">
         <span>Connected with limited access</span>
@@ -224,7 +227,10 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
             {limitedAccess ? (
               <DenButton variant="secondary" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>Reconnect</DenButton>
             ) : null}
-            <ChatButton name={name} />
+            {connection.policyBlocked && connection.connectedForMe ? (
+              <DenButton variant="secondary" loading={disconnectAccount.isPending} onClick={() => disconnectAccount.mutate(connection)}>Disconnect</DenButton>
+            ) : null}
+            <ChatButton name={name} disabled={connection.policyBlocked} />
           </>
         )}
       />
@@ -266,6 +272,7 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
         <section className="flex flex-col gap-2.5">
           <SectionTitle title="Details" />
           <DetailRows rows={details} />
+          {disconnectAccount.error ? <p role="alert">{disconnectAccount.error.message}</p> : null}
           {signIn.failure?.id === connectionId ? (
             <p className="text-[13px] text-red-600" role="alert">{`Could not sign in to ${name}. ${signIn.failure.message}`}</p>
           ) : null}

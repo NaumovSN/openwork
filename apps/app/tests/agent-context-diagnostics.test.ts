@@ -40,6 +40,110 @@ describe("organization connection diagnostic observations", () => {
     expect(serialized).not.toContain("secret=hidden");
   });
 
+  test("retains a blocked stored Slack account without copying policy text or account identifiers", () => {
+    const request = collectAgentContextDiagnosticObservations({
+      workspaceType: "local",
+      organizationConnectionsProbe: { status: "observed", code: null, totalCount: 0, truncated: false },
+      organizationConnections: [{
+        ...connection,
+        id: "slack",
+        name: "Slack",
+        nativeProviderKey: "slack",
+        connected: false,
+        connectedForMe: true,
+        needsReconnect: false,
+        missingFeatures: [],
+        policyBlocked: true,
+        policyMessage: "Private policy reason canary",
+        externalAccountId: "private-account-canary",
+        tenantId: "private-workspace-canary",
+        grantedScopes: ["private-scope-canary"],
+      }],
+    });
+
+    expect(request.organizationConnections).toEqual([{
+      id: "slack",
+      name: "Slack",
+      credentialMode: "per_member",
+      connected: false,
+      connectedForMe: true,
+      needsReconnect: false,
+      missingFeatureCount: 0,
+      policyBlocked: true,
+    }]);
+    expect(agentContextDiagnosticsRequestSchema.safeParse(request).success).toBe(true);
+    expect(JSON.stringify(request)).not.toContain("canary");
+  });
+
+  test.each([
+    {
+      access: "public search and history only",
+      grantedScopes: ["search:read.public", "channels:history"],
+      missingFeatures: ["privateChannels", "directMessages", "groupMessages"],
+      missingFeatureCount: 3,
+    },
+    {
+      access: "private search without private history",
+      grantedScopes: [
+        "search:read.public", "channels:history", "search:read.private",
+        "search:read.im", "im:history", "search:read.mpim", "mpim:history",
+      ],
+      missingFeatures: ["privateChannels"],
+      missingFeatureCount: 1,
+    },
+  ])("summarizes usable Slack access: $access", ({ grantedScopes, missingFeatures, missingFeatureCount }) => {
+    const request = collectAgentContextDiagnosticObservations({
+      workspaceType: "local",
+      organizationConnectionsProbe: { status: "observed", code: null, totalCount: 0, truncated: false },
+      organizationConnections: [{
+        ...connection,
+        id: "slack",
+        name: "Slack",
+        nativeProviderKey: "slack",
+        grantedScopes,
+        missingFeatures,
+      }],
+    });
+
+    expect(request.organizationConnections).toEqual([{
+      id: "slack",
+      name: "Slack",
+      credentialMode: "per_member",
+      connected: true,
+      connectedForMe: true,
+      needsReconnect: false,
+      missingFeatureCount,
+      limitedAccess: true,
+    }]);
+    expect(agentContextDiagnosticsRequestSchema.safeParse(request).success).toBe(true);
+    expect(JSON.stringify(request)).not.toContain("grantedScopes");
+    expect(JSON.stringify(request)).not.toContain("search:read");
+  });
+
+  test("does not infer limited access for other providers, blocked accounts, or required permission repair", () => {
+    const overrides: Partial<DenExternalMcpConnection>[] = [
+      { nativeProviderKey: "google-workspace" },
+      { nativeProviderKey: "microsoft-365" },
+      { nativeProviderKey: null },
+      { needsReconnect: true },
+      { connectedForMe: false },
+      { policyBlocked: true },
+      { missingFeatures: ["privateChannels", "requiredFeature"] },
+    ];
+    for (const override of overrides) {
+      const summaries = summarizeOrganizationConnections([{
+        ...connection,
+        id: "slack",
+        name: "Slack",
+        nativeProviderKey: "slack",
+        missingFeatures: ["privateChannels"],
+        ...override,
+      }]);
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]?.limitedAccess).toBeUndefined();
+    }
+  });
+
   test("redacts unsafe text from client-observed names while preserving safe identifiers", () => {
     const summaries = summarizeOrganizationConnections([
       {

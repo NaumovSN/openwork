@@ -53,8 +53,17 @@ not `body`. The optional `conversationTypes` query value is comma-separated.
 The upstream RTS method remains POST. Threads remain GET.
 
 The separately minted replay tokens must return exactly `mcp:read` in the
-mint response. A successful native search invocation with that token proves
-read-only gateway authority without changing generic POST policy.
+mint response. Each Den process receives its own audience-valid token; a
+wrong-audience or generic authentication rejection is not a policy witness.
+A successful native search invocation proves read-only gateway authority
+without changing generic POST policy. Disabled execution must specifically
+return `policy_blocked`, while the existing account remains removable.
+
+## Engine preparation
+
+The local app-web stack boots a V1 compatibility primary even when chat is routed to V2. Supply both repository-pinned binaries through `OPENWORK_OPENCODE_BIN` and `OPENWORK_OPENCODE2_BIN`; a V2 binary on the generic `opencode` PATH cannot satisfy the V1 launcher. Prepare verified sidecars with the repository's `prepare:sidecar` script rather than relaxing startup parsing or changing the machine's OpenCode installation.
+
+With `--engine v2`, the journey checks both public V2 runtime statuses against the build manifest, distinct process IDs, and native message history for the actual UI conversation. The CLI selection alone is not the runtime witness.
 
 ## Placement and outstanding proof
 

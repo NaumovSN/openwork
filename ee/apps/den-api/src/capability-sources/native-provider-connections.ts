@@ -29,6 +29,7 @@ import { memberFacingMcpConnectionsEnabled } from "./external-mcp-rollout.js"
 
 export type NativeProviderConnectionEntry = {
   id: string
+  externalKey: null
   name: string
   url: string
   authType: "oauth"
@@ -40,6 +41,9 @@ export type NativeProviderConnectionEntry = {
   connectedForMe: boolean
   needsReconnect: boolean
   missingFeatures: string[]
+  /** Account-management visibility only; blocked rows never enter capability discovery. */
+  policyBlocked?: boolean
+  policyMessage?: string
   /** Which service this connector fronts ("google-workspace"), so an admin-named card ("Acme Labs") can still say what it signs in to. */
   nativeProviderKey: string
   externalAccountId?: string | null
@@ -95,6 +99,7 @@ export function buildNativeProviderEntry(
   }
   return {
     id: state.credentialProviderId ?? provider.providerId,
+    externalKey: null,
     name: state.name ?? provider.displayName,
     url: provider.websiteUrl,
     authType: "oauth",
@@ -211,6 +216,55 @@ export async function listNativeProviderUsableEntries(input: {
     if (entry) entries.push(entry)
   }
   return entries
+}
+
+/**
+ * Member account management is distinct from capability availability. A saved
+ * Slack grant stays visible for removal after its rollout is disabled, without
+ * returning it from the usable-entry resolver consumed by MCP and Code Mode.
+ */
+export async function listBlockedNativeProviderAccountEntries(input: {
+  organizationId: DenTypeId<"organization">
+  orgMembershipId: DenTypeId<"member">
+}): Promise<NativeProviderConnectionEntry[]> {
+  const account = await getConnectedAccount({
+    organizationId: input.organizationId,
+    orgMembershipId: input.orgMembershipId,
+    providerId: "slack",
+  })
+  if (!account?.accessToken || account.organizationId !== input.organizationId
+    || account.orgMembershipId !== input.orgMembershipId || account.providerId !== "slack") return []
+  const provider = NATIVE_OAUTH_PROVIDERS.slack
+  if (!provider) return []
+  const policy = await nativeProviderConnectionPolicyError(input.organizationId, "slack")
+  const identity = parseSlackAccountIdentity(account.externalAccountId)
+  const client = await getNativeOAuthClient(input.organizationId, "slack")
+  const message = policy?.message
+    ?? (!identity || !slackWorkspaceAllowed(identity.workspaceId)
+      ? "This saved Slack account is outside the approved validation workspace. An OpenWork administrator controls preview access; you can still disconnect your account."
+      : !client
+        ? "The OpenWork-supplied Slack app is unavailable. An OpenWork administrator can restore it; you can still disconnect your account."
+        : null)
+  if (!message) return []
+  return [{
+    id: "slack",
+    externalKey: null,
+    name: provider.displayName,
+    url: provider.websiteUrl,
+    authType: "oauth",
+    credentialMode: "per_member",
+    exposeDirectly: false,
+    connected: false,
+    connectedAt: account.connectedAt.toISOString(),
+    connectedForMe: true,
+    needsReconnect: false,
+    missingFeatures: [],
+    nativeProviderKey: "slack",
+    policyBlocked: true,
+    policyMessage: message,
+    requiredBy: [],
+    access: null,
+  }]
 }
 
 export async function resolveDefaultNativeProviderCredentialId(input: {

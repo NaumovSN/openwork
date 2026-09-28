@@ -375,7 +375,8 @@ export function useMemberSignIn() {
     queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
   ]);
 
-  async function signIn(item: { id: string; name: string }) {
+  async function signIn(item: { id: string; name: string; policyBlocked?: boolean }) {
+    if (item.policyBlocked) return;
     if (timer.current) clearInterval(timer.current);
     setPendingId(item.id);
     setFailure(null);

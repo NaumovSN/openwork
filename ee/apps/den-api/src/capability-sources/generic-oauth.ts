@@ -16,8 +16,8 @@ import { encodeSlackAccountIdentity, parseSlackAccountIdentity, slackPreviewPoli
 /**
  * Shared native OAuth authorization-code driver, with PKCE where supported.
  * Registry entries supply endpoints and permissions; Slack's standard OAuth
- * protocol additionally requires user_scope, a nested member grant, and
- * verified workspace/member identity.
+ * protocol additionally requires user_scope, grant-specific member token
+ * envelopes, and verified workspace/member identity.
  */
 
 const TOKEN_EXPIRY_SAFETY_WINDOW_MS = 60_000
@@ -200,6 +200,15 @@ const slackTokenResponseSchema = z.object({
     refresh_token: z.string().min(1).optional(),
     expires_in: z.number().nonnegative().optional(),
   }),
+})
+
+const slackRefreshTokenResponseSchema = slackTokenResponseSchema.omit({ authed_user: true }).extend({
+  id: z.string().regex(/^[UW][A-Z0-9]{1,63}$/).optional(),
+  access_token: z.string().trim().min(1),
+  token_type: z.literal("user"),
+  scope: z.string().optional(),
+  refresh_token: z.string().min(1),
+  expires_in: z.number().nonnegative(),
 })
 
 const tokenResponseSchema = z.object({
@@ -501,12 +510,26 @@ async function postTokenRequest(input: {
     })
   }
   if (input.provider.providerId === "slack") {
+    // The requested grant determines the envelope, not the presence of a token.
+    // User refresh replies are top-level; authorization-code replies are not.
+    // https://docs.slack.dev/authentication/using-token-rotation/#refresh
+    if (input.params.get("grant_type") === "refresh_token") {
+      const parsed = slackRefreshTokenResponseSchema.safeParse(body)
+      if (!parsed.success) {
+        throw new OAuthTokenExchangeError("Slack did not return a valid member token refresh.", "oauth_token_response_invalid")
+      }
+      return {
+        ...parsed.data,
+        slackWorkspaceId: parsed.data.team?.id,
+        slackUserId: parsed.data.id,
+      }
+    }
     const parsed = slackTokenResponseSchema.safeParse(body)
     if (!parsed.success) {
       throw new OAuthTokenExchangeError("Slack did not return a valid member authorization.", "oauth_token_response_invalid")
     }
-    // Standard oauth.v2.access can also return a bot grant at the top level.
-    // Only authed_user is the member's grant; never substitute the bot token.
+    // Authorization-code replies can also contain a top-level bot grant.
+    // Only authed_user is the member's grant here; never substitute a top-level token.
     return {
       ...parsed.data.authed_user,
       scope: parsed.data.authed_user.scope ?? "",
@@ -624,7 +647,11 @@ export async function getValidAccessToken(input: {
     expiresAt,
     ...(slackIdentity !== undefined ? {
       externalAccountId: slackIdentity,
-      scopes: [...new Set((refreshed.scope ?? "").split(/[\s,]+/).filter(Boolean))],
+      // Refresh may omit unchanged scopes (RFC 6749 §§5.1, 6). Retain only
+      // previously confirmed grants, never the provider's requested defaults.
+      scopes: refreshed.scope === undefined
+        ? account.scopes
+        : [...new Set(refreshed.scope.split(/[\s,]+/).filter(Boolean))],
     } : {}),
   })
   if (input.provider.providerId === "slack" && !slackOAuthConfigurationIsCurrent({

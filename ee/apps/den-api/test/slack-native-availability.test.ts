@@ -36,7 +36,7 @@ mock.module("../src/capability-sources/external-mcp-connections.js", () => ({
   listUsableNativeProviderConnections: async () => [],
 }))
 
-const { listNativeProviderUsableEntries, resolveDefaultNativeProviderCredentialId } = await import("../src/capability-sources/native-provider-connections.js")
+const { listBlockedNativeProviderAccountEntries, listNativeProviderUsableEntries, resolveDefaultNativeProviderCredentialId } = await import("../src/capability-sources/native-provider-connections.js")
 
 beforeEach(() => {
   settings.slackEnabled = true
@@ -104,6 +104,36 @@ test("disabling Slack blocks discovery and retained default-account selection", 
     nativeProviderKey: "slack",
     teamIds: [],
   })).toBeNull()
+})
+
+test("a disabled existing Slack account remains manageable but never usable by capabilities", async () => {
+  account = connectedSlackAccount()
+  settings.slackEnabled = false
+  const managed = await listBlockedNativeProviderAccountEntries({ organizationId, orgMembershipId: memberId })
+  expect(managed).toHaveLength(1)
+  expect(managed[0]).toMatchObject({
+    id: "slack", nativeProviderKey: "slack", connected: false, connectedForMe: true,
+    policyBlocked: true, needsReconnect: false,
+  })
+  expect(managed[0]?.policyMessage).toContain("OpenWork administrator")
+  expect(JSON.stringify(managed)).not.toContain("synthetic-user-token")
+  expect(await entriesForMember()).toEqual([])
+})
+
+test("management-only rows are not advertised to new members or borrowed across identities", async () => {
+  settings.slackEnabled = false
+  expect(await listBlockedNativeProviderAccountEntries({ organizationId, orgMembershipId: memberId })).toEqual([])
+  account = connectedSlackAccount()
+  expect(await listBlockedNativeProviderAccountEntries({ organizationId, orgMembershipId: createDenTypeId("member") })).toEqual([])
+  expect(await listBlockedNativeProviderAccountEntries({ organizationId: createDenTypeId("organization"), orgMembershipId: memberId })).toEqual([])
+})
+
+test("management keeps stale-workspace and unavailable-app grants visible only for cleanup", async () => {
+  account = { ...connectedSlackAccount(), externalAccountId: "slack:TOTHER:USYNTHETIC" }
+  expect((await listBlockedNativeProviderAccountEntries({ organizationId, orgMembershipId: memberId }))[0]).toMatchObject({ policyBlocked: true, connectedForMe: true })
+  account = connectedSlackAccount()
+  settings.slackClientSecret = ""
+  expect((await listBlockedNativeProviderAccountEntries({ organizationId, orgMembershipId: memberId }))[0]).toMatchObject({ policyBlocked: true, connectedForMe: true })
 })
 
 test("an account for another Slack workspace is not shown as connected", async () => {

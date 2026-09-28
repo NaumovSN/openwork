@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { useState, type ReactNode } from "react";
-import { AlertCircle, ChevronRight, Loader2 } from "lucide-react";
+import { AlertCircle, ChevronRight, Loader2, Lock } from "lucide-react";
 import type { EnablementResult } from "../../app/extensions";
 import { t } from "../../i18n";
 import {
@@ -54,7 +54,7 @@ export type ExtensionCardProps = {
   /** Click handler. */
   onClick?: () => void;
   /** List rows: a short state beside the kind, e.g. Sign in or Set up. */
-  statusChip?: { label: string; tone: "attention" | "setup" };
+  statusChip?: { label: string; tone: "attention" | "setup" | "blocked" };
   /** List rows: a control after the row, outside its button, e.g. a ⋯ menu. */
   trailing?: ReactNode;
 };
@@ -272,6 +272,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
               data-library-status={props.statusChip.label}
               className={`whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-medium ${props.statusChip.tone === "attention" ? "bg-amber-3 text-amber-11" : "bg-dls-hover text-dls-text"}`}
             >
+              {props.statusChip.tone === "blocked" ? <Lock className="mr-1 inline" size={16} strokeWidth={1.5} aria-hidden /> : null}
               {props.statusChip.label}
             </span>
           ) : null}
@@ -317,6 +318,7 @@ export function ExtensionCard(props: ExtensionCardProps) {
       data-library-status={props.statusChip.label}
       className={`shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-medium ${props.statusChip.tone === "attention" ? "bg-amber-3 text-amber-11" : "bg-dls-hover text-dls-text"}`}
     >
+      {props.statusChip.tone === "blocked" ? <Lock className="mr-1 inline" size={16} strokeWidth={1.5} aria-hidden /> : null}
       {props.statusChip.label}
     </span>
   ) : null;

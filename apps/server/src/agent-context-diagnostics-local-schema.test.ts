@@ -114,6 +114,65 @@ describe("agent context diagnostics server-local schema parity", () => {
     expect(sharedReportSchema.safeParse(reportWithSlashHeavyMcp).success).toBe(true);
   });
 
+  test("preserves optional policy and limited-access flags without changing older payloads", async () => {
+    expect(localRequestSchema.parse(validRequest)).toEqual(validRequest);
+    expect(sharedRequestSchema.parse(validRequest)).toEqual(validRequest);
+    const request: AgentContextDiagnosticsRequest = {
+      organizationConnectionsProbe: { status: "observed", code: null, totalCount: 2, truncated: false },
+      organizationConnections: [
+        {
+          id: "slack.blocked",
+          name: "Blocked account",
+          credentialMode: "per_member",
+          connected: false,
+          connectedForMe: true,
+          needsReconnect: false,
+          missingFeatureCount: 0,
+          policyBlocked: true,
+          limitedAccess: false,
+        },
+        {
+          id: "slack.limited",
+          name: "Limited account",
+          credentialMode: "per_member",
+          connected: true,
+          connectedForMe: true,
+          needsReconnect: false,
+          missingFeatureCount: 1,
+          policyBlocked: false,
+          limitedAccess: true,
+        },
+      ],
+    };
+    expect(localRequestSchema.parse(request)).toEqual(request);
+    expect(sharedRequestSchema.parse(request)).toEqual(request);
+    const report = await runAgentContextDiagnostics({
+      config,
+      workspace,
+      request,
+      inspectRegistration: () => "not-recorded",
+      dependencies: { fetchImpl: failFetch },
+    });
+    expect(report.schemaVersion).toBe(2);
+    expect(report.organizationConnections).toEqual(request.organizationConnections);
+    expect(localReportSchema.parse(report)).toEqual(report);
+    expect(sharedReportSchema.parse(report)).toEqual(report);
+
+    for (const unsafeFields of [
+      { policyBlocked: "true" },
+      { limitedAccess: "true" },
+      { policyMessage: "Private policy details" },
+      { externalAccountId: "private-account-canary" },
+      { grantedScopes: ["private-scope-canary"] },
+    ]) {
+      const organizationConnections = request.organizationConnections.map((connection) => ({ ...connection, ...unsafeFields }));
+      expect(localRequestSchema.safeParse({ ...request, organizationConnections }).success).toBe(false);
+      expect(sharedRequestSchema.safeParse({ ...request, organizationConnections }).success).toBe(false);
+      expect(localReportSchema.safeParse({ ...report, organizationConnections }).success).toBe(false);
+      expect(sharedReportSchema.safeParse({ ...report, organizationConnections }).success).toBe(false);
+    }
+  });
+
   test("rejects unsafe and unknown request fields in both contracts", () => {
     const candidates = [
       { ...validRequest, unexpected: true },

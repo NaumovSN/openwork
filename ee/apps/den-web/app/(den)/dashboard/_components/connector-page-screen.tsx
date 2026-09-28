@@ -1,10 +1,11 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, MessageSquare, UserPlus } from "lucide-react";
+import { ChevronDown, Lock, MessageSquare, UserPlus } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { DenButton } from "../../_components/ui/button";
+import { DenBadge } from "../../_components/ui/badge";
 import { getLibraryConnectorShareRoute, getLibraryRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ownedAccessStatus } from "./access-summary";
@@ -66,7 +67,17 @@ export function WhatYourAiCanDo({ tools, loading, signedIn, error }: {
   );
 }
 
-export function ChatButton({ name }: { name: string }) {
+export function ConnectionPolicyStatus({ message }: { message?: string }) {
+  return (
+    <span className="flex flex-col items-end gap-1 whitespace-normal">
+      <DenBadge icon={Lock}>Blocked</DenBadge>
+      <span>{message ?? "An administrator controls access to this connection."}</span>
+    </span>
+  );
+}
+
+export function ChatButton({ name, disabled = false }: { name: string; disabled?: boolean }) {
+  if (disabled) return <DenButton icon={MessageSquare} disabled>Chat</DenButton>;
   return (
     <DenButton icon={MessageSquare} href={connectorChatDeepLink({ connector: name, prompt: connectorChatPrompt(name) })}>
       Chat
@@ -91,7 +102,7 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
   const native = Boolean(connection && isNativeProviderConnectionId(connection.id, connection.nativeProviderKey));
   const tools = useMcpConnectionTools(connectionId, signedIn && !native);
   const viewerId = orgContext?.currentMember.id ?? null;
-  const mine = Boolean(connection?.access) || Boolean(item && isOwnedByViewer(item, viewerId, new Set()));
+  const mine = !connection?.policyBlocked && (Boolean(connection?.access) || Boolean(item && isOwnedByViewer(item, viewerId, new Set())));
   const back = { href: getLibraryRoute(orgSlug), label: "My Library" };
 
   if (!connection && (usable.isLoading || library.isLoading)) {
@@ -138,7 +149,7 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
               size="md"
               label={`More for ${name}`}
               entries={[
-                ...(connection.connectedForMe && connection.credentialMode === "per_member" ? [{ label: "Sign out", onSelect: () => void signOut() }] : []),
+                ...(!connection.policyBlocked && connection.connectedForMe && connection.credentialMode === "per_member" ? [{ label: "Sign out", onSelect: () => void signOut() }] : []),
                 ...(mine ? [removeEntry(name, remove)] : []),
               ]}
             />
@@ -151,7 +162,10 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
             {limitedAccess ? (
               <DenButton variant="secondary" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>Reconnect</DenButton>
             ) : null}
-            <ChatButton name={name} />
+            {connection.policyBlocked && connection.connectedForMe ? (
+              <DenButton variant="secondary" loading={disconnect.isPending} onClick={() => void signOut()}>Disconnect</DenButton>
+            ) : null}
+            <ChatButton name={name} disabled={connection.policyBlocked} />
           </>
         )}
       />
@@ -163,10 +177,11 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
             { label: "Who can use it", value: who },
             ...(connection.authType === "none" ? [] : [{
               label: "Signed in as",
-              value: signedIn
+              value: signedIn || connection.policyBlocked
                 ? connectorAccountLabel(connection) ?? "You"
                 : <DenButton variant="secondary" size="xs" loading={signIn.pendingId === connectionId} onClick={() => void signIn.signIn(connection)}>{connection.needsReconnect ? "Reconnect" : "Sign in"}</DenButton>,
             }]),
+            ...(connection.policyBlocked ? [{ label: "Access", value: <ConnectionPolicyStatus message={connection.policyMessage} /> }] : []),
             ...(limitedAccess ? [{ label: "Access", value: (
               <span className="flex flex-col gap-1 whitespace-normal">
                 <span>Connected with limited access</span>

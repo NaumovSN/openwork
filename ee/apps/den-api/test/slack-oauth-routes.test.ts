@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, expect, mock, test } from "bun:test"
+import { afterAll, beforeAll, beforeEach, expect, mock, spyOn, test } from "bun:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
@@ -91,6 +91,7 @@ mock.module("../src/db.js", () => ({ db: {
 let tokenBody: unknown
 let identityBody: unknown
 let tokenRequests = 0
+let tokenRequestParams: URLSearchParams[] = []
 let identityRequests = 0
 let identityAuthorization: string | null = null
 let identityResponse: (() => Promise<Response>) | undefined
@@ -102,6 +103,7 @@ const server = Bun.serve({
     if (path === "/api/oauth.v2.access") {
       tokenRequests++
       const responseBody = tokenBody
+      tokenRequestParams.push(new URLSearchParams(await request.text()))
       await onTokenRequest?.()
       return Response.json(responseBody)
     }
@@ -173,6 +175,7 @@ beforeEach(() => {
     ]],
   ])
   tokenRequests = 0
+  tokenRequestParams = []
   identityRequests = 0
   identityAuthorization = null
   identityResponse = undefined
@@ -215,11 +218,11 @@ async function nativeToken(credentialProviderId = "slack", orgId = organizationI
   return oauth.getValidAccessToken({ provider, credentialProviderId, organizationId: orgId, orgMembershipId: membershipId })
 }
 
-async function connectExpiringGrant() {
+async function connectExpiringGrant(scope = "search:read.public,channels:history,search:read.private,groups:history") {
   tokenBody = {
     ok: true, team: { id: "TTEST001" }, authed_user: {
       id: "UTEST001", token_type: "user", access_token: "expiring-member-token", refresh_token: "synthetic-refresh",
-      expires_in: 1, scope: "search:read.public,channels:history,search:read.private,groups:history",
+      expires_in: 1, scope,
     },
   }
   expect((await callback(await start())).status).toBe(200)
@@ -267,17 +270,133 @@ test("a zero-lifetime Slack token is expired rather than treated as permanent", 
     expires_in: 0, scope: "search:read.public,channels:history",
   } }
   expect((await callback(await start())).status).toBe(200)
-  tokenBody = { ok: true, team: { id: "TTEST001" }, authed_user: {
-    id: "UTEST001", token_type: "user", access_token: "fresh-member-token", expires_in: 3600, scope: "search:read.public,channels:history",
-  } }
+  tokenBody = {
+    ok: true, id: "UTEST001", token_type: "user", access_token: "fresh-member-token",
+    refresh_token: "rotated-refresh", expires_in: 3600, scope: "search:read.public,channels:history",
+  }
   const refreshed = await nativeToken()
   expect("accessToken" in refreshed && refreshed.accessToken).toBe("fresh-member-token")
   expect(tokenRequests).toBe(2)
 })
 
+const validUserRefreshReply = {
+  ok: true, token_type: "user", access_token: "refreshed-user-token",
+  refresh_token: "rotated-refresh", expires_in: 43200,
+}
+
+test.each([
+  { ...validUserRefreshReply, ok: false },
+  { ...validUserRefreshReply, token_type: "bot", authed_user: { access_token: "nested-user-decoy", token_type: "user" } },
+  { ...validUserRefreshReply, token_type: undefined },
+  { ...validUserRefreshReply, access_token: "" },
+  { ...validUserRefreshReply, access_token: undefined, authed_user: { access_token: "nested-user-decoy", token_type: "user" } },
+  { ...validUserRefreshReply, refresh_token: undefined },
+  { ...validUserRefreshReply, expires_in: undefined },
+  { ...validUserRefreshReply, scope: null },
+  { ...validUserRefreshReply, is_enterprise_install: true },
+])("refresh rejects invalid top-level grants rather than substituting nested tokens (%#)", async (reply) => {
+  await connectExpiringGrant()
+  tokenBody = reply
+  await expect(nativeToken()).rejects.toBeInstanceOf(oauth.OAuthTokenExchangeError)
+  expect(identityRequests).toBe(1)
+  expect((await status()).scopes).toEqual(["search:read.public", "channels:history", "search:read.private", "groups:history"])
+})
+
+test("refresh selects the top-level user grant even when the response also contains a nested token", async () => {
+  await connectExpiringGrant()
+  tokenBody = {
+    ...validUserRefreshReply, scope: "search:read.public,channels:history",
+    authed_user: { id: "UOTHER001", access_token: "nested-token-decoy", token_type: "user", scope: "search:read.private" },
+  }
+  const refreshed = await nativeToken()
+  expect("accessToken" in refreshed && refreshed.accessToken).toBe("refreshed-user-token")
+  expect(identityAuthorization).toBe("Bearer refreshed-user-token")
+  expect(tokenRequestParams[1]?.get("grant_type")).toBe("refresh_token")
+  expect(tokenRequestParams[1]?.get("refresh_token")).toBe("synthetic-refresh")
+  expect(tokenRequestParams[1]?.has("code")).toBe(false)
+  expect((await status()).scopes).toEqual(["search:read.public", "channels:history"])
+})
+
+test("an explicitly empty refreshed scope removes grants instead of preserving stale permissions", async () => {
+  await connectExpiringGrant()
+  tokenBody = { ...validUserRefreshReply, scope: "" }
+  const refreshed = await nativeToken()
+  expect("accessToken" in refreshed && refreshed.accessToken).toBe("refreshed-user-token")
+  expect((await status()).scopes).toEqual([])
+})
+
+test("an omitted refresh scope cannot manufacture grants when none were previously confirmed", async () => {
+  await connectExpiringGrant("")
+  tokenBody = validUserRefreshReply
+  const refreshed = await nativeToken()
+  expect("accessToken" in refreshed && refreshed.accessToken).toBe("refreshed-user-token")
+  expect((await status()).scopes).toEqual([])
+})
+
+test("a refresh omitting scope and identity hints preserves only the previously confirmed partial grant", async () => {
+  await connectExpiringGrant("search:read.public,channels:history")
+  tokenBody = {
+    ok: true, token_type: "user", access_token: "refreshed-partial-token",
+    refresh_token: "rotated-refresh", expires_in: 43200,
+  }
+  const refreshed = await nativeToken()
+  expect("accessToken" in refreshed && refreshed.accessToken).toBe("refreshed-partial-token")
+  expect(identityAuthorization).toBe("Bearer refreshed-partial-token")
+  expect(await status()).toEqual({
+    connected: true, externalAccountId: "slack:TTEST001:UTEST001", scopes: ["search:read.public", "channels:history"],
+  })
+})
+
+test("two refreshes accepted during Slack's grace period reuse the CAS winner and its rotated refresh token", async () => {
+  await connectExpiringGrant()
+  let releaseFirst = () => {}
+  let firstRequested = () => {}
+  const holdFirst = new Promise<void>((resolve) => { releaseFirst = resolve })
+  const firstRequestStarted = new Promise<void>((resolve) => { firstRequested = resolve })
+  tokenBody = {
+    ...validUserRefreshReply, access_token: "late-grace-token", refresh_token: "late-grace-refresh",
+    scope: "search:read.public,channels:history,search:read.private,groups:history",
+  }
+  onTokenRequest = async () => {
+    if (tokenRequests === 2) { firstRequested(); await holdFirst }
+  }
+  const firstRefresh = nativeToken()
+  await firstRequestStarted
+  try {
+    tokenBody = {
+      ...validUserRefreshReply, access_token: "winning-grace-token", refresh_token: "winning-grace-refresh",
+      scope: "search:read.public,channels:history",
+    }
+    const winner = await nativeToken()
+    expect("accessToken" in winner && winner.accessToken).toBe("winning-grace-token")
+  } finally {
+    releaseFirst()
+  }
+  const late = await firstRefresh
+  expect("accessToken" in late && late.accessToken).toBe("winning-grace-token")
+  expect(tokenRequestParams.slice(1).map((params) => params.get("refresh_token"))).toEqual(["synthetic-refresh", "synthetic-refresh"])
+
+  // Once the winner expires, the next outbound request must use its rotated
+  // refresh token, not the old or losing grant. No wall-clock sleep is needed.
+  const clock = spyOn(Date, "now").mockReturnValue(Date.now() + 43_200_000)
+  try {
+    tokenBody = { ...validUserRefreshReply, access_token: "next-rotation-token", refresh_token: "next-rotation-refresh" }
+    const next = await nativeToken()
+    expect("accessToken" in next && next.accessToken).toBe("next-rotation-token")
+    expect(tokenRequestParams[3]?.get("grant_type")).toBe("refresh_token")
+    expect(tokenRequestParams[3]?.get("refresh_token")).toBe("winning-grace-refresh")
+    expect((await status()).scopes).toEqual(["search:read.public", "channels:history"])
+  } finally {
+    clock.mockRestore()
+  }
+})
+
 test("refresh cannot change the Slack member even when OAuth and auth.test agree on a different identity", async () => {
   await connectExpiringGrant()
-  tokenBody = { ok: true, team: { id: "TTEST001" }, authed_user: { id: "UOTHER001", token_type: "user", access_token: "wrong-member-token", scope: "search:read.public" } }
+  tokenBody = {
+    ok: true, id: "UOTHER001", token_type: "user", access_token: "wrong-member-token",
+    refresh_token: "rotated-refresh", expires_in: 3600, scope: "search:read.public",
+  }
   identityBody = { ok: true, team_id: "TTEST001", user_id: "UOTHER001" }
   await expect(nativeToken()).rejects.toBeInstanceOf(oauth.OAuthTokenExchangeError)
   expect((await status()).externalAccountId).toBe("slack:TTEST001:UTEST001")
@@ -289,6 +408,10 @@ test("refresh is blocked before contacting Slack after disable and cannot restor
   expect(await nativeToken()).toEqual({ error: "not_connected" })
   expect(tokenRequests).toBe(1)
   Object.assign(env, { slackEnabled: true })
+  tokenBody = {
+    ok: true, id: "UTEST001", token_type: "user", access_token: "refreshed-token",
+    refresh_token: "rotated-refresh", expires_in: 3600, scope: "search:read.public,channels:history",
+  }
   onTokenRequest = async () => { expect((await request("/v1/oauth-providers/slack/disconnect", "POST")).status).toBe(200) }
   expect(await nativeToken()).toEqual({ error: "not_connected" })
   expect((await status()).connected).toBe(false)
@@ -296,9 +419,10 @@ test("refresh is blocked before contacting Slack after disable and cannot restor
 
 test("a losing refresh does not switch to a newly connected Slack identity", async () => {
   await connectExpiringGrant()
-  tokenBody = { ok: true, team: { id: "TTEST001" }, authed_user: {
-    id: "UTEST001", token_type: "user", access_token: "late-refreshed-token", expires_in: 3600, scope: "search:read.public,channels:history",
-  } }
+  tokenBody = {
+    ok: true, id: "UTEST001", token_type: "user", access_token: "late-refreshed-token",
+    refresh_token: "rotated-refresh", expires_in: 3600, scope: "search:read.public,channels:history",
+  }
   onTokenRequest = async () => {
     onTokenRequest = undefined
     tokenBody = { ok: true, team: { id: "TTEST001" }, authed_user: {
@@ -314,7 +438,10 @@ test("a losing refresh does not switch to a newly connected Slack identity", asy
 
 test("refresh rechecks platform configuration before saving changed scopes", async () => {
   await connectExpiringGrant()
-  tokenBody = { ok: true, team: { id: "TTEST001" }, authed_user: { id: "UTEST001", token_type: "user", access_token: "refreshed-token", scope: "search:read.public", expires_in: 3600 } }
+  tokenBody = {
+    ok: true, id: "UTEST001", token_type: "user", access_token: "refreshed-token",
+    refresh_token: "rotated-refresh", expires_in: 3600, scope: "search:read.public",
+  }
   onTokenRequest = async () => { Object.assign(env, { slackClientId: "rotated-client" }) }
   expect(await nativeToken()).toEqual({ error: "not_connected" })
   expect((await status()).scopes).toEqual(["search:read.public", "channels:history", "search:read.private", "groups:history"])
@@ -429,11 +556,12 @@ test("refresh preserves the validated member identity and updates the actual nar
     },
   }
   expect((await callback(await start())).status).toBe(200)
+  // oauth.v2.access refresh_token replies use a top-level user grant, unlike
+  // the nested authed_user in the initial authorization_code reply.
+  // https://docs.slack.dev/authentication/using-token-rotation/#refresh
   tokenBody = {
-    ok: true, access_token: "never-use-bot", token_type: "bot", team: { id: "TTEST001" }, authed_user: {
-      id: "UTEST001", token_type: "user", access_token: "refreshed-member-token", refresh_token: "rotated-refresh",
-      expires_in: 3600, scope: "search:read.public,channels:history",
-    },
+    ok: true, id: "UTEST001", token_type: "user", access_token: "refreshed-member-token",
+    refresh_token: "rotated-refresh", expires_in: 3600, scope: "search:read.public,channels:history",
   }
   const registry = await import("../src/capability-sources/provider-registry.js")
   const provider = registry.getNativeOAuthProvider("slack")

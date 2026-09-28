@@ -753,6 +753,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       responses: {
         200: jsonResponse("Connection status.", oauthStatusResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The provider is blocked by rollout or organization policy.", forbiddenSchema),
         404: jsonResponse("Unknown providerId.", oauthNotFoundSchema),
       },
     }),

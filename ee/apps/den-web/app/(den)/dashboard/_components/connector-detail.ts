@@ -24,7 +24,7 @@ export function displayedConnectorConnections(
 }
 
 export function connectorAccountReady(connection: ExternalMcpConnection): boolean {
-  return !connection.setupRequired
+  return !connection.policyBlocked && !connection.setupRequired
     && !connectionNeedsOAuthClientConfiguration(connection)
     && !connection.issuerReviewRequired
     && !connection.needsReconnect
@@ -46,11 +46,12 @@ export function connectorLimitedAccess(connection: ExternalMcpConnection): strin
     groupMessages: "group direct messages",
   };
   const missing = (connection.missingFeatures ?? []).flatMap((feature) => labels[feature] ? [labels[feature]] : []);
-  return missing.length > 0 ? `Not authorized: ${missing.join(", ")}` : null;
+  return missing.length > 0 ? `Limited permissions for: ${missing.join(", ")}` : null;
 }
 
 /** Account readiness is personal, even on an organization management page. */
 export function connectorAccountStatus(connection: ExternalMcpConnection, setupRequired = false): string {
+  if (connection.policyBlocked) return "Blocked";
   if (setupRequired || connection.setupRequired || connectionNeedsOAuthClientConfiguration(connection)) return "Setup required";
   if (connection.issuerReviewRequired) return "OAuth settings need review";
   if (connection.needsReconnect || connection.credentialHealth === "reconnect_required") return "Reconnect required";

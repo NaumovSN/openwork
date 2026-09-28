@@ -376,6 +376,9 @@ export type DenExternalMcpConnection = {
   /** For per_member connections: whether the CALLING member has connected their own account. Always true for connected shared connections. */
   connectedForMe: boolean;
   needsReconnect?: boolean;
+  /** Stored account retained for management while organization policy blocks use. */
+  policyBlocked?: boolean;
+  policyMessage?: string;
   issuerReviewRequired?: boolean;
   reconnectActionOwner?: "member" | "organization_admin" | null;
   missingFeatures?: string[];
@@ -2201,6 +2204,8 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
     connectedAt: typeof value.connectedAt === "string" ? value.connectedAt : null,
     connectedForMe: value.connectedForMe === true,
     ...(typeof value.needsReconnect === "boolean" ? { needsReconnect: value.needsReconnect } : {}),
+    ...(typeof value.policyBlocked === "boolean" ? { policyBlocked: value.policyBlocked } : {}),
+    ...(typeof value.policyMessage === "string" ? { policyMessage: value.policyMessage } : {}),
     ...(typeof value.issuerReviewRequired === "boolean" ? { issuerReviewRequired: value.issuerReviewRequired } : {}),
     ...(value.reconnectActionOwner === "member" || value.reconnectActionOwner === "organization_admin" || value.reconnectActionOwner === null
       ? { reconnectActionOwner: value.reconnectActionOwner }

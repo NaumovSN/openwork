@@ -8,7 +8,7 @@ import {
   type AgentContextDiagnosticsReport,
 } from "@openwork/types/agent-context-diagnostics";
 
-import { serializeAgentContextDiagnosticsReport } from "../src/app/lib/agent-context-diagnostics";
+import { serializeAgentContextDiagnosticsReport, summarizeOrganizationConnections } from "../src/app/lib/agent-context-diagnostics";
 import {
   AgentContextDiagnosticsErrorNotice,
   AgentContextDiagnosticsReportView,
@@ -292,6 +292,64 @@ describe("AgentContextDiagnosticsReportView", () => {
     expect(serialized).not.toContain("stack trace");
   });
 
+  test("renders a blocked stored account with a neutral lock instead of readiness or sign-in", () => {
+    const report = healthyReport();
+    const connection = {
+      id: "slack",
+      name: "Slack",
+      credentialMode: "per_member",
+      connected: false,
+      connectedForMe: true,
+      needsReconnect: false,
+      missingFeatureCount: 0,
+      policyBlocked: true,
+    } satisfies AgentContextDiagnosticsReport["organizationConnections"][number];
+    report.organizationConnections = [connection];
+
+    expect(organizationConnectionState(connection)).toEqual({ label: "Blocked", status: "blocked" });
+    const html = renderToStaticMarkup(
+      <AgentContextDiagnosticsReportView report={report} copied={false} copying={false} onCopy={() => {}} />,
+    );
+    expect(html).toContain("Blocked");
+    expect(html).toContain("lucide-lock");
+    expect(html).toContain("bg-gray-2 text-gray-11");
+    expect(html).toContain("Access is blocked by policy. Ask an administrator to review availability.");
+    expect(html).not.toContain("Needs reconnect");
+    expect(html).not.toContain("Needs sign-in");
+    expect(serializeAgentContextDiagnosticsReport(report)).toContain('"policyBlocked": true');
+  });
+
+  test.each([
+    { access: "public-only", missingFeatures: ["privateChannels", "directMessages", "groupMessages"] },
+    { access: "private search without history", missingFeatures: ["privateChannels"] },
+  ])("renders summarized partial Slack permissions as usable without forced reconnection: $access", ({ missingFeatures }) => {
+    const report = healthyReport();
+    report.organizationConnections = summarizeOrganizationConnections([{
+      id: "slack",
+      name: "Slack",
+      url: "",
+      authType: "oauth",
+      credentialMode: "per_member",
+      exposeDirectly: false,
+      nativeProviderKey: "slack",
+      connected: true,
+      connectedForMe: true,
+      connectedAt: null,
+      needsReconnect: false,
+      missingFeatures,
+    }]);
+    const connection = report.organizationConnections[0];
+    if (!connection) throw new Error("Expected a summarized Slack account.");
+    expect(organizationConnectionState(connection)).toEqual({ label: "Connected with limited access", status: "passed" });
+    const html = renderToStaticMarkup(
+      <AgentContextDiagnosticsReportView report={report} copied={false} copying={false} onCopy={() => {}} />,
+    );
+    expect(html).toContain("Connected with limited access");
+    expect(html).not.toContain("Needs reconnect");
+    expect(html).not.toContain("Needs sign-in");
+    expect(serializeAgentContextDiagnosticsReport(report)).toContain('"limitedAccess": true');
+  });
+
   test("does not label an organization connection ready when features are missing", () => {
     const connection = healthyReport().organizationConnections[0];
     if (!connection) throw new Error("Expected an organization connection fixture.");
@@ -305,6 +363,29 @@ describe("AgentContextDiagnosticsReportView", () => {
 
     expect(state.status).toBe("warning");
     expect(state.label).toBe("Needs reconnect");
+  });
+
+  test("limited-access metadata never overrides reconnect, disconnection, or a policy block", () => {
+    const connection = {
+      id: "slack",
+      name: "Slack",
+      credentialMode: "per_member",
+      connected: true,
+      connectedForMe: true,
+      needsReconnect: false,
+      missingFeatureCount: 1,
+      limitedAccess: true,
+    } satisfies AgentContextDiagnosticsReport["organizationConnections"][number];
+    expect(organizationConnectionState({ ...connection, needsReconnect: true })).toEqual({
+      label: "Needs reconnect", status: "warning",
+    });
+    expect(organizationConnectionState({ ...connection, connectedForMe: false }).status).toBe("warning");
+    expect(organizationConnectionState({ ...connection, credentialMode: "shared", connected: false })).toEqual({
+      label: "Not ready", status: "failed",
+    });
+    expect(organizationConnectionState({ ...connection, policyBlocked: true, needsReconnect: true })).toEqual({
+      label: "Blocked", status: "blocked",
+    });
   });
 
   test("rejects duplicate observed cloud tool IDs", () => {

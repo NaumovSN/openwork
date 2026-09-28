@@ -139,6 +139,7 @@ export async function authenticateChatConnection(input: {
   const connections = await input.listConnections()
   assertCurrent()
   const connection = connections.find(entry => entry.id === input.connectionId)
+  if (connection?.policyBlocked) throw new Error(connection.policyMessage ?? "An administrator controls access to this connection.")
   if (!connection || connection.authType !== "oauth" || connection.credentialMode !== "per_member") {
     throw new Error(`${input.connectionName} is no longer available as your reconnectable account.`)
   }
@@ -180,10 +181,11 @@ export function isChatMcpReconnectScopeCurrent(
 }
 
 export function hasFreshMcpAuthorization(
-  connection: Pick<DenExternalMcpConnection, "connectedForMe" | "connectedAt"> | null | undefined,
+  connection: Pick<DenExternalMcpConnection, "connectedForMe" | "connectedAt" | "policyBlocked"> | null | undefined,
   previousConnectedAt: string | null,
 ): boolean {
   return connection?.connectedForMe === true
+    && !connection.policyBlocked
     && typeof connection.connectedAt === "string"
     && connection.connectedAt.length > 0
     && connection.connectedAt !== previousConnectedAt

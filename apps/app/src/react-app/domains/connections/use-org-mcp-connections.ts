@@ -59,12 +59,15 @@ async function disconnectMemberAccount(
 
 export type OrgMcpConnectionCardState = {
   connected: boolean;
+  policyMessage?: string;
   descriptionKey:
+    | null
     | "mcp.org_connection_desc_shared"
     | "mcp.org_connection_desc_per_member_connected"
     | "mcp.org_connection_desc_per_member_reconnect"
     | "mcp.org_connection_desc_per_member";
   actionLabelKey:
+    | null
     | "mcp.org_connection_managed_label"
     | "mcp.org_connection_connected_label"
     | "mcp.org_connection_reconnect_action"
@@ -92,8 +95,11 @@ export function isOrgMcpPollScopeCurrent(
  * `connectedForMe` rather than the connection-wide `connected` flag.
  */
 export function resolveOrgMcpConnectionCardState(
-  connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "nativeProviderKey">,
+  connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "nativeProviderKey" | "policyBlocked" | "policyMessage">,
 ): OrgMcpConnectionCardState {
+  if (connection.policyBlocked) {
+    return { connected: false, descriptionKey: null, actionLabelKey: null, policyMessage: connection.policyMessage };
+  }
   if (connection.credentialMode === "shared") {
     return {
       connected: connection.connected,
@@ -224,6 +230,7 @@ export function useOrgMcpConnections() {
     }
 
     const previous = connectionsRef.current.find((entry) => entry.id === connectionId);
+    if (previous?.policyBlocked) return;
     const previousConnectedAt = previous?.connectedAt ?? null;
 
     stopPolling();
@@ -289,7 +296,7 @@ export function useOrgMcpConnections() {
           if (!isActionScopeCurrent(pollScope)) return;
           setConnections(polled);
           const match = polled.find((entry) => entry.id === connectionId);
-          const fresh = Boolean(match && match.connectedForMe && !connectionNeedsReconnect(match)
+          const fresh = Boolean(match && !match.policyBlocked && match.connectedForMe && !connectionNeedsReconnect(match)
             && typeof match.connectedAt === "string" && match.connectedAt.length > 0
             && match.connectedAt !== previousConnectedAt);
           if (fresh) {

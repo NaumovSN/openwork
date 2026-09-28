@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type Ref } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { AlertTriangle, Check, Loader2, Plug, Wrench } from "lucide-react";
+import { AlertTriangle, Check, Loader2, Lock, Plug, Wrench } from "lucide-react";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
 import { DenBadge } from "../../_components/ui/badge";
 import { connectorAccountLabel, connectorLimitedAccess } from "./connector-detail";
@@ -182,17 +182,17 @@ function YourConnectionRow({
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const { orgContext } = useOrgDashboard();
   const isPerMember = connection.credentialMode === "per_member";
-  const needsAdminRecovery = !needsAdminSetup
+  const needsAdminRecovery = !connection.policyBlocked && !needsAdminSetup
     && connection.needsReconnect === true
     && connection.reconnectActionOwner === "organization_admin";
-  const needsReconnect = !needsAdminSetup
+  const needsReconnect = !connection.policyBlocked && !needsAdminSetup
     && !needsAdminRecovery
     && connection.needsReconnect === true;
-  const needsMyConnect = !needsAdminSetup && !needsAdminRecovery && isPerMember && !connection.connectedForMe;
-  const needsAdminConnect = !needsAdminSetup && !needsAdminRecovery && isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
-  const canDisconnect = !needsAdminSetup && canDisconnectMyConnectionAccount(connection);
+  const needsMyConnect = !connection.policyBlocked && !needsAdminSetup && !needsAdminRecovery && isPerMember && !connection.connectedForMe;
+  const needsAdminConnect = !connection.policyBlocked && !needsAdminSetup && !needsAdminRecovery && isAdmin && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
+  const canDisconnect = (connection.policyBlocked || !needsAdminSetup) && canDisconnectMyConnectionAccount(connection);
   const isNativeProvider = isNativeProviderConnectionId(connection.id, connection.nativeProviderKey);
-  const canTestTools = !needsAdminSetup && !needsAdminRecovery && isAdmin
+  const canTestTools = !connection.policyBlocked && !needsAdminSetup && !needsAdminRecovery && isAdmin
     && !isNativeProvider && connection.connectedForMe && !needsReconnect;
   const microsoftScopes = (connection.nativeProviderKey === "microsoft-365" || connection.id === "microsoft-365")
     ? (connection.grantedScopes ?? []).filter((scope) => MICROSOFT_365_DISPLAY_SCOPES.has(scope))
@@ -214,7 +214,9 @@ function YourConnectionRow({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="truncate text-[14px] font-semibold text-gray-900">{connection.name}</p>
-              {needsAdminSetup ? (
+              {connection.policyBlocked ? (
+                <DenBadge icon={Lock}>Blocked</DenBadge>
+              ) : needsAdminSetup ? (
                 <span className="inline-flex rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
                   Waiting for an admin to finish setup
                 </span>
@@ -258,6 +260,7 @@ function YourConnectionRow({
             {requiredByLabel ? (
               <p className="mt-1 text-[12px] font-medium text-gray-700">{requiredByLabel}</p>
             ) : null}
+            {connection.policyBlocked ? <p className="mt-1 text-sm text-muted-foreground">{connection.policyMessage ?? "An administrator controls access to this connection."}</p> : null}
             {limitedAccess ? <p className="mt-1 text-sm text-muted-foreground">{limitedAccess}</p> : null}
             {isNativeProvider && (tenantId || accountLabel) ? (
               <p className="mt-1 text-[11px] text-gray-500">
@@ -285,7 +288,7 @@ function YourConnectionRow({
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {setupTarget ? (
+          {setupTarget && !connection.policyBlocked ? (
             <MarketplaceConfigureButton
               connection={connection}
               target={setupTarget}

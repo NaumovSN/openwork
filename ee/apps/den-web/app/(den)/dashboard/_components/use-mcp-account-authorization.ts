@@ -67,7 +67,7 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
       const result = await refetch();
       const connection = result.data?.find((entry) => entry.id === connectionId);
       const outcome = resolveMcpAuthorizationPollOutcome({
-        connected: Boolean(connection?.connectedForMe && connection.needsReconnect !== true
+        connected: Boolean(connection?.connectedForMe && !connection.policyBlocked && connection.needsReconnect !== true
           && (!previousConnectedAt || (connection.connectedAt && connection.connectedAt !== previousConnectedAt))),
         authorizationWindowClosed: authorizationTab.closed,
         elapsedMs: Date.now() - startedAt,
@@ -86,6 +86,7 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
   async function connect(connectionId: string) {
     setError(null);
     const previous = connections.find((connection) => connection.id === connectionId);
+    if (previous?.policyBlocked) return;
     const connectionName = previous?.name ?? "this provider";
     const previousConnectedAt = previous?.nativeProviderKey === "slack" && previous.connectedForMe ? previous.connectedAt : null;
     let authorizationTab: Window | null = null;
@@ -95,7 +96,7 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
       if (result.status === "connected") {
         const refreshed = await refetch();
         const connection = refreshed.data?.find((entry) => entry.id === connectionId);
-        if (connection?.connectedForMe && connection.needsReconnect !== true) {
+        if (connection?.connectedForMe && !connection.policyBlocked && connection.needsReconnect !== true) {
           authorizationTab.close();
           finishConnected();
         } else {

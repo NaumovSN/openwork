@@ -1,8 +1,8 @@
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { connect, debuggerUrlFor, listTargets, type Surface } from "@openwork/cdp";
 import { denFetch, type DenSession } from "@openwork/behaviors";
-import { SkipError, type Place, type Seed } from "@openwork/env";
+import { resolveEvalEngine, SkipError, type Place, type Seed } from "@openwork/env";
 import { slackFixtureClientId, slackFixtureClientSecret, slackFixtureWorkspace, startNativeSlackFixture } from "../packages/labs/src/mock-native-slack.ts";
 import { slackIncomplete, slackLimited, slackResultObjects, slackSearchHits, startNativeSlackModel } from "../packages/labs/src/native-slack-model.ts";
 
@@ -40,6 +40,10 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
   if (place.kind !== "local" || process.env.OPENWORK_EVAL_DEN_API_URL) {
     throw new SkipError("isolated co-located native Slack HTTP fixture; testkit has no Daytona native-provider transport");
   }
+  // The build manifest supplies the independent version pin, not a synthesized runtime result.
+  const versions = object(JSON.parse(await readFile(new URL("../../constants.json", import.meta.url), "utf8")));
+  const engine = resolveEvalEngine();
+  const engineVersion = text(versions[engine === "v2" ? "opencodeV2Version" : "opencodeVersion"]);
   await using setup = new AsyncDisposableStack();
   const slack = setup.use(await startNativeSlackFixture());
   const model = setup.use(await startNativeSlackModel(Object.values(nativeSlackPrompts)));
@@ -80,16 +84,19 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
       ...(body === undefined ? {} : { body: JSON.stringify(body) }), redirect: "manual", signal: AbortSignal.timeout(30_000) });
     return { status: result.response.status, body: result.body, text: result.text };
   };
-  async function mint(identity: keyof typeof sessions): Promise<DenSession> {
-    const result = await memberRequest(identity, "/v1/mcp/token", "POST", { scopes: ["mcp:read"] });
+  async function mint(identity: keyof typeof sessions, disabled = false): Promise<DenSession> {
+    const result = await memberRequest(identity, "/v1/mcp/token", "POST", { scopes: ["mcp:read"] }, disabled);
     if (result.status !== 200) throw new Error(`Synthetic member MCP mint failed: ${result.status}`);
     const minted = object(result.body);
     if (!Array.isArray(minted.scopes) || minted.scopes.length !== 1 || minted.scopes[0] !== "mcp:read") {
       throw new Error("The proof requires an actually minted mcp:read-only token");
     }
-    return { ...sessions[identity], token: text(minted.token) };
+    return { ...sessions[identity], ...(disabled ? gateOff.ref : {}), token: text(minted.token) };
   }
   const tokens = { first: await mint("first"), second: await mint("second"), blocked: await mint("blocked") };
+  // Each deployment needs its own valid audience-bound bearer. A wrong-audience
+  // rejection would not witness the Slack rollout policy at all.
+  const disabledTokens = { first: await mint("first", true), second: await mint("second", true), blocked: await mint("blocked", true) };
   const makeApp = async (identity: "first" | "second") => {
     const directory = seed.tmpPath(`native-slack-${identity}`);
     await mkdir(directory, { recursive: true });
@@ -117,8 +124,8 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
   let rpcId = 0;
   const resources = setup.move();
   return {
-    app: memberOne.app, secondApp: memberTwo.app, slack, model, first: sessions.first, second: sessions.second,
-    organizationId, blockedOrganizationId, memberRequest, searchHits: slackSearchHits, incomplete: slackIncomplete, limited: slackLimited, objects: slackResultObjects,
+    app: memberOne.app, secondApp: memberTwo.app, slack, model, engine, engineVersion, first: sessions.first, second: sessions.second,
+    organizationId, blockedOrganizationId, workspaceId: memberOne.workspace.workspaceId, memberRequest, searchHits: slackSearchHits, incomplete: slackIncomplete, limited: slackLimited, objects: slackResultObjects,
     prompt: nativeSlackPrompts,
     appUrl: new URL(`#/workspace/${memberOne.workspace.workspaceId}/session`, memberOne.app.webUrl).toString(),
     async connection(identity: "first" | "second") {
@@ -148,7 +155,7 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
       return authorizeUrl.toString();
     },
     async mcp(identity: keyof typeof sessions, name: string, args: Record<string, unknown>, disabled = false) {
-      const session = disabled ? { ...tokens[identity], ...gateOff.ref } : tokens[identity];
+      const session = disabled ? disabledTokens[identity] : tokens[identity];
       const result = await denFetch(session, "/mcp/agent", { method: "POST",
         headers: { authorization: `Bearer ${session.token}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
         body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method: "tools/call", params: { name, arguments: args } }), signal: AbortSignal.timeout(30_000) });

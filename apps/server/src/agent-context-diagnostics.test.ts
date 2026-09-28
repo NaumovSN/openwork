@@ -1966,6 +1966,127 @@ describe("agent context diagnostics analyzer", () => {
     });
   });
 
+  test("reports a blocked stored account without declaring readiness or requesting another sign-in", async () => {
+    const fixture = await createFixture();
+    const fetchCalls: CatalogFetchCall[] = [];
+    const request: AgentContextDiagnosticsRequest = {
+      organizationConnectionsProbe: { status: "observed", code: null, totalCount: 1, truncated: false },
+      organizationConnections: [{
+        id: "slack",
+        name: "Slack",
+        credentialMode: "per_member",
+        connected: false,
+        connectedForMe: true,
+        needsReconnect: false,
+        missingFeatureCount: 0,
+        policyBlocked: true,
+      }],
+    };
+    const report = await runAgentContextDiagnostics({
+      config: fixture.config,
+      workspace: fixture.workspace,
+      request,
+      inspectRegistration: () => "connected",
+      dependencies: { fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls) },
+    });
+
+    expect(report.organizationConnections).toEqual(request.organizationConnections);
+    expect(checkById(report, "organization-connections")).toMatchObject({
+      status: "skipped",
+      code: "organization_connections_policy_blocked",
+      owner: "organization-admin",
+      action: "Ask an administrator to review connection availability. Signing in again cannot remove a policy block.",
+      details: { notReadyCount: 1, policyBlockedCount: 1, memberActionCount: 0, organizationAdminActionCount: 0 },
+    });
+  });
+
+  test.each([3, 1])("keeps an account with %i missing optional permissions usable in diagnostics", async (missingFeatureCount) => {
+    const fixture = await createFixture();
+    const fetchCalls: CatalogFetchCall[] = [];
+    const request: AgentContextDiagnosticsRequest = {
+      organizationConnectionsProbe: { status: "observed", code: null, totalCount: 1, truncated: false },
+      organizationConnections: [{
+        id: "slack",
+        name: "Slack",
+        credentialMode: "per_member",
+        connected: true,
+        connectedForMe: true,
+        needsReconnect: false,
+        missingFeatureCount,
+        limitedAccess: true,
+      }],
+    };
+    const report = await runAgentContextDiagnostics({
+      config: fixture.config,
+      workspace: fixture.workspace,
+      request,
+      inspectRegistration: () => "connected",
+      dependencies: { fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls) },
+    });
+
+    expect(report.organizationConnections).toEqual(request.organizationConnections);
+    expect(checkById(report, "organization-connections")).toMatchObject({
+      status: "passed",
+      code: "organization_connections_limited_access",
+      action: "No action is required.",
+      details: { notReadyCount: 0, limitedAccessCount: 1, memberActionCount: 0, organizationAdminActionCount: 0 },
+    });
+  });
+
+  test("separates blocked and limited accounts from legacy connections that need sign-in", async () => {
+    const fixture = await createFixture();
+    const fetchCalls: CatalogFetchCall[] = [];
+    const request: AgentContextDiagnosticsRequest = {
+      organizationConnectionsProbe: { status: "observed", code: null, totalCount: 3, truncated: false },
+      organizationConnections: [
+        {
+          id: "slack.blocked",
+          name: "Blocked account",
+          credentialMode: "per_member",
+          connected: false,
+          connectedForMe: true,
+          needsReconnect: true,
+          missingFeatureCount: 1,
+          policyBlocked: true,
+          limitedAccess: true,
+        },
+        {
+          id: "slack.limited",
+          name: "Limited account",
+          credentialMode: "per_member",
+          connected: true,
+          connectedForMe: true,
+          needsReconnect: false,
+          missingFeatureCount: 1,
+          limitedAccess: true,
+        },
+        {
+          id: "legacy.connection",
+          name: "Legacy connection",
+          credentialMode: "per_member",
+          connected: true,
+          connectedForMe: true,
+          needsReconnect: false,
+          missingFeatureCount: 1,
+        },
+      ],
+    };
+    const report = await runAgentContextDiagnostics({
+      config: fixture.config,
+      workspace: fixture.workspace,
+      request,
+      inspectRegistration: () => "connected",
+      dependencies: { fetchImpl: catalogFetch(["search_capabilities", "execute_capability"], fetchCalls) },
+    });
+
+    expect(checkById(report, "organization-connections")).toMatchObject({
+      status: "warning",
+      code: "organization_member_action_required",
+      action: "Connect or reconnect only per-member connections marked as needing sign-in or reconnection in Settings > Connect.",
+      details: { notReadyCount: 2, policyBlockedCount: 1, limitedAccessCount: 1, memberActionCount: 1, organizationAdminActionCount: 0 },
+    });
+  });
+
   test("registration inspection accepts only the latest matching stable fingerprint", async () => {
     const engine = startRecordingServer();
     const fixture = await createFixture({ workspace: { baseUrl: engine.baseUrl } });

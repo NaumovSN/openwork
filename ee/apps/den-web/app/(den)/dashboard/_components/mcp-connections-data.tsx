@@ -51,6 +51,8 @@ export type ExternalMcpConnection = {
   updatedAt: string | null;
   connectedForMe: boolean;
   needsReconnect?: boolean;
+  policyBlocked?: boolean;
+  policyMessage?: string;
   credentialHealth?: "unknown" | "ready" | "reconnect_required";
   credentialHealthReason?: "authorization_rejected" | "credential_expired" | "post_authorization_validation_failed" | null;
   credentialHealthCheckedAt?: string | null;
@@ -590,6 +592,8 @@ async function fetchConnections(scope: ExternalMcpConnectionScope, orgId: string
     exposeDirectly: connection.exposeDirectly === true,
     ...(typeof connection.createdByName === "string" || connection.createdByName === null ? { createdByName: connection.createdByName } : {}),
     ...(typeof connection.needsReconnect === "boolean" ? { needsReconnect: connection.needsReconnect } : {}),
+    ...(typeof connection.policyBlocked === "boolean" ? { policyBlocked: connection.policyBlocked } : {}),
+    ...(typeof connection.policyMessage === "string" ? { policyMessage: connection.policyMessage } : {}),
     ...(connection.credentialHealth === "unknown" || connection.credentialHealth === "ready" || connection.credentialHealth === "reconnect_required"
       ? { credentialHealth: connection.credentialHealth }
       : {}),
