@@ -43,6 +43,7 @@ import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecyc
 import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { MEMBER_FREE_STATUS_PATH } from "@openwork/free-auto"
 import { appLogger } from "./observability/logger.js"
+import { calculateDesktopPolicyForOrgMember } from "./desktop-policies.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -68,6 +69,16 @@ async function paidEntitlementMismatch(organizationId: OrgId, database: Database
   return true
 }
 
+/**
+ * An organization whose desktop policy allows only its managed providers does not get free Auto: Auto is an
+ * OpenWork provider, not one the organization assigned. Read from the member's effective policy in Den, so it
+ * holds whether or not the desktop app enforces the policy locally.
+ */
+export async function freeAutoBlockedByDesktopPolicy(input: Pick<FreeMemberInput, "organizationId" | "memberId">): Promise<boolean> {
+  const policy = await calculateDesktopPolicyForOrgMember({ organizationId: input.organizationId, orgMemberId: input.memberId })
+  return policy.allowCustomProviders === false
+}
+
 export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<InferenceAccess> {
   let defaultPinned: boolean | undefined
   const unavailable = (reason: "not_eligible" | "admin_disabled" | "accounting_unavailable") => ({
@@ -87,6 +98,7 @@ export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<
     const now = new Date(Number(row.nowMs))
     if (!env.inferenceFree.enabled) return { ...freeInferenceAccess({ config: env.inferenceFree, now }), defaultPinned }
     if (await paidEntitlementMismatch(input.organizationId)) return unavailable("not_eligible")
+    if (await freeAutoBlockedByDesktopPolicy(input)) return unavailable("admin_disabled")
     const identity = freeHash("member", input.userId)
     const [bucket] = await db.select().from(InferenceFreeUsageBucketTable).where(and(
       eq(InferenceFreeUsageBucketTable.scope, "member"), eq(InferenceFreeUsageBucketTable.identity_hash, identity),
@@ -168,6 +180,7 @@ export async function getFreeInferenceProviderSummary(organizationId: OrgId): Pr
  */
 export async function ensureMemberFreeInferenceCredential(input: FreeMemberInput) {
   if (!env.inferenceFree.enabled) return null
+  if (await freeAutoBlockedByDesktopPolicy(input)) return null
   const apiKey = await db.transaction(async (tx) => {
     const [organization] = await tx.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
       .where(eq(OrganizationTable.id, input.organizationId)).limit(1).for("update")

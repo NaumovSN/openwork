@@ -28,12 +28,15 @@ const database = { ...transaction, transaction: async <T>(callback: (tx: typeof 
 const configuration = { inferenceFree: readFreeInferenceConfig({ INFERENCE_FREE_ENABLED: "true" }), modelsPublicBaseUrl: "https://inference.example.test" }
 mock.module("../src/db.js", () => ({ db: database }))
 mock.module("../src/env.js", () => ({ env: configuration }))
+let desktopPolicy: Record<string, unknown> = { allowCustomProviders: true, allowZenModel: true }
+mock.module("../src/desktop-policies.js", () => ({ calculateDesktopPolicyForOrgMember: async () => desktopPolicy }))
 const { getMemberInferenceAccess, ensureMemberFreeInferenceCredential, getFreeInferenceProviderSummary } = await import("../src/inference.js")
 const input = { organizationId: createDenTypeId("organization"), memberId: createDenTypeId("member"), userId: createDenTypeId("user") }
 const joinedAt = new Date("2026-09-01T00:00:00.000Z")
 const person = { id: input.memberId, organizationId: input.organizationId, userId: input.userId, joinedAt, removedAt: null }
 const now = new Date("2026-09-18T12:00:00.000Z")
 beforeEach(() => {
+  desktopPolicy = { allowCustomProviders: true, allowZenModel: true }
   results = []
   writes.length = 0
   failRead = false
@@ -90,6 +93,18 @@ test("an organization Stripe still collects for is never downgraded to free Auto
   }
   // Once Stripe has given up, the organization is unsubscribed and free Auto may serve it.
   results = [[{ metadata: {} }], [{ status: "canceled" }], [person], []]
+  expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toMatch(/^ow_inf_/)
+})
+
+test("an organization whose desktop policy allows only its managed providers gets no free Auto", async () => {
+  desktopPolicy = { allowCustomProviders: false, allowZenModel: true }
+  expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
+  results = [[{ metadata: {}, nowMs: now.getTime() }], []]
+  expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "unavailable", reason: "admin_disabled" })
+  expect(writes).toEqual([])
+  // The same organization with custom providers allowed is offered Auto as before.
+  desktopPolicy = { allowCustomProviders: true, allowZenModel: false }
+  results = [[{ metadata: {} }], [], [person], []]
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toMatch(/^ow_inf_/)
 })
 

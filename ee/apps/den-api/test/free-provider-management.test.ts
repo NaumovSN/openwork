@@ -34,6 +34,7 @@ mock.module("../src/inference.js", () => ({
   getInferenceStatus: async () => { throw new Error("Pins must not read paid accounting") },
   setInferenceEnabled: async () => { throw new Error("Pins must not enable inference") },
   allowFreeInferenceOffer: async () => { throw new Error("Pins must not change the free Auto opt-out") },
+  freeAutoBlockedByDesktopPolicy: async () => { throw new Error("Pins must not read member desktop policy") },
 }))
 mock.module("../src/organization-metadata.js", () => ({
   updateOrganizationMetadata: async (orgId: string, transform: (current: Record<string, unknown>) => Record<string, unknown>) => {

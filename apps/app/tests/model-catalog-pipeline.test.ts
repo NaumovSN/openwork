@@ -76,7 +76,7 @@ describe("one catalog for every picker", () => {
 describe("free Auto before it is switched on", () => {
   const status = (code: string | null, state = "unavailable") => ({ providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID, state, code });
   test("Auto does not appear while the Gateway reports it switched off, or before its first check answers", () => {
-    for (const code of ["free_disabled", "inference_disabled"]) {
+    for (const code of ["free_disabled", "inference_disabled", "free_not_offered"]) {
       expect(keys(catalogFor(["opencode", AUTO_PROVIDER_ID, "anthropic"], { autoStatus: status(code) }).options)).toEqual(["anthropic/claude-opus-4-6"]);
     }
     expect(keys(catalogFor(["opencode", AUTO_PROVIDER_ID, "anthropic"], { autoPending: true }).options)).toEqual(["anthropic/claude-opus-4-6"]);
