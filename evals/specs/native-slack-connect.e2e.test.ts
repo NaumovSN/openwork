@@ -28,8 +28,9 @@ test("an internal member connects their own Slack, reads linked excerpts, and ca
     await second.see("composer", { editable: true });
     if (world.engine === "v2") {
       const runtimes = [];
-      for (const observer of [probe, secondProbe]) {
-        const result = await observer.eventually(() => observer.desktopApi("/experimental/engine-v2-preview/status"), {
+      const identities: Array<"first" | "second"> = ["first", "second"];
+      for (const identity of identities) {
+        const result = await probe.eventually(() => world.appRequest(identity, "/experimental/engine-v2-preview/status"), {
           within: 60_000, label: "the pinned V2 runtime is running", until: result => result.status === 200 && world.objects(result.body).some(entry => entry.running === true),
         });
         const runtime = world.objects(result.body).find(entry => entry.running === true);
@@ -40,8 +41,8 @@ test("an internal member connects their own Slack, reads linked excerpts, and ca
       expect(runtimes[0]?.pid).not.toBe(runtimes[1]?.pid);
       evidence.recordAssertionEvidence("The two app profiles use distinct pinned V2 runtimes", `Both public runtime status calls confirm ${world.engineVersion}, enabled chat routing, and distinct running process IDs. No engine settings were changed by the spec.`, true);
     } else {
-      expect((await probe.desktopApi("/health")).status).toBe(200);
-      expect((await secondProbe.desktopApi("/health")).status).toBe(200);
+      expect((await world.appRequest("first", "/health")).status).toBe(200);
+      expect((await world.appRequest("second", "/health")).status).toBe(200);
       evidence.recordAssertionEvidence("Both legacy app profiles are healthy", "Two independently launched app servers returned HTTP 200; no V2-specific runtime claim is made for this selection.", true);
     }
   });
@@ -109,7 +110,7 @@ test("an internal member connects their own Slack, reads linked excerpts, and ca
     if (world.engine === "v2") {
       const sessionId = (await probe.hash()).match(/\/session\/([^/?#]+)/)?.[1];
       if (!sessionId) throw new Error("The visible conversation has no session route for the native-history witness");
-      const nativeHistory = await probe.desktopApi(`/workspace/${encodeURIComponent(world.workspaceId)}/opencode2/api/session/${encodeURIComponent(decodeURIComponent(sessionId))}/message`);
+      const nativeHistory = await world.appRequest("first", `/workspace/${encodeURIComponent(world.workspaceId)}/opencode2/api/session/${encodeURIComponent(decodeURIComponent(sessionId))}/message`);
       expect(nativeHistory.status).toBe(200);
       expect(JSON.stringify(nativeHistory.body)).toContain(world.prompt.first);
       expect(JSON.stringify(nativeHistory.body)).toContain(world.slack.conversations[0].text);

@@ -1,5 +1,7 @@
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { readHeadlessRuntimeManifest, resolveHeadlessWorldRuntimePaths } from "@openwork/world";
 import { connect, debuggerUrlFor, listTargets, type Surface } from "@openwork/cdp";
 import { denFetch, type DenSession } from "@openwork/behaviors";
 import { resolveEvalEngine, SkipError, type Place, type Seed } from "@openwork/env";
@@ -116,7 +118,26 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
     await app.client.send("Network.setBlockedURLs", { urls: ["*://slack.com/*", "*://*.slack.com/*"] });
     await seed.signIn(app, sessions[identity], identity);
     const workspace = await seed.workspace(app, workspacePath);
-    return { app, workspace };
+    // App-web has no Electron desktopApi bridge. Reuse the owned-runtime public
+    // HTTP witness used by engine-parity; this token never enters prompts/evidence.
+    const runtimePaths = resolveHeadlessWorldRuntimePaths(fileURLToPath(new URL("../../", import.meta.url)), app.handle.name);
+    const manifest = await readHeadlessRuntimeManifest(runtimePaths.runtimeManifestPath);
+    if (!manifest) throw new Error("Missing the test-owned app runtime manifest");
+    const ownerResponse = await fetch(`${app.openworkUrl}/tokens`, {
+      method: "POST", redirect: "error", headers: { "X-OpenWork-Host-Token": manifest.hostToken, "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "owner", label: "eng-76-runtime-witness" }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (ownerResponse.status !== 201) throw new Error("Could not authorize the test-owned runtime witness");
+    const ownerToken = text(object(await ownerResponse.json()).token);
+    const request = async (path: string) => {
+      const response = await fetch(`${app.openworkUrl}${path}`, {
+        headers: { Authorization: `Bearer ${ownerToken}` }, redirect: "error", signal: AbortSignal.timeout(30_000),
+      });
+      const body: unknown = await response.json();
+      return { status: response.status, body };
+    };
+    return { app, workspace, request };
   };
   const memberOne = await makeApp("first");
   const memberTwo = await makeApp("second");
@@ -127,6 +148,9 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
     app: memberOne.app, secondApp: memberTwo.app, slack, model, engine, engineVersion, first: sessions.first, second: sessions.second,
     organizationId, blockedOrganizationId, workspaceId: memberOne.workspace.workspaceId, memberRequest, searchHits: slackSearchHits, incomplete: slackIncomplete, limited: slackLimited, objects: slackResultObjects,
     prompt: nativeSlackPrompts,
+    appRequest(identity: "first" | "second", path: string) {
+      return (identity === "first" ? memberOne : memberTwo).request(path);
+    },
     appUrl: new URL(`#/workspace/${memberOne.workspace.workspaceId}/session`, memberOne.app.webUrl).toString(),
     async connection(identity: "first" | "second") {
       const result = await memberRequest(identity, "/v1/mcp-connections?scope=usable");
