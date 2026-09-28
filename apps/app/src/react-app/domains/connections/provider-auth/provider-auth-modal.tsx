@@ -51,7 +51,7 @@ type ProviderOAuthSession = ProviderOAuthStartResult & {
   methodLabel: string;
 };
 
-const PROVIDER_LABELS: Record<string, string> = {
+export const PROVIDER_LABELS: Record<string, string> = {
   openwork: "OpenWork",
   opencode: "OpenCode Zen",
   openai: "OpenAI",

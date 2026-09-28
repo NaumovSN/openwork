@@ -4,6 +4,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import {
   createClientV2,
   createV2EventTranslationState,
+  mapV2McpStatuses,
   translateV2Event,
   v2PromptText,
   type V2MappedMessage,
@@ -14,6 +15,43 @@ import { getModelBehaviorControls, getModelBehaviorOptions } from "../src/app/li
 import { catalogFastVariants, fastVariantId, nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { mentionPromptParts } from "../src/react-app/domains/session/sync/mention-parts";
 import { subscribeProviderCatalogChanges } from "../src/app/lib/provider-events";
+
+describe("MCP status", () => {
+  test("reads the native v2 catalog instead of reporting no servers", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests: Request[] = [];
+    globalThis.fetch = async (input, init) => {
+      const request = new Request(input, init); requests.push(request);
+      return jsonResponse({ data: [
+        { name: "linear", status: { status: "needs_auth" } },
+        { name: "github", status: { status: "connected" } },
+        { name: "broken", status: { status: "failed", error: "boom" } },
+        { name: "registering", status: { status: "needs_client_registration", error: "no client" } },
+        { name: "starting", status: { status: "pending" } },
+      ] });
+    };
+    try {
+      const client = createClientV2("http://localhost/opencode2", "/workspace", {});
+      const result = await client.mcp.status();
+      expect(new URL(requests[0]!.url).pathname).toBe("/opencode2/api/mcp");
+      expect(result.data).toEqual({
+        linear: { status: "needs_auth" },
+        github: { status: "connected" },
+        broken: { status: "failed", error: "boom" },
+        registering: { status: "needs_client_registration", error: "no client" },
+      });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("maps unknown statuses to failed and rejects a malformed catalog", () => {
+    expect(mapV2McpStatuses({ data: [{ name: "x", status: { status: "weird" } }] })).toEqual({
+      x: { status: "failed", error: "Unknown MCP status: weird" },
+    });
+    expect(mapV2McpStatuses({ data: { nope: true } })).toBeNull();
+  });
+});
 
 describe("native conversation mutations", () => {
   test("fork excludes the selected boundary and preserves a root conversation", async () => {

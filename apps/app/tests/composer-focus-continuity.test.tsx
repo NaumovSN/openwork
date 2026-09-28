@@ -85,6 +85,7 @@ async function waitFor(predicate: () => boolean, label: string) {
 }
 
 test.each([
+  ...["enter", "modified-enter", "button"].map(editSubmission => ({ name: `busy edit via ${editSubmission} replaces its original turn without entering the queue`, editSubmission })),
   { name: "composer focus, shared Restore, pending stops, and optimistic sends preserve drafts through snapshots and first-message handoff", queueRegression: false, modeRegression: false },
   { name: "Auto rejection clears only submitted text and reloads its unprocessed wall without resending", autoRejection: true },
   { name: "busy Enter clears persisted composer text and attachments without losing queued messages or newer typing", queueRegression: true, modeRegression: false },
@@ -99,7 +100,7 @@ test.each([
   { name: "mobile web cancelled send keeps the keyboard", mobileOutcome: "cancelled" },
   { name: "mobile web rejected send keeps the keyboard", mobileOutcome: "rejected" },
   { name: "mobile web uncertain send keeps the keyboard", mobileOutcome: "unknown" },
-])("$name", async ({ queueRegression, modeRegression, orderingRegression, firstSendRegression, mobileOutcome, autoRejection }) => {
+])("$name", async ({ queueRegression, modeRegression, orderingRegression, firstSendRegression, mobileOutcome, autoRejection, editSubmission }) => {
   const sessionId = `session-focus-continuity${orderingRegression ? `-${orderingRegression}` : firstSendRegression ? "-first-send" : ""}`;
   window.localStorage.clear();
   const require = createRequire(import.meta.url);
@@ -576,6 +577,30 @@ test.each([
     if (!editor) throw new Error("Expected the Lexical editor");
     editor.focus();
     expect(document.activeElement).toBe(editor);
+
+    if (editSubmission) {
+      await openMessageMenu("edit");
+      await waitFor(() => editor.textContent === "Keep this session mounted.", "the original message in the editor");
+      expect(useComposerStateStore.getState().sessions[sessionId]?.revertMessageId).toBe("existing-user-message");
+      await act(async () => useComposerStateStore.getState().setDraft(sessionId, "Replace the running turn"));
+      expect(container.querySelector('button[aria-label="Stop"]')).toBeNull();
+      const send = container.querySelector<HTMLButtonElement>('button[aria-label="Run task"]');
+      expect(send?.disabled).toBe(false);
+      await act(async () => {
+        if (editSubmission === "button") send?.click();
+        else editor.dispatchEvent(new KeyboardEvent("keydown", {
+          key: "Enter", ctrlKey: editSubmission === "modified-enter", bubbles: true, cancelable: true,
+        }));
+      });
+      await waitFor(() => sentDrafts.length === 1, "the edit submitted immediately");
+      expect(sentDrafts[0]?.text).toBe("Replace the running turn");
+      expect(sentDrafts[0]?.revertMessageId).toBe("existing-user-message");
+      expect(useComposerStateStore.getState().queuedDrafts[sessionId] ?? []).toEqual([]);
+      await act(async () => submission.resolve({ outcome: "blocked" }));
+      await waitFor(() => editor.textContent === "Replace the running turn", "a rejected edit restored to the composer");
+      expect(useComposerStateStore.getState().sessions[sessionId]?.revertMessageId).toBe("existing-user-message");
+      return;
+    }
 
     if (mobileOutcome) {
       await act(async () => useComposerStateStore.getState().setDraft(sessionId, ""));
@@ -1371,7 +1396,10 @@ test.each([
         })),
       };
       fetchedSnapshot = nativeSnapshot;
-      await act(async () => queryClient.setQueryData(transcriptKey(workspaceId, sessionId), snapshotToUIMessages(nativeSnapshot)));
+      await act(async () => {
+        queryClient.setQueryData(snapshotKey(workspaceId, sessionId), nativeSnapshot);
+        queryClient.setQueryData(transcriptKey(workspaceId, sessionId), snapshotToUIMessages(nativeSnapshot));
+      });
     };
     nativeMessages.push({ id: "native-historical", role: "user", text: "Historical attachment", time: { created: 100 } });
     await refreshNativeTranscript();
@@ -1498,6 +1526,8 @@ test.each([
       expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Composer continuation beside queue");
     };
     submission = Promise.withResolvers<CloudMcpSubmissionResult>();
+    // Complete cached history lets admission begin immediately. Hold the send
+    // itself to check duplicate clicks and session switches while it is pending.
     const sendsBeforeQueue = sentDrafts.length;
     await act(async () => sendNow());
     expectQueuedSending();
@@ -1582,7 +1612,8 @@ test.each([
     await act(async () => submission.reject(new PromptAdmissionUnknownError({ messageID: queuedUnknownId })));
     expect(getQueuedDrainState(sessionId).phase).toMatchObject({ kind: "admission_unknown", messageID: queuedUnknownId });
     expect(container.textContent).toContain("It may already be running");
-    expect(useComposerStateStore.getState().queuedDrafts[sessionId]?.map((item) => item.draft.messageId)).toEqual([queuedUnknownId]);
+    // Keep the uncertain row for reconciliation, but fence it from another send.
+    expect(useComposerStateStore.getState().queuedDrafts[sessionId]?.map(item => item.draft.text)).toEqual(["Uncertain queued message"]);
     expect(container.querySelector('[data-lexical-editor="true"]')?.textContent).toBe("Newer composer edits during queue send");
     await act(async () => {
       useComposerStateStore.getState().appendQueuedDraft(sessionId, queueDraft("Do not retry uncertain admission"));

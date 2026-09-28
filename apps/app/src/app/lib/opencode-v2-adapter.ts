@@ -19,7 +19,7 @@ import type {
 import { createClient, createDesktopFetch, type FieldsResult } from "./opencode";
 import type { OpenworkSessionHistory } from "./openwork-server";
 import { isDesktopRuntime } from "./runtime-env";
-import type { OpencodeEvent } from "../types";
+import type { McpStatusMap, OpencodeEvent } from "../types";
 import { normalizeDirectoryPath } from "../utils";
 import { dispatchProviderCatalogChanged } from "./provider-events";
 
@@ -1665,6 +1665,28 @@ function failedResult<T>(transport: TransportResult): FieldsResult<T> {
   };
 }
 
+/**
+ * Map the native v2 `/api/mcp` catalog (`[{ name, status: { status, error? } }]`)
+ * onto the v1 name-keyed status map the rest of the app consumes. `pending`
+ * servers are omitted so callers treat them as not-yet-known instead of failed.
+ */
+export function mapV2McpStatuses(payload: unknown): McpStatusMap | null {
+  const entries = responseData(payload);
+  if (!Array.isArray(entries)) return null;
+  const statuses: McpStatusMap = {};
+  for (const entry of entries) {
+    const name = readString(entry, "name");
+    const detail = isRecord(entry) ? entry.status : undefined;
+    const status = readString(detail, "status");
+    if (!name || !status) continue;
+    const error = readString(detail, "error") ?? "MCP connection failed";
+    if (status === "connected" || status === "disabled" || status === "needs_auth") statuses[name] = { status };
+    else if (status === "failed" || status === "needs_client_registration") statuses[name] = { status, error };
+    else if (status !== "pending") statuses[name] = { status: "failed", error: `Unknown MCP status: ${status}` };
+  }
+  return statuses;
+}
+
 function localResult<T>(baseUrl: string, path: string, data: T): FieldsResult<T> {
   return {
     data,
@@ -2276,7 +2298,16 @@ export function createClientV2(
       files: async (): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/fs/find", []),
     },
     mcp: {
-      status: async (): Promise<FieldsResult<Record<string, never>>> => localResult(baseUrl, "/api/mcp", {}),
+      status: async (
+        _parameters: DirectoryParameters = {},
+        options?: RequestOptions,
+      ): Promise<FieldsResult<McpStatusMap>> => {
+        const result = await request("GET", "/api/mcp", undefined, options?.signal);
+        if (!result.response.ok) return failedResult(result);
+        const statuses = mapV2McpStatuses(result.payload);
+        if (!statuses) return failedResult({ ...result, payload: { name: "InvalidV2McpCatalogResponse" } });
+        return successfulResult(result, statuses);
+      },
     },
     event: {
       subscribe: async (

@@ -33,6 +33,10 @@ export type AiSettingsViewProps = {
   onOpenProviderAuth: () => void | Promise<void>;
   onDisconnectProvider: (providerId: string) => void | Promise<void>;
   canDisconnectProvider: (provider: ConnectedProvider) => boolean;
+  /** Providers hidden by Disconnect (disabled_providers); each can be enabled again. */
+  disabledProviders?: { id: string; name: string }[];
+  enablingProviderId?: string | null;
+  onEnableProvider?: (providerId: string) => void | Promise<void>;
   canAddProviders: boolean;
   organizationName?: string;
   cloudProviderIds?: Set<string>;
@@ -106,6 +110,10 @@ export function AiSettingsView(props: AiSettingsViewProps) {
           <div className="flex shrink-0 items-center gap-1"><Button variant="ghost" disabled={props.busy || props.providerAuthBusy || !ready || !props.canDisconnectProvider(provider) || props.disconnectingProviderId !== null} onClick={() => void props.onDisconnectProvider(provider.id)}>{props.disconnectingProviderId === provider.id ? t("settings.disconnecting") : props.canDisconnectProvider(provider) ? t("settings.disconnect") : t("settings.managed_by_env")}</Button>
           </div>
         </div>)}
+        {props.onEnableProvider ? props.disabledProviders?.map((provider) => <div key={`disabled:${provider.id}`} className="flex min-h-12 items-center justify-between gap-3 px-4 py-3" data-testid="disabled-provider" data-provider-scope="device">
+          <div className="flex min-w-0 items-center gap-3"><ProviderIcon providerId={provider.id} providerName={provider.name} size={20} className="text-muted-foreground" /><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">{provider.name}</span><Badge variant="outline">{t("settings.provider_disabled_badge")}</Badge></div><div className="text-xs text-muted-foreground">{t("settings.provider_disabled_hint")}</div></div></div>
+          <Button variant="ghost" disabled={props.busy || props.providerAuthBusy || props.disconnectingProviderId !== null || (props.enablingProviderId ?? null) !== null} onClick={() => void props.onEnableProvider?.(provider.id)}>{props.enablingProviderId === provider.id ? t("settings.enabling_provider") : t("settings.enable_provider")}</Button>
+        </div>) : null}
       </div>
       {ready && !local.length && !showAuto ? <p className="text-sm text-muted-foreground">{t("settings.no_providers_connected")}</p> : null}
       {props.autoError ? <SettingsNotice tone="error">{props.autoError}</SettingsNotice> : null}

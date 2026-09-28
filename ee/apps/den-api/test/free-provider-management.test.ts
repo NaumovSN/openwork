@@ -22,11 +22,11 @@ const summary: FreeInferenceProviderSummary = {
 const memberRoute: MiddlewareHandler = async (c, next) => {
   if (!authenticated) return c.json({ error: "unauthorized" }, 401)
   c.set("organizationContext", { organization: { id: organizationId, metadata }, currentMember: { id: memberId, role, isOwner: role === "owner" } })
-  c.set("session", { createdAt: new Date(Date.now() - (fresh ? 0 : 3_600_000)) })
+  c.set("session", { createdAt: new Date(Date.now() - (fresh ? 0 : 3 * 3_600_000)) })
   await next()
 }
 mock.module("../src/middleware/index.js", () => ({ ...validation, orgMemberRoute: () => memberRoute, orgRoleRoute: () => memberRoute }))
-mock.module("../src/env.js", () => ({ env: { inferenceFree: { enabled: false } } }))
+mock.module("../src/env.js", () => ({ env: { inferenceFree: { enabled: false }, betterAuthUrl: "https://app.den.example.test" } }))
 mock.module("../src/inference.js", () => ({
   getFreeInferenceProviderSummary: async (orgId: string) => { reads.push(orgId); if (failRead) throw new Error("Unavailable"); return { ...summary, defaultPinned: freeInferenceDefaultPinned(metadata) } },
   getMemberInferenceAccess: async () => { throw new Error("Personal balances must not supply organization metrics") },

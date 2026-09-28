@@ -24,6 +24,7 @@ import {
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
+import { memberSignInLink } from "../../agent-links.js"
 import { appLogger } from "../../observability/logger.js"
 import { ORGANIZATION_SUPER_ADMIN_ROLE, organizationRoleValueSatisfies } from "../../organization-role-hierarchy.js"
 import {
@@ -622,6 +623,12 @@ const connectionCreatedResponseSchema = connectionResponseSchema.extend({
   links: z.object({
     /** Where members connect their own account for per_member connections. Share this with the team. */
     yourConnections: z.string(),
+    /**
+     * Opens a page where the person signs in to this connection with one
+     * click. Hand it to the user when the host cannot render a connection
+     * card (for example a terminal agent).
+     */
+    signIn: z.string().describe("Browser link where the person signs in to this connection. Give it to the user when you cannot show a sign-in card."),
     /** The exact OAuth redirect URL to whitelist in pre-registered provider apps. */
     oauthCallback: z.string(),
   }),
@@ -634,16 +641,12 @@ const connectionUpdatedResponseSchema = connectionResponseSchema.extend({
   reconnectionRequired: z.boolean(),
 }).meta({ ref: "ExternalMcpConnectionUpdatedResponse" })
 
-/**
- * The classical member handoff: after an admin (or their agent) publishes a
- * connection, members connect their own account in the den-web dashboard.
- * betterAuthUrl is the den-web public origin in every deployment layout.
- */
 function memberConnectLinks(connection: ExternalMcpConnectionRow) {
   const yourConnections = new URL("/dashboard/your-connections", env.betterAuthUrl)
   yourConnections.searchParams.set("connectionId", connection.id)
   return {
     yourConnections: yourConnections.toString(),
+    signIn: memberSignInLink(connection),
     oauthCallback: connection.kind === "native_provider" && connection.nativeProviderKey
       ? nativeProviderCallbackUrl(connection.nativeProviderKey)
       : callbackRedirectUriWithClient(connection, null),
@@ -2632,7 +2635,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       // (connect/start, callbacks, client secrets) stays agent-blocked.
       tags: ["Capability Sources"],
       summary: "Register a new External MCP Connection for the org",
-      description: "Owners and admins can register any server. Other members can add one for themselves: an OAuth server where each person signs in (credentialMode per_member) or a server with no sign-in, shared with specific members or teams but never org-wide; the caller is always kept in its access. Registers a third-party MCP server by name + URL and grants access (org-wide, teams, or members). Use GET /v1/mcp-connections/presets for known server URLs (Notion, Linear, Stripe, Sentry, Slack, Context7). For credentialMode per_member, each member connects their own account afterwards — share links.yourConnections from the response so teammates know where to sign in. For servers with pre-registered OAuth apps, whitelist links.oauthCallback. API-key and OAuth-client credentials cannot be created through the agent surface; use the dashboard.",
+      description: "Owners and admins can register any server. Other members can add one for themselves: an OAuth server where each person signs in (credentialMode per_member) or a server with no sign-in, shared with specific members or teams but never org-wide; the caller is always kept in its access. Registers a third-party MCP server by name + URL and grants access (org-wide, teams, or members). Use GET /v1/mcp-connections/presets for known server URLs (Notion, Linear, Stripe, Sentry, Slack, Context7). For credentialMode per_member, each member connects their own account afterwards — give the user links.signIn (a one-click browser sign-in page for this connection) when you cannot show a sign-in card, and share links.yourConnections so teammates know where to sign in. For servers with pre-registered OAuth apps, whitelist links.oauthCallback. API-key and OAuth-client credentials cannot be created through the agent surface; use the dashboard.",
       responses: {
         200: jsonResponse("Connection created.", connectionCreatedResponseSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
@@ -2954,7 +2957,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
     describeRoute({
       tags: ["Authentication"],
       summary: "Remove an External MCP Connection",
-      description: "Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. Workspace owners and super-admins can remove any connection; other members only the connections they created. Session callers must have signed in within the last 15 minutes (403 reauth); API-key callers are exempt.",
+      description: "Permanently deletes the connection together with its access grants, stored shared and per-member accounts, OAuth client registration, and plugin MCP requirement bindings. Workspace owners and super-admins can remove any connection; other members only the connections they created. Session callers must have signed in within the last 2 hours (403 reauth); API-key callers are exempt.",
       responses: {
         200: jsonResponse("The connection was removed.", okSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),

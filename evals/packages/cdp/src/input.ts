@@ -547,6 +547,8 @@ export async function typeText(surface: Surface, text: string): Promise<void> {
 const EDITING_COMMANDS: Record<string, string[]> = {
   "Meta+A": ["selectAll"],
   "Control+A": ["selectAll"],
+  "Meta+V": ["paste"],
+  "Control+V": ["paste"],
   "Meta+ArrowDown": ["moveToEndOfDocument"],
   "Control+End": ["moveToEndOfDocument"],
   // macOS standard key bindings: bare Home/End scroll the document and only
@@ -568,7 +570,10 @@ export async function pressKey(surface: Surface, key: string): Promise<void> {
     modifiers: descriptor.modifiers,
   };
   const commands = EDITING_COMMANDS[key];
-  await surface.client.send("Input.dispatchKeyEvent", { type: "keyDown", ...params, ...(commands ? { commands } : {}) });
+  // Enter needs a text event for native HTML button activation. Keydown alone
+  // reaches JS handlers but does not produce the browser's default click.
+  const text = descriptor.key === "Enter" && (descriptor.modifiers & (1 | 2 | 4)) === 0 ? "\r" : undefined;
+  await surface.client.send("Input.dispatchKeyEvent", { type: "keyDown", ...params, ...(text ? { text } : {}), ...(commands ? { commands } : {}) });
   await surface.client.send("Input.dispatchKeyEvent", { type: "keyUp", ...params });
 }
 
