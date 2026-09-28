@@ -110,11 +110,13 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
       mcp: { "openwork-cloud": { type: "remote", url: `${enabled.ref.apiUrl}/mcp/agent`, oauth: false, enabled: true, headers: { Authorization: `Bearer ${tokens[identity].token}` } } },
     }));
     const app = await seed.appWeb({ name: `native-slack-${identity}`, workspacePath, headless: true, env: {
-      // Browser clients re-derive their API URL after handoff and on reload;
-      // seed.signIn's explicit exchange URL is not a persistent browser API pin.
-      // web:false has no Den web proxy, so every later /v1 call must use this API.
+      // Handoff alone permits cross-origin exchange. Ordinary authenticated
+      // browser requests use the existing same-origin Vite proxy, not wider CORS.
+      OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "1",
+      OPENWORK_DEV_DEN_PROXY_TARGET: enabled.ref.webUrl,
+      OPENWORK_DEV_HEADLESS_DEN_API_TARGET: enabled.ref.apiUrl,
       VITE_DEN_BASE_URL: enabled.ref.webUrl,
-      VITE_DEN_API_BASE_URL: enabled.ref.apiUrl,
+      VITE_DEN_API_BASE_URL: "/api/den",
       OPENCODE_MODELS_URL: `${model.url}/models`,
       ...(process.env.OPENWORK_OPENCODE_BIN ? { OPENWORK_OPENCODE_BIN: process.env.OPENWORK_OPENCODE_BIN } : {}),
       ...(process.env.OPENWORK_OPENCODE2_BIN ? { OPENWORK_OPENCODE2_BIN: process.env.OPENWORK_OPENCODE2_BIN } : {}),

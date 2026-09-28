@@ -52,13 +52,15 @@ Slack bot/signing credentials. Native API search is **GET**
 not `body`. The optional `conversationTypes` query value is comma-separated.
 The upstream RTS method remains POST. Threads remain GET.
 
-The app-web children also receive `VITE_DEN_BASE_URL=enabled.ref.webUrl` and
-`VITE_DEN_API_BASE_URL=enabled.ref.apiUrl`. `seed.signIn` supplies a direct API
-URL for the initial handoff exchange, but browser clients subsequently
-re-derive the API URL from the web base and build configuration. Because this
-world does not boot den-web, there is no `/api/den` proxy on `webUrl`: the
-explicit build pin keeps session restoration and native connection requests
-on the owned API, including after a browser reload.
+The app-web children enable the existing headless development proxy with
+`OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY=1`, the logical web target, and
+`OPENWORK_DEV_HEADLESS_DEN_API_TARGET=enabled.ref.apiUrl`. They receive
+`VITE_DEN_BASE_URL=enabled.ref.webUrl` and `VITE_DEN_API_BASE_URL=/api/den`.
+`seed.signIn` uses direct API handoff exchange, but ordinary authenticated
+browser calls are same-origin Vite requests forwarded to the owned API with
+`/api/den` stripped. This world has no den-web process on `webUrl`; using that
+unserved proxy or making cross-origin API calls would leave session restoration
+unavailable. No production origin/CORS policy is weakened.
 
 The separately minted replay tokens must return exactly `mcp:read` in the
 mint response. Each Den process receives its own audience-valid token; a
