@@ -81,8 +81,9 @@ export function useModelCatalog(input: UseModelCatalogInput): ModelCatalogView {
   const autoPresent = Boolean(runtime?.some(isAutoModel) || input.fallbackOptions?.some(isAutoModel) || (input.current && isAutoModel(input.current)));
   const { query: autoQuery } = useAutoAccess(autoPresent);
   const autoStatus = autoQuery.data;
-  // A failed status check still shows Auto (as unavailable); only a check that has not answered hides it.
-  const autoPending = autoPresent && autoQuery.isPending;
+  // A failed status check still shows Auto (as unavailable); only a check that is running and has not answered
+  // hides it. A check that never runs (outside the desktop) leaves Auto as the engine lists it.
+  const autoPending = autoPresent && autoQuery.isPending && autoQuery.fetchStatus !== "idle";
   const catalog = useMemo(() => buildModelCatalog({
     runtime, fallback: input.fallbackOptions, pending: input.pendingOptions, imports: input.importedProviders,
     signedIn, restrictToCloud, checkRestriction, disabledProviders: input.disabledProviders,

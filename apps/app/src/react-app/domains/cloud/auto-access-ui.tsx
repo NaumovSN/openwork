@@ -127,7 +127,7 @@ export function useAutoAccess(available: boolean) {
 
 export function AutoFirstUseStatus({ onConnect }: { onConnect?: () => void }) {
   const { query } = useAutoAccess(true);
-  if (query.isPending || (query.isSuccess && freeAutoSwitchedOff(query.data))) return null;
+  if ((query.isPending && query.fetchStatus !== "idle") || (query.isSuccess && freeAutoSwitchedOff(query.data))) return null;
   const ready = query.isSuccess && query.data.state === "ready";
   return <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-testid="auto-first-use">
     {ready ? <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-green-9" /> : null}

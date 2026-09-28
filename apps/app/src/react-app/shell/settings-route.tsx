@@ -1059,7 +1059,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [autoPreferences, setAutoPreferences] = useState<DesktopFreePreferences | null>(null);
   // Until an operator switches free Auto on, Settings shows no OpenWork Models row for it.
   const { query: autoAccessQuery } = useAutoAccess(Boolean(autoPreferences));
-  const autoSwitchedOff = autoAccessQuery.isPending || freeAutoSwitchedOff(autoAccessQuery.data);
+  const autoSwitchedOff = (autoAccessQuery.isPending && autoAccessQuery.fetchStatus !== "idle") || freeAutoSwitchedOff(autoAccessQuery.data);
   const visibleAutoPreferences = autoSwitchedOff ? null : autoPreferences;
   const [autoBusy, setAutoBusy] = useState(false);
   const [autoError, setAutoError] = useState<string | null>(null);
