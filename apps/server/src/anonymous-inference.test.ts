@@ -654,6 +654,16 @@ test("minting a guest session does the proof of work for its own nonce and redoe
   });
 });
 
+test("a gateway with guest Auto switched off reports free_disabled, which the app treats as no Auto at all", async () => {
+  await fixture(async ({ service, reject }) => {
+    await service.initialize(9876);
+    reject(DESKTOP_FREE_SESSION_PATH, 503, { error: { code: "free_disabled" } });
+    const status = await service.status(true);
+    expect(status).toMatchObject({ state: "unavailable", code: "free_disabled" });
+    expect((await service.status()).code).toBe("free_disabled");
+  });
+});
+
 test("a switched-off guest gateway is not asked again, and no proof of work is solved, until its refusal lapses or someone sends with Auto", async () => {
   await fixture(async ({ service, requests, reject, advance, activate }) => {
     await service.initialize(9876);
