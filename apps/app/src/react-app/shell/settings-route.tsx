@@ -1,4 +1,6 @@
 /** @jsxImportSource react */
+import { useAutoAccess } from "@/react-app/domains/cloud/auto-access-ui";
+import { freeAutoSwitchedOff } from "@/app/lib/inference-access";
 import { openNewSessionDraft } from "@/react-app/domains/session/chat/new-session-destination";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate, useParams } from "react-router";
@@ -1055,6 +1057,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [cloudSession.baseUrl, platform]);
   const autoClient = isDesktopRuntime() && openworkServerSnapshot.openworkServerClient && isLoopbackOpenworkServerUrl(openworkServerSnapshot.openworkServerClient.baseUrl) ? openworkServerSnapshot.openworkServerClient : null;
   const [autoPreferences, setAutoPreferences] = useState<DesktopFreePreferences | null>(null);
+  // Until an operator switches free Auto on, Settings shows no OpenWork Models row for it.
+  const { query: autoAccessQuery } = useAutoAccess(Boolean(autoPreferences));
+  const autoSwitchedOff = autoAccessQuery.isPending || freeAutoSwitchedOff(autoAccessQuery.data);
+  const visibleAutoPreferences = autoSwitchedOff ? null : autoPreferences;
   const [autoBusy, setAutoBusy] = useState(false);
   const [autoError, setAutoError] = useState<string | null>(null);
   const autoGeneration = useRef(0);
@@ -2515,7 +2521,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             }}
             onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
             showOpenWorkModelsSyncing={showOpenWorkModelsSyncing}
-            autoPreferences={autoPreferences}
+            autoPreferences={visibleAutoPreferences}
+            autoSwitchedOff={autoSwitchedOff}
             autoBusy={autoBusy}
             autoError={autoError}
             onSetAutoEnabled={autoClient ? setAutoEnabled : undefined}
@@ -2960,7 +2967,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         onSubmitApiKey={providerAuthStore.submitProviderApiKey}
         onSubmitOAuth={providerAuthStore.completeProviderAuthOAuth}
         onRefreshProviders={providerAuthStore.refreshProviders}
-        openWorkModelsState={autoPreferences ? !autoPreferences.enabled ? "off" : autoPreferences.available ? "included" : "unavailable" : undefined}
+        openWorkModelsState={visibleAutoPreferences ? !visibleAutoPreferences.enabled ? "off" : visibleAutoPreferences.available ? "included" : "unavailable" : undefined}
         organizationName={cloudSession.activeOrgName}
         organizationProviderIds={organizationProviderIds}
         organizationProviderCount={cloudSession.isSignedIn ? new Set([...providerAuthSnapshot.cloudOrgProviders.map((provider) => provider.id), ...Object.keys(providerAuthSnapshot.importedCloudProviders), ...gatewayConnectProviders.map((provider) => provider.cloudProviderId)]).size : undefined}

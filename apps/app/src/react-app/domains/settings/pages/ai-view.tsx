@@ -37,6 +37,8 @@ export type AiSettingsViewProps = {
   disabledProviders?: { id: string; name: string }[];
   enablingProviderId?: string | null;
   onEnableProvider?: (providerId: string) => void | Promise<void>;
+  /** The Gateway reports free Auto switched off: no OpenWork Models row for it. */
+  autoSwitchedOff?: boolean;
   canAddProviders: boolean;
   organizationName?: string;
   cloudProviderIds?: Set<string>;
@@ -83,7 +85,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
   const managed = (provider: ConnectedProvider) => provider.id !== AUTO_PROVIDER_ID && (isCloudManagedProviderKey(provider.id) || props.cloudProviderIds?.has(provider.id) || props.gatewayProviderIds?.has(provider.id));
   const local = props.connectedProviders.filter((provider) => !managed(provider) && provider.id !== AUTO_PROVIDER_ID);
   const organization = props.connectedProviders.filter(managed);
-  const showAuto = Boolean(props.autoPreferences || props.connectedProviders.some((provider) => provider.id === AUTO_PROVIDER_ID));
+  const showAuto = !props.autoSwitchedOff && Boolean(props.autoPreferences || props.connectedProviders.some((provider) => provider.id === AUTO_PROVIDER_ID));
   const autoOff = props.autoPreferences?.enabled === false;
   const autoAvailable = props.autoPreferences?.available ?? ready;
   const locked = !props.canAddProviders;

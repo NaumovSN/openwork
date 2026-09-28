@@ -81,12 +81,14 @@ export function useModelCatalog(input: UseModelCatalogInput): ModelCatalogView {
   const autoPresent = Boolean(runtime?.some(isAutoModel) || input.fallbackOptions?.some(isAutoModel) || (input.current && isAutoModel(input.current)));
   const { query: autoQuery } = useAutoAccess(autoPresent);
   const autoStatus = autoQuery.data;
+  // A failed status check still shows Auto (as unavailable); only a check that has not answered hides it.
+  const autoPending = autoPresent && autoQuery.isPending;
   const catalog = useMemo(() => buildModelCatalog({
     runtime, fallback: input.fallbackOptions, pending: input.pendingOptions, imports: input.importedProviders,
     signedIn, restrictToCloud, checkRestriction, disabledProviders: input.disabledProviders,
-    gatewayProviderIds: input.gatewayProviderIds, autoStatus,
+    gatewayProviderIds: input.gatewayProviderIds, autoStatus, autoPending,
   }), [runtime, input.fallbackOptions, input.pendingOptions, input.importedProviders, signedIn, restrictToCloud, checkRestriction,
-    input.disabledProviders, input.gatewayProviderIds, autoStatus]);
+    input.disabledProviders, input.gatewayProviderIds, autoStatus, autoPending]);
 
   const catalogState: ModelPickerCatalogState = {
     state: providers.isError ? "error" : input.client && input.enabled && providers.isPending ? "loading" : "ready",
@@ -104,7 +106,9 @@ export function useModelCatalog(input: UseModelCatalogInput): ModelCatalogView {
   const rememberedOption = remembered.current?.scope === identityScope ? remembered.current.option : undefined;
   const retainedSelection = current ? resolveRetainedSelection({
     current, catalog, remembered: rememberedOption, saved: input.savedSelection, signedIn,
-    restrictToCloud, checkRestriction, catalogState: catalogState.state, sessionScoped: input.sessionScoped ?? false,
+    restrictToCloud, checkRestriction, sessionScoped: input.sessionScoped ?? false,
+    // A conversation already on Auto is not called unavailable while Auto's first check is still answering.
+    catalogState: autoPending && isAutoModel(current) ? "loading" : catalogState.state,
   }) : undefined;
   const options = useMemo(() => withoutBlockedSelection(catalog.options, retainedSelection), [catalog.options, retainedSelection?.model.providerID, retainedSelection?.model.modelID, retainedSelection?.reason]);
   const auto = options.find(isAutoModel);

@@ -2,6 +2,7 @@ import type { CloudImportedProvider } from "@/app/cloud/import-state";
 import type { ModelOption, ModelRef } from "@/app/types";
 import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
 import type { DesktopAppRestrictionChecker } from "@/app/cloud/desktop-app-restrictions";
+import { freeAutoSwitchedOff } from "@/app/lib/inference-access";
 import { getConnectedProviderItems } from "@/react-app/infra/provider-list-query";
 import { filterCloudManagedModelOptions, markDisabledModelOptions, mergeModelOptions } from "../connections/provider-auth/assigned-model-options";
 import { isCloudManagedProviderKey } from "../connections/provider-auth/cloud-provider-config";
@@ -30,6 +31,9 @@ export function runtimeModelOptions(data: ProviderList, isNewProvider: (provider
       behaviorTitle: summary.title, behaviorLabel: summary.label, behaviorDescription: summary.description,
       behaviorValue: summary.value, behaviorOptions: summary.options,
       isFree: isAutoModel(ref) || costsNothing(model),
+      // Zen with the person's own key or subscription (OpenWork, `opencode auth login`, env or config) is a real
+      // provider and stays listed in full; only the credential-less built-in Zen is a fallback.
+      ...(provider.id === "opencode" && provider.source === "custom" && costsNothing(model) ? { zenFallback: true } : {}),
       ...(isNewProvider(provider.id) ? { isRecommended: true } : {}),
       ...(isCloudManagedProviderKey(provider.id) ? { source: "cloud" as const } : {}),
     };
@@ -50,7 +54,9 @@ export type ModelCatalogInput = {
   disabledProviders?: readonly string[];
   gatewayProviderIds?: ReadonlySet<string>;
   /** Den's Auto pin policy, from Auto status. */
-  autoStatus?: { providerID: string; modelID: string; defaultPinned?: boolean };
+  autoStatus?: { providerID: string; modelID: string; defaultPinned?: boolean; code?: string | null };
+  /** Auto's first status check has not answered yet: Auto is not offered until the Gateway says it is on. */
+  autoPending?: boolean;
 };
 
 export type ModelCatalog = {
@@ -69,7 +75,13 @@ export function buildModelCatalog(input: ModelCatalogInput): ModelCatalog {
     .map((option) => input.gatewayProviderIds?.has(option.providerID) ? { ...option, source: "gateway" as const } : option);
   const known = markDisabledModelOptions(filterCloudManagedModelOptions(merged, input.signedIn), input.disabledProviders ?? []);
   const entitled = filterEntitledModelOptions(known, { restrictToCloud: input.restrictToCloud, checkRestriction: input.checkRestriction });
-  return { known, options: withAutoDefaultPin(hideBuiltInZenFallback(entitled), input.autoStatus) };
+  // Free Auto that is switched off, or not yet confirmed on, is not offered anywhere. It is not "unavailable":
+  // that state is for Auto that is on but failing. The model stays known so a saved choice can still be named.
+  const autoHidden = input.autoPending === true || freeAutoSwitchedOff(input.autoStatus);
+  const offered = autoHidden ? entitled.filter((option) => !isAutoModel(option)) : entitled;
+  // Under "only managed providers" the list stays exactly as the desktop policy allows it, Zen included.
+  const listed = input.restrictToCloud ? offered : hideBuiltInZenFallback(offered);
+  return { known, options: withAutoDefaultPin(listed, input.autoStatus) };
 }
 
 /** Auto cannot be switched to from a shortcut or the palette while its access is being synced or is not ready. */
@@ -106,7 +118,7 @@ export function resolveRetainedSelection(input: RetainedSelectionInput): Retaine
   const signedOut = !input.signedIn && isCloudManagedProviderKey(current.providerID);
   const implicitStarter = !input.sessionScoped && !known && !saved && current.providerID === "opencode" && current.modelID === "big-pickle";
   // The free Zen starter is only hidden from the list once better models exist; it still works, so it is not "unavailable".
-  const hiddenZenFallback = Boolean(known && !known.disabled && known.providerID === "opencode" && known.isFree === true);
+  const hiddenZenFallback = Boolean(known && !known.disabled && known.zenFallback === true);
   if (implicitStarter || (hiddenZenFallback && !policyBlocked && !blockedBySaved)
     || (input.catalogState === "loading" && !policyBlocked && !signedOut)) return undefined;
   return {

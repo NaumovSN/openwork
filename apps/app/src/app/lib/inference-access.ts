@@ -38,6 +38,14 @@ export function autoAccessWall(status: DesktopFreeAccessStatus): AutoAccessWall 
     resetsAt: status.allowance?.resetsAt, minimumVersion: status.minimumVersion ?? undefined };
 }
 
+/**
+ * The Gateway (or Den, for members) reports free Auto as switched off, not merely down. Until an operator turns it on,
+ * the app shows no trace of Auto: no picker row, no Settings row, no first-use caption.
+ */
+export function freeAutoSwitchedOff(status: { code?: string | null } | null | undefined): boolean {
+  return status?.code === "free_disabled" || status?.code === "inference_disabled";
+}
+
 export function autoAccessWallFromError(value: unknown, model?: ModelRef | null, depth = 0): AutoAccessWall | null {
   if ((model && !isAutoModel(model)) || depth > 6 || value == null) return null;
   if (typeof value === "string") {

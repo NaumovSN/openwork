@@ -4,6 +4,8 @@ import type { ModelOption } from "../src/app/types";
 import { buildModelCatalog, resolveRetainedSelection, runtimeModelOptions, withAutoActionState, withoutBlockedSelection, type ModelCatalogInput } from "../src/react-app/domains/models/catalog";
 import { AUTO_MODEL_ID, AUTO_PROVIDER_ID } from "../src/react-app/domains/models/model-catalog";
 import { pendingGatewayModelOptions } from "../src/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { filterCloudManagedModelOptions, markDisabledModelOptions, mergeModelOptions } from "../src/react-app/domains/connections/provider-auth/assigned-model-options";
+import { filterEntitledModelOptions } from "../src/react-app/domains/connections/provider-auth/provider-policy";
 
 // Provider list shaped like the engine's real response: connected ids plus full model records with costs.
 const cost = (input: number, output: number) => ({ input, output, cache: { read: 0, write: 0 } });
@@ -68,6 +70,78 @@ describe("one catalog for every picker", () => {
     expect(catalog.options.find((option) => option.providerID === AUTO_PROVIDER_ID)?.defaultPinned).toBe(false);
     expect(withAutoActionState(catalog.options, { blocked: true }).find((option) => option.providerID === AUTO_PROVIDER_ID)?.disabled).toBe(true);
     expect(withAutoActionState(catalog.options, { blocked: false }).some((option) => option.disabled)).toBe(false);
+  });
+});
+
+describe("free Auto before it is switched on", () => {
+  const status = (code: string | null, state = "unavailable") => ({ providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID, state, code });
+  test("Auto does not appear while the Gateway reports it switched off, or before its first check answers", () => {
+    for (const code of ["free_disabled", "inference_disabled"]) {
+      expect(keys(catalogFor(["opencode", AUTO_PROVIDER_ID, "anthropic"], { autoStatus: status(code) }).options)).toEqual(["anthropic/claude-opus-4-6"]);
+    }
+    expect(keys(catalogFor(["opencode", AUTO_PROVIDER_ID, "anthropic"], { autoPending: true }).options)).toEqual(["anthropic/claude-opus-4-6"]);
+    // With nothing else connected, a switched-off Auto still leaves the built-in Zen starter, exactly as today.
+    expect(keys(catalogFor(["opencode", AUTO_PROVIDER_ID], { autoStatus: status("free_disabled") }).options)).toEqual(["opencode/big-pickle"]);
+  });
+  test("Auto that is on but failing is still listed, so the picker can say it is unavailable", () => {
+    for (const code of ["anonymous_unavailable", "anonymous_capacity_exceeded", null]) {
+      expect(keys(catalogFor([AUTO_PROVIDER_ID, "anthropic"], { autoStatus: status(code) }).options)).toContain(`${AUTO_PROVIDER_ID}/${AUTO_MODEL_ID}`);
+    }
+    expect(keys(catalogFor([AUTO_PROVIDER_ID], { autoStatus: status(null, "ready") }).options)).toEqual([`${AUTO_PROVIDER_ID}/${AUTO_MODEL_ID}`]);
+  });
+  test("a conversation already on Auto is named, not called unavailable, while switched off or still checking", () => {
+    const current = { providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID };
+    const catalog = catalogFor([AUTO_PROVIDER_ID, "anthropic"], { autoStatus: status("free_disabled") });
+    expect(catalog.known.some((option) => option.providerID === AUTO_PROVIDER_ID)).toBe(true);
+    expect(resolveRetainedSelection({ current, catalog, signedIn: true, restrictToCloud: false, checkRestriction: allow, catalogState: "loading", sessionScoped: true })).toBeUndefined();
+  });
+});
+
+describe("providers people set up outside OpenWork keep all their models", () => {
+  const withSource = (id: string, source: string, models: Record<string, ReturnType<typeof model>>) => {
+    const list = providerList([id, "anthropic"]);
+    const all = (list as unknown as { all: Array<Record<string, unknown>> }).all.filter((provider) => provider.id !== id);
+    all.push({ id, name: id, source, env: [], models });
+    return { ...list, all } as typeof list;
+  };
+  test("Zen set up with a subscription or key (OpenWork, opencode auth login, env or config) keeps every model, free ones included", () => {
+    const zen = { "big-pickle": model("big-pickle", "Big Pickle", cost(0, 0)), "claude-sonnet-4-6": model("claude-sonnet-4-6", "Claude Sonnet 4.6") };
+    for (const source of ["api", "env", "config"]) {
+      const options = buildModelCatalog({ runtime: runtimeModelOptions(withSource("opencode", source, zen)), signedIn: true, restrictToCloud: false, checkRestriction: allow }).options;
+      expect(keys(options)).toEqual(expect.arrayContaining(["opencode/big-pickle", "opencode/claude-sonnet-4-6", "anthropic/claude-opus-4-6"]));
+    }
+    // Only the built-in Zen nobody configured steps aside once a real model exists.
+    const builtIn = buildModelCatalog({ runtime: runtimeModelOptions(withSource("opencode", "custom", { "big-pickle": zen["big-pickle"] })), signedIn: true, restrictToCloud: false, checkRestriction: allow }).options;
+    expect(keys(builtIn)).toEqual(["anthropic/claude-opus-4-6"]);
+  });
+  test("OpenAI signed in through the Codex CLI stays listed, whatever source the engine reports", () => {
+    for (const source of ["api", "custom", "env", "config"]) {
+      const options = buildModelCatalog({ runtime: runtimeModelOptions(withSource("openai", source, { "gpt-5.6": model("gpt-5.6", "GPT-5.6") })), signedIn: true, restrictToCloud: false, checkRestriction: allow }).options;
+      expect(keys(options)).toContain("openai/gpt-5.6");
+    }
+  });
+});
+
+describe("enterprise: only managed providers", () => {
+  // Desktop policy with allowCustomProviders off; allowZenModel decides Zen, as it always has.
+  const policy = (zenAllowed: boolean): ModelCatalogInput["checkRestriction"] => (input) =>
+    input.restriction === "allowCustomProviders" ? true : input.restriction === "allowZenModel" ? !zenAllowed : false;
+  const everything = ["opencode", AUTO_PROVIDER_ID, "anthropic", "lpr_team"];
+  test("the picker offers exactly what the existing policy filter allows: managed providers, never Auto or personal keys", () => {
+    for (const zenAllowed of [true, false]) {
+      for (const autoStatus of [undefined, { providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID, state: "ready", code: null }]) {
+        const checkRestriction = policy(zenAllowed);
+        const runtime = runtimeModelOptions(providerList(everything, true));
+        const catalog = buildModelCatalog({ runtime, signedIn: true, restrictToCloud: true, checkRestriction, autoStatus });
+        // The same filter chain dev applies to the engine's models under this policy.
+        const devEquivalent = filterEntitledModelOptions(markDisabledModelOptions(filterCloudManagedModelOptions(mergeModelOptions(runtime, []), true), []), { restrictToCloud: true, checkRestriction });
+        expect(keys(catalog.options)).toEqual(keys(devEquivalent));
+        expect(keys(catalog.options)).not.toContain(`${AUTO_PROVIDER_ID}/${AUTO_MODEL_ID}`);
+        expect(keys(catalog.options)).not.toContain("anthropic/claude-opus-4-6");
+        expect(keys(catalog.options)).toContain("lpr_team/claude-haiku");
+        expect(keys(catalog.options).some((key) => key.startsWith("opencode/"))).toBe(zenAllowed);
+      }
+    }
   });
 });
 
