@@ -52,6 +52,14 @@ Slack bot/signing credentials. Native API search is **GET**
 not `body`. The optional `conversationTypes` query value is comma-separated.
 The upstream RTS method remains POST. Threads remain GET.
 
+The app-web children also receive `VITE_DEN_BASE_URL=enabled.ref.webUrl` and
+`VITE_DEN_API_BASE_URL=enabled.ref.apiUrl`. `seed.signIn` supplies a direct API
+URL for the initial handoff exchange, but browser clients subsequently
+re-derive the API URL from the web base and build configuration. Because this
+world does not boot den-web, there is no `/api/den` proxy on `webUrl`: the
+explicit build pin keeps session restoration and native connection requests
+on the owned API, including after a browser reload.
+
 The separately minted replay tokens must return exactly `mcp:read` in the
 mint response. Each Den process receives its own audience-valid token; a
 wrong-audience or generic authentication rejection is not a policy witness.
