@@ -6,6 +6,7 @@ import type { MockMcpTool } from "@openwork/labs";
 import { go, runWorkflow, saveWorkflow, waitFor } from "@openwork/behaviors";
 import { connect, debuggerUrlFor, evaluate, listTargets } from "@openwork/cdp";
 import { configureProvider } from "./chat.ts";
+import { enableOrgManagedDashboards } from "./dashboards.ts";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import { reconcileDraftHost } from "../fixtures/cloud-draft-host.ts";
 
@@ -429,6 +430,7 @@ export async function savedAppCreation(seed: Seed) {
       tracker: seed.mock({ allowUnauthenticatedMcp: true, appToolName: "search_issues_using_jql" }),
     },
   });
+  await enableOrgManagedDashboards(seed, den.admin);
   const connection = await seed.orgConnection(den.admin, {
     name: "Issue tracker", url: den.mocks.tracker.mcpUrl,
     authType: "none", credentialMode: "shared", access: { orgWide: true },

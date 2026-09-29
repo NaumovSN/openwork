@@ -1,6 +1,33 @@
 import type { Seed } from "@openwork/env";
 import { isRecord, records } from "./library.ts";
 
+/**
+ * Org-managed Dashboards are default-off per organization. Worlds that create
+ * or render org dashboards switch the capability on through the platform-admin
+ * route the /admin panel uses; the seeded org admin is the platform admin.
+ */
+export async function enableOrgManagedDashboards(
+  seed: Seed,
+  admin: Parameters<Seed["api"]>[0],
+  organizationId?: string,
+): Promise<string> {
+  let orgId = organizationId ?? "";
+  if (!orgId) {
+    const context = await seed.api(admin, "/v1/org");
+    const organization = isRecord(context.body) && isRecord(context.body.organization) ? context.body.organization : null;
+    orgId = organization && typeof organization.id === "string" ? organization.id : "";
+  }
+  if (!orgId) throw new Error("Could not resolve the seeded organization to enable Dashboards.");
+  const result = await seed.api(admin, `/v1/admin/organizations/${orgId}/capabilities`, {
+    method: "PUT",
+    body: JSON.stringify({ capabilities: { orgManagedDashboards: true } }),
+  });
+  if (!result.response.ok) {
+    throw new Error(`Enabling org-managed Dashboards failed: HTTP ${result.response.status} ${result.text.slice(0, 500)}`);
+  }
+  return orgId;
+}
+
 /** The witness MCP App every tile in this world launches: one tool, required `jql` input. */
 export const dashboardAppTool = {
   name: "search_issues_using_jql",
@@ -20,6 +47,7 @@ export async function emptyDashboardWithOneApp(seed: Seed) {
     org: { name: `Dashboard tiles ${stamp}`, admin: { name: "Dashboard Tile Admin" } },
     mocks: { tracker: seed.mock({ allowUnauthenticatedMcp: true, appToolName: dashboardAppTool.name }) },
   });
+  await enableOrgManagedDashboards(seed, den.admin);
   const connection = await seed.orgConnection(den.admin, {
     name: `Issue tracker ${stamp}`,
     url: den.mocks.tracker.mcpUrl,

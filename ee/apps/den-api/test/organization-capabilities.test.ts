@@ -4,10 +4,11 @@ import {
   ORGANIZATION_CAPABILITY_KEYS,
   organizationCapabilityKeySchema,
   organizationHasCapability,
+  organizationManagedDashboardsEnabled,
   readOrganizationCapabilityOverrides,
 } from "../src/organization-capabilities.js"
 
-const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false }
+const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false, orgManagedDashboards: false }
 
 test("auditLogs accepts only canonical literal booleans and defaults off even for Enterprise", () => {
   expect(organizationCapabilityKeySchema.parse("auditLogs")).toBe("auditLogs")
@@ -118,4 +119,21 @@ describe("organizationHasCapability", () => {
     expect(organizationHasCapability(JSON.stringify({ capabilities: { installLinks: true } }), "installLinks")).toBe(true)
     expect(organizationHasCapability(JSON.stringify({ capabilities: { mcpConnections: true } }), "mcpConnections")).toBe(true)
   })
+})
+
+test("orgManagedDashboards is default-off and enabled only by a literal true", () => {
+  for (const orgManagedDashboards of [undefined, null, false, "true", 1, {}, []]) {
+    const metadata = { capabilities: { orgManagedDashboards } }
+    expect(organizationManagedDashboardsEnabled(metadata)).toBe(false)
+    expect(organizationManagedDashboardsEnabled(JSON.stringify(metadata))).toBe(false)
+  }
+  for (const metadata of [null, undefined, "", "not json", {}, { capabilities: null }]) {
+    expect(organizationManagedDashboardsEnabled(metadata)).toBe(false)
+  }
+  const enabled = { plan: { tier: "team" }, capabilities: { installLinks: false, orgManagedDashboards: true } }
+  expect(organizationManagedDashboardsEnabled(enabled)).toBe(true)
+  expect(organizationManagedDashboardsEnabled(JSON.stringify(enabled))).toBe(true)
+  expect(organizationCapabilityKeySchema.parse("orgManagedDashboards")).toBe("orgManagedDashboards")
+  expect(normalizeOrganizationCapabilities(enabled)).toEqual({ ...defaultCapabilities, orgManagedDashboards: true })
+  expect(readOrganizationCapabilityOverrides(enabled)).toEqual({ installLinks: false, orgManagedDashboards: true })
 })

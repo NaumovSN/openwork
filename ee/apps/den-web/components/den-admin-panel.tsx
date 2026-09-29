@@ -130,6 +130,7 @@ type AdminUser = {
 
 type AdminOrganizationCapabilities = {
   auditLogs: boolean;
+  orgManagedDashboards: boolean;
   modelsAnalytics: boolean;
   installLinks: boolean;
   mcpConnections: boolean;
@@ -453,6 +454,7 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
           billableSeatCount: toNumberValue(value.billableSeatCount),
           capabilities: {
             auditLogs: capabilities.auditLogs === true,
+            orgManagedDashboards: capabilities.orgManagedDashboards === true,
             modelsAnalytics: capabilities.modelsAnalytics === true,
             installLinks: capabilities.installLinks === true,
             mcpConnections: capabilities.mcpConnections === true
@@ -826,7 +828,7 @@ function buildFixtureOrganization(index: number): AdminOrganization {
     freeSeatCount: target ? 25 : DEFAULT_FREE_SEAT_COUNT,
     seatsFreeAdditional: target ? 20 : 0,
     billableSeatCount: target ? 103 : 0,
-    capabilities: { auditLogs: false, installLinks: target, mcpConnections: target, modelsAnalytics: false },
+    capabilities: { auditLogs: false, orgManagedDashboards: false, installLinks: target, mcpConnections: target, modelsAnalytics: false },
     openworkWebAccess: {
       hasAccess: target,
       accessSource: target ? "complimentary" : null,
@@ -2754,6 +2756,17 @@ export function DenAdminPanel() {
                           className="h-4 w-4 rounded-sm border-slate-300"
                         />
                         Audit logs
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          data-testid="admin-capability-orgManagedDashboards"
+                          checked={org.capabilities.orgManagedDashboards}
+                          disabled={savingCapabilityOrgId === org.id}
+                          onChange={(event) => void saveOrganizationCapability(org, "orgManagedDashboards", event.target.checked)}
+                          className="h-4 w-4 rounded-sm border-slate-300"
+                        />
+                        Dashboards
                       </label>
                     </div>
                     <label className="mt-3 inline-flex items-center gap-2 text-sm text-slate-700">
