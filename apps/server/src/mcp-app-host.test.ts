@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { ConnectionActionIntent } from "@openwork/types/connection-action-app";
+import { mcpAppResourceUri } from "@openwork/types/mcp-app";
 import { createCipheriv, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,6 +29,7 @@ import {
 } from "./connect-mcp-server-catalog.js";
 import { ENGINE_GLOBAL_RUNTIME_CONFIG_ID, readRuntimeOpencodeConfig, runtimeMcpMap, writeRuntimeOpencodeConfig, writeGlobalRuntimeOpencodeConfig } from "./runtime-opencode-config-store.js";
 import {
+  advertisesLaunchedResource,
   callMcpAppTool,
   listMcpAppCatalog,
   McpAppHostError,
@@ -832,6 +834,21 @@ describe("MCP Apps host transport", () => {
         resourceUri: RESOURCE_URI,
       },
     })).rejects.toMatchObject({ code: "tool_resource_mismatch" });
+  });
+
+  test("a card from an earlier revision of an App built in OpenWork opens the revision advertised now", () => {
+    // Built by Den's own writer, so the host's copy of the format cannot drift from it.
+    const revision = mcpAppResourceUri;
+    const app = `cob_01mcpapp${"a".repeat(18)}`;
+    const other = `cob_01mcpapp${"b".repeat(18)}`;
+    const [first, second] = [`cov_01mcpapp${"1".repeat(18)}`, `cov_01mcpapp${"2".repeat(18)}`];
+    expect(advertisesLaunchedResource(revision(app, first), revision(app, second), app)).toBe(true);
+    expect(advertisesLaunchedResource(revision(app, first), revision(app, second), "emc_provider")).toBe(false);
+    expect(advertisesLaunchedResource(revision(app, first), revision(app, second))).toBe(false);
+    expect(advertisesLaunchedResource(revision(app, first), revision(other, second), app)).toBe(false);
+    // Every other MCP App still has to match exactly.
+    expect(advertisesLaunchedResource(RESOURCE_URI, UPDATED_RESOURCE_URI)).toBe(false);
+    expect(advertisesLaunchedResource(RESOURCE_URI, RESOURCE_URI)).toBe(true);
   });
 
   test("treats a management tool without a UI resource as a normal result", async () => {

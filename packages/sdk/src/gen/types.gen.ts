@@ -75,6 +75,7 @@ export type AdminOrganizationsPageResponse = {
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
+      appMcpServers: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -149,6 +150,7 @@ export type AdminOverviewResponse = {
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
+      appMcpServers: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -966,6 +968,25 @@ export type MeDashboardListResponse = {
   items: Array<MeDashboard>;
 };
 
+export type BuiltMcpApp = {
+  serverName: string;
+  connectionId: string;
+  toolName: string;
+  projectedToolName: string;
+  resourceUri: string;
+  title: string;
+  description: string | null;
+  pluginId: string;
+  pluginName: string;
+  requiresInput: boolean;
+  requiredInputKeys: Array<string>;
+  requiresApproval: boolean;
+};
+
+export type BuiltMcpAppListResponse = {
+  apps: Array<BuiltMcpApp>;
+};
+
 export type DesktopPolicyResponse = {
   desktopPolicy: {
     [key: string]: unknown;
@@ -1291,7 +1312,13 @@ export type CreateInstallLinkResponse = {
 
 export type CapabilityDisabledError = {
   error: "capability_disabled";
-  capability: "installLinks" | "mcpConnections" | "modelsAnalytics" | "auditLogs" | "orgManagedDashboards";
+  capability:
+    | "installLinks"
+    | "mcpConnections"
+    | "modelsAnalytics"
+    | "auditLogs"
+    | "orgManagedDashboards"
+    | "appMcpServers";
 };
 
 export type CreateInstallLinkRequest = {
@@ -5166,6 +5193,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
+      appMcpServers: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -5228,6 +5256,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       modelsAnalytics: boolean;
       auditLogs: boolean;
       orgManagedDashboards: boolean;
+      appMcpServers: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -10339,6 +10368,35 @@ export type GetV1MeDashboardsResponses = {
 };
 
 export type GetV1MeDashboardsResponse = GetV1MeDashboardsResponses[keyof GetV1MeDashboardsResponses];
+
+export type GetV1McpAppsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/mcp-apps";
+};
+
+export type GetV1McpAppsErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and admins can list Apps for dashboards.
+   */
+  403: ForbiddenError;
+};
+
+export type GetV1McpAppsError = GetV1McpAppsErrors[keyof GetV1McpAppsErrors];
+
+export type GetV1McpAppsResponses = {
+  /**
+   * Apps built in OpenWork that can be added to a dashboard.
+   */
+  200: BuiltMcpAppListResponse;
+};
+
+export type GetV1McpAppsResponse = GetV1McpAppsResponses[keyof GetV1McpAppsResponses];
 
 export type DeleteV1DesktopPoliciesByKeyByExternalKeyData = {
   body?: never;

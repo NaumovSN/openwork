@@ -4,11 +4,12 @@ import {
   ORGANIZATION_CAPABILITY_KEYS,
   organizationCapabilityKeySchema,
   organizationHasCapability,
+  organizationAppMcpServersEnabled,
   organizationManagedDashboardsEnabled,
   readOrganizationCapabilityOverrides,
 } from "../src/organization-capabilities.js"
 
-const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false, orgManagedDashboards: false }
+const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false, orgManagedDashboards: false, appMcpServers: false }
 
 test("auditLogs accepts only canonical literal booleans and defaults off even for Enterprise", () => {
   expect(organizationCapabilityKeySchema.parse("auditLogs")).toBe("auditLogs")
@@ -136,4 +137,21 @@ test("orgManagedDashboards is default-off and enabled only by a literal true", (
   expect(organizationCapabilityKeySchema.parse("orgManagedDashboards")).toBe("orgManagedDashboards")
   expect(normalizeOrganizationCapabilities(enabled)).toEqual({ ...defaultCapabilities, orgManagedDashboards: true })
   expect(readOrganizationCapabilityOverrides(enabled)).toEqual({ installLinks: false, orgManagedDashboards: true })
+})
+
+test("appMcpServers is default-off and enabled only by a literal true", () => {
+  for (const appMcpServers of [undefined, null, false, "true", 1, {}, []]) {
+    const metadata = { capabilities: { appMcpServers } }
+    expect(organizationAppMcpServersEnabled(metadata)).toBe(false)
+    expect(organizationAppMcpServersEnabled(JSON.stringify(metadata))).toBe(false)
+  }
+  for (const metadata of [null, undefined, "", "not json", {}, { capabilities: null }]) {
+    expect(organizationAppMcpServersEnabled(metadata)).toBe(false)
+  }
+  const enabled = { plan: { tier: "team" }, capabilities: { installLinks: false, appMcpServers: true } }
+  expect(organizationAppMcpServersEnabled(enabled)).toBe(true)
+  expect(organizationAppMcpServersEnabled(JSON.stringify(enabled))).toBe(true)
+  expect(organizationCapabilityKeySchema.parse("appMcpServers")).toBe("appMcpServers")
+  expect(normalizeOrganizationCapabilities(enabled)).toEqual({ ...defaultCapabilities, appMcpServers: true })
+  expect(readOrganizationCapabilityOverrides(enabled)).toEqual({ installLinks: false, appMcpServers: true })
 })

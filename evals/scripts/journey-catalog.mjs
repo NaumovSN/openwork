@@ -34,6 +34,9 @@ const definitions = {
   'agent-connection-journey.e2e.test.ts': {
     cases: [{ id: 'AGENT-VIS-04', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
   },
+  'agent-connection-sign-in-journey.e2e.test.ts': {
+    cases: [{ id: 'AGENT-VIS-06', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
   'agent-visibility-journey.e2e.test.ts': {
     cases: [
       { id: 'AGENT-VIS-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },

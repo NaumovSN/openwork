@@ -25,6 +25,7 @@ const specs = new Set([
   "evals/specs/agent-visibility-journey.e2e.test.ts",
   "evals/specs/agent-background-journey.e2e.test.ts",
   "evals/specs/agent-connection-journey.e2e.test.ts",
+  "evals/specs/agent-connection-sign-in-journey.e2e.test.ts",
 ]);
 
 export function parityProofPlan(spec) {

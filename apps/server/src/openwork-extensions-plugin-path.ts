@@ -44,3 +44,4 @@ export const openworkGatewayQuotaPluginPath = () => openworkPluginPath("openwork
 export const openworkGatewayQuotaV2PluginPath = () => openworkPluginPath("openwork-gateway-quota-v2");
 export const openworkContextV2PluginPath = () => openworkPluginPath("openwork-context-v2");
 export const openworkProviderFiltersV2PluginPath = () => openworkPluginPath("openwork-provider-filters-v2");
+export const openworkMcpResultsV2PluginPath = () => openworkPluginPath("openwork-mcp-results-v2");

@@ -11,6 +11,8 @@ import {
 } from "../src/app/lib/opencode-v2-adapter";
 import { parseDynamicToolUIPart } from "../src/react-app/domains/session/sync/parse-tool-parts";
 import { codeModeToolCalls } from "../src/lib/code-mode-tools";
+import { connectionFromChatToolPart } from "../src/components/tools/error-attribution";
+import type { ToolPart } from "@opencode-ai/sdk/v2/client";
 import { getModelBehaviorControls, getModelBehaviorOptions } from "../src/app/lib/model-behavior";
 import { catalogFastVariants, fastVariantId, nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { mentionPromptParts } from "../src/react-app/domains/session/sync/mention-parts";
@@ -349,6 +351,11 @@ const capturedV2ToolEvents = [
 
 const delay = (milliseconds: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
+function isToolPart(value: unknown): value is ToolPart {
+  return typeof value === "object" && value !== null && "type" in value && value.type === "tool"
+    && "callID" in value && typeof value.callID === "string" && "state" in value && typeof value.state === "object";
+}
 
 function jsonResponse(value: unknown, status = 200): Response {
   return new Response(JSON.stringify(value), {
@@ -1395,6 +1402,60 @@ describe("OpenCode v2 client compatibility", () => {
       expect(ui).toMatchObject({ output: "Combined result" });
     } finally { globalThis.fetch = originalFetch; }
   });
+  test("Code Mode connection reports become the tool parts v1 saves, so the connection card finds them", async () => {
+    // Shapes recorded from opencode2 beta-19086 with the openwork-mcp-results-v2 plugin: a
+    // connection_action result keeps its structuredContent; an isError call keeps its text.
+    const connection = {
+      schemaVersion: "1", connectionId: "conn_notion", connectionName: "Notion", state: "needs_connection", actor: "member",
+      message: "Connect Notion to continue.", action: { type: "connect", label: "Connect", surface: "openwork_your_connections" },
+    };
+    const openworkMcpResults = [
+      { tool: "openwork-cloud_connection_action", input: { connectionId: "conn_notion" }, status: "completed", output: connection },
+      { tool: "openwork-cloud_execute_capability", input: { name: "notion.search" }, status: "error",
+        error: JSON.stringify({ error: "needs_connection", connectionStatus: connection }) },
+    ];
+    const toolCalls = [
+      { tool: "openwork-cloud.connection_action", status: "completed", input: { connectionId: "conn_notion" } },
+      { tool: "openwork-cloud.execute_capability", status: "error", input: { name: "notion.search" } },
+    ];
+    const reported = (parts: readonly unknown[]) => parts.filter(isToolPart).flatMap((part) => {
+      const ui = parseDynamicToolUIPart(part);
+      const found = ui ? connectionFromChatToolPart(ui) : null;
+      return ui && found ? [[ui.toolCallId, ui.toolName, found.connection.connectionName, found.connection.state]] : [];
+    });
+    const expected = [
+      ["execute-notion:mcp:0", "openwork-cloud_connection_action", "Notion", "needs_connection"],
+      ["execute-notion:mcp:1", "openwork-cloud_execute_capability", "Notion", "needs_connection"],
+    ];
+
+    const state = createV2EventTranslationState();
+    const data = { sessionID: "ses_code", assistantMessageID: "msg_code", id: "execute-notion" };
+    translateV2Event({ type: "session.tool.input.started", data: { ...data, name: "execute" } }, state);
+    translateV2Event({ type: "session.tool.called", data: { ...data, input: { code: "recorded code" } } }, state);
+    const live = translateV2Event({ type: "session.tool.success", data: {
+      ...data, metadata: { toolCalls, openworkMcpResults }, content: [{ type: "text", text: "Combined result" }],
+    } }, state) ?? [];
+    expect(live.map((event) => event.type)).toEqual(["message.part.updated", "message.part.updated", "message.part.updated"]);
+    expect(reported(live.map((event) => typeof event.properties === "object" && event.properties !== null && "part" in event.properties
+      ? event.properties.part : null))).toEqual(expected);
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => jsonResponse({ data: [{
+      id: "msg_code", type: "assistant", time: { created: 1, completed: 2 },
+      content: [{ id: "execute-notion", type: "tool", name: "execute", time: { created: 1, completed: 2 }, state: {
+        status: "completed", input: { code: "recorded code" }, metadata: { toolCalls, openworkMcpResults },
+        content: [{ type: "text", text: "Combined result" }],
+      } }],
+    }] });
+    try {
+      const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+      const result = await client.session.messages({ sessionID: "ses_code" });
+      const parts = result.data?.[0]?.parts ?? [];
+      expect(parts.map((part) => part.id)).toEqual(["execute-notion", "execute-notion:mcp:0", "execute-notion:mcp:1"]);
+      expect(reported(parts)).toEqual(expected);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+
   test("hydrates mixed native content with the same text and reasoning IDs as streaming", async () => {
     const originalFetch = globalThis.fetch;
     // beta19086 schema: each kind has its own ordinal; reasoning time is optional.

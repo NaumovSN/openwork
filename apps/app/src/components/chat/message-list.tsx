@@ -91,7 +91,7 @@ import { ConnectionCard } from "@/components/chat/connection-card"
 import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
 import { isReservedConnectionQuestion, type ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
-import { hasPreservedMcpAppResult, isNativeConnectionAppLaunch, McpAppFrame } from "@/components/chat/mcp-app-frame"
+import { builtMcpAppId, hasPreservedMcpAppResult, isNativeConnectionAppLaunch, McpAppFrame } from "@/components/chat/mcp-app-frame"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
 import { SubagentRunLine } from "@/components/chat/subagent-run-line"
 import { ToolAggregateGroup } from "@/components/chat/tool-aggregate-group"
@@ -1232,6 +1232,15 @@ interface AssistantMessageGroupProps {
   items: UIMessageWithIndex[]
   isLastGroup: boolean
   isStreaming: boolean
+  /** Newline-joined tool call ids of each built App's newest card in the conversation. */
+  newestAppCallIds: string
+}
+
+function isMcpAppFramePart(part: UIMessage["parts"][number]): part is DynamicToolUIPart {
+  return part.type === "dynamic-tool"
+    && (part.state === "output-available" || part.state === "output-error")
+    && hasPreservedMcpAppResult(part)
+    && !isNativeConnectionAppLaunch(part)
 }
 
 function collectMcpAppParts(items: UIMessageWithIndex[]): DynamicToolUIPart[] {
@@ -1239,26 +1248,39 @@ function collectMcpAppParts(items: UIMessageWithIndex[]): DynamicToolUIPart[] {
   for (const item of items) {
     if (item.message.role !== "assistant" || isSessionErrorMessage(item.message)) continue
     for (const part of item.message.parts) {
-      if (
-        part.type === "dynamic-tool"
-        && (part.state === "output-available" || part.state === "output-error")
-        && hasPreservedMcpAppResult(part)
-        && !isNativeConnectionAppLaunch(part)
-      ) {
-        parts.set(part.toolCallId, part)
-      }
+      if (isMcpAppFramePart(part)) parts.set(part.toolCallId, part)
     }
   }
   return [...parts.values()]
+}
+
+/**
+ * Every card of an App built in OpenWork opens the App's current revision, so
+ * only its newest card in the conversation stays live; earlier ones would load
+ * the same App again. A string keeps memoized groups stable while text streams.
+ */
+function newestBuiltAppCallIds(messages: UIMessage[]): string {
+  const newest = new Map<string, string>()
+  for (const message of messages) {
+    if (message.role !== "assistant" || isSessionErrorMessage(message)) continue
+    for (const part of message.parts) {
+      if (!isMcpAppFramePart(part)) continue
+      const appId = builtMcpAppId(part)
+      if (appId) newest.set(appId, part.toolCallId)
+    }
+  }
+  return [...newest.values()].sort().join("\n")
 }
 
 function MessageGroup({
   items,
   isLastGroup,
   isStreaming,
+  newestAppCallIds,
 }: AssistantMessageGroupProps) {
   const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, showThinking, readOnly, getConnectionDecision } = useMessageList()
   const connectionCardParts = React.useMemo(() => connectionCardPartIds(items, getConnectionDecision), [items, getConnectionDecision])
+  const newestAppCalls = React.useMemo(() => new Set(newestAppCallIds.split("\n")), [newestAppCallIds])
   const lastItem = items[items.length - 1]
   // Branch/revert must target a real server-side message id. Synthetic
   // client-side messages (e.g. session errors) don't exist on the server and
@@ -1294,6 +1316,16 @@ function MessageGroup({
       proseItems = [{ index: firstProse.index, message: split.answer }, ...proseItems.slice(1)]
     }
   }
+  const appFrame = (part: DynamicToolUIPart) => (
+    <Message
+      key={`mcp-app-${part.toolCallId}`}
+      className="mx-auto flex w-full max-w-3xl flex-col px-2 empty:hidden md:px-10"
+    >
+      {builtMcpAppId(part) && !newestAppCalls.has(part.toolCallId)
+        ? <p className="mt-2 text-xs text-muted-foreground">This App has a newer version below.</p>
+        : <McpAppFrame part={part} />}
+    </Message>
+  )
   // How long the turn spent working, from the first step to when the answer
   // finished (or started, for older history without a completed timestamp).
   // Server timestamps, so this survives a reload.
@@ -1416,14 +1448,7 @@ function MessageGroup({
           </LiveSteps>
         )
       ) : null}
-      {mcpAppParts.map((part) => (
-        <Message
-          key={`mcp-app-${part.toolCallId}`}
-          className="mx-auto flex w-full max-w-3xl flex-col px-2 empty:hidden md:px-10"
-        >
-          <McpAppFrame part={part} />
-        </Message>
-      ))}
+      {mcpAppParts.map(appFrame)}
       {renderItems(proseItems, stepItems.length, collapseSteps)}
       {lastTextMessage && !isStreaming && (
         <div className={cn("mx-auto flex w-full max-w-3xl flex-wrap items-center gap-2 px-2 transition-opacity duration-150 group-hover/message-group:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100 md:px-8", forkingMessageId && forkingMessageId === lastRealItem?.message.id ? "opacity-100" : "opacity-0")}>
@@ -1471,6 +1496,7 @@ function MessageGroup({
 function sameMessageGroupProps(left: AssistantMessageGroupProps, right: AssistantMessageGroupProps): boolean {
   return left.isLastGroup === right.isLastGroup
     && left.isStreaming === right.isStreaming
+    && left.newestAppCallIds === right.newestAppCallIds
     && left.items.length === right.items.length
     && left.items.every((item, index) => (
       item.index === right.items[index]?.index
@@ -1533,6 +1559,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   const [stoppingBackground, setStoppingBackground] = React.useState(false)
   const workspace = useWorkspaceMaybe()
   const tasks = React.useMemo(() => activeDelegatedTasks(messages), [messages])
+  const newestAppCallIds = React.useMemo(() => newestBuiltAppCallIds(messages), [messages])
   const delegatedIds = React.useMemo(() => [...new Set(messages.flatMap(message => message.parts)
     .filter(isToolUIPart).filter(isTaskToolPart).map(taskChildSessionId).filter((id): id is string => Boolean(id)))], [messages])
   const backgroundCount = useSessionActivityStore(state => delegatedIds.filter(id =>
@@ -1639,6 +1666,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
               items={item.messages}
               isLastGroup={item.messages.at(-1)?.index === messages.length - 1}
               isStreaming={isStreaming && item.messages.at(-1)?.index === messages.length - 1}
+              newestAppCallIds={newestAppCallIds}
             />
           )
         }
