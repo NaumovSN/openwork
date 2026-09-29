@@ -97,7 +97,7 @@ async function replaceOrganizationMetadata(metadata: Record<string, unknown>) {
     .where(drizzle.eq(schema.OrganizationTable.id, organizationId))
 }
 
-async function putCapabilities(capabilities: { installLinks?: boolean | null; mcpConnections?: boolean | null; gatewayDashboard?: boolean | null }) {
+async function putCapabilities(capabilities: { installLinks?: boolean | null; mcpConnections?: boolean | null; gatewayDashboard?: boolean | null; auditLogs?: boolean | null }) {
   return routeApp().request(`http://den.local/v1/admin/organizations/${organizationId}/capabilities`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -421,4 +421,60 @@ test("gateway capability administration requires the platform allowlist, not org
     }
   }
   expect(await readOrganizationMetadata()).toEqual(before)
+})
+
+test("audit feature admin GET/PUT/list preserves booleans, clears null and excludes malformed managed values", async () => {
+  if (routeTestUnavailable) throw new Error(`Audit capability route DB coverage unavailable: ${routeTestUnavailable}`)
+  const url = `http://den.local/v1/admin/organizations/${organizationId}/capabilities`
+  const base = { plan: { tier: "enterprise", source: "manual" }, capabilities: { installLinks: false, otherCapability: "preserved" } }
+  await replaceOrganizationMetadata(base)
+  await expect((await routeApp().request(url)).json()).resolves.toMatchObject({ capabilities: { auditLogs: false } })
+  for (const auditLogs of [true, false, true, null]) {
+    const response = await putCapabilities({ auditLogs })
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ capabilities: { auditLogs: auditLogs === true } })
+    const expected = { ...base, capabilities: { ...base.capabilities, ...(auditLogs === null ? {} : { auditLogs }) } }
+    expect(await readOrganizationMetadata()).toEqual(expected)
+    await expect((await routeApp().request(url)).json()).resolves.toMatchObject({ capabilities: { auditLogs: auditLogs === true } })
+    const listed = await routeApp().request(`http://den.local/v1/admin/organizations?search=${organizationId}`)
+    expect(listed.status).toBe(200)
+    await expect(listed.json()).resolves.toMatchObject({ organizations: [{ id: organizationId, capabilities: { auditLogs: auditLogs === true } }] })
+    expect((await putCapabilities({})).status).toBe(200)
+    expect(await readOrganizationMetadata()).toEqual(expected)
+  }
+  for (const auditLogs of ["true", "false", 1, {}, []]) {
+    const response = await routeApp().request(url, { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ capabilities: { auditLogs } }) })
+    expect(response.status).toBe(400)
+    expect(await readOrganizationMetadata()).toEqual(base)
+    await replaceOrganizationMetadata({ ...base, capabilities: { ...base.capabilities, auditLogs } })
+    expect((await putCapabilities({})).status).toBe(200)
+    expect(await readOrganizationMetadata()).toEqual(base)
+  }
+  const denied = await routeApp().request(url, { method: "PUT", headers: { "content-type": "application/json", "x-test-caller": "owner" }, body: JSON.stringify({ capabilities: { auditLogs: true } }) })
+  expect(denied.status).toBe(403)
+  expect(await readOrganizationMetadata()).toEqual(base)
+})
+
+test("real BetterAuth organization creation cannot spoof audit feature via object or string metadata", async () => {
+  if (routeTestUnavailable) throw new Error(`Audit creation DB coverage unavailable: ${routeTestUnavailable}`)
+  const { auth } = await import("../src/auth.js")
+  const { db, schema, drizzle } = testDatabase()
+  for (const auditLogs of [true, false, null, "true", 1]) {
+    const metadata = { capabilities: { auditLogs, gatewayDashboard: true } }
+    for (const input of [metadata, JSON.stringify(metadata)]) {
+      const slug = `synthetic-spoof-${createDenTypeId("organization")}`
+      // BetterAuth's current endpoint rejects strings before the hook; the hook
+      // suite also proves string metadata is denied if it reaches that boundary.
+      if (typeof input === "string") {
+        const response = await auth.handler(new Request("http://127.0.0.1:8790/api/auth/organization/create", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: "Synthetic spoof", slug, userId: ownerUserId, metadata: input }),
+        }))
+        expect(response.status).toBe(400)
+        expect(await response.json()).toMatchObject({ message: "[body.metadata] Invalid input: expected record, received string" })
+      } else await expect(auth.api.createOrganization({ body: { name: "Synthetic spoof", slug, userId: ownerUserId, metadata: input } })).rejects.toMatchObject({ status: "FORBIDDEN", body: { message: "capabilities.auditLogs is reserved for internal platform administration." } })
+      const created = await db.select({ id: schema.OrganizationTable.id }).from(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.slug, slug))
+      expect(created).toHaveLength(0)
+    }
+  }
 })

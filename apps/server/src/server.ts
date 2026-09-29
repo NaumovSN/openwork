@@ -1000,10 +1000,15 @@ export async function startServer(
             workspace,
             proxyPath: mount.restPath,
             connection,
+            // A turn uses the connections that are ready; MCP upkeep runs in
+            // the background and the engine adds tools as connections finish.
             prepareExecution: async (directory) => {
+              engineV2Preview.warmWorkspace(workspace.id, directory);
               await engineV2Preview.ensureWorkspaceReady(directory);
-              await engineV2Preview.syncWorkspaceMcp(workspace.id, directory);
             },
+            // The desktop's silent re-auth sends v1's connect route; restart
+            // that one connection through the folder's reconciler instead.
+            reconnectMcp: (directory, name) => engineV2Preview.syncWorkspaceMcp(workspace.id, directory, { reconnect: [name] }),
             actor,
             recoverySignal: taskRecovery?.owns(request) ? request.signal : undefined,
           });
@@ -1282,6 +1287,8 @@ export async function proxyOpencodeV2Request(input: {
   connection: { url: string; username: string; password: string };
   /** Bounded upkeep for the folder a prompt runs in; throws only when execution must not proceed. */
   prepareExecution?: (directory: string) => Promise<void>;
+  /** Restart one connection that is not healthy (v1's `POST /mcp/:name/connect`). */
+  reconnectMcp?: (directory: string, name: string) => Promise<void>;
   recoverySignal?: AbortSignal;
 }): Promise<Response> {
   const method = input.request.method.toUpperCase();
@@ -1301,6 +1308,12 @@ export async function proxyOpencodeV2Request(input: {
   }
   if (method !== "GET" && method !== "HEAD" && /^\/api\/mcp(?:\/|$)/.test(decodeURIComponent(forwardedPath))) {
     throw new ApiError(403, "engine_mcp_managed", "Manage connections through OpenWork");
+  }
+  const v1Connect = method === "POST" ? /^\/mcp\/([^/]+)\/connect$/.exec(forwardedPath) : null;
+  if (v1Connect?.[1] && input.reconnectMcp) {
+    // v2 has no such route (405); OpenWork owns connection restarts.
+    await input.reconnectMcp(input.workspace.path, decodeURIComponent(v1Connect[1]));
+    return Response.json(true);
   }
   const target = new URL(input.connection.url);
   target.pathname = forwardedPath;
@@ -3506,7 +3519,10 @@ function createRoutes(
       // rendered from the ENGINE_GLOBAL row only, so a workspace-row write
       // would never reach the engine.
       const providerUpdate = isRecord(provider) ? provider : {};
-      if (Object.keys(providerUpdate).length) await managedDesktopPolicy(config).assert("provider");
+      // Removing a provider is always allowed; adding or changing one must fit the organization's model access.
+      if (Object.keys(providerUpdate).length) await managedDesktopPolicy(config).assert("provider", {
+        providerIDs: Object.entries(providerUpdate).filter(([, value]) => value !== null).map(([id]) => id),
+      });
       if (Object.keys(providerUpdate).length) {
         const providerResult = await writeGlobalRuntimeOpencodeConfig(config, (current) => ({
           ...current,

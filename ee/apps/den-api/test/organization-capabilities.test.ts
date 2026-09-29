@@ -7,7 +7,18 @@ import {
   readOrganizationCapabilityOverrides,
 } from "../src/organization-capabilities.js"
 
-const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false }
+const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false }
+
+test("auditLogs accepts only canonical literal booleans and defaults off even for Enterprise", () => {
+  expect(organizationCapabilityKeySchema.parse("auditLogs")).toBe("auditLogs")
+  for (const auditLogs of [undefined, null, true, false, "true", "false", 1, {}, []]) {
+    const metadata = { plan: { tier: "enterprise" }, auditLogs: true, capabilities: { auditLogs } }
+    for (const input of [metadata, JSON.stringify(metadata)]) {
+      expect(organizationHasCapability(input, "auditLogs")).toBe(auditLogs === true)
+      expect(readOrganizationCapabilityOverrides(input)).toEqual(typeof auditLogs === "boolean" ? { auditLogs } : {})
+    }
+  }
+})
 
 describe("normalizeOrganizationCapabilities", () => {
   test("defaults every capability to false when metadata is empty", () => {

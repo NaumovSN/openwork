@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { setTimeout } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { selectedAppEnv } from "./app-env.ts";
 import { resolveEvalEngineValue } from "./eval-engine.ts";
 import type { ChromeSurfaceOptions, DenServiceHandle, DenServiceOptions, ElectronSurfaceOptions, Host, RetainedElectronSurface, ShareLinks, SurfaceHandle } from "./types.ts";
 
@@ -664,6 +665,9 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
       }
 
       const env = new Map<string, string>();
+      // Explicit `pnpm world up --env KEY` app settings; the launcher keys set
+      // below always win over a selected value.
+      appendExtraEnv(env, selectedAppEnv());
       if (opts.profile !== "blank") {
         if (resolveEvalEngineValue(process.env.OPENWORK_EVAL_ENGINE) === "v2") env.set("OPENWORK_ENGINE_V2_PREVIEW", "1");
         appendExtraEnv(env, opts.env);

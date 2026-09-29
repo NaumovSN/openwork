@@ -27,7 +27,9 @@ describe("Claude Cowork on 3P page", () => {
     expect(html).toContain('value="500"');
     expect(text).toContain("Claude Desktop on 3P");
     expect(text).toContain("How we calculate");
-    expect(text).toContain("OpenWork Enterprise");
+    // Enterprise controls default to Not needed, so 3P is compared with OpenWork Team.
+    expect(text).toContain("OpenWork Team");
+    expect(text).toContain("Claude Desktop on 3P");
   });
 
   test("renders every FAQ entry and is discoverable", () => {

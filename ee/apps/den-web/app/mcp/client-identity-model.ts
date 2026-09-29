@@ -5,6 +5,8 @@
  */
 export type McpRedirectDescription = {
   host: string;
+  /** Full normalized callback, displayed as text so the person can inspect it. */
+  url: string;
   /** Only loopback redirects: the code goes to whatever runs on this computer. */
   loopbackOnly: boolean;
 };
@@ -21,10 +23,10 @@ export function describeMcpRedirect(redirectUri: string | null): McpRedirectDesc
   try {
     const url = new URL(redirectUri);
     if (url.protocol === "http:" || url.protocol === "https:") {
-      return { host: url.host, loopbackOnly: isLoopbackHost(url.hostname) };
+      return { host: url.host, url: url.href, loopbackOnly: isLoopbackHost(url.hostname) };
     }
     // Native app schemes (e.g. cursor://) name the app that will receive the code.
-    return { host: `${url.protocol}//`, loopbackOnly: false };
+    return { host: `${url.protocol}//`, url: url.href, loopbackOnly: false };
   } catch {
     return null;
   }

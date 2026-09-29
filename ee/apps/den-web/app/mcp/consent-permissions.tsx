@@ -1,4 +1,5 @@
 import { SetupCanList, SetupTechnicalDetails } from "../(den)/_components/setup-frame-parts";
+import type { McpRedirectDescription } from "./client-identity-model";
 
 /** Plain sentences for what an OAuth scope string lets an app do. */
 export function mcpPermissionLines(scope: string): string[] {
@@ -17,11 +18,12 @@ export function McpConsentPermissions({ scope, actor = "This app" }: { scope: st
 }
 
 /** The raw scope string and app id, behind one collapsed row. */
-export function McpTechnicalDetails({ scope, clientId }: { scope: string; clientId: string | null }) {
+export function McpTechnicalDetails({ scope, clientId, redirect }: { scope: string; clientId: string | null; redirect?: McpRedirectDescription | null }) {
   return (
     <SetupTechnicalDetails>
       <span>Permissions: {scope || "none requested"}</span>
       {clientId ? <span>App ID: {clientId}</span> : null}
+      {redirect ? <span>Full return address: <span dir="ltr" data-testid="mcp-redirect-url">{redirect.url}</span></span> : null}
     </SetupTechnicalDetails>
   );
 }

@@ -14,6 +14,7 @@ import {
   openworkServerDataDir,
 } from "@openwork/paths";
 import { ensureDenStack } from "./den-stack.ts";
+import { selectedAppEnv } from "./app-env.ts";
 import { resolveEvalEngineValue } from "./eval-engine.ts";
 import type { ChildProcess } from "node:child_process";
 import type { DisposableHost, SurfaceHandle, ElectronSurfaceOptions, ChromeSurfaceOptions, DenServiceOptions, DenServiceHandle, ShareLinks } from "./types.ts";
@@ -506,6 +507,9 @@ export function electronSurfaceEnv(
   // Give local eval Electron surfaces isolated app data, config, and identity so
   // they cannot affect the user's real desktop app.
   return {
+    // Explicit `pnpm world up --env KEY` app settings come first so the
+    // isolation keys below always win over a selected value.
+    ...selectedAppEnv(),
     ...(pnpmHome ? { PNPM_HOME: pnpmHome } : {}),
     APPDATA: paths.appDataDir,
     HOME: paths.homeDir,

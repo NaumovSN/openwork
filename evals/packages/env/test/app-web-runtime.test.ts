@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isolatedRuntimeEnvironment, parseRemoteRuntime } from "../src/app-web-runtime.ts";
-import { bootAppWebWorld } from "../../../../worlds/app-web.ts";
+import { bootAppWebWorld } from "../../../../worlds/preview-app-web.ts";
 
 test("seed app-web runtime remains isolated and Cloud-off", () => {
   const env = isolatedRuntimeEnvironment("/tmp/owned-fixture");
@@ -37,7 +37,7 @@ function fakeWorld(failure?: "launch" | "verify" | "source") {
       assert.equal(options.private, true);
       assert.equal(options.reuse, undefined);
       assert.equal(options.secrets, undefined);
-      assert.match(options.name, /^app-web--test-stage-/);
+      assert.match(options.name, /^preview-app-web--test-stage-/);
       await options.onCreated?.("owned-name");
       calls.push("provision");
       return { sandbox: "owned-name", created: true, source: failure === "source" ? { ...source, actualSha: "c".repeat(40) } : source };
@@ -54,7 +54,7 @@ function fakeWorld(failure?: "launch" | "verify" | "source") {
     remote: async (id, name, workspace, receipt, options) => {
       calls.push("launch");
       assert.equal(id, "owned-id");
-      assert.match(name, /^app-web--test-stage-/);
+      assert.match(name, /^preview-app-web--test-stage-/);
       assert.equal(workspace, "/workspace");
       assert.equal(receipt.actualSha, ref);
       const expectedEnv: NodeJS.ProcessEnv = { OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "1", OPENWORK_DEV_DEN_PROXY_TARGET: "https://app.openworklabs.com",
@@ -120,7 +120,7 @@ test("local app-web uses this working tree, selected env and owned runtime clean
   const runtimeDirectory = await mkdtemp(join(tmpdir(), "app-web-runtime-unit-"));
   try {
     deps.local = async (name, workspace, options) => {
-      assert.match(name, /^app-web--test-stage-/);
+      assert.match(name, /^preview-app-web--test-stage-/);
       assert.equal(workspace, fileURLToPath(new URL("../../../../", import.meta.url)));
       assert.equal(options?.env?.OPENWORK_TOKEN, undefined);
       assert.equal(options?.env?.OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY, "1");

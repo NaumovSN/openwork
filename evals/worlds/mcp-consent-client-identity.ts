@@ -1,7 +1,8 @@
 import { createHash, randomBytes } from "node:crypto";
+import { createServer } from "node:http";
 import { denFetch } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
-import { isRecord } from "./openwork-server-cli.ts";
+import { close, isRecord, listen } from "./openwork-server-cli.ts";
 
 function clientIdFrom(value: unknown): string {
   const id = isRecord(value) ? value.client_id : undefined;
@@ -10,9 +11,8 @@ function clientIdFrom(value: unknown): string {
 }
 
 /**
- * A signed-in member and two MCP clients that ask for OpenWork access: one
- * whose only return address is this computer (loopback) and one that
- * returns to a public website.
+ * A signed-in member and named loopback, named hosted, and unnamed MCP clients.
+ * A local callback witnesses denial without contacting an external service.
  */
 export async function mcpConsentClientIdentity(seed: Seed) {
   const den = await seed.den({ org: { name: "Consent identity org", members: {} } });
@@ -27,12 +27,13 @@ export async function mcpConsentClientIdentity(seed: Seed) {
       }),
     });
     if (registered.response.status !== 201) throw new Error(`Client registration failed: HTTP ${registered.response.status}`);
+    const state = randomBytes(8).toString("hex");
     const query = new URLSearchParams({
       client_id: clientIdFrom(registered.body), redirect_uri: redirectUri, response_type: "code", scope,
-      resource: `${den.ref.apiUrl}/mcp/agent`, state: randomBytes(8).toString("hex"), code_challenge_method: "S256",
+      resource: `${den.ref.apiUrl}/mcp/agent`, state, code_challenge_method: "S256",
       code_challenge: createHash("sha256").update(randomBytes(32).toString("base64url")).digest("base64url"),
     });
-    return { clientId: clientIdFrom(registered.body), url: `${den.ref.apiUrl}/api/auth/oauth2/authorize?${query}`, authorizePath: `/api/auth/oauth2/authorize?${query}` };
+    return { clientId: clientIdFrom(registered.body), redirectUri, state, url: `${den.ref.apiUrl}/api/auth/oauth2/authorize?${query}`, authorizePath: `/api/auth/oauth2/authorize?${query}` };
   }
 
   /**
@@ -54,9 +55,30 @@ export async function mcpConsentClientIdentity(seed: Seed) {
     return `${den.ref.webUrl}/mcp/consent${signed.search}`;
   }
 
-  const loopback = { name: "Terminal agent", redirectHost: "127.0.0.1:39422", ...await authorizeUrl("Terminal agent", "http://127.0.0.1:39422/callback") };
-  const hosted = { name: "Hosted assistant", redirectHost: "assistant.example.com", ...await authorizeUrl("Hosted assistant", "https://assistant.example.com/oauth/callback") };
-  const unnamed = { redirectHost: "agent.example.net", ...await authorizeUrl(null, "https://agent.example.net/oauth/callback") };
-  const web = await seed.web({ den, headless: true, viewport: { width: 1280, height: 1000 } });
-  return { den, web, loopback, hosted, unnamed, consentUrl, admin: { email: den.admin.email, password: den.admin.password } };
+  const callbacks: Array<{ hasCode: boolean; error: string | null; state: string | null }> = [];
+  const callback = createServer((request, response) => {
+    const url = new URL(request.url ?? "/", "http://127.0.0.1");
+    if (request.method !== "GET" || url.pathname !== "/callback") {
+      response.writeHead(404).end();
+      return;
+    }
+    callbacks.push({ hasCode: url.searchParams.has("code"), error: url.searchParams.get("error"), state: url.searchParams.get("state") });
+    response.writeHead(200, { "content-type": "text/html", "cache-control": "no-store" });
+    response.end("<!doctype html><title>Consent callback</title><h1>Authorization returned to client</h1>");
+  });
+  const callbackOrigin = await listen(callback);
+  try {
+    const loopback = { name: "Terminal agent", redirectHost: new URL(callbackOrigin).host, ...await authorizeUrl("Terminal agent", `${callbackOrigin}/callback`) };
+    const hosted = { name: "Hosted assistant", redirectHost: "assistant.example.com", ...await authorizeUrl("Hosted assistant", "https://assistant.example.com/oauth/callback") };
+    const unnamed = { redirectHost: "agent.example.net", ...await authorizeUrl(null, "https://agent.example.net/oauth/callback") };
+    const web = await seed.web({ den, headless: true, viewport: { width: 1280, height: 1000 } });
+    return {
+      den, web, loopback, hosted, unnamed, consentUrl, admin: { email: den.admin.email, password: den.admin.password },
+      callbacks: () => callbacks.map(entry => ({ ...entry })),
+      async [Symbol.asyncDispose]() { await close(callback); },
+    };
+  } catch (error) {
+    await close(callback);
+    throw error;
+  }
 }
