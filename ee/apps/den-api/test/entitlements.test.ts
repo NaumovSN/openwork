@@ -38,7 +38,7 @@ test("legacy entitlements are granted when gating is disabled, but audit remains
   })
 })
 
-test("entitlements require the enterprise tier when gating is enabled", () => {
+test("SSO needs Team or Enterprise; other entitlements need Enterprise when gating is enabled", () => {
   expect(entitlements.getOrganizationEntitlements(null, { gatingEnabled: true })).toEqual({
     sso: false,
     desktopPolicies: false,
@@ -47,7 +47,7 @@ test("entitlements require the enterprise tier when gating is enabled", () => {
     auditLogs: false,
   })
   expect(entitlements.getOrganizationEntitlements({ plan: { tier: "team" } }, { gatingEnabled: true })).toEqual({
-    sso: false,
+    sso: true,
     desktopPolicies: false,
     orgControls: false,
     analytics: false,
@@ -80,8 +80,12 @@ test("checkEntitlement returns a 402 payload with a human-readable message", () 
     expect(result.status).toBe(402)
     expect(result.response.error).toBe("enterprise_plan_required")
     expect(result.response.feature).toBe("sso")
-    expect(result.response.message).toContain("Enterprise plan")
+    expect(result.response.message).toContain("Team or Enterprise plan")
   }
+  const policies = entitlements.checkEntitlement({ plan: { tier: "team" } }, "desktopPolicies", { gatingEnabled: true })
+  expect(policies.ok).toBe(false)
+  if (!policies.ok) expect(policies.response.message).toContain("Enterprise plan")
+  expect(entitlements.checkEntitlement({ plan: { tier: "team" } }, "sso", { gatingEnabled: true })).toEqual({ ok: true })
 })
 
 test("checkEntitlement passes for entitled organizations", () => {

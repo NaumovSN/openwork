@@ -7,7 +7,6 @@ export const pricingSources = [
   { label: "Claude plans", href: "https://claude.com/pricing" },
   { label: "Claude Team plan", href: "https://support.claude.com/en/articles/9266767-what-is-the-team-plan" },
   { label: "Claude Enterprise pricing", href: "https://claude.com/pricing/enterprise" },
-  { label: "Claude Desktop on third-party platforms", href: "https://claude.com/docs/third-party/claude-desktop/overview" },
   { label: "OpenWork pricing", href: "/pricing" },
   { label: "Model prices from models.dev", href: "https://models.dev" }
 ];
@@ -46,13 +45,28 @@ export const planPrices = {
 
 /**
  * OpenWork Enterprise volume pricing used in the calculator, graduated like tax brackets: each tier's price applies
- * only to the seats inside that tier. The public pricing page says "volume pricing above 250 users".
+ * only to the seats inside that tier. The pricing page shows Enterprise as custom pricing; the calculator is the only
+ * public place these numbers appear.
  */
 export const openworkEnterpriseVolumeTiers: { upTo: number; price: number }[] = [
   { upTo: 250, price: 20 },
   { upTo: 1000, price: 16 },
   { upTo: Number.POSITIVE_INFINITY, price: 13 }
 ];
+
+/** "$20 a person a month for the first 250, $16 for seats 251–1,000, $13 above". Built from the tiers above. */
+export function describeEnterpriseVolumeTiers(): string {
+  const count = new Intl.NumberFormat("en-US");
+  let previous = 0;
+  const parts = openworkEnterpriseVolumeTiers.map((tier, index) => {
+    const from = previous + 1;
+    previous = tier.upTo;
+    if (index === 0) return `$${tier.price} a person a month for the first ${count.format(tier.upTo)}`;
+    if (!Number.isFinite(tier.upTo)) return `$${tier.price} above`;
+    return `$${tier.price} for seats ${count.format(from)}–${count.format(tier.upTo)}`;
+  });
+  return parts.join(", ");
+}
 
 /** Monthly OpenWork Enterprise seat cost for a number of seats, with graduated volume tiers. */
 export function openworkEnterpriseSeatsMonthly(seats: number): number {

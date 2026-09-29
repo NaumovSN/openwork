@@ -89,10 +89,12 @@ export function getOrganizationEntitlements(
   options: EntitlementOptions = {},
 ): OrganizationEntitlements {
   const gatingEnabled = options.gatingEnabled ?? env.planGatingEnabled
-  const entitled = !gatingEnabled || parseOrganizationPlan(metadata).tier === "enterprise"
+  const tier = parseOrganizationPlan(metadata).tier
+  const entitled = !gatingEnabled || tier === "enterprise"
 
   return {
-    sso: entitled,
+    // SSO / SAML is part of Team. Enforced SSO (orgControls), SCIM, and policies stay on Enterprise.
+    sso: !gatingEnabled || tier === "team" || tier === "enterprise",
     desktopPolicies: entitled,
     orgControls: entitled,
     analytics: entitled,
@@ -115,7 +117,10 @@ export function checkEntitlement(
     response: {
       error: "enterprise_plan_required",
       feature: key,
-      message: `${ENTITLEMENT_FEATURE_LABELS[key]} requires an Enterprise plan. Talk to us at openworklabs.com/enterprise.`,
+      message:
+        key === "sso"
+          ? `${ENTITLEMENT_FEATURE_LABELS[key]} requires a Team or Enterprise plan. Upgrade at openworklabs.com/pricing.`
+          : `${ENTITLEMENT_FEATURE_LABELS[key]} requires an Enterprise plan. Talk to us at openworklabs.com/enterprise.`,
     },
   }
 }

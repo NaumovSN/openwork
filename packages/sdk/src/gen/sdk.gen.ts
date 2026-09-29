@@ -4948,7 +4948,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Enable the tested organization SSO configuration
    *
-   * Switches the organization's SSO connection to enabled once its domain is verified and the current configuration revision has a successful test. Any other state, including a configuration edited after its last test, answers 409 with an explanatory message. Requires the Enterprise plan; the change is recorded in the organization audit log.
+   * Switches the organization's SSO connection to enabled once its domain is verified and the current configuration revision has a successful test. Any other state, including a configuration edited after its last test, answers 409 with an explanatory message. Requires a Team or Enterprise plan; the change is recorded in the organization audit log.
    */
   public postV1SsoEnable<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).post<PostV1SsoEnableResponses, PostV1SsoEnableErrors, ThrowOnError>({

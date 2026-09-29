@@ -248,7 +248,7 @@ export const capabilityGroups: CapabilityGroup[] = [
 export const seatPrice: Record<ProductKey, string> = {
   enterprise: "$20 + usage",
   thirdParty: "No seat fee",
-  openwork: "Free, or $10–$20"
+  openwork: "Free, or from $10"
 };
 
 export const capabilitySources: CompareSource[] = [
