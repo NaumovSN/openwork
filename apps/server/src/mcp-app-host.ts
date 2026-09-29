@@ -130,6 +130,22 @@ async function launchFingerprint(input: { serverConfig: ServerConfig; workspaceI
   return createHash("sha256").update(JSON.stringify({ config, managed, runtimeRevisions, privateRevision })).digest("hex");
 }
 
+// The revision URI of an App built in OpenWork, as mcpAppResourceUri in
+// @openwork/types/mcp-app writes it. That subpath ships as TypeScript, which the
+// packaged server cannot load, so the format is matched here.
+const BUILT_APP_REVISION_URI = /^ui:\/\/openwork\/apps\/(cob_[0-7][0-9a-hjkmnp-tv-z]{25})\/revisions\/cov_[0-7][0-9a-hjkmnp-tv-z]{25}\/index\.html$/u;
+
+/**
+ * An App built in OpenWork publishes each update as a new revision of the same
+ * App, so a card from an earlier revision opens the one its tool advertises now
+ * instead of failing. Anything else must still match exactly.
+ */
+export function advertisesLaunchedResource(launchedUri: string, advertisedUri: string, connectionId?: string): boolean {
+  if (advertisedUri === launchedUri) return true;
+  const launched = BUILT_APP_REVISION_URI.exec(launchedUri)?.[1];
+  return launched !== undefined && connectionId === launched && launched === BUILT_APP_REVISION_URI.exec(advertisedUri)?.[1];
+}
+
 function bindLaunch(input: { serverConfig: ServerConfig; workspaceId: string; workspaceRoot: string; context?: McpAppLaunchContext; launch?: { arguments?: Record<string, unknown> } }, app: McpAppResource, fingerprint: string, tool: Tool): McpAppResource {
   // Old clients can read HTML, but cannot manufacture an actionable launch from a server name.
   if (!input.context || input.context.readOnly || input.serverConfig.readOnly) return app;
@@ -840,7 +856,7 @@ export async function resolveConnectMcpAppResource(input: {
       throw new McpAppHostError("tool_not_visible", "The originating MCP App tool is not visible to apps.");
     }
     const resourceUri = toolUiResourceUri(tool);
-    if (resourceUri !== input.launch.resourceUri) {
+    if (!resourceUri || !advertisesLaunchedResource(input.launch.resourceUri, resourceUri, input.launch.connectionId)) {
       throw new McpAppHostError("tool_resource_mismatch", "The originating MCP App tool now advertises a different resource.");
     }
     const projectedName = projectedMcpToolName(serverName, tool.name);
@@ -910,7 +926,7 @@ export async function resolveSameServerMcpAppResource(input: {
         throw new McpAppHostError("tool_not_visible", "The same-server MCP App tool is not visible to apps.");
       }
       const resourceUri = toolUiResourceUri(launchTool);
-      if (resourceUri !== input.launch.resourceUri) {
+      if (!resourceUri || resourceUri !== input.launch.resourceUri) {
         throw new McpAppHostError("tool_resource_mismatch", "The same-server MCP App tool now advertises a different resource.");
       }
       const projectedLaunchName = projectedMcpToolName(item.name, launchTool.name);

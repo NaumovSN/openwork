@@ -492,6 +492,36 @@ function toolOutput(value: unknown, result?: unknown): string {
   }
 }
 
+/**
+ * Code Mode runs OpenWork Cloud calls inside one `execute`, whose part keeps
+ * only `{ tool, status, input }` per call. The server's v2 plugin
+ * (openwork-mcp-results-v2) saves the calls that report a connection in
+ * `openworkMcpResults`; surface each as the ordinary tool part v1 produces for
+ * a direct call, so the chat's existing connection card finds it.
+ */
+export function codeModeConnectionParts(part: ToolPart): ToolPart[] {
+  if (part.metadata?.openworkV2CodeMode !== true || part.state.status !== "completed") return [];
+  const { metadata, time } = part.state;
+  const entries = metadata?.openworkMcpResults;
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry, index): ToolPart[] => {
+    if (!isRecord(entry)) return [];
+    const tool = readString(entry, "tool");
+    if (!tool) return [];
+    const callID = `${part.callID}:mcp:${index}`;
+    const base = { id: callID, messageID: part.messageID, sessionID: part.sessionID, type: "tool" as const, callID, tool };
+    const input = readRecord(entry, "input") ?? {};
+    const status = readString(entry, "status");
+    if (status === "completed") {
+      const output = toolOutput(undefined, entry.output);
+      return [{ ...base, state: { status, input, output, title: tool, time,
+        metadata: { openworkMcpResult: { content: [{ type: "text", text: output }], structuredContent: entry.output } } } }];
+    }
+    const error = readString(entry, "error");
+    return status === "error" && error ? [{ ...base, state: { status, input, error, metadata: {}, time } }] : [];
+  });
+}
+
 function mapV2ToolPart(
   value: Record<string, unknown>,
   messageID: string,
@@ -591,7 +621,7 @@ function mapV2MessageParts(
       }
       if (readString(entry, "type") === "tool") {
         const part = mapV2ToolPart(entry, messageID, sessionID, messageCreated, taskSessions);
-        return part ? [part] : [];
+        return part ? [part, ...codeModeConnectionParts(part)] : [];
       }
       return [];
     });
@@ -1339,7 +1369,7 @@ export function translateV2Event(
     const part = completedToolPart(stream, properties, toolEventTimestamp(value, properties), state.taskSessions);
     state.tools.set(toolStreamKey(stream.sessionID, stream.callID), null);
     clearV2SessionTranslation(state, stream.sessionID);
-    return [{ type: "message.part.updated", properties: { part } }];
+    return [part, ...codeModeConnectionParts(part)].map((next) => ({ type: "message.part.updated", properties: { part: next } }));
   }
 
   if (type === "session.tool.failed" || type === "session.next.tool.failed") {

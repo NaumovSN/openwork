@@ -515,7 +515,11 @@ export async function restartUpdateTaskWorld(seed: Seed) {
     window.__openworkUpdaterEvalBridge = {
       getChannel: async () => ({ channel: "stable", currentVersion }),
       setChannel: async (channel) => ({ channel, currentVersion }),
-      check: async () => ({ available: true, channel: "stable", currentVersion, latestVersion: "9.9.9" }),
+      // Like the main process, report the staged build to checks that must preserve it.
+      check: async (_channel?: string, _targetVersion?: string, options?: { preserveStaged?: boolean }) => ({
+        available: true, channel: "stable", currentVersion, latestVersion: "9.9.9",
+        ...(options?.preserveStaged ? { stagedVersion: "9.9.9" } : {}),
+      }),
       download: async () => ({ ok: true }),
       // Do not replace a binary in a journey. Unlike the download-only fixture,
       // confirmation goes through real main-process app.relaunch()/app.quit().

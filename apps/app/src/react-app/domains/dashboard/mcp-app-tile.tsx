@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { DashboardConnectionCard } from "./dashboard-connection-card";
 import { connectionCardPayloadFromChatToolResult } from "@/components/tools/error-attribution";
 import type { ConnectionActionPayload } from "@openwork/types/connection-action-app";
+import { mcpAppResourceIdentity } from "@openwork/types/mcp-app";
 import { Play } from "lucide-react";
 
 import {
@@ -120,8 +121,10 @@ function launchArgumentsSignature(argumentsValue: Record<string, unknown>) {
     : value);
 }
 
+// A new revision of an App built in OpenWork keeps the tile mounted at its size;
+// the launch effect then opens the new revision in place.
 function dashboardEntryIdentity(entry: DashboardMcpAppEntry, signature: string) {
-  return JSON.stringify([entry.id, entry.connectionId, entry.serverName, entry.toolName, entry.resourceUri, entry.projectedToolName, signature]);
+  return JSON.stringify([entry.id, entry.connectionId, entry.serverName, entry.toolName, mcpAppResourceIdentity(entry.resourceUri, entry.connectionId), entry.projectedToolName, signature]);
 }
 
 /** The same workspace on the same server keeps its live view when the route rebuilds its client object. */

@@ -143,6 +143,7 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "invitations.ts": legacy(["organization.invitation.created", "organization.invitation.refreshed", "organization.invitation.canceled"], ["invitation"]),
   "llm-provider-access.ts": support("Legacy LLM provider authorization helpers, not operation capture."),
   "llm-providers.ts": uncovered("Legacy LLM provider management; not the implemented inference-provider emitter."),
+  "mcp-app-catalog.ts": uncovered("Reads of the Apps built in OpenWork an admin can add to a dashboard."),
   "mcp-connections.ts": uncovered("MCP connection administration and OAuth."),
   "members.ts": legacy(["organization.member.role_updated", "organization.member.ownership_transferred", "organization.member.removed"], ["member"]),
   "microsoft-365.ts": uncovered("Microsoft 365 connections and external operations."),

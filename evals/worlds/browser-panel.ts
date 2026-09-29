@@ -712,6 +712,65 @@ export async function builtinBrowserWorld(seed: Seed, options: { workspacePath?:
   return { app, workspace, session, origin: info.baseUrl.replace(/\/+$/, "") };
 }
 
+/** A working native tab and a refused loopback destination on the same host. */
+export async function browserConnectionFailureWorld(seed: Seed) {
+  const world = await builtinBrowserWorld(seed);
+  const tab = await seedBrowserTab(seed, world.app, `${world.origin}/?connection-probe=working`, world.session.sessionId);
+  // Allocate and release a port on the desktop host so the navigation reaches
+  // a refused loopback connection, not DNS, an unsafe port, or a public site.
+  const port = await runBrowserHost(world.app, `
+    const { createServer } = await import('node:net');
+    const server = createServer();
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+    await new Promise(resolve => server.close(resolve));
+    return port;
+  `);
+  if (typeof port !== "number") throw new Error("The connection failure fixture returned no port.");
+  const failedUrl = `http://127.0.0.1:${port}/connection-probe`;
+  const page = await attachBuiltinTab(world.app, tab.targetId);
+  let recoveryPid: number | null = null;
+  return {
+    ...world, tab, page, failedUrl,
+    // Restoring this fixture's network fault changes only the local site;
+    // the person must still use the browser's Reload control to recover.
+    async restoreConnection() {
+      const source = `
+        const { createServer } = await import('node:http');
+        const server = createServer((request, response) => {
+          response.setHeader('Content-Type', 'text/html');
+          response.end('<!doctype html><title>Connection restored</title><h1>Connection restored</h1><p>The same address is available again.</p>');
+        });
+        server.listen(${port}, '127.0.0.1');
+        process.on('SIGTERM', () => server.close(() => process.exit(0)));
+      `;
+      const pid = await runBrowserHost(world.app, `
+        const { spawn } = await import('node:child_process');
+        const child = spawn(process.execPath, ['--input-type=module', '-e', ${browserScriptValue(source)}], { detached: true, stdio: 'ignore' });
+        child.unref();
+        return child.pid;
+      `);
+      if (typeof pid !== "number") throw new Error("The recovery site returned no process.");
+      recoveryPid = pid;
+      const ready = await runBrowserHost(world.app, `
+        for (let attempt = 0; attempt < 50; attempt++) {
+          try {
+            const response = await fetch(${browserScriptValue(failedUrl)}, { signal: AbortSignal.timeout(1000) });
+            if (response.ok && (await response.text()).includes('<title>Connection restored</title>')) return true;
+          } catch {}
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        return false;
+      `);
+      if (ready !== true) throw new Error("The recovery site did not become available.");
+    },
+    async [Symbol.asyncDispose]() {
+      await page.stop();
+      if (recoveryPid !== null) await runBrowserHost(world.app, `try { process.kill(${recoveryPid}, 'SIGTERM'); } catch {} return true;`);
+    },
+  };
+}
+
 /** Real native tab and deterministic document, with no viewport emulation. */
 export async function browserGeometryWorld(seed: Seed) {
   const world = await createBuiltinBrowserWorld(seed);

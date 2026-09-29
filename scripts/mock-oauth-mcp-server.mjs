@@ -583,6 +583,7 @@ async function handleAgentCompletion(req, res, entry) {
       codes: [...value.matchAll(/"(?:error|code)"\s*:\s*"([a-z_]{2,80})"/g)].map(match => match[1]),
       isError: /"isError"\s*:\s*true/.test(value),
       hasAppMetadata: value.includes("openwork/mcpApp"),
+      hasAppShownNote: value.includes("the person now sees this App right above your reply"),
       hasDraftResult: value.includes("Draft ready for Test recipient"),
     };
   });

@@ -1450,22 +1450,31 @@ export async function backgroundUpdateWorld(seed: Seed) {
     });
     window.__openworkApplyDesktopConfig?.({});
     window.__openworkSetDesktopConfigRefreshResult?.({});
+    // Like the main process, report which build is staged to checks that must preserve it.
+    let stagedVersion: string | null = null;
     window.__openworkUpdaterEvalBridge = {
       getChannel: async () => ({ channel: "stable", currentVersion }),
       setChannel: async (channel) => ({ channel, currentVersion }),
-      check: async () => {
+      check: async (_channel?: string, _targetVersion?: string, options?: { preserveStaged?: boolean }) => {
         state.checks++;
-        return { available: state.checks >= 4, channel: "stable", currentVersion, latestVersion: state.checks >= 4 ? "9.9.9" : currentVersion };
+        return {
+          available: state.checks >= 4, channel: "stable", currentVersion, latestVersion: state.checks >= 4 ? "9.9.9" : currentVersion,
+          ...(options?.preserveStaged ? { stagedVersion } : {}),
+        };
       },
       download: async () => {
         state.downloads++;
         const attempt = state.downloads;
+        stagedVersion = null;
         return new Promise((resolve, reject) => {
           state.finishDownload = () => {
             state.finishDownload = null;
             if (attempt === 1) resolve({ ok: false, reason: "Update native preparation failed." });
             else if (attempt === 2) reject(new Error("Update download connection failed."));
-            else resolve({ ok: true });
+            else {
+              stagedVersion = "9.9.9";
+              resolve({ ok: true });
+            }
           };
         });
       },
