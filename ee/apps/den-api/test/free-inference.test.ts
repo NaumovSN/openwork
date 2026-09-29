@@ -125,16 +125,18 @@ test("admin opt-out and missing active membership deny issuance", async () => {
   expect(writes).toEqual([])
 })
 
-test("member status includes cross-week pending state and never offers a paid model", async () => {
-  results = [[{ metadata: {}, nowMs: now.getTime() }], [], [], [{ id: "old-week-pending" }], [{ blocked: false }]]
+test("member status reports this week's usage against the allowance and never offers a paid model", async () => {
+  results = [[{ metadata: {}, nowMs: now.getTime() }], [], [{ used_amount: 0 }]]
   const access = await getMemberInferenceAccess(input)
-  expect(access).toMatchObject({ kind: "free", reason: "free_request_in_progress", canUpgrade: false, weeklyLimitUsd: 5 })
+  expect(access).toMatchObject({ kind: "free", reason: null, canUpgrade: false, weeklyLimitUsd: 5, usedUsd: 0, remainingUsd: 5 })
   expect(access.catalog?.map((model) => model.modelID)).toEqual(["openai/gpt-5.6-luna"])
+  results = [[{ metadata: {}, nowMs: now.getTime() }], [], [{ used_amount: Number.MAX_SAFE_INTEGER }]]
+  expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "exhausted", reason: "free_allowance_exhausted", remainingUsd: 0 })
   expect(writes).toEqual([])
 })
 
 test("accounting failures fail closed instead of inventing a balance", async () => {
   failRead = true
-  expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "unavailable", reason: "accounting_unavailable", usedUsd: null, reservedUsd: null, remainingUsd: null })
+  expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "unavailable", reason: "accounting_unavailable", usedUsd: null, remainingUsd: null })
   expect(writes).toEqual([])
 })

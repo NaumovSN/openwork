@@ -88,7 +88,7 @@ export type DesktopFreeAccessStatus = {
   providerID: typeof DESKTOP_FREE_PROVIDER_ID;
   modelID: typeof DESKTOP_FREE_MODEL_ID;
   allowance: {
-    limitUsd: number; usedUsd: number; reservedUsd: number; remainingUsd: number; resetsAt: string;
+    limitUsd: number; usedUsd: number; remainingUsd: number; resetsAt: string;
   } | null;
   catalog?: ManagedModelRecommendation[];
   defaultPinned?: boolean;

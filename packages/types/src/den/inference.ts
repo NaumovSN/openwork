@@ -155,7 +155,7 @@ export function freeInferenceWindow(now = new Date()) {
 
 export const INFERENCE_ACCESS_REASONS = [
   "admin_disabled", "not_eligible", "free_disabled", "accounting_unavailable",
-  "free_allowance_exhausted", "free_request_in_progress", "upstream_unavailable",
+  "free_allowance_exhausted", "upstream_unavailable",
 ] as const;
 export type InferenceAccessReason = (typeof INFERENCE_ACCESS_REASONS)[number];
 export type ManagedModelRecommendation = {
@@ -167,7 +167,6 @@ export type InferenceAccess = {
   modelID: string | null;
   weeklyLimitUsd: number | null;
   usedUsd: number | null;
-  reservedUsd: number | null;
   remainingUsd: number | null;
   resetsAt: string | null;
   reason: InferenceAccessReason | null;
@@ -207,19 +206,19 @@ export function freeInferenceOrganizationAllowed(metadata: Record<string, unknow
 export function freeInferenceAccess(input: {
   config: FreeInferenceConfig;
   reason?: InferenceAccessReason | null;
-  bucket?: { limit_amount: number; used_amount: number; reserved_amount: number; blocked: boolean } | null;
+  bucket?: { used_amount: number } | null;
   now?: Date;
 }): InferenceAccess {
-  const limit = input.bucket?.limit_amount ?? input.config.weeklyLimitAmount;
+  // Like paid Models: the current limit applies, and the allowance is used up once usage reaches it.
+  const limit = input.config.weeklyLimitAmount;
   const used = input.bucket?.used_amount ?? 0;
-  const reserved = input.bucket?.reserved_amount ?? 0;
-  const valid = [limit, used, reserved].every((amount) => Number.isSafeInteger(amount) && amount >= 0);
-  const remaining = Math.max(0, limit - used - reserved);
-  const reason = input.reason ?? (!input.config.enabled ? "free_disabled" : !valid || input.bucket?.blocked
-    ? "accounting_unavailable" : remaining === 0 ? "free_allowance_exhausted" : reserved > 0 ? "free_request_in_progress" : null);
-  return { kind: reason === null || reason === "free_request_in_progress" ? "free" : reason === "free_allowance_exhausted" ? "exhausted" : "unavailable",
+  const valid = [limit, used].every((amount) => Number.isSafeInteger(amount) && amount >= 0);
+  const remaining = Math.max(0, limit - used);
+  const reason = input.reason ?? (!input.config.enabled ? "free_disabled" : !valid
+    ? "accounting_unavailable" : remaining === 0 ? "free_allowance_exhausted" : null);
+  return { kind: reason === null ? "free" : reason === "free_allowance_exhausted" ? "exhausted" : "unavailable",
     modelID: input.config.modelID, weeklyLimitUsd: valid ? limit / INFERENCE_USAGE_CONVERSION_FACTOR : null,
-    usedUsd: valid ? used / INFERENCE_USAGE_CONVERSION_FACTOR : null, reservedUsd: valid ? reserved / INFERENCE_USAGE_CONVERSION_FACTOR : null,
+    usedUsd: valid ? used / INFERENCE_USAGE_CONVERSION_FACTOR : null,
     remainingUsd: valid ? remaining / INFERENCE_USAGE_CONVERSION_FACTOR : null, resetsAt: freeInferenceWindow(input.now).end.toISOString(),
     reason, canUpgrade: false, catalog: managedModelCatalog() };
 }

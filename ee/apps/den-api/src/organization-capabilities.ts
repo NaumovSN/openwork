@@ -11,7 +11,7 @@ import { z } from "zod"
  * Storage rides the existing organization metadata JSON column — the same
  * home as `limits`, `plan`, and `requireSso` — so no schema change is needed.
  */
-export const ORGANIZATION_CAPABILITY_KEYS = ["installLinks", "mcpConnections", "modelsAnalytics", "auditLogs"] as const
+export const ORGANIZATION_CAPABILITY_KEYS = ["installLinks", "mcpConnections", "modelsAnalytics", "auditLogs", "orgManagedDashboards"] as const
 
 export const organizationCapabilityKeySchema = z.enum(ORGANIZATION_CAPABILITY_KEYS)
 
@@ -52,6 +52,7 @@ export function normalizeOrganizationCapabilities(metadata: MetadataInput): Orga
     mcpConnections: raw.mcpConnections === true,
     modelsAnalytics: raw.modelsAnalytics === true,
     auditLogs: raw.auditLogs === true,
+    orgManagedDashboards: raw.orgManagedDashboards === true,
   }
 }
 
@@ -70,8 +71,19 @@ export function readOrganizationCapabilityOverrides(metadata: MetadataInput): Pa
 
   if (typeof raw.modelsAnalytics === "boolean") capabilities.modelsAnalytics = raw.modelsAnalytics
   if (typeof raw.auditLogs === "boolean") capabilities.auditLogs = raw.auditLogs
+  if (typeof raw.orgManagedDashboards === "boolean") capabilities.orgManagedDashboards = raw.orgManagedDashboards
 
   return capabilities
+}
+
+/**
+ * Org-managed Dashboards are default-off per organization. Only an explicit
+ * `metadata.capabilities.orgManagedDashboards: true` enables the Den admin
+ * surface, the /v1/dashboards routes, and granted dashboards in Desktop.
+ * Workflows, saved apps, and every other capability are unaffected.
+ */
+export function organizationManagedDashboardsEnabled(metadata: MetadataInput): boolean {
+  return normalizeOrganizationCapabilities(metadata).orgManagedDashboards
 }
 
 /** Whether the organization stores an explicit literal true for the capability. */

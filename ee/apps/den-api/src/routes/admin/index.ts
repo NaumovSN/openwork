@@ -108,6 +108,7 @@ const updateOrganizationCapabilitiesSchema = z.object({
     mcpConnections: z.boolean().nullable().optional(),
     modelsAnalytics: z.boolean().nullable().optional(),
     auditLogs: z.boolean().nullable().optional(),
+    orgManagedDashboards: z.boolean().nullable().optional(),
     gatewayDashboard: z.boolean().nullable().optional().meta({
       deprecated: true,
       description: "Accepted for compatibility only and ignored; AI Gateway no longer has an organization rollout override.",
@@ -120,6 +121,7 @@ const adminOrganizationCapabilitiesSchema = z.object({
   mcpConnections: z.boolean(),
   modelsAnalytics: z.boolean(),
   auditLogs: z.boolean(),
+  orgManagedDashboards: z.boolean(),
   gatewayDashboard: z.literal(true).meta({
     deprecated: true,
     description: "Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.",
@@ -296,6 +298,7 @@ function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unkno
     mcpConnections: memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false }),
     modelsAnalytics: normalizeOrganizationCapabilities(metadata).modelsAnalytics,
     auditLogs: normalizeOrganizationCapabilities(metadata).auditLogs,
+    orgManagedDashboards: normalizeOrganizationCapabilities(metadata).orgManagedDashboards,
     gatewayDashboard: true,
   }
 }
@@ -335,7 +338,7 @@ function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Rec
     // OpenWork Web access instead), so stale stored overrides stay managed
     // (dropped on the next capabilities write) instead of passing through as
     // unmanaged metadata.
-    if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "auditLogs" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
+    if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "auditLogs" && key !== "orgManagedDashboards" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
       capabilities[key] = value
     }
   }
@@ -2008,7 +2011,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
     describeRoute({
       tags: ["Admin"],
       summary: "Set an organization's capability overrides",
-      description: "Enables, disables or clears (null) the install-links, MCP-connections, Models analytics and auditLogs overrides. Audit logs require literal true (absent/false is disabled); this flag neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true. Stale retired overrides are removed on capability writes.",
+      description: "Enables, disables or clears (null) the install-links, MCP-connections, Models analytics, auditLogs and orgManagedDashboards overrides. Audit logs and org-managed Dashboards require literal true (absent/false is disabled); this flag neither grants capture entitlement nor initializes capacity or changes capture preferences. The deprecated gatewayDashboard boolean or null input is validated but ignored and never persisted; its response field is always true. Stale retired overrides are removed on capability writes.",
       responses: {
         200: jsonResponse("Capability overrides were updated.", z.object({ ok: z.literal(true), organization: z.object({ id: z.string() }), capabilities: adminOrganizationCapabilitiesSchema })),
         400: jsonResponse("The request body or organization id was invalid.", adminRequestErrorSchema),
@@ -2065,6 +2068,10 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         const auditLogs = body.data.capabilities.auditLogs
         if (auditLogs === null) delete capabilities.auditLogs
         else if (auditLogs !== undefined) capabilities.auditLogs = auditLogs
+
+        const orgManagedDashboards = body.data.capabilities.orgManagedDashboards
+        if (orgManagedDashboards === null) delete capabilities.orgManagedDashboards
+        else if (orgManagedDashboards !== undefined) capabilities.orgManagedDashboards = orgManagedDashboards
 
         return {
           ...current,

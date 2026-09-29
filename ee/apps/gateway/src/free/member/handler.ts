@@ -52,18 +52,17 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       }
       if (method === "GET" && path === MEMBER_FREE_STATUS_PATH) {
         const status: DesktopFreeAccessStatus = { currentVersion: "", minimumVersion: null, providerID: DESKTOP_FREE_PROVIDER_ID,
-          modelID: DESKTOP_FREE_MODEL_ID, catalog: managedModelCatalog(), ...await store.read(principal, null) }
+          modelID: DESKTOP_FREE_MODEL_ID, catalog: managedModelCatalog(), ...await store.read(principal) }
         return c.json(status, 200, { "cache-control": "no-store" })
       }
       if (method !== "POST" || path !== MEMBER_FREE_CHAT_PATH) return freeError(404, "not_found", "Only Auto is available without an OpenWork Models subscription.")
-      const deadlineAt = Date.now() + config.requestTimeoutMs
       const controller = new AbortController()
-      const signal = AbortSignal.any([controller.signal, c.req.raw.signal, AbortSignal.timeout(config.requestTimeoutMs)])
-      const parsed = await readFreeRequest(c.req.raw, config.maxBodyBytes, signal)
+      const signal = AbortSignal.any([controller.signal, c.req.raw.signal])
+      const parsed = await readFreeRequest(c.req.raw, config.maxBodyBytes, AbortSignal.any([signal, AbortSignal.timeout(config.requestTimeoutMs)]))
       const prepared = prepareFreeRequest(parsed.value, config)
       const usageLog = dependencies.usageLog
       const upstream = new URL(FREE_OPENAI_CHAT_URL)
-      return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal, ipHash: null, prepared, signal, controller, deadlineAt,
+      return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal, prepared, signal, controller,
         startUsageLog: usageLog ? (requestId, stream) => {
           const recorder = createRequestLogRecorder({ insertRequestLog: usageLog.insert, updateRequestLog: usageLog.update,
             reporter: safeInferenceReporter(usageLog.reporter ?? sentryInferenceReporter) })
