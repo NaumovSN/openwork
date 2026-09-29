@@ -11,7 +11,7 @@ LiteLLM and Bifrost are standalone gateways for any app; OpenWork AI Gateway man
 | **What it is** | Model access layer inside the OpenWork workspace and control plane | Python SDK and proxy server for 100+ LLM APIs in OpenAI format | Go gateway with one OpenAI-compatible API across 1000+ models |
 | **License** | Desktop app and core: MIT. Gateway and control plane (`ee/`): source-available [OpenWork EE License](https://github.com/different-ai/openwork/blob/dev/ee/LICENSE) | MIT, except the `enterprise/` directory under a separate license | Apache-2.0 (open-source edition) |
 | **Deployment** | OpenWork Cloud, or self-hosted with Helm on Kubernetes | Self-hosted on your infrastructure (Docker image or pip package) | Self-hosted (Docker, Kubernetes, Go binary); enterprise supports in-VPC and air-gapped |
-| **SSO / RBAC** | SSO/SAML, SCIM, and RBAC on the Enterprise plan | SSO free up to 5 users; SSO + SCIM, JWT auth, and RBAC by org/team with an enterprise license | SAML/OIDC SSO and RBAC in Enterprise |
+| **SSO / RBAC** | SSO/SAML on the Team plan; SCIM and RBAC on Enterprise | SSO free up to 5 users; SSO + SCIM, JWT auth, and RBAC by org/team with an enterprise license | SAML/OIDC SSO and RBAC in Enterprise |
 | **Spend tracking** | Tokens and estimated cost by model, team, and person; USD allowances with hard limits | Spend tracking and budgets in OSS; more budget and reporting features in enterprise | Budgets and rate limits with virtual keys; built-in observability |
 | **Keys for consumers** | One Gateway key per member, issued automatically | Virtual keys | Virtual keys |
 | **Per-member provider sign-in** | Yes for Google Vertex AI (each member signs in with Google) | — | — |

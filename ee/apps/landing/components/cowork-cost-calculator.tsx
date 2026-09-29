@@ -7,6 +7,7 @@ import {
   anthropicPricingCheckedAt,
   cumulativeCosts,
   defaultMixShare,
+  describeEnterpriseVolumeTiers,
   mixShares,
   perPersonMonthly,
   planPrices,
@@ -25,8 +26,6 @@ import { LpSectionHeader } from "./lp-primitives";
 type Props = {
   defaultUsers?: number;
   defaultTier?: Tier;
-  /** "plan" compares the Claude plan for the tier; "3p" compares Claude Desktop on Bedrock, Vertex, or Foundry. */
-  claudeSide?: "plan" | "3p";
   heading?: string;
 };
 
@@ -198,7 +197,7 @@ type ChartLine = {
   stroke: string;
   width: number;
   pattern: LinePattern;
-  /** Stroke opacity; the light Claude-on-3P line stays at or above 3:1 against the panel. */
+  /** Stroke opacity; lighter lines stay at or above 3:1 against the panel. */
   opacity: number;
 };
 
@@ -527,7 +526,6 @@ function shortClaudeModel(label: string): string {
 export function CoworkCostCalculator({
   defaultUsers = 50,
   defaultTier = "team",
-  claudeSide = "plan",
   heading = "What will your team spend?"
 }: Props) {
   const id = useId();
@@ -553,15 +551,14 @@ export function CoworkCostCalculator({
     months: years * 12
   });
 
-  const claudeLine = claudeSide === "3p" ? result.claude3p : result.claude;
+  const claudeLine = result.claude;
   const period = periodLabel(years);
   // "Claude Team, Premium seats" -> vendor "Claude Team", seat "Premium seats".
   const [claudePlanVendor = claudeLine.name, claudeSeat] = result.claude.name.split(", ");
-  const claudeVendor = claudeSide === "3p" ? "Claude on 3P" : claudePlanVendor;
+  const claudeVendor = claudePlanVendor;
   const claudeModelShort = shortClaudeModel(model.label);
   const claudePlanLabel = `${claudePlanVendor} · ${claudeModelShort}${claudeSeat ? ` (${claudeSeat})` : ""}`;
-  const claude3pLabel = `Claude on 3P · ${claudeModelShort}`;
-  const claudeLabel = claudeSide === "3p" ? claude3pLabel : claudePlanLabel;
+  const claudeLabel = claudePlanLabel;
   const openworkLabel = `OpenWork · ${model.label}`;
   const openPercent = Math.round(mixShare * 100);
   const claudePercent = 100 - openPercent;
@@ -588,7 +585,7 @@ export function CoworkCostCalculator({
   ];
 
   const notices = [
-    ...(result.claudeTeamUnavailable && claudeSide === "plan"
+    ...(result.claudeTeamUnavailable
       ? [`Claude Team stops at ${planPrices.claudeTeamMaxSeats} seats, so this compares Claude Enterprise.`]
       : []),
     ...(tier === "enterprise" && users > planPrices.openworkEnterpriseVolumeAbove
@@ -631,9 +628,7 @@ export function CoworkCostCalculator({
           : null
         : claudeLine.tokensIncluded
           ? "Claude Team includes usage up to plan limits. OpenWork pays for tokens at API rates."
-          : claudeLine.seatsMonthly === 0
-            ? "Claude on 3P has no seat fee. Tokens cost the same on both."
-            : null;
+          : null;
 
   const rows: { key: string; series: CostSeries; detail: string; strong: boolean }[] = [
     {
@@ -641,9 +636,7 @@ export function CoworkCostCalculator({
       series: claudeLine,
       detail: claudeLine.tokensIncluded
         ? "Usage included up to plan limits"
-        : claudeSide === "3p"
-          ? `${model.label}, tokens billed by your cloud provider`
-          : model.label,
+        : model.label,
       strong: true
     },
     { key: "openwork", series: result.openwork, detail: model.label, strong: true },
@@ -889,13 +882,12 @@ export function CoworkCostCalculator({
             </li>
             <li>
               Claude Enterprise: ${planPrices.claudeEnterpriseSeat}/seat billed annually, {planPrices.claudeEnterpriseMinSeats}{" "}
-              seats minimum, all usage at API rates. Claude Desktop on 3P: no seat fee, tokens through Bedrock, Vertex, Foundry, or
-              your own gateway.
+              seats minimum, all usage at API rates.
             </li>
             <li>
               OpenWork Team on OpenWork Cloud: first {planPrices.openworkFreeSeats} seats free, then $
-              {planPrices.openworkTeamSeat}/seat. OpenWork Enterprise: ${planPrices.openworkEnterpriseSeat}/person a month
-              for the first 250, $16 for seats 251–1,000, $13 above, billed annually. Tokens billed by your own provider or gateway.
+              {planPrices.openworkTeamSeat}/seat. OpenWork Enterprise: {describeEnterpriseVolumeTiers()}, billed annually.
+              Tokens billed by your own provider or gateway.
             </li>
             <li>
               Costs accrue monthly. List prices from models.dev ({modelPricesFetchedAt}); Anthropic plans checked{" "}

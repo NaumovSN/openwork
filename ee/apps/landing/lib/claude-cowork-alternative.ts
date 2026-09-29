@@ -77,7 +77,7 @@ ${alternativeCards.map((card) => `- ${card.title}: [${card.link.label}](https://
 
 ## Cost
 
-The page includes a calculator comparing Claude Team, Claude Enterprise, Claude Desktop on 3P, and OpenWork plans for your team size, usage, and models, using list API prices from models.dev. On Bedrock, Vertex, or Foundry? See [OpenWork vs Claude Cowork on 3P](https://openworklabs.com/alternatives/claude-cowork-3p).
+The page includes a calculator comparing Claude Team, Claude Enterprise, and OpenWork plans for your team size, usage, and models, using list API prices from models.dev. On Bedrock, Vertex, or Foundry? Compare features in [OpenWork vs Claude Cowork on 3P](https://openworklabs.com/alternatives/claude-cowork-3p).
 
 ## FAQ
 

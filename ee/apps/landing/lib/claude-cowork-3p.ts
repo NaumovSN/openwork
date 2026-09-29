@@ -45,11 +45,6 @@ export const claudeCowork3pFaq: FaqEntry[] = [
     answer: "Yes, plus any OpenAI-compatible gateway. Your existing cloud commitments keep applying."
   },
   {
-    question: "Is OpenWork cheaper than Claude Desktop on 3P?",
-    answer:
-      "Not on seats: 3P has none, and OpenWork Team is $10 per seat after the first 5. Savings come from running a share of work on lower-cost models, so check the calculator with your numbers."
-  },
-  {
     question: "How do we share skills and MCP servers?",
     answer: "Admins publish them once in OpenWork Cloud and assign them to teams. Each person signs in to MCP connections as themselves."
   },
@@ -74,10 +69,6 @@ ${capabilityMarkdown()}
 ## Why teams on 3P switch
 
 ${threePCards.map((card) => `- ${card.title}: [${card.link.label}](https://openworklabs.com${card.link.href})`).join("\n")}
-
-## Cost
-
-The page includes a calculator comparing Claude Team, Claude Enterprise, Claude Desktop on 3P, and OpenWork plans for your team size, usage, and models, using list API prices from models.dev.
 
 ## FAQ
 

@@ -37,7 +37,7 @@ const home = `# OpenWork
 A free, open-source desktop app (macOS, Windows, Linux) for doing work with AI agents on your own files. Built on OpenCode; an open-source alternative to Claude Cowork and Codex.
 
 ### Is OpenWork free?
-Yes — the desktop app is free and open source with bring-your-own keys. On OpenWork Cloud, Team Starter includes your first 5 seats free, then \\$10 per seat/mo; self-hosting is free for organizations up to 5 users; Enterprise is custom.
+Yes — the desktop app is free and open source with bring-your-own keys. On OpenWork Cloud, Team includes your first 5 seats free, then \\$10 per seat/mo; self-hosting is free for organizations up to 5 users; Enterprise is custom.
 
 ### Which models does it support?
 Any model OpenCode supports: OpenAI, Anthropic, Google, local models — 50+ providers.
@@ -59,17 +59,17 @@ Backed by Y Combinator.
 
 const pricing = `# OpenWork pricing — free, team, and enterprise
 
-> OpenWork has three tiers: free open-source desktop, Team Starter with the first 5 OpenWork Cloud seats free then \\$10 per seat/mo, and custom Enterprise. Self-hosting is free for organizations up to 5 users.
+> OpenWork has three tiers: free open-source desktop, Team with the first 5 OpenWork Cloud seats free then \\$10 per seat/mo, and custom Enterprise. Self-hosting is free for organizations up to 5 users.
 
-## Solo — Free
+## Free
 
 - Open-source desktop app
-- macOS and Linux downloads
+- macOS, Windows, and Linux downloads
 - Bring your own provider keys
 - Free forever
 - CTA: [Get Started for free](https://app.openworklabs.com?mode=sign-up)
 
-## Team Starter — \\$10 / seat / month
+## Team — \\$10 / seat / month
 
 - First 5 seats free on OpenWork Cloud
 - API access
@@ -80,7 +80,7 @@ const pricing = `# OpenWork pricing — free, team, and enterprise
 
 ## Enterprise — Custom pricing
 
-- Everything in Team Starter, including SSO
+- Everything in Team, including SSO
 - SCIM provisioning
 - Bring your own inference — self-hosted or private models
 - Desktop policies and version controls — admins decide which providers, models, extensions, and app versions employees can use; the desktop app enforces it automatically

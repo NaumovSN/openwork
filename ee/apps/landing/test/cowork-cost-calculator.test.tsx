@@ -82,15 +82,9 @@ describe("cost calculator results", () => {
     expect(page).toContain(`You keep ${dollars.format(costs.claude.total - mix.total)}`);
   });
 
-  test("3P page: 500 people compares Claude on 3P with OpenWork Team", () => {
-    const { costs, mix } = defaults(500);
-    expect(costs.openwork.id).toBe("openwork-team");
-    const page = text(renderToStaticMarkup(createElement(CoworkCostCalculator, { defaultUsers: 500, claudeSide: "3p" })));
-    const delta = costs.claude3p.total - costs.openwork.total;
-    expect(delta).toBeLessThan(0);
-    expect(page).toContain(`Claude costs ${dollars.format(-delta)} less`);
-    expect(page).toContain(`Claude on 3P ${dollars.format(costs.claude3p.total)} vs OpenWork ${dollars.format(costs.openwork.total)}`);
-    expect(page).toContain(`You keep ${dollars.format(costs.claude3p.total - mix.total)}`);
-    expect(page).toContain("Claude Desktop on 3P");
+  test("compares only against Claude's own plans, never Claude on 3P", () => {
+    const page = text(renderToStaticMarkup(createElement(CoworkCostCalculator, { defaultUsers: 500 })));
+    expect(page).not.toContain("3P");
+    expect(page).toContain("Claude Enterprise");
   });
 });
