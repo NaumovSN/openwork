@@ -1,7 +1,6 @@
 import { CLAUDE_COWORK_ALTERNATIVE_PATH } from "../lib/claude-cowork-alternative";
 import { claudeCowork3pAnswer, claudeCowork3pFaq, claudeCowork3pHeading, threePCards } from "../lib/claude-cowork-3p";
 import { CapabilityMatrix } from "./capability-matrix";
-import { CoworkCostCalculator } from "./cowork-cost-calculator";
 import { DownloadLink } from "./download-link";
 import { LandingFaq } from "./landing-faq";
 import { CompareCards, CompareHero, CompareSection } from "./lp-compare";
@@ -30,14 +29,6 @@ export function ClaudeCowork3pPage({ stars }: Props) {
             emphasis="thirdParty"
           />
         </CompareSection>
-
-        <div id="cost" className="scroll-mt-28 py-12 md:py-16">
-          <CoworkCostCalculator
-            defaultUsers={500}
-            claudeSide="3p"
-            heading="Claude on 3P vs OpenWork"
-          />
-        </div>
 
         <CompareSection id="why-heading" heading="Why teams on 3P switch">
           <CompareCards cards={threePCards} />

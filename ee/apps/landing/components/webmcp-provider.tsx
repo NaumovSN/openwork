@@ -27,20 +27,20 @@ const destinations: Record<string, string> = {
 const pricingSummary = {
   plans: [
     {
-      id: "solo",
-      name: "Solo",
+      id: "free",
+      name: "Free",
       price: "Free",
       cadence: "free forever",
       highlights: [
         "Open-source desktop app",
-        "macOS and Linux downloads",
+        "macOS, Windows, and Linux downloads",
         "Bring your own provider keys",
       ],
       cta: { label: "Get Started for free", href: "https://app.openworklabs.com?mode=sign-up" },
     },
     {
-      id: "team-starter",
-      name: "Team Starter",
+      id: "team",
+      name: "Team",
       price: "$10",
       cadence: "per seat / month",
       highlights: [
@@ -58,7 +58,7 @@ const pricingSummary = {
       price: "custom",
       cadence: "contact us",
       highlights: [
-        "Everything in Team Starter, including SSO",
+        "Everything in Team, including SSO",
         "SCIM provisioning",
         "Bring your own inference — self-hosted or private models",
         "Desktop policies and version controls",

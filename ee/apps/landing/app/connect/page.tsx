@@ -164,7 +164,7 @@ export default async function ConnectPage() {
             <div className="mt-4 grid border-y border-[var(--lp-border)] md:grid-cols-3">
               <Tier name="Solo" price="Free" note="Just you, every client you use." first />
               <Tier name="Team" price="First 5 seats free" note="Then $10 per seat a month." />
-              <Tier name="Enterprise" price="Talk to us" note="SSO, SCIM, audit and your own hosting." />
+              <Tier name="Enterprise" price="Talk to us" note="SCIM, audit and your own hosting." />
             </div>
           </section>
 

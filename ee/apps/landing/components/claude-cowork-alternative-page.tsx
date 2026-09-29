@@ -41,7 +41,7 @@ export function ClaudeCoworkAlternativePage({ stars }: Props) {
         <div id="cost" className="scroll-mt-28 py-12 md:py-16">
           <CoworkCostCalculator />
           <div className="mt-6">
-            <LpArrowLink href={CLAUDE_COWORK_3P_PATH}>On Bedrock, Vertex, or Foundry? Compare with Claude on 3P</LpArrowLink>
+            <LpArrowLink href={CLAUDE_COWORK_3P_PATH}>On Bedrock, Vertex, or Foundry? Compare features with Claude on 3P</LpArrowLink>
           </div>
         </div>
 
