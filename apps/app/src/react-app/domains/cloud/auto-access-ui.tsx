@@ -86,7 +86,7 @@ export function AutoPickerRecovery({ state, onRetry, onReload, hasAlternatives =
   };
   const reloadWorkspace = onReload ?? (workspace?.openworkServerClient && workspace.workspaceId ? () => workspace.openworkServerClient!.reloadEngine(workspace.workspaceId) : undefined);
   const reload = reloadWorkspace ? async () => { await reloadWorkspace(); await retry(); } : undefined;
-  if (state === "ready") return null;
+  if (state === "ready" || freeAutoSwitchedOff(observed)) return null;
   return <div role="status" data-testid="auto-picker-recovery" className="flex items-center gap-2 border-t border-border px-4 py-2 text-sm">
     <span className="min-w-0 flex-1 text-muted-foreground">{failed ? "Couldn’t refresh Auto. Try again, or choose another model." : state === "unavailable" && !hasAlternatives ? "Auto is having trouble right now. Connect another provider to continue." : copy.detail}</span>
     {copy.action === "Sign in" ? <Button size="sm" onClick={() => openAutoSignIn()}>Sign in</Button> : null}
@@ -138,7 +138,7 @@ export function AutoFirstUseStatus({ onConnect }: { onConnect?: () => void }) {
 
 function AutoAccessFooterContent({ available, syncing = false }: { available: boolean; syncing?: boolean }) {
   const { query, auth } = useAutoAccess(available);
-  if (!available && !syncing) return null;
+  if ((!available && !syncing) || freeAutoSwitchedOff(query.data)) return null;
   const status = syncing || query.isFetching ? "Syncing Auto…"
     : query.isError || query.data?.state === "unavailable" ? "Auto status unavailable"
     : query.data?.state === "exhausted" ? "Free limit used up"

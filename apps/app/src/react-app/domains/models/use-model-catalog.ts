@@ -1,3 +1,4 @@
+import { freeAutoSwitchedOff } from "@/app/lib/inference-access";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { CloudImportedProvider } from "@/app/cloud/import-state";
 import type { Client, ModelOption, ModelRef } from "@/app/types";
@@ -121,7 +122,7 @@ export function useModelCatalog(input: UseModelCatalogInput): ModelCatalogView {
   return {
     options, knownOptions: catalog.known, actionOptions, catalogState, retainedSelection, restrictToCloud,
     currentOption: selectable ?? (current ? catalog.known.find((option) => modelRefKey(option) === modelRefKey(current)) ?? (rememberedOption && modelRefKey(rememberedOption) === modelRefKey(current) ? rememberedOption : undefined) : undefined),
-    autoVisible: !hiddenByChoice && (Boolean(auto) || Boolean(current && isAutoModel(current))),
+    autoVisible: !freeAutoSwitchedOff(autoStatus) && !hiddenByChoice && (Boolean(auto) || Boolean(current && isAutoModel(current))),
     error: providers.error,
     refetch,
   };

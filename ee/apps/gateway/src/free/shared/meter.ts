@@ -32,14 +32,14 @@ function publicResponse(value: Record<string, unknown>) {
 
 export class FreeResponseReceipt {
   private id: string | null = null
-  private terminal = false
+  private finishedChoices = new Set<number>()
   private receipt: FreeUsageReceipt | null = null
   private sawModel = false
   private invalidUsage = false
   done = false
-  constructor(private readonly config: FreeMeterConfig) {}
+  constructor(private readonly config: FreeMeterConfig, private readonly choiceCount = 1) {}
   accept(value: unknown): Record<string, unknown> {
-    if (this.done || !record(value) || value.error != null || !Array.isArray(value.choices) || value.choices.length > 1) throw new Error("Incomplete Auto response")
+    if (this.done || !record(value) || value.error != null || !Array.isArray(value.choices) || value.choices.length > this.choiceCount) throw new Error("Incomplete Auto response")
     if (value.id !== undefined) {
       if (typeof value.id !== "string" || !value.id || value.id.length > 255 || this.id !== null && this.id !== value.id) throw new Error("Mismatched Auto response identity")
       this.id = value.id
@@ -49,14 +49,14 @@ export class FreeResponseReceipt {
       this.sawModel = true
     }
     for (const choice of value.choices) {
-      if (!record(choice) || choice.index !== 0) throw new Error("Invalid Auto choice")
-      if (this.terminal && record(choice.delta) && Object.values(choice.delta).some((part) => part !== null && part !== "")) throw new Error("Output after Auto completion")
+      if (!record(choice) || !nonnegative(choice.index) || choice.index >= this.choiceCount) throw new Error("Invalid Auto choice")
+      if (this.finishedChoices.has(choice.index) && record(choice.delta) && Object.values(choice.delta).some((part) => part !== null && part !== "")) throw new Error("Output after Auto completion")
       if (choice.finish_reason != null) {
         if (!["stop", "length", "tool_calls", "function_call", "content_filter"].includes(String(choice.finish_reason))) throw new Error("Invalid Auto completion")
-        this.terminal = true
+        this.finishedChoices.add(choice.index)
       }
     }
-    if (this.terminal && this.id && this.sawModel && record(value.usage)) {
+    if (this.finishedChoices.size === this.choiceCount && this.id && this.sawModel && record(value.usage)) {
       const receipt = readFreeUsage(value, this.id, this.config)
       if (receipt && this.receipt && JSON.stringify(receipt) !== JSON.stringify(this.receipt)) throw new Error("Conflicting Auto usage")
       if (receipt) this.receipt = receipt
@@ -65,30 +65,30 @@ export class FreeResponseReceipt {
     return publicResponse(value)
   }
   complete() {
-    if (!this.terminal || !this.id || !this.sawModel || this.done) throw new Error("Incomplete Auto response")
+    if (this.finishedChoices.size !== this.choiceCount || !this.id || !this.sawModel || this.done) throw new Error("Incomplete Auto response")
     this.done = true
     return this.invalidUsage ? null : this.receipt
   }
 }
 
 export function meterFreeResponse(body: ReadableStream<Uint8Array>, input: {
-  config: FreeMeterConfig; streaming: boolean; maxBytes: number; signal: AbortSignal;
+  config: FreeMeterConfig; streaming: boolean; maxBytes: number; signal: AbortSignal; choices?: number;
   settle: (receipt: FreeUsageReceipt | null) => Promise<void>;
 }) {
   const reader = body.getReader()
   const decoder = new TextDecoder("utf-8", { fatal: true })
   const encoder = new TextEncoder()
-  const receipt = new FreeResponseReceipt(input.config)
+  const receipt = new FreeResponseReceipt(input.config, input.choices)
   let pending = "", data: string[] = [], closed = false
   let settlement: Promise<void> | null = null
-  const settle = (value: FreeUsageReceipt | null) => settlement ??= input.settle(value).catch(() => undefined)
+  const settle = (value: FreeUsageReceipt | null) => settlement ??= input.settle(value)
   const cleanup = () => { input.signal.removeEventListener("abort", abort); void reader.cancel().catch(() => undefined) }
   let output: ReadableStreamDefaultController<Uint8Array>
   const fail = (error: unknown) => {
     if (closed) return
     closed = true
     cleanup()
-    void settle(null)
+    void settle(null).catch(() => { console.error("Auto allowance settlement failed") })
     output.error(error)
   }
   const abort = () => fail(new Error("Auto response cancelled"))

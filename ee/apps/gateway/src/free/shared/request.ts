@@ -9,33 +9,38 @@ const schema = z.strictObject({
   model: z.literal(INFERENCE_FREE_MODEL_ID),
   messages: z.array(z.strictObject({
     role: z.enum(["system", "developer", "user", "assistant", "tool"]),
-    content: z.union([z.string(), z.array(z.strictObject({ type: z.literal("text"), text: z.string() }))]).nullish(),
+    content: z.union([z.string(), z.array(z.union([
+      z.strictObject({ type: z.literal("text"), text: z.string() }),
+      z.strictObject({ type: z.literal("image_url"), image_url: z.strictObject({ url: z.string(), detail: z.enum(["auto", "low", "high"]).optional() }) }),
+      z.strictObject({ type: z.literal("input_audio"), input_audio: z.strictObject({ data: z.string(), format: z.enum(["wav", "mp3"]) }) }),
+      z.strictObject({ type: z.literal("file"), file: z.strictObject({ file_id: z.string().optional(), file_data: z.string().optional(), filename: z.string().optional() }) }),
+    ]))]).nullish(),
     name: z.string().optional(), tool_call_id: z.string().optional(), refusal: z.string().nullish(),
     tool_calls: z.array(z.strictObject({ id: z.string().min(1).max(256), type: z.literal("function"),
-      function: z.strictObject({ name, arguments: z.string() }) })).max(64).nullish(),
-  })).min(1).max(256),
+      function: z.strictObject({ name, arguments: z.string() }) })).nullish(),
+  })).min(1),
   tools: z.array(z.strictObject({ type: z.literal("function"), function: z.strictObject({ name,
-    description: z.string().max(8192).nullish(), parameters: z.record(z.string(), z.unknown()).nullish(), strict: z.boolean().nullish() }) })).max(64).nullish(),
+    description: z.string().nullish(), parameters: z.record(z.string(), z.unknown()).nullish(), strict: z.boolean().nullish() }) })).nullish(),
   tool_choice: z.union([z.enum(["auto", "none", "required"]), z.strictObject({ type: z.literal("function"), function: z.strictObject({ name }) })]).nullish(),
   parallel_tool_calls: z.boolean().nullish(),
-  max_tokens: z.number().int().positive().max(128000).nullish(),
-  max_completion_tokens: z.number().int().positive().max(128000).nullish(),
+  max_tokens: z.number().int().positive().nullish(),
+  max_completion_tokens: z.number().int().positive().nullish(),
   stream: z.boolean().optional(), stream_options: z.strictObject({ include_usage: z.boolean().optional() }).nullish(),
-  n: z.literal(1).nullish(),
+  n: z.number().int().positive().nullish(),
+  temperature: z.number().nullish(), top_p: z.number().nullish(),
+  stop: z.union([z.string(), z.array(z.string())]).nullish(), seed: z.number().int().nullish(),
+  presence_penalty: z.number().nullish(), frequency_penalty: z.number().nullish(),
+  logprobs: z.boolean().nullish(), top_logprobs: z.number().int().nullish(),
+  logit_bias: z.record(z.string(), z.number()).nullish(), user: z.string().nullish(),
+  metadata: z.record(z.string(), z.string()).nullish(),
   reasoning_effort: z.literal("none").nullish(),
   verbosity: z.enum(["low", "medium", "high"]).nullish(),
   response_format: z.union([z.strictObject({ type: z.enum(["text", "json_object"]) }), z.strictObject({ type: z.literal("json_schema"),
     json_schema: z.strictObject({ name: z.string(), description: z.string().optional(), schema: z.record(z.string(), z.unknown()), strict: z.boolean().optional() }) })]).nullish(),
 })
-function boundedSchema(value: unknown, depth = 0): boolean {
-  if (depth > 24) return false
-  if (Array.isArray(value)) return value.every((entry) => boundedSchema(entry, depth + 1))
-  if (value && typeof value === "object") return !Object.hasOwn(value, "$ref") && Object.values(value).every((entry) => boundedSchema(entry, depth + 1))
-  return true
-}
 export function prepareFreeRequest(value: unknown, config: AutoConfig) {
   const parsed = schema.safeParse(value)
-  if (!parsed.success || !boundedSchema(value)) throw new FreeRequestError(400, "unsupported_free_inference_input", "Auto supports text and ordinary function tools. This input was not sent.")
+  if (!parsed.success) throw new FreeRequestError(400, "unsupported_free_inference_input", "Auto requires a valid chat completion request. This input was not sent.")
   const request = parsed.data
   // OpenAI Chat Completions with the dedicated free key; the client never chooses the model or routing.
   const messages = request.messages.map(({ refusal, ...message }) => refusal == null ? message : { ...message, refusal })
@@ -44,11 +49,13 @@ export function prepareFreeRequest(value: unknown, config: AutoConfig) {
     ...(request.parallel_tool_calls != null ? { parallel_tool_calls: request.parallel_tool_calls } : {}),
     ...(request.response_format != null ? { response_format: request.response_format } : {}),
     ...(request.verbosity != null ? { verbosity: request.verbosity } : {}),
+    ...Object.fromEntries(["n", "temperature", "top_p", "stop", "seed", "presence_penalty", "frequency_penalty", "logprobs", "top_logprobs", "logit_bias", "user", "metadata"]
+      .filter((name) => Reflect.get(request, name) != null).map((name) => [name, Reflect.get(request, name)])),
     stream: request.stream === true, ...(request.stream ? { stream_options: { include_usage: true } } : {}),
     ...(request.max_completion_tokens ?? request.max_tokens ? { max_completion_tokens: request.max_completion_tokens ?? request.max_tokens } : {}),
     reasoning_effort: "none", store: false,
   })
-  return { body, stream: request.stream === true }
+  return { body, stream: request.stream === true, choices: request.n ?? 1 }
 }
 
 export async function readFreeRequest(request: Request, maxBytes: number, signal: AbortSignal) {

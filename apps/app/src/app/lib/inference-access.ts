@@ -47,6 +47,11 @@ export function freeAutoSwitchedOff(status: { code?: string | null } | null | un
   return status?.code === "free_disabled" || status?.code === "inference_disabled" || status?.code === "free_not_offered";
 }
 
+/** New tasks cannot inherit a switched-off starter; saved conversation identities stay intact. */
+export function modelForNewTask(model: ModelRef | null, status: { code?: string | null } | null | undefined): ModelRef | null {
+  return model && isAutoModel(model) && freeAutoSwitchedOff(status) ? null : model;
+}
+
 export function autoAccessWallFromError(value: unknown, model?: ModelRef | null, depth = 0): AutoAccessWall | null {
   if ((model && !isAutoModel(model)) || depth > 6 || value == null) return null;
   if (typeof value === "string") {

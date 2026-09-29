@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ActionContextMenu } from "@/components/ui/action-context-menu";
 import { ProviderIcon } from "@/react-app/design-system/provider-icon";
 import { AutoPickerRecovery, useObservedAutoAccessSnapshot } from "@/react-app/domains/cloud/auto-access-ui";
-import { autoPickerCopy, type AutoPickerState } from "@/app/lib/inference-access";
+import { autoPickerCopy, freeAutoSwitchedOff, type AutoPickerState } from "@/app/lib/inference-access";
 import type { MenuAction } from "@/components/ui/action-menu-model";
 import { Command, CommandCollection, CommandGroup, CommandGroupLabel, CommandHeader, CommandInput, CommandItem, CommandList, CommandPanel } from "@/components/ui/command";
 import { immutableModelPin, isAutoModel, isPinModelShortcut, markExplicitModelChoice, modelGroups, modelSource, modelSubtitle, modelTitle, orderedModelPins, retainedModelCopy, withAutoDefaultPin, MODEL_SOURCE_LABELS, type ModelGroup, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
@@ -68,8 +68,9 @@ function AutoStatusModelPickerList(props: ModelPickerListProps) {
   const auto = isAutoModel(props.current) ? props.current : availableAuto;
   const matches = auto && status && modelRefKey(auto) === modelRefKey(status);
   const state = props.openWorkModelsSyncing ? "sync" : snapshot?.status === "error" ? "unavailable" : matches ? status.state : "ready";
+  const switchedOff = freeAutoSwitchedOff(status);
   const blockedByPolicy = props.retainedSelection !== undefined && props.retainedSelection.reason !== "unavailable" && isAutoModel(props.current);
-  return <ModelPickerRows {...props} options={withAutoDefaultPin(props.options, status)} openWorkModelsSyncing={!blockedByPolicy && props.openWorkModelsSyncing} autoRow={!blockedByPolicy && auto ? { model: auto, state } : undefined} />;
+  return <ModelPickerRows {...props} retainedSelection={switchedOff && isAutoModel(props.current) ? undefined : props.retainedSelection} options={withAutoDefaultPin(switchedOff ? props.options.filter((option) => !isAutoModel(option)) : props.options, status)} openWorkModelsSyncing={!switchedOff && !blockedByPolicy && props.openWorkModelsSyncing} autoRow={!switchedOff && !blockedByPolicy && auto ? { model: auto, state } : undefined} />;
 }
 
 /** Context-menu rows show the chord that triggers the same command (DESIGN S6). */

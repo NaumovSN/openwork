@@ -1,4 +1,6 @@
 /** @jsxImportSource react */
+import { freeAutoSwitchedOff, modelForNewTask } from "@/app/lib/inference-access";
+import { useAutoAccess, useObservedAutoAccessStatus } from "@/react-app/domains/cloud/auto-access-ui";
 import { newSessionDraftSlot, newSessionDraftOwnerKey, openNewSessionDraft } from "@/react-app/domains/session/chat/new-session-destination";
 import { getSessionDraft, clearSessionDraft } from "@/react-app/domains/session/sync/draft-store";
 import { acknowledgePendingSession, beginPendingConversation, bindPendingConversationWorkspace, createPendingConversation, ensurePendingConversationGroup, pendingConversationAutoSendPayload, pendingConversationForRoute, publishPendingSideChat, usePendingConversationStore, withPendingSessionPublication, type PendingConversation } from "@/react-app/domains/session/chat/pending-conversation-store";
@@ -554,7 +556,9 @@ export function SessionRoute() {
   const workspaceDefaultScope = workspaceModelScope({ profileId: modelProfileId,
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId, opencodeBaseUrl, localRuntime: isDesktopRuntime() });
   const workspaceDefault = useWorkspaceDefaultModel(workspaceDefaultScope);
-  const newTaskModel = workspaceDefault?.model ?? local.prefs.defaultModel;
+  const configuredNewTaskModel = workspaceDefault?.model ?? local.prefs.defaultModel;
+  const observedAutoStatus = useObservedAutoAccessStatus();
+  const newTaskModel = modelForNewTask(configuredNewTaskModel, observedAutoStatus);
   const newTaskVariant = workspaceDefault ? workspaceDefault.variant : local.prefs.modelVariant ?? null;
   const changeNewTaskModel = useCallback((model: ModelRef, variant: string | null = null) => {
     const scope = workspaceModelScope({ profileId: modelProfileId,
@@ -1146,7 +1150,9 @@ export function SessionRoute() {
     providerListQuery.data,
     restrictToCloudProviders,
   ]);
+  const { query: initialAutoAccess } = useAutoAccess(entitledModelOptions.some(isAutoModel));
   useEffect(() => {
+    if ((initialAutoAccess.isPending && initialAutoAccess.fetchStatus !== "idle") || freeAutoSwitchedOff(initialAutoAccess.data)) return;
     if (!isDesktopRuntime() || loading || selectedSessionId || workspaceDefault || workspaceSessionGroups.some((group) => group.status !== "ready")) return;
     const available = providerListModelEntitlementOptions(cloudProviderList ?? providerListQuery.data);
     try {
@@ -1157,7 +1163,7 @@ export function SessionRoute() {
       const auto = available.find(isAutoModel);
       if (auto) local.setPrefs((previous) => ({ ...previous, defaultModel: auto, modelVariant: null }));
     } catch {}
-  }, [cloudProviderList, providerListQuery.data, loading, selectedSessionId, sessionsByWorkspaceId, workspaceSessionGroups, local, workspaceDefault]);
+  }, [initialAutoAccess.isPending, initialAutoAccess.fetchStatus, initialAutoAccess.data, cloudProviderList, providerListQuery.data, loading, selectedSessionId, sessionsByWorkspaceId, workspaceSessionGroups, local, workspaceDefault]);
   const openWorkModelsAvailable = hasOpenWorkModelsAvailable({
     providerConnectedIds,
     providers,
@@ -1206,7 +1212,8 @@ export function SessionRoute() {
   const entitledOrgDefaultModel = useMemo(() => {
     const runtimeProviderList = cloudProviderList ?? providerListQuery.data;
     return resolveOrgDefaultModelReplacement({
-      runtimeOptions: providerListModelEntitlementOptions(runtimeProviderList),
+      runtimeOptions: providerListModelEntitlementOptions(runtimeProviderList).filter((option) => !isAutoModel(option)
+        || (!freeAutoSwitchedOff(initialAutoAccess.data) && !(initialAutoAccess.isPending && initialAutoAccess.fetchStatus !== "idle"))),
       // Same pending rule as computeModelAvailability: a connected workspace
       // engine whose catalog has not answered (e.g. still reloading after a
       // provider was configured) must not be read as "provider missing".
@@ -1219,6 +1226,9 @@ export function SessionRoute() {
   }, [
     checkDesktopRestriction,
     cloudProviderList,
+    initialAutoAccess.data,
+    initialAutoAccess.isPending,
+    initialAutoAccess.fetchStatus,
     local.prefs.defaultModel,
     opencodeClient,
     organizationAssignedModelOptions,
@@ -2454,8 +2464,9 @@ export function SessionRoute() {
     const scope = workspaceModelScope({ profileId: modelProfileId, workspaceId: endpoint.workspaceId,
       opencodeBaseUrl: endpoint.opencodeBaseUrl, localRuntime: isDesktopRuntime() });
     const { model, variant } = resolveNewTaskModel(scope, { model: local.prefs.defaultModel, variant: local.prefs.modelVariant ?? null });
-    if (model?.providerID && model.modelID) useSessionModelStore.getState().setModel(sessionId, model, variant);
-  }, [local.prefs.defaultModel, local.prefs.modelVariant, modelProfileId]);
+    const availableModel = modelForNewTask(model, observedAutoStatus);
+    if (availableModel?.providerID && availableModel.modelID) useSessionModelStore.getState().setModel(sessionId, availableModel, variant);
+  }, [local.prefs.defaultModel, local.prefs.modelVariant, modelProfileId, observedAutoStatus]);
 
   const handleCreateTaskInWorkspaceWithOpenMode = useCallback(async (
     workspaceId: string,

@@ -68,7 +68,8 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
     // OpenAI list prices for the free model, in USD per million tokens.
     inputPrice: integer("INFERENCE_FREE_INPUT_PRICE_MICRO_USD_PER_MILLION", 250000, 1, 100000000) / 1000000,
     outputPrice: integer("INFERENCE_FREE_OUTPUT_PRICE_MICRO_USD_PER_MILLION", 1200000, 1, 100000000) / 1000000,
-    maxBodyBytes: integer("ANONYMOUS_MAX_BODY_BYTES", 262144, 1024, 1048576),
+    // Match the paid Gateway body ceiling; free requests do not get a smaller context limit.
+    maxBodyBytes: integer("ANONYMOUS_MAX_BODY_BYTES", 32 * 1024 * 1024, 1024, 32 * 1024 * 1024),
     /** The largest single response frame the meter buffers; the answer as a whole is not capped. */
     maxResponseBytes: integer("ANONYMOUS_MAX_RESPONSE_BYTES", 2097152, 16384, 16777216),
     trustProxyHops: integer("ANONYMOUS_TRUST_PROXY_HOPS", 0, 0, 8),

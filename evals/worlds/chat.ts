@@ -632,11 +632,12 @@ export async function focusContinuity(seed: Seed) {
   return { app, workspace, session };
 }
 
-export async function modelPicker(seed: Seed) {
+async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: boolean } = {}) {
   const [webPort] = await allocateFreePorts(1);
   if (!webPort) throw new Error("No app-web port available for the picker fixture");
   const den = await seed.den({
     trustedOrigins: [`http://127.0.0.1:${webPort}`],
+    ...(options.disabledAutoDesktop ? { env: { INFERENCE_FREE_ENABLED: "false", ANONYMOUS_INFERENCE_ENABLED: "false" } } : {}),
     mocks: { provider: seed.mock({ isolatedProcessEnv: true }) },
   });
   const witness = den.mocks.provider;
@@ -659,7 +660,9 @@ export async function modelPicker(seed: Seed) {
     throw new Error(`Picker organization provider setup failed: HTTP ${created.response.status}`);
   }
   const workspacePath = seed.tmpPath("model-picker");
-  const app = await seed.appWeb({ name: "model-picker", workspacePath, webPort, den: den.ref });
+  const app = options.disabledAutoDesktop
+    ? await seed.desktop({ name: "model-picker-disabled-auto", den, as: "admin", env: { OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1" } })
+    : await seed.appWeb({ name: "model-picker", workspacePath, webPort, den: den.ref });
   await addInitScript(app.client, browserScript((providerId) => {
     const originalFetch = window.fetch.bind(window);
     window.fetch = async (input, init) => {
@@ -714,6 +717,23 @@ export async function modelPicker(seed: Seed) {
   return { app, den, workspace, session, auto, byok, favorite, recent, organization,
     requests: () => witness.agentRequests(),
   };
+}
+
+export function modelPicker(seed: Seed) {
+  return seedModelPicker(seed);
+}
+
+/** A saved Auto default on the native renderer, with Den's free switch explicitly off. */
+export async function modelPickerDisabledAuto(seed: Seed) {
+  const world = await seedModelPicker(seed, { disabledAutoDesktop: true });
+  // No first-class seed primitive initializes model preferences on a sessionless route.
+  await seed.evalIn(world.app, browserScript((auto, workspaceId) => {
+    localStorage.setItem("openwork.defaultModel", `${auto.providerID}/${auto.modelID}`);
+    location.hash = `/workspace/${workspaceId}/session`;
+    location.reload();
+    return true;
+  }, [world.auto, world.workspace.workspaceId]));
+  return world;
 }
 
 /**

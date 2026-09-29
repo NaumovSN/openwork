@@ -533,6 +533,12 @@ test("Auto remains checked while recovery focuses an alternative pin, and immuta
       allowance: { limitUsd: 1, usedUsd: 1, remainingUsd: 0, resetsAt: "2026-09-28T00:00:00Z" } }));
     expect(autoRow()?.textContent).toContain("Free · OpenWork picks the model");
     expect(queryClient.getQueryState(statusKey)?.fetchStatus).toBe("idle");
+    await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), code: "free_disabled" }));
+    expect(autoRow()).toBeNull();
+    expect(host.querySelector('[data-testid="auto-picker-recovery"]')).toBeNull();
+    expect(host.textContent).not.toContain("temporarily unavailable");
+    expect(host.textContent).not.toContain("Saved selection");
+    expect(host.querySelector('[data-model-key="openai:alternative"]')).not.toBeNull();
     expect(selected).toEqual([]);
     const row = document.querySelector<HTMLElement>('[data-model-key="openai:alternative"]');
     await act(async () => { row?.focus(); row?.dispatchEvent(new KeyboardEvent("keydown", { key: "P", shiftKey: true, bubbles: true })); });

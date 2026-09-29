@@ -1,6 +1,6 @@
 import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
-import { InferenceKeyTable, MemberTable, OrganizationTable, OrgSubscriptionTable } from "@openwork-ee/den-db"
+import { InferenceKeyTable, MemberTable, OrganizationTable, OrgSubscriptionTable, readDesktopPolicyForOrgMember } from "@openwork-ee/den-db"
 import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-policy"
 import { freeInferenceDefaultPinned, freeInferenceOrganizationAllowed, inferenceSubscribed, inferenceSubscriptionLive } from "@openwork/types/den/inference"
 import { db, freeAutoDatabase } from "../../db.js"
@@ -38,23 +38,28 @@ function freeOrganization(metadata: Record<string, unknown> | null, subscription
   return true
 }
 
+async function freePolicyAllowed(identity: Pick<MemberPrincipal, "memberId" | "organizationId">, database: Database) {
+  const policy = await readDesktopPolicyForOrgMember(database, { organizationId: identity.organizationId, orgMemberId: identity.memberId })
+  return policy.allowZenModel !== false
+}
+
 export async function findMemberFreePrincipal(key: Pick<InferenceKeyRow, "id" | "org_membership_id" | "organization_id">, database: Database = freeAutoDatabase()): Promise<MemberPrincipal | null> {
   const identity = { inferenceKeyId: key.id, memberId: key.org_membership_id, organizationId: key.organization_id }
   const row = await memberFreePrincipalRow(identity, database)
-  if (!row?.userId || !freeOrganization(row.metadata, row.subscription)) return null
+  if (!row?.userId || !freeOrganization(row.metadata, row.subscription) || !await freePolicyAllowed(identity, database)) return null
   return { kind: "member", id: row.userId, ...identity }
 }
 
 export async function memberFreePrincipalAllowed(principal: FreePrincipal, database: Database = db): Promise<boolean> {
   if (principal.kind !== "member") return true
   const row = await memberFreePrincipalRow(principal, database)
-  return Boolean(row && row.userId === principal.id && freeOrganization(row.metadata, row.subscription))
+  return Boolean(row && row.userId === principal.id && freeOrganization(row.metadata, row.subscription) && await freePolicyAllowed(principal, database))
 }
 
 /** Whether the organization pins Auto for its members. Guests always see Auto pinned. */
 export async function readFreePrincipalDefaultPinned(principal: FreePrincipal, database: Database = freeAutoDatabase()): Promise<boolean> {
   if (principal.kind !== "member") return true
   const row = await memberFreePrincipalRow(principal, database)
-  if (!row || row.userId !== principal.id || !freeOrganization(row.metadata, row.subscription)) throw new Error("free_principal_rejected")
+  if (!row || row.userId !== principal.id || !freeOrganization(row.metadata, row.subscription) || !await freePolicyAllowed(principal, database)) throw new Error("free_principal_rejected")
   return freeInferenceDefaultPinned(row.metadata)
 }

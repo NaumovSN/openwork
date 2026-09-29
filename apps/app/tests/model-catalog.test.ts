@@ -121,7 +121,7 @@ test("public model titles never expose opaque gateway ids", () => {
 
 test("built-in OpenCode Zen models are only a silent fallback", async () => {
   const { hideBuiltInZenFallback } = await import("../src/react-app/domains/connections/provider-auth/provider-policy");
-  const zenFree = { providerID: "opencode", modelID: "big-pickle", isFree: true };
+  const zenFree = { providerID: "opencode", modelID: "big-pickle", isFree: true, zenFallback: true };
   const zenPaid = { providerID: "opencode", modelID: "premium", isFree: false };
   const auto = { providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID, isFree: true };
   const byok = { providerID: "anthropic", modelID: "claude-opus-4-6", isFree: false };
@@ -129,4 +129,15 @@ test("built-in OpenCode Zen models are only a silent fallback", async () => {
   expect(hideBuiltInZenFallback([zenFree, auto])).toEqual([auto]);
   expect(hideBuiltInZenFallback([zenFree, byok])).toEqual([byok]);
   expect(hideBuiltInZenFallback([zenFree, zenPaid, byok])).toEqual([zenPaid, byok]);
+});
+
+
+test("new tasks cannot inherit disabled Auto, while other models and saved conversation identities remain unchanged", async () => {
+  const { modelForNewTask } = await import("../src/app/lib/inference-access");
+  for (const code of ["free_disabled", "inference_disabled", "free_not_offered"]) {
+    expect(modelForNewTask(auto, { code })).toBeNull();
+    expect(modelForNewTask(local, { code })).toEqual(local);
+    expect(auto).toMatchObject({ providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID });
+  }
+  expect(modelForNewTask(auto, { code: null })).toEqual(auto);
 });

@@ -422,7 +422,7 @@ test("an OpenAI error charges nothing; a transport failure charges the fixed est
   assert.deepEqual(transport.receipts, [null])
 })
 
-test("request validation preserves tools but denies routing, media and expanded schemas", async () => {
+test("request validation preserves ordinary OpenAI input and denies provider routing", async () => {
   const value = { model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hello" }], stream: true, max_tokens: 64000,
     tools: [{ type: "function", function: { name: "run", parameters: { type: "object" } } }] }
   const body = JSON.parse(prepareFreeRequest(value, config).body)
@@ -433,7 +433,16 @@ test("request validation preserves tools but denies routing, media and expanded 
   for (const extra of [{ provider: { allow_fallbacks: true } }, { usage: { include: true } }, { reasoning: { effort: "none" } }, { models: ["x"] }]) {
     assert.throws(() => prepareFreeRequest({ ...value, ...extra }, config), JSON.stringify(extra))
   }
-  assert.throws(() => prepareFreeRequest({ ...value, tools: [{ type: "function", function: { name: "run", parameters: { $ref: "remote" } } }] }, config))
+  const large = { ...value, messages: Array.from({ length: 300 }, () => ({ role: "user", content: "x".repeat(1024) })),
+    tools: Array.from({ length: 70 }, (_, index) => ({ type: "function", function: { name: `tool_${index}`, description: "x".repeat(10000),
+      parameters: { type: "object", properties: { value: { $ref: "#/$defs/value" } }, $defs: { value: { type: "string" } } } } })) }
+  assert.deepEqual(JSON.parse(prepareFreeRequest(large, config).body).tools, large.tools)
+  assert.deepEqual(JSON.parse(prepareFreeRequest(large, config).body).messages, large.messages)
+  const media = [{ role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,fixture" } }] }]
+  assert.deepEqual(JSON.parse(prepareFreeRequest({ ...value, messages: media }, config).body).messages, media)
+  assert.equal(config.maxBodyBytes, 32 * 1024 * 1024)
+  const largeBody = JSON.stringify(large)
+  assert.deepEqual((await readFreeRequest(new Request("https://free.test", { method: "POST", headers: { "content-type": "application/json" }, body: largeBody }), config.maxBodyBytes, new AbortController().signal)).value, large)
   assert.throws(() => prepareFreeRequest({ ...value, messages: [{ role: "user", content: [{ type: "image_url", image_url: "remote" }] }] }, config))
   await assert.rejects(readFreeRequest(new Request("https://free.test", { method: "POST", headers: { "content-type": "application/json" }, body: prompt }), 1, new AbortController().signal))
 })
@@ -611,4 +620,54 @@ test("member Auto fails closed when the Gateway request log cannot be written, w
   assert.equal(f.requests.length, 0, "nothing was sent upstream")
   assert.equal(f.calls.charged, 0, "no allowance was consumed")
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 200, "guests do not depend on organization accounting")
+})
+
+
+test("successful but unreadable OpenAI responses charge the missing-usage estimate", async () => {
+  for (const reply of [new Response("billed", { headers: { "content-type": "text/plain" } }), new Response(null, { status: 204 })]) {
+    const f = fixture({}, () => reply)
+    const result = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))
+    assert.equal(result.status, 502)
+    assert.deepEqual(f.receipts, [null])
+    assert.doesNotMatch(await result.text(), /No allowance was consumed/)
+  }
+})
+
+test("a database write failure retains the real receipt until one idempotent settlement succeeds", async () => {
+  const base = fixture()
+  let attempts = 0
+  const seen: unknown[] = []
+  const f = fixture({ store: { ...base.store, charge: async (input) => {
+    seen.push(input)
+    if (++attempts <= 2) throw new Error("database temporarily offline")
+    return base.store.charge(input)
+  } } })
+  const result = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))
+  assert.equal((await result.json()).model, INFERENCE_FREE_MODEL_ID)
+  assert.equal(attempts, 3)
+  assert.equal(base.calls.charged, 1)
+  assert.ok(seen.every((input) => JSON.stringify(input) === JSON.stringify(seen[0])))
+  assert.equal(base.receipts[0]?.amount, expectedAmount)
+})
+
+test("the meter cannot finish a successful response when its settlement rejects", async () => {
+  const result = meterFreeResponse(Response.json(openAiResponse()).body!, { config, streaming: false, maxBytes: config.maxResponseBytes,
+    signal: new AbortController().signal, settle: async () => { throw new Error("accounting unavailable") } })
+  await assert.rejects(new Response(result).json(), /accounting unavailable/)
+})
+
+
+test("ordinary OpenAI sampling options and multiple choices preserve the provider's aggregate usage", () => {
+  const input = { model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hello" }],
+    n: 2, temperature: 0.4, top_p: 0.9, stop: ["end"], max_completion_tokens: 256000 }
+  const prepared = prepareFreeRequest(input, config)
+  assert.equal(prepared.choices, 2)
+  assert.deepEqual(JSON.parse(prepared.body), { ...input, model: config.upstreamModel, stream: false, reasoning_effort: "none", store: false })
+  const parser = new FreeResponseReceipt(config, 2)
+  const response = openAiResponse()
+  parser.accept({ ...response, choices: [response.choices[0], { ...response.choices[0], index: 1 }] })
+  assert.equal(parser.complete()?.amount, expectedAmount)
+  const incomplete = new FreeResponseReceipt(config, 2)
+  incomplete.accept(response)
+  assert.throws(() => incomplete.complete(), /Incomplete/)
 })
