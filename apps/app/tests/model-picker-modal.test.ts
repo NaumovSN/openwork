@@ -530,7 +530,7 @@ test("Auto remains checked while recovery focuses an alternative pin, and immuta
     await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), state: "exhausted", providerID: "another-provider" }));
     expect(autoRow()?.textContent).toContain("Free · OpenWork picks the model");
     await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), state: "ready", minimumVersion: "1.0.0",
-      allowance: { limitUsd: 1, usedUsd: 1, reservedUsd: 0, remainingUsd: 0, resetsAt: "2026-09-28T00:00:00Z" } }));
+      allowance: { limitUsd: 1, usedUsd: 1, remainingUsd: 0, resetsAt: "2026-09-28T00:00:00Z" } }));
     expect(autoRow()?.textContent).toContain("Free · OpenWork picks the model");
     expect(queryClient.getQueryState(statusKey)?.fetchStatus).toBe("idle");
     expect(selected).toEqual([]);

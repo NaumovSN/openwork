@@ -17,7 +17,7 @@ const writes: string[] = []
 const summary: FreeInferenceProviderSummary = {
   state: "available", reason: null, defaultPinned: true, modelGroup: { id: "free", name: "Free" }, catalog: [],
   allowance: { usageScope: "organization", allowanceScope: "person", windowStartAt: "2026-09-14T00:00:00.000Z", resetsAt: "2026-09-21T00:00:00.000Z",
-    weeklyLimitUsd: 5, joinedMembers: 3, eligibleMembers: 3, exhaustedMembers: 1, usedUsd: 2, reservedUsd: 0, retainedUsd: 0, requestCount: 4 },
+    weeklyLimitUsd: 5, joinedMembers: 3, eligibleMembers: 3, exhaustedMembers: 1, usedUsd: 2, requestCount: 4 },
 }
 const memberRoute: MiddlewareHandler = async (c, next) => {
   if (!authenticated) return c.json({ error: "unauthorized" }, 401)

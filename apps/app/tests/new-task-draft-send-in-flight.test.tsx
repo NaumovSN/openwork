@@ -204,7 +204,7 @@ test("signed-out first use keeps its heading and chips above the composer, repor
     spyOn(policy, "useOrgRestrictions").mockReturnValue({}), spyOn(mobile, "useIsMobile").mockReturnValue(false)];
   const client = new QueryClient();
   const key = autoAccessStatusQueryKey(signedOut, undefined, workspaceId);
-  client.setQueryData(key, { ...unavailableDesktopFreeStatus(), state: "ready", minimumVersion: "1.0.0", allowance: { limitUsd: 1, usedUsd: 0, reservedUsd: 0, remainingUsd: 1, resetsAt: "2026-09-28T00:00:00Z" } });
+  client.setQueryData(key, { ...unavailableDesktopFreeStatus(), state: "ready", minimumVersion: "1.0.0", allowance: { limitUsd: 1, usedUsd: 0, remainingUsd: 1, resetsAt: "2026-09-28T00:00:00Z" } });
   let sends = 0; let connects = 0;
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);

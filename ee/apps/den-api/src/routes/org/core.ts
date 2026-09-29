@@ -21,7 +21,7 @@ import { jsonValidator, orgMemberRoute, orgRoleRoute, publicRoute, queryValidato
 import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { validateInvitationAcceptVerification } from "../../organization-join-verification.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
-import { organizationHasCapability } from "../../organization-capabilities.js"
+import { organizationHasCapability, organizationManagedDashboardsEnabled } from "../../organization-capabilities.js"
 import { isOpenWorkWebAvailableForOrganization } from "../../openwork-web-availability.js"
 import { getOpenWorkWebAccess } from "../../stripe-billing.js"
 import {
@@ -725,7 +725,9 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
           // calling the dashboard routes. Older Den versions omit the field,
           // allowing newer Desktop builds to fail closed during a staggered
           // rollout instead of calling an endpoint that does not exist yet.
-          orgManagedDashboards: true,
+          // Per-organization and default-off: platform admins enable it with
+          // metadata.capabilities.orgManagedDashboards = true.
+          orgManagedDashboards: organizationManagedDashboardsEnabled(payload.organization.metadata),
           // Expose the effective value, not the raw stored flag: Connect is
           // member-facing default-on unless an explicit org kill switch says no.
           mcpConnections: memberFacingMcpConnectionsEnabled(payload.organization.metadata, {

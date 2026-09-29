@@ -79,7 +79,7 @@ export function meterFreeResponse(body: ReadableStream<Uint8Array>, input: {
   const decoder = new TextDecoder("utf-8", { fatal: true })
   const encoder = new TextEncoder()
   const receipt = new FreeResponseReceipt(input.config)
-  let pending = "", data: string[] = [], bytes = 0, closed = false
+  let pending = "", data: string[] = [], closed = false
   let settlement: Promise<void> | null = null
   const settle = (value: FreeUsageReceipt | null) => settlement ??= input.settle(value).catch(() => undefined)
   const cleanup = () => { input.signal.removeEventListener("abort", abort); void reader.cancel().catch(() => undefined) }
@@ -115,8 +115,6 @@ export function meterFreeResponse(body: ReadableStream<Uint8Array>, input: {
             controller.close()
             return
           }
-          bytes += chunk.value.byteLength
-          if (bytes > input.maxBytes) throw new Error("Auto response too large")
           pending += decoder.decode(chunk.value, { stream: true })
           if (pending.length > input.maxBytes) throw new Error("Auto response frame too large")
           if (!input.streaming) continue

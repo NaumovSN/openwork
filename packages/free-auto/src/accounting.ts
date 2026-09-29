@@ -1,21 +1,15 @@
 import { INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference";
 
 /**
- * Free Auto accounting rules shared by the Gateway (which reserves and
- * settles) and Den (which reports balances). Amounts are in inference usage
- * units (INFERENCE_USAGE_CONVERSION_FACTOR per USD).
+ * Free Auto accounting rules shared by the Gateway (which charges) and Den
+ * (which reports balances). Amounts are in inference usage units
+ * (INFERENCE_USAGE_CONVERSION_FACTOR per USD).
  */
-export const FREE_CONTROL_ID = "free-auto";
-export const ACTIVE_RESERVATION_STATUSES = ["held", "dispatched"] as const;
 
 export type FreePrices = { inputPrice: number; outputPrice: number };
 /** Cost of a completion from its token counts, rounded up. Prices are USD per million tokens. */
 export function freeUsageAmount(prices: FreePrices, inputTokens: number, outputTokens: number): number {
   return Math.ceil((inputTokens * prices.inputPrice + outputTokens * prices.outputPrice) * INFERENCE_USAGE_CONVERSION_FACTOR / 1000000);
-}
-/** The hold taken before dispatch: the largest possible request, plus 10%. */
-export function freeRequestReservation(input: FreePrices & { maxInputTokens: number; maxCompletionTokens: number }): number {
-  return Math.ceil(freeUsageAmount(input, input.maxInputTokens, input.maxCompletionTokens) * 1.1);
 }
 
 /** Guest allowance tiers by minutes with the app open; ascending, first tier at 0. */

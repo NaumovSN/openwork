@@ -219,7 +219,7 @@ test("exhausted Auto without alternatives focuses search and offers Connect", as
 test("a real defaultPinned false status removes only the automatic Auto pin and keeps Auto accessible", async () => {
   const view = await fixture();
   view.client.setQueryData(autoAccessStatusQueryKey(signedOut), { ...unavailableDesktopFreeStatus(), state: "ready", defaultPinned: false, minimumVersion: "1.0.0",
-    allowance: { limitUsd: 1, usedUsd: 0, reservedUsd: 0, remainingUsd: 1, resetsAt: "2026-09-28T00:00:00Z" } });
+    allowance: { limitUsd: 1, usedUsd: 0, remainingUsd: 1, resetsAt: "2026-09-28T00:00:00Z" } });
   let selections = 0;
   try {
     await view.render(<ModelPickerList options={[auto, local]} current={local} query="" onQueryChange={() => {}} onSelect={() => { selections++; }} />);

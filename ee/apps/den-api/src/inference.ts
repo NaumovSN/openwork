@@ -1,11 +1,10 @@
 import { peopleMemberCondition } from "./setup-agent-members.js"
-import { and, asc, eq, gt, gte, lt, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, gte, lt, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   InferenceKeyTable,
   InferenceFreeUsageBucketTable,
-  InferenceFreeReservationTable,
-  InferenceFreeControlTable,
+  InferenceFreeUsageTable,
   InferenceOrgLimitPolicyTable,
   InferenceOrgUpstreamProviderKeyTable,
   InferenceOrgUsageBucketTable,
@@ -82,7 +81,7 @@ export async function freeAutoBlockedByDesktopPolicy(input: Pick<FreeMemberInput
 export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<InferenceAccess> {
   let defaultPinned: boolean | undefined
   const unavailable = (reason: "not_eligible" | "admin_disabled" | "accounting_unavailable") => ({
-    ...freeInferenceAccess({ config: env.inferenceFree, reason }), defaultPinned, usedUsd: null, reservedUsd: null, remainingUsd: null,
+    ...freeInferenceAccess({ config: env.inferenceFree, reason }), defaultPinned, usedUsd: null, remainingUsd: null,
   })
   try {
     const [row] = await db.select({ metadata: OrganizationTable.metadata, nowMs: sql<number>`unix_timestamp(current_timestamp(3)) * 1000` })
@@ -92,7 +91,7 @@ export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<
     if (!row) return unavailable("not_eligible")
     defaultPinned = freeInferenceDefaultPinned(row.metadata)
     assertManagedModelsAllowed(row.metadata)
-    if (inferenceSubscribed(row.metadata)) return { kind: "paid", modelID: null, weeklyLimitUsd: null, usedUsd: null, reservedUsd: null,
+    if (inferenceSubscribed(row.metadata)) return { kind: "paid", modelID: null, weeklyLimitUsd: null, usedUsd: null,
       remainingUsd: null, resetsAt: null, reason: null, canUpgrade: false, defaultPinned }
     if (!freeInferenceOrganizationAllowed(row.metadata)) return unavailable("admin_disabled")
     const now = new Date(Number(row.nowMs))
@@ -100,15 +99,9 @@ export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<
     if (await paidEntitlementMismatch(input.organizationId)) return unavailable("not_eligible")
     if (await freeAutoBlockedByDesktopPolicy(input)) return unavailable("admin_disabled")
     const identity = freeHash("member", input.userId)
-    const [bucket] = await db.select().from(InferenceFreeUsageBucketTable).where(and(
-      eq(InferenceFreeUsageBucketTable.scope, "member"), eq(InferenceFreeUsageBucketTable.identity_hash, identity),
-      eq(InferenceFreeUsageBucketTable.window_type, "weekly"), eq(InferenceFreeUsageBucketTable.window_start_at, freeInferenceWindow(now).start))).limit(1)
-    const [pending] = await db.select({ id: InferenceFreeReservationTable.request_id }).from(InferenceFreeReservationTable).where(and(
-      eq(InferenceFreeReservationTable.principal_hash, identity), inArray(InferenceFreeReservationTable.status, ["held", "dispatched"]),
-      gt(InferenceFreeReservationTable.expires_at, now))).limit(1)
-    const [control] = await db.select().from(InferenceFreeControlTable).where(eq(InferenceFreeControlTable.id, "free-auto")).limit(1)
-    return { ...freeInferenceAccess({ config: env.inferenceFree, now, bucket,
-      reason: control?.blocked ? "accounting_unavailable" : pending ? "free_request_in_progress" : null }), defaultPinned }
+    const [bucket] = await db.select({ used_amount: InferenceFreeUsageBucketTable.used_amount }).from(InferenceFreeUsageBucketTable).where(and(
+      eq(InferenceFreeUsageBucketTable.identity_hash, identity), eq(InferenceFreeUsageBucketTable.window_start_at, freeInferenceWindow(now).start))).limit(1)
+    return { ...freeInferenceAccess({ config: env.inferenceFree, now, bucket }), defaultPinned }
   } catch (error) {
     return unavailable(error instanceof ManagedModelsPolicyError && error.code === "managed_models_disabled_for_dpa" ? "admin_disabled" : "accounting_unavailable")
   }
@@ -139,36 +132,27 @@ export async function getFreeInferenceProviderSummary(organizationId: OrgId): Pr
     modelGroup: { id: "free", name: "Free" }, catalog: managedModelCatalog(),
     allowance: { usageScope: "organization", allowanceScope: "person", windowStartAt: window.start.toISOString(), resetsAt: window.end.toISOString(),
       weeklyLimitUsd: env.inferenceFree.weeklyBudgetUsd, joinedMembers: identities.length, eligibleMembers: reason ? 0 : identities.length,
-      exhaustedMembers: null, usedUsd: null, reservedUsd: null, retainedUsd: null, requestCount: null },
+      exhaustedMembers: null, usedUsd: null, requestCount: null },
   }
   if (reason) return summary
-  const buckets = identities.length ? await db.select().from(InferenceFreeUsageBucketTable).where(and(
-    eq(InferenceFreeUsageBucketTable.scope, "member"), inArray(InferenceFreeUsageBucketTable.identity_hash, identities),
-    eq(InferenceFreeUsageBucketTable.window_type, "weekly"), eq(InferenceFreeUsageBucketTable.window_start_at, window.start))) : []
-  const [control] = await db.select({ blocked: InferenceFreeControlTable.blocked }).from(InferenceFreeControlTable)
-    .where(eq(InferenceFreeControlTable.id, "free-auto")).limit(1)
+  const buckets = identities.length ? await db.select({ identity_hash: InferenceFreeUsageBucketTable.identity_hash, used_amount: InferenceFreeUsageBucketTable.used_amount })
+    .from(InferenceFreeUsageBucketTable).where(and(inArray(InferenceFreeUsageBucketTable.identity_hash, identities),
+      eq(InferenceFreeUsageBucketTable.window_start_at, window.start))) : []
   const [usage] = await db.select({
-    usedAmount: sql<number | string>`coalesce(sum(case when ${InferenceFreeReservationTable.status} in ('settled', 'retained') then ${InferenceFreeReservationTable.actual_amount} else 0 end), 0)`,
-    retainedAmount: sql<number | string>`coalesce(sum(case when ${InferenceFreeReservationTable.status} = 'retained' then ${InferenceFreeReservationTable.actual_amount} else 0 end), 0)`,
-    reservedAmount: sql<number | string>`coalesce(sum(case when ${InferenceFreeReservationTable.status} in ('held', 'dispatched') then ${InferenceFreeReservationTable.reserved_amount} else 0 end), 0)`,
+    usedAmount: sql<number | string>`coalesce(sum(${InferenceFreeUsageTable.amount}), 0)`,
     requestCount: sql<number | string>`count(*)`,
-    invalidRows: sql<number | string>`coalesce(sum(case when ${InferenceFreeReservationTable.reserved_amount} < 0 or (${InferenceFreeReservationTable.status} in ('settled', 'retained') and (${InferenceFreeReservationTable.actual_amount} is null or ${InferenceFreeReservationTable.actual_amount} < 0)) then 1 else 0 end), 0)`,
-  }).from(InferenceFreeReservationTable)
-    .where(and(eq(InferenceFreeReservationTable.organization_id, organizationId),
-      eq(InferenceFreeReservationTable.model_id, env.inferenceFree.modelID),
-      gte(InferenceFreeReservationTable.created_at, window.start), lt(InferenceFreeReservationTable.created_at, window.end),
-      inArray(InferenceFreeReservationTable.status, ["held", "dispatched", "settled", "retained"])))
+  }).from(InferenceFreeUsageTable)
+    .where(and(eq(InferenceFreeUsageTable.organization_id, organizationId),
+      gte(InferenceFreeUsageTable.created_at, window.start), lt(InferenceFreeUsageTable.created_at, window.end)))
   const bucketsByIdentity = new Map(buckets.map((bucket) => [bucket.identity_hash, bucket]))
   const accesses = identities.map((identity) => freeInferenceAccess({ config: env.inferenceFree, now, bucket: bucketsByIdentity.get(identity) }))
-  if (!usage || control?.blocked || accesses.some((access) => access.reason === "accounting_unavailable")
-    || Object.values(usage).some((amount) => !Number.isSafeInteger(Number(amount)) || Number(amount) < 0) || Number(usage.invalidRows) > 0) {
+  if (!usage || accesses.some((access) => access.reason === "accounting_unavailable")
+    || Object.values(usage).some((amount) => !Number.isSafeInteger(Number(amount)) || Number(amount) < 0)) {
     return { ...summary, state: "unavailable", reason: "accounting_unavailable" }
   }
   return { ...summary, allowance: { ...summary.allowance,
     exhaustedMembers: accesses.filter((access) => access.kind === "exhausted").length,
     usedUsd: Number(usage.usedAmount) / INFERENCE_USAGE_CONVERSION_FACTOR,
-    reservedUsd: Number(usage.reservedAmount) / INFERENCE_USAGE_CONVERSION_FACTOR,
-    retainedUsd: Number(usage.retainedAmount) / INFERENCE_USAGE_CONVERSION_FACTOR,
     requestCount: Number(usage.requestCount),
   } }
 }

@@ -478,52 +478,39 @@ export const gatewayUsageRollupRelations = relations(GatewayUsageRollupTable, ({
   }),
 }))
 
-const freeAccountingStatuses = ["held", "dispatched", "settled", "retained", "cancelled"] as const
+// Free Auto follows the paid Models pattern: check each window's used total against its limit before a
+// request, then charge the real cost once afterwards. Nothing is held in advance.
 const freeAccountingWindows = ["weekly", "daily", "monthly"] as const
 
 // Signed-out desktop Auto. Guests have no account, organization or membership,
 // so nothing here references them: identities are keyed HMACs of the machine and IP.
-export const AnonymousInferenceControlTable = mysqlTable("anonymous_inference_control", {
-  id: varchar("id", { length: 64 }).notNull().primaryKey(),
-  blocked: boolean("blocked").notNull().default(false),
-})
-
 export const AnonymousInferenceUsageBucketTable = mysqlTable("anonymous_inference_usage_buckets", {
   id: varchar("id", { length: 64 }).notNull().primaryKey(),
-  scope: mysqlEnum("scope", ["installation", "ip", "global"]).notNull(),
+  scope: mysqlEnum("scope", ["installation", "global"]).notNull(),
   identity_hash: varchar("identity_hash", { length: 64 }).notNull(),
   window_type: mysqlEnum("window_type", freeAccountingWindows).notNull(),
   window_start_at: timestamp("window_start_at", { fsp: 3 }).notNull(),
   window_end_at: timestamp("window_end_at", { fsp: 3 }).notNull(),
   limit_amount: bigint("limit_amount", { mode: "number" }).notNull(),
   used_amount: bigint("used_amount", { mode: "number" }).notNull().default(0),
-  reserved_amount: bigint("reserved_amount", { mode: "number" }).notNull().default(0),
-  blocked: boolean("blocked").notNull().default(false),
 }, (table) => [uniqueIndex("anonymous_inference_usage_identity_window").on(table.scope, table.identity_hash, table.window_type, table.window_start_at)])
 
-export const AnonymousInferenceReservationTable = mysqlTable("anonymous_inference_reservations", {
+/** One row per charged request, like the paid usage ledger. The completion id makes the charge happen once. */
+export const AnonymousInferenceUsageTable = mysqlTable("anonymous_inference_usage", {
   request_id: varchar("request_id", { length: 64 }).notNull().primaryKey(),
+  completion_id: varchar("completion_id", { length: 255 }),
   principal_hash: varchar("principal_hash", { length: 64 }).notNull(),
   model_id: varchar("model_id", { length: 255 }).notNull(),
-  status: mysqlEnum("status", freeAccountingStatuses).notNull().default("held"),
-  reserved_amount: bigint("reserved_amount", { mode: "number" }).notNull(),
-  actual_amount: bigint("actual_amount", { mode: "number" }),
-  max_input_tokens: int("max_input_tokens").notNull(),
-  max_output_tokens: int("max_output_tokens").notNull(),
-  external_event_id: varchar("external_event_id", { length: 255 }),
-  expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+  amount: bigint("amount", { mode: "number" }).notNull(),
+  input_tokens: int("input_tokens"),
+  output_tokens: int("output_tokens"),
+  /** No usage report arrived, so the fixed estimate was charged. */
+  estimated: boolean("estimated").notNull().default(false),
   created_at: timestamps.created_at,
-}, (table) => [index("anonymous_inference_reservation_principal").on(table.principal_hash, table.status),
-  index("anonymous_inference_reservation_expiry").on(table.status, table.expires_at),
-  uniqueIndex("anonymous_inference_reservation_event").on(table.external_event_id)])
+}, (table) => [uniqueIndex("anonymous_inference_usage_completion").on(table.completion_id),
+  index("anonymous_inference_usage_principal_created").on(table.principal_hash, table.created_at)])
 
-export const AnonymousInferenceReservationChargeTable = mysqlTable("anonymous_inference_reservation_charges", {
-  id: varchar("id", { length: 64 }).notNull().primaryKey(),
-  request_id: varchar("request_id", { length: 64 }).notNull(),
-  bucket_id: varchar("bucket_id", { length: 64 }).notNull(),
-  reserved_amount: bigint("reserved_amount", { mode: "number" }).notNull(),
-}, (table) => [uniqueIndex("anonymous_inference_charge_request_bucket").on(table.request_id, table.bucket_id)])
-
+/** Daily count of new machines per IP. */
 export const AnonymousInferenceRateBucketTable = mysqlTable("anonymous_inference_rate_buckets", {
   id: varchar("id", { length: 64 }).notNull().primaryKey(),
   used_amount: int("used_amount").notNull().default(0),
@@ -538,6 +525,7 @@ export const AnonymousInferenceIdentityTable = mysqlTable("anonymous_inference_i
   active_ms: bigint("active_ms", { mode: "number" }).notNull().default(0),
 })
 
+/** Desktop proof signatures already seen, so a signed proof cannot be replayed. */
 export const DesktopFreeProofNonceTable = mysqlTable("desktop_free_proof_nonces", {
   id: varchar("id", { length: 64 }).notNull().primaryKey(),
   expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
@@ -545,56 +533,31 @@ export const DesktopFreeProofNonceTable = mysqlTable("desktop_free_proof_nonces"
 
 // Signed-in, unsubscribed members. They authenticate with their OpenWork Models
 // key (InferenceKeyTable); these tables only hold their free weekly allowance.
-export const InferenceFreeControlTable = mysqlTable("inference_free_control", {
-  id: varchar("id", { length: 64 }).notNull().primaryKey(),
-  blocked: boolean("blocked").notNull().default(false),
-})
-
 export const InferenceFreeUsageBucketTable = mysqlTable("inference_free_usage_buckets", {
   id: varchar("id", { length: 64 }).notNull().primaryKey(),
-  scope: mysqlEnum("scope", ["member", "global"]).notNull(),
   identity_hash: varchar("identity_hash", { length: 64 }).notNull(),
-  window_type: mysqlEnum("window_type", freeAccountingWindows).notNull(),
   window_start_at: timestamp("window_start_at", { fsp: 3 }).notNull(),
   window_end_at: timestamp("window_end_at", { fsp: 3 }).notNull(),
   limit_amount: bigint("limit_amount", { mode: "number" }).notNull(),
   used_amount: bigint("used_amount", { mode: "number" }).notNull().default(0),
-  reserved_amount: bigint("reserved_amount", { mode: "number" }).notNull().default(0),
-  blocked: boolean("blocked").notNull().default(false),
-}, (table) => [uniqueIndex("inference_free_usage_identity_window").on(table.scope, table.identity_hash, table.window_type, table.window_start_at)])
+}, (table) => [uniqueIndex("inference_free_usage_identity_window").on(table.identity_hash, table.window_start_at)])
 
-export const InferenceFreeReservationTable = mysqlTable("inference_free_reservations", {
+export const InferenceFreeUsageTable = mysqlTable("inference_free_usage", {
   request_id: varchar("request_id", { length: 64 }).notNull().primaryKey(),
+  completion_id: varchar("completion_id", { length: 255 }),
   principal_hash: varchar("principal_hash", { length: 64 }).notNull(),
   organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
   org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
   inference_key_id: denTypeIdColumn("inferenceKey", "inference_key_id").notNull(),
   model_id: varchar("model_id", { length: 255 }).notNull(),
-  status: mysqlEnum("status", freeAccountingStatuses).notNull().default("held"),
-  reserved_amount: bigint("reserved_amount", { mode: "number" }).notNull(),
-  actual_amount: bigint("actual_amount", { mode: "number" }),
-  max_input_tokens: int("max_input_tokens").notNull(),
-  max_output_tokens: int("max_output_tokens").notNull(),
-  external_event_id: varchar("external_event_id", { length: 255 }),
-  expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+  amount: bigint("amount", { mode: "number" }).notNull(),
+  input_tokens: int("input_tokens"),
+  output_tokens: int("output_tokens"),
+  estimated: boolean("estimated").notNull().default(false),
   created_at: timestamps.created_at,
-}, (table) => [index("inference_free_reservation_principal").on(table.principal_hash, table.status),
-  index("inference_free_reservation_expiry").on(table.status, table.expires_at),
-  index("inference_free_reservation_org_created").on(table.organization_id, table.created_at),
-  uniqueIndex("inference_free_reservation_event").on(table.external_event_id)])
-
-export const InferenceFreeReservationChargeTable = mysqlTable("inference_free_reservation_charges", {
-  id: varchar("id", { length: 64 }).notNull().primaryKey(),
-  request_id: varchar("request_id", { length: 64 }).notNull(),
-  bucket_id: varchar("bucket_id", { length: 64 }).notNull(),
-  reserved_amount: bigint("reserved_amount", { mode: "number" }).notNull(),
-}, (table) => [uniqueIndex("inference_free_charge_request_bucket").on(table.request_id, table.bucket_id)])
-
-export const InferenceFreeRateBucketTable = mysqlTable("inference_free_rate_buckets", {
-  id: varchar("id", { length: 64 }).notNull().primaryKey(),
-  used_amount: int("used_amount").notNull().default(0),
-  expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
-}, (table) => [index("inference_free_rate_expiry").on(table.expires_at)])
+}, (table) => [uniqueIndex("inference_free_usage_completion").on(table.completion_id),
+  index("inference_free_usage_principal_created").on(table.principal_hash, table.created_at),
+  index("inference_free_usage_org_created").on(table.organization_id, table.created_at)])
 
 export const inferenceKey = InferenceKeyTable
 export const inferenceOrgLimitPolicy = InferenceOrgLimitPolicyTable

@@ -9,7 +9,7 @@ export const desktopFreeAccessStatusSchema = z.object({
   minimumVersion: z.string().nullable(),
   providerID: z.string(),
   modelID: z.string(),
-  allowance: z.object({ resetsAt: z.string(), limitUsd: z.number().finite().nonnegative(), usedUsd: z.number().finite().nonnegative(), reservedUsd: z.number().finite().nonnegative(), remainingUsd: z.number().finite().nonnegative() }).nullable(),
+  allowance: z.object({ resetsAt: z.string(), limitUsd: z.number().finite().nonnegative(), usedUsd: z.number().finite().nonnegative(), remainingUsd: z.number().finite().nonnegative() }).nullable(),
   defaultPinned: z.boolean().optional(),
   // The desktop server has already verified the version floor for guests; signed-in members have none.
 }).refine((status) => status.state !== "ready" || Boolean(status.allowance), "Ready Auto access requires a verified allowance");
@@ -61,7 +61,7 @@ export function autoAccessWallFromError(value: unknown, model?: ModelRef | null,
     const minimumVersion = Reflect.get(value, "minimumVersion");
     return typeof minimumVersion === "string" && minimumVersion.trim() ? { state: "update", minimumVersion } : { state: "update" };
   }
-  if (["anonymous_limit_exceeded", "anonymous_reservation_does_not_fit", "free_allowance_exhausted"].includes(code)) return { state: "limit" };
+  if (["anonymous_limit_exceeded", "free_allowance_exhausted"].includes(code)) return { state: "limit" };
   if (["desktop_version_unavailable", "anonymous_capacity_exceeded", "anonymous_unavailable"].includes(code)) return { state: "unavailable" };
   if (code === "model_sync_pending") return { state: "sync" };
   for (const key of ["details", "error", "data", "responseBody", "message", "cause"]) {

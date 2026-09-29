@@ -18,7 +18,7 @@ export const desktopFreeGateError = freeError
 type GateResult = { error: Response; proof?: undefined }
   | { error?: undefined; proof: VerifiedDesktopFreeProof; minimumVersion: string | null; versionError: ReturnType<typeof desktopFreeVersionError> }
 
-export async function checkDesktopFreeRequest(request: Request, bodyHash: string, ipHash: string,
+export async function checkDesktopFreeRequest(request: Request, bodyHash: string,
   dependencies: DesktopFreeGateDependencies, binding?: DesktopFreeBinding): Promise<GateResult> {
   const url = new URL(request.url)
   const { config } = dependencies
@@ -27,7 +27,7 @@ export async function checkDesktopFreeRequest(request: Request, bodyHash: string
     releaseSecrets: (appVersion) => releaseSecretCandidates(config, appVersion), now: dependencies.now?.() })
   if (!proof) return { error: desktopFreeGateError(401, "invalid_desktop_proof") }
   try {
-    const nonce = await dependencies.consumeNonce(proof, ipHash)
+    const nonce = await dependencies.consumeNonce(proof)
     if (nonce !== "accepted") return { error: desktopFreeGateError(nonce === "replay" ? 401 : 503,
       nonce === "replay" ? "desktop_proof_replayed" : "desktop_proof_unavailable") }
     const releases = await dependencies.releases().catch(() => null)

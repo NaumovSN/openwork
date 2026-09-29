@@ -45,10 +45,9 @@ export function prepareFreeRequest(value: unknown, config: AutoConfig) {
     ...(request.response_format != null ? { response_format: request.response_format } : {}),
     ...(request.verbosity != null ? { verbosity: request.verbosity } : {}),
     stream: request.stream === true, ...(request.stream ? { stream_options: { include_usage: true } } : {}),
-    max_completion_tokens: Math.min(request.max_tokens ?? config.maxCompletionTokens, request.max_completion_tokens ?? config.maxCompletionTokens, config.maxCompletionTokens),
+    ...(request.max_completion_tokens ?? request.max_tokens ? { max_completion_tokens: request.max_completion_tokens ?? request.max_tokens } : {}),
     reasoning_effort: "none", store: false,
   })
-  if (Buffer.byteLength(body, "utf8") > config.maxInputTokens - 2048) throw new FreeRequestError(413, "free_inference_input_too_large", "Auto's text and tool context is too large. Nothing was trimmed or sent.")
   return { body, stream: request.stream === true }
 }
 

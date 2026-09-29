@@ -52,7 +52,7 @@ const managedModelsPolicyErrorSchema = z.object({
 
 const freeAccessSchema = z.object({
   access: z.object({ kind: z.enum(["free", "paid", "exhausted", "unavailable"]), modelID: z.string().nullable(),
-    weeklyLimitUsd: z.number().nullable(), usedUsd: z.number().nullable(), reservedUsd: z.number().nullable(),
+    weeklyLimitUsd: z.number().nullable(), usedUsd: z.number().nullable(),
     remainingUsd: z.number().nullable(), resetsAt: z.string().datetime().nullable(), reason: z.enum(INFERENCE_ACCESS_REASONS).nullable(),
     defaultPinned: z.boolean().optional().describe("Organization-managed Auto pin for this membership. False removes only the organization pin; model access and personal pins are unchanged. Pins never grant access."), canUpgrade: z.literal(false), catalog: z.array(z.object({ modelID: z.string(), displayName: z.string(), providerName: z.string(),
       summary: z.string(), recommended: z.boolean(), rank: z.number(), capabilities: z.array(z.string()) })).optional() }),

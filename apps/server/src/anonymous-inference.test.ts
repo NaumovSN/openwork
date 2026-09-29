@@ -19,7 +19,7 @@ import { openworkRuntimeConfigFilePath } from "./openwork-runtime-config.js";
 const ready: DesktopFreeAccessStatus = {
   state: "ready", code: null, currentVersion: "0.20.0", minimumVersion: "0.20.0",
   providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID,
-  allowance: { limitUsd: 1, usedUsd: 0.2, reservedUsd: 0, remainingUsd: 0.8, resetsAt: "2030-01-07T00:00:00Z" },
+  allowance: { limitUsd: 1, usedUsd: 0.2, remainingUsd: 0.8, resetsAt: "2030-01-07T00:00:00Z" },
 };
 // Members reach Auto on /api/v1 with their Models key: no desktop version floor is reported.
 const memberReady: DesktopFreeAccessStatus = { ...ready, currentVersion: "", minimumVersion: null, allowance: { ...ready.allowance!, limitUsd: 5, remainingUsd: 4.8 }, defaultPinned: false };

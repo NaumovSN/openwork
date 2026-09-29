@@ -8,7 +8,7 @@ import {
 } from "@openwork/free-auto"
 import { managedModelCatalog } from "@openwork/types/den/inference"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
-import { anonymousIpHash, createAnonymousIdentities, issueAnonymousToken, resolveAnonymousClientAddress, verifyAnonymousToken } from "./identity.js"
+import { createAnonymousIdentities, issueAnonymousToken, resolveAnonymousClientAddress, verifyAnonymousToken } from "./identity.js"
 import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/allowance.js"
 import { type AutoConfig } from "../shared/config.js"
 import type { GuestPrincipal } from "../shared/principal.js"
@@ -68,7 +68,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     const parsed = await readFreeRequest(c.req.raw, 4096, AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(10000)]))
     const session = sessionSchema.safeParse(parsed.value)
     if (!session.success) return desktopFreeGateError(400, "invalid_request")
-    const gate = await checkDesktopFreeRequest(c.req.raw, parsed.bodyHash, anonymousIpHash(address, config), gateDependencies)
+    const gate = await checkDesktopFreeRequest(c.req.raw, parsed.bodyHash, gateDependencies)
     if (gate.error) return gate.error
     if (gate.versionError) return versionResponse(gate.versionError)
     // Minting costs a little CPU, bound to this proof's single-use nonce so the work cannot be replayed.
@@ -77,7 +77,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     }
     const identities = createAnonymousIdentities(gate.proof, address, config)
     const minted = await store.consumeSession(identities.ipHash, identities.installationHash)
-    if (minted !== "accepted") return desktopFreeGateError(429, minted === "new_identity_capped" ? "anonymous_new_identity_capped" : "anonymous_capacity_exceeded")
+    if (minted !== "accepted") return desktopFreeGateError(429, "anonymous_new_identity_capped")
     return c.json({ ...issueAnonymousToken(identities, gate.proof, config), model: DESKTOP_FREE_MODEL_ID }, 200, { "cache-control": "no-store" })
   }))
 
@@ -90,10 +90,9 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     const guest = token && address ? verifyAnonymousToken(token, address, config) : null
     if (!guest || !address) return { error: desktopFreeGateError(401, "invalid_anonymous_token") }
     const principal: GuestPrincipal = { kind: "installation", id: guest.installationHash }
-    const ipHash = anonymousIpHash(address, config)
-    const gate = await checkDesktopFreeRequest(c.req.raw, bodyHash, ipHash, gateDependencies, guest)
+    const gate = await checkDesktopFreeRequest(c.req.raw, bodyHash, gateDependencies, guest)
     if (gate.error) return { error: gate.error }
-    return { ...gate, principal, ipHash }
+    return { ...gate, principal }
   }
 
   app.get(DESKTOP_FREE_STATUS_PATH, route(async (c) => {
@@ -106,7 +105,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     if (auth.versionError) {
       status.state = auth.versionError.code === "desktop_update_required" ? "update_required" : "unavailable"
       status.code = auth.versionError.code
-    } else Object.assign(status, await store.read(auth.principal, auth.ipHash))
+    } else Object.assign(status, await store.read(auth.principal))
     return c.json(status, 200, { "cache-control": "no-store" })
   }))
   app.get(DESKTOP_FREE_MODELS_PATH, route(async (c) => {
@@ -119,16 +118,15 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
   app.post(DESKTOP_FREE_CHAT_PATH, route(async (c) => {
     if (!config.anonymousEnabled) return switchedOff()
     if (new URL(c.req.url).search) return desktopFreeGateError(400, "invalid_request")
-    const deadlineAt = Date.now() + config.requestTimeoutMs
     const controller = new AbortController()
-    const signal = AbortSignal.any([controller.signal, c.req.raw.signal, AbortSignal.timeout(config.requestTimeoutMs)])
-    const parsed = await readFreeRequest(c.req.raw, config.maxBodyBytes, signal)
+    const signal = AbortSignal.any([controller.signal, c.req.raw.signal])
+    const parsed = await readFreeRequest(c.req.raw, config.maxBodyBytes, AbortSignal.any([signal, AbortSignal.timeout(config.requestTimeoutMs)]))
     const auth = await authenticate(c, parsed.bodyHash)
     if (auth.error) return auth.error
     if (auth.versionError) return versionResponse(auth.versionError)
     const prepared = prepareFreeRequest(parsed.value, config)
-    return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal: auth.principal, ipHash: auth.ipHash,
-      prepared, signal, controller, deadlineAt })
+    return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal: auth.principal,
+      prepared, signal, controller })
   }))
   app.all("/api/anonymous", () => desktopFreeGateError(404, "not_found"))
   app.all("/api/anonymous/*", () => desktopFreeGateError(404, "not_found"))

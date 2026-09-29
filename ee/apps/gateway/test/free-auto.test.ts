@@ -7,7 +7,7 @@ import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferen
 import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
   MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeSessionPowMessage, leadingZeroBits, type DesktopFreeProofClaims } from "@openwork/free-auto"
 import { readAutoConfig, FREE_OPENAI_CHAT_URL } from "../src/free/shared/config.js"
-import { freeRequestReservation, freeUsageAmount, rampedDeviceAmount } from "@openwork/free-auto/accounting"
+import { freeUsageAmount, rampedDeviceAmount } from "@openwork/free-auto/accounting"
 import { verifyDesktopFreeProof } from "../src/free/guest/proof.js"
 import { createDesktopFreeReleaseSource } from "../src/free/guest/releases-source.js"
 import { desktopFreeVersionError, supportedDesktopReleases, type DesktopRelease } from "@openwork/free-auto"
@@ -24,7 +24,7 @@ process.env.DATABASE_URL = "mysql://root:password@127.0.0.1:3306/free_auto_test_
 const { registerAnonymousInferenceRoutes } = await import("../src/free/guest/routes.js")
 const { createFreeMemberHandler } = await import("../src/free/member/handler.js")
 const { registerProxyRoutes } = await import("../src/proxy.js")
-const { freeSettlementDecision } = await import("../src/free/shared/allowance.js")
+const { validFreeReceipt } = await import("../src/free/shared/allowance.js")
 
 const releaseKey = "test-only-release-master-key-2222222222222222222"
 const previousReleaseKey = "test-only-previous-master-key-33333333333333333"
@@ -86,19 +86,16 @@ function openAiResponse(id = "chatcmpl-1") {
 }
 const expectedAmount = freeUsageAmount(config, 10, 2)
 type Upstream = { url: string; headers: Headers; body: Record<string, unknown> }
-function fakeStore(principals: FreePrincipal[], receipts: Array<FreeUsageReceipt | null>, calls: { session: number; cancelled: number; released: number }): FreeAllowanceStore {
+function fakeStore(principals: FreePrincipal[], receipts: Array<FreeUsageReceipt | null>, calls: { session: number; charged: number }): FreeAllowanceStore {
   const nonces = new Set<string>()
   return {
     family: "anonymous",
     async consumeNonce(proof) { const key = `${proof.keyThumbprint}:${proof.nonce}`; if (nonces.has(key)) return "replay"; nonces.add(key); return "accepted" },
     async consumeSession() { calls.session++; return "accepted" as const },
     async read(principal) { return { state: "ready", code: null, allowance: { limitUsd: principal.kind === "member" ? 5 : 1,
-      usedUsd: 0, reservedUsd: 0, remainingUsd: principal.kind === "member" ? 5 : 1, resetsAt: freeInferenceWindow().end.toISOString() } } },
-    async reserve(principal, _ip, requestId, deadlineAt) { principals.push(principal); return { ok: true, requestId, deadlineAt } },
-    async dispatch() { return true },
-    async cancelUndispatched() { calls.cancelled++; return true },
-    async release() { calls.released++; return true },
-    async settle(_id, receipt) { receipts.push(receipt); return true },
+      usedUsd: 0, remainingUsd: principal.kind === "member" ? 5 : 1, resetsAt: freeInferenceWindow().end.toISOString() } } },
+    async admit(principal) { principals.push(principal); return { ok: true, windows: [] } },
+    async charge({ receipt }) { calls.charged++; receipts.push(receipt); return true },
   }
 }
 function fixture(overrides: Partial<import("../src/free/guest/routes.js").FreeRouteDependencies> = {}, upstream: (request: Upstream) => Response = () => Response.json(openAiResponse()),
@@ -106,7 +103,7 @@ function fixture(overrides: Partial<import("../src/free/guest/routes.js").FreeRo
   const principals: FreePrincipal[] = []
   const receipts: Array<FreeUsageReceipt | null> = []
   const requests: Upstream[] = []
-  const calls = { session: 0, cancelled: 0, released: 0 }
+  const calls = { session: 0, charged: 0 }
   const store = fakeStore(principals, receipts, calls)
   const fetch: typeof globalThis.fetch = async (url, init) => {
     const request = { url: String(url), headers: new Headers(init?.headers), body: JSON.parse(String(init?.body)) }
@@ -344,7 +341,7 @@ function guestFor(version: string) {
   return { source, token: issueAnonymousToken(createAnonymousIdentities(binding, "127.0.0.1", config), binding, config).token }
 }
 
-test("only supported releases pass: version outside the window, unsupported model and unknown list deny before reservation", async () => {
+test("only supported releases pass: version outside the window, unsupported model and unknown list deny before admission", async () => {
   const f = fixture()
   // A token issued to one build cannot be used with another build's proof.
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { version: "1.2.2" }))).status, 401)
@@ -402,27 +399,26 @@ test("an untagged (v2) proof is always refused with the update wall, since no re
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))).status, 200, "a tagged release proof still works")
 })
 
-test("policy flip before dispatch cancels admission without an upstream call", async () => {
+test("a refused admission sends nothing upstream", async () => {
   const base = fixture()
-  const f = fixture({ store: { ...base.store, dispatch: async () => false } })
-  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 403)
-  assert.equal(f.requests.length, 0)
+  for (const [code, status] of [["anonymous_limit_exceeded", 429], ["anonymous_capacity_exceeded", 429], ["free_principal_rejected", 403]] as const) {
+    const f = fixture({ store: { ...base.store, admit: async () => ({ ok: false, code }) } })
+    const response = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))
+    assert.equal(response.status, status)
+    assert.equal((await response.json()).error.code, code)
+    assert.equal(f.requests.length, 0)
+  }
 })
 
-test("a revoked or rate-limited OpenAI key releases the hold; an uncertain failure retains it", async () => {
-  for (const status of [401, 403, 429]) {
+test("an OpenAI error charges nothing; a transport failure charges the fixed estimate", async () => {
+  for (const status of [401, 403, 429, 500]) {
     const f = fixture({}, () => Response.json({ error: { message: "no" } }, { status }))
     const response = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))
     assert.equal(response.status, 503)
-    assert.equal(f.calls.released, 1)
-    assert.deepEqual(f.receipts, [])
+    assert.equal(f.calls.charged, 0)
   }
-  const server = fixture({}, () => Response.json({ error: { message: "no" } }, { status: 500 }))
-  assert.equal((await server.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 502)
-  assert.deepEqual(server.receipts, [null])
   const transport = fixture({ fetch: async () => { throw new Error("uncertain transport") } })
   assert.equal((await transport.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 502)
-  assert.equal(transport.calls.cancelled, 0)
   assert.deepEqual(transport.receipts, [null])
 })
 
@@ -432,7 +428,8 @@ test("request validation preserves tools but denies routing, media and expanded 
   const body = JSON.parse(prepareFreeRequest(value, config).body)
   assert.deepEqual(body.tools, value.tools)
   assert.deepEqual(body.stream_options, { include_usage: true })
-  assert.equal(body.max_completion_tokens, config.maxCompletionTokens)
+  assert.equal(body.max_completion_tokens, 64000, "the client's own output limit passes through, as on paid Models")
+  assert.equal(JSON.parse(prepareFreeRequest({ ...value, max_tokens: undefined }, config).body).max_completion_tokens, undefined)
   for (const extra of [{ provider: { allow_fallbacks: true } }, { usage: { include: true } }, { reasoning: { effort: "none" } }, { models: ["x"] }]) {
     assert.throws(() => prepareFreeRequest({ ...value, ...extra }, config), JSON.stringify(extra))
   }
@@ -488,12 +485,14 @@ test("usage followed by error or truncated EOF retains full hold", async () => {
   }
 })
 
-test("unknown settlement retains conservative charge; actual overrun triggers safety block", () => {
-  const held = { status: "dispatched", reserved_amount: freeRequestReservation(config), model_id: INFERENCE_FREE_MODEL_ID,
-    max_input_tokens: config.maxInputTokens, max_output_tokens: config.maxCompletionTokens } satisfies Parameters<typeof freeSettlementDecision>[0]
-  assert.deepEqual(freeSettlementDecision(held, null), { amount: held.reserved_amount, status: "retained", unsafe: false })
-  assert.equal(freeSettlementDecision(held, { eventId: "event", model: INFERENCE_FREE_MODEL_ID, amount: held.reserved_amount + 1, inputTokens: 1, outputTokens: 1 })?.unsafe, true)
-  assert.equal(freeSettlementDecision(held, { eventId: "event", model: "wrong", amount: 1, inputTokens: 1, outputTokens: 1 }), null)
+test("only a sane receipt for the free model is charged as reported", () => {
+  const receipt = { eventId: "chatcmpl-1", model: INFERENCE_FREE_MODEL_ID, amount: 5, inputTokens: 1, outputTokens: 1 }
+  assert.equal(validFreeReceipt(receipt), true)
+  assert.equal(validFreeReceipt({ ...receipt, amount: 1_000_000_000 }), true, "a large real cost is charged in full, never refused")
+  assert.equal(validFreeReceipt({ ...receipt, model: "wrong" }), false)
+  assert.equal(validFreeReceipt({ ...receipt, eventId: "" }), false)
+  assert.equal(validFreeReceipt({ ...receipt, amount: -1 }), false)
+  assert.equal(validFreeReceipt(null), false)
 })
 
 test("the support window is the newest releases plus the 14-day floor, minus blocked, never prereleases", () => {
@@ -593,17 +592,15 @@ test("member Auto requests join the organization's usage as OpenWork Models, log
   assert.equal(rows.length, 2, "guest requests are never attributed to an organization")
 })
 
-test("a member request refused at dispatch still closes its usage log row", async () => {
+test("a member over the allowance is refused before a usage log row or upstream call", async () => {
   const rows: Array<Record<string, unknown>> = []
   const usageLog = { insert: async (row: Record<string, unknown>) => { rows.push({ ...row }) }, update: async (row: Record<string, unknown>) => { rows.push({ ...row }); return true } }
   const base = fixture()
-  const f = fixture({}, undefined, { usageLog: usageLog as never, store: { ...base.store, family: "member", dispatch: async () => false } })
+  const f = fixture({}, undefined, { usageLog: usageLog as never, store: { ...base.store, family: "member", admit: async () => ({ ok: false, code: "anonymous_limit_exceeded" }) } })
   const response = await memberCall(f.memberApp, MEMBER_FREE_CHAT_PATH, memberChat)
-  assert.equal(response.status, 403)
+  assert.equal(response.status, 429)
   assert.equal(f.requests.length, 0)
-  await new Promise((resolve) => setTimeout(resolve, 20))
-  assert.equal(rows.length, 2, "one pending insert and one finishing update")
-  assert.equal(rows[1].outcome, "rejected")
+  assert.equal(rows.length, 0)
 })
 
 test("member Auto fails closed when the Gateway request log cannot be written, without consuming allowance", async () => {
@@ -612,6 +609,6 @@ test("member Auto fails closed when the Gateway request log cannot be written, w
   assert.equal(response.status, 503)
   assert.equal((await response.json()).error.code, "request_log_unavailable")
   assert.equal(f.requests.length, 0, "nothing was sent upstream")
-  assert.equal(f.calls.cancelled, 1, "the undispatched reservation was released")
+  assert.equal(f.calls.charged, 0, "no allowance was consumed")
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 200, "guests do not depend on organization accounting")
 })

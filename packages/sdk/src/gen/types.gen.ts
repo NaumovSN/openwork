@@ -74,6 +74,7 @@ export type AdminOrganizationsPageResponse = {
       mcpConnections: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
+      orgManagedDashboards: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -147,6 +148,7 @@ export type AdminOverviewResponse = {
       mcpConnections: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
+      orgManagedDashboards: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -1019,7 +1021,6 @@ export type InferenceAccessResponse = {
     modelID: string | null;
     weeklyLimitUsd: number | null;
     usedUsd: number | null;
-    reservedUsd: number | null;
     remainingUsd: number | null;
     resetsAt: string | null;
     reason:
@@ -1028,7 +1029,6 @@ export type InferenceAccessResponse = {
       | "free_disabled"
       | "accounting_unavailable"
       | "free_allowance_exhausted"
-      | "free_request_in_progress"
       | "upstream_unavailable"
       | null;
     /**
@@ -1295,7 +1295,7 @@ export type CreateInstallLinkResponse = {
 
 export type CapabilityDisabledError = {
   error: "capability_disabled";
-  capability: "installLinks" | "mcpConnections" | "modelsAnalytics" | "auditLogs";
+  capability: "installLinks" | "mcpConnections" | "modelsAnalytics" | "auditLogs" | "orgManagedDashboards";
 };
 
 export type CreateInstallLinkRequest = {
@@ -5169,6 +5169,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       mcpConnections: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
+      orgManagedDashboards: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -5230,6 +5231,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       mcpConnections: boolean;
       modelsAnalytics: boolean;
       auditLogs: boolean;
+      orgManagedDashboards: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -10913,7 +10915,6 @@ export type GetV1InferenceFreeProviderResponses = {
         | "free_disabled"
         | "accounting_unavailable"
         | "free_allowance_exhausted"
-        | "free_request_in_progress"
         | "upstream_unavailable"
         | null;
       defaultPinned: boolean;
@@ -10939,12 +10940,10 @@ export type GetV1InferenceFreeProviderResponses = {
         joinedMembers: number;
         eligibleMembers: number;
         /**
-         * Current eligible members whose recorded weekly usage plus reservations reaches their person-wide limit; not a probe of Gateway request headroom. Null when accounting cannot be verified.
+         * Current eligible members whose recorded weekly usage has reached their person-wide limit; not a probe of Gateway request headroom. Null when accounting cannot be verified.
          */
         exhaustedMembers: number | null;
         usedUsd: number | null;
-        reservedUsd: number | null;
-        retainedUsd: number | null;
         requestCount: number | null;
       };
     };
