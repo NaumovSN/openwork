@@ -24,9 +24,10 @@ test("a member with a saved Auto default can choose a working model while free a
   await step("before: the member opens a new task with free access switched off and an Auto preference saved", async () => {
     const status = await probe.api(world.den.admin, "/v1/inference/access");
     expect(status.response.status).toBe(200);
-    expect(status.body).toMatchObject({ reason: "free_disabled" });
+    expect(status.body).toMatchObject({ access: { reason: "free_disabled" } });
     expect(await probe.storage("openwork.defaultModel")).toBe(`${world.auto.providerID}/${world.auto.modelID}`);
     await user.see("composer", { editable: true });
+    expect((await probe.dom('button[aria-label="Change model"]')).elements.map((element) => element.text)).not.toContain("Auto");
     await user.type("composer", draft);
     await quiet();
     await user.screenshot();
@@ -44,7 +45,7 @@ test("a member with a saved Auto default can choose a working model while free a
     await user.see({ role: "button", label: "Change model" }, { text: "BYOK witness" });
     await user.see("composer", { text: draft });
     await quiet();
-    expect((await probe.api(world.den.admin, "/v1/inference/access")).body).toMatchObject({ reason: "free_disabled" });
+    expect((await probe.api(world.den.admin, "/v1/inference/access")).body).toMatchObject({ access: { reason: "free_disabled" } });
     await user.screenshot();
   });
 });
