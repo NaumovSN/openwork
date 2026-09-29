@@ -11,6 +11,8 @@ test("Freestyle desktop maps only the signed-out fresh scenario from a pushed co
     { sha: SHA, lifetimeMinutes: 30 });
   const refused: [Parameters<typeof freestyleDesktopPlan>[0], RegExp][] = [
     [{ surface: "den", argv: [], sources: sha, seeds: [] }, /preview-den cannot run on Freestyle/],
+    [{ surface: "full", argv: [], sources: sha, seeds: [] }, /preview-full cannot run on Freestyle/],
+    [{ surface: "desktop", argv: [], sources: sha, seeds: [], selectedEnv: ["OPENWORK_ENGINE_V2_PREVIEW"] }, /--env app settings cannot apply/],
     [{ surface: "desktop", argv: ["--scenario", "team"], sources: sha, seeds: [] }, /only the signed-out fresh/],
     [{ surface: "desktop", argv: [], sources: sha, seeds: [{ name: "restricted" }] }, /only --seed fresh/],
     [{ surface: "desktop", argv: [], sources: { ...sha, den: { kind: "sha", sha: SHA } }, seeds: [] }, /no den component/],

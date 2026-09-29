@@ -37,14 +37,15 @@ const UNSET_API_KEY = "openwork-engine-v2-preview-unset";
 const CATALOG_MIRROR_TIMEOUT_MS = 60_000;
 // Upkeep waits are bounded and never fail a request, as in v1: the engine
 // serves what it has, and OpenWork only improves the next turn's odds.
-// A registration the engine rejected, or a connection that failed to start, is
-// retried after `mcpRetryMs`, or at once when its configuration changes,
-// instead of on every prompt.
-export const ENGINE_V2_UPKEEP_WAITS: Readonly<Record<"providerPushJoinMs" | "workspaceProviderReadyMs" | "mcpSettleMs" | "mcpRetryMs", number>> = Object.freeze({
+// MCP upkeep never holds a request. A registration the engine rejected, or a
+// connection that failed to start, is retried after `mcpRetryMs`, or at once
+// when its configuration changes. Every `mcpHealthMs` known folders are
+// checked for connections that failed or went missing.
+export const ENGINE_V2_UPKEEP_WAITS: Readonly<Record<"providerPushJoinMs" | "workspaceProviderReadyMs" | "mcpRetryMs" | "mcpHealthMs", number>> = Object.freeze({
   providerPushJoinMs: 10_000,
   workspaceProviderReadyMs: 8_000,
-  mcpSettleMs: 10_000,
   mcpRetryMs: 60_000,
+  mcpHealthMs: 60_000,
 });
 
 function delay(ms: number): Promise<void> {
@@ -93,7 +94,14 @@ export interface EngineV2Preview {
   connection(): { url: string; username: string; password: string } | undefined;
   ensureWorkspaceReady(directory: string): Promise<void>;
   refreshProviders(): Promise<void>;
-  syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void>;
+  /**
+   * Reconcile a folder's MCP connections with the engine: register new or
+   * changed ones, remove revoked ones, and restart failed ones after a back-off.
+   * Healthy and starting connections are left alone. `reconnect` names are
+   * restarted now, without the back-off, when they are not healthy.
+   * Background upkeep: prompts never wait on it.
+   */
+  syncWorkspaceMcp(workspaceId: string, directory: string, options?: { reconnect?: string[] }): Promise<void>;
   /** Start a folder's upkeep in the background the first time it is seen. Never waits or throws. */
   warmWorkspace(workspaceId: string, directory: string): void;
   /** After OpenWork writes workspace skills, briefly wait for the engine to reflect them. Never throws. */
@@ -334,6 +342,18 @@ export function mapRuntimeMcpToV2(value: unknown): Record<string, unknown> | und
     ...(oauth === undefined ? {} : { oauth }), ...shared };
 }
 
+interface McpLocation {
+  workspaceId: string;
+  /** Config fingerprint of each registration this mirror owns. */
+  applied: Map<string, string>;
+  /** Last rejected registration or restart per name, for the back-off. */
+  attempts: Map<string, { fingerprint: string; at: number }>;
+  /** The latest run; the next one starts after it. */
+  tail?: Promise<void>;
+  /** A run that has not started yet; later triggers join it. */
+  queued?: { promise: Promise<void>; reconnect: Set<string> };
+}
+
 /** Live MCP status per name for one location, or undefined when unknown. */
 async function readLiveMcpStatus(
   active: Pick<ManagedOpencodeV2Server, "fetchJson">,
@@ -389,10 +409,9 @@ export function createEngineV2Preview(options: {
   let mirrorDirty = false;
   const workspaceReadiness = new Map<string, Promise<void>>();
   let mirroredSpecs: OpencodeV2ProviderSpec[] = [];
-  const workspaceMcp = new Map<string, Map<string, string>>();
-  const mcpInFlight = new Map<string, Promise<void>>();
-  const mcpWorkspaces = new Map<string, string>();
-  const mcpRejected = new Map<string, Map<string, { fingerprint: string; at: number }>>();
+  // One MCP reconciler per folder, keyed by directory.
+  const mcpLocations = new Map<string, McpLocation>();
+  let mcpHealthTimer: ReturnType<typeof setInterval> | undefined;
   async function settleWorkspaceSkills(directory: string): Promise<void> {
     const active = sidecar;
     if (!active || !chatRouting) return;
@@ -403,102 +422,114 @@ export function createEngineV2Preview(options: {
     });
   }
 
-  async function syncWorkspaceMcp(workspaceId: string, directory: string): Promise<void> {
-    mcpWorkspaces.set(directory, workspaceId);
-    // Serialize each location, then re-read authoritative state. A queued call
-    // must not reuse a snapshot taken before a removal or credential update.
-    const previous = mcpInFlight.get(directory);
-    const pending = (async () => {
-      if (previous) await previous.catch(() => undefined);
-      const active = sidecar;
-      if (!active) throw new Error("OpenCode v2 is not running");
-      const runtime = runtimeMcpMap(await readEffectiveRuntimeOpencodeConfig(config, workspaceId));
-      const desired = new Map(Object.entries(runtime).flatMap(([name, value]) => {
-        const mapped = mapRuntimeMcpToV2(value);
-        return mapped ? [[name, mapped] as const] : [];
-      }));
-      const applied = workspaceMcp.get(directory) ?? new Map<string, string>();
-      workspaceMcp.set(directory, applied);
-      // The engine's live status, not our record of what we sent, decides
-      // whether a connection is healthy. A 204 only means the engine accepted
-      // the config; the connection starts afterwards and can fail (a local app
-      // that was closed), and the engine never retries it on its own.
-      const live = await readLiveMcpStatus(active, directory);
-      let changed = false;
-      // Remove first so a failed replacement cannot leave an old credential or
-      // revoked tool active. Only touch registrations owned by this mirror.
-      for (const [name, fingerprint] of applied) {
-        if (desired.has(name) && JSON.stringify(desired.get(name)) === fingerprint) continue;
-        const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, {
-          method: "DELETE", directory, timeoutMs: 15_000,
-        });
-        if (result.status !== 204 && result.status !== 404) throw new Error(`OpenCode v2 MCP removal failed (${result.status})`);
-        applied.delete(name);
-        changed = true;
+  function syncWorkspaceMcp(workspaceId: string, directory: string, options: { reconnect?: string[] } = {}): Promise<void> {
+    let location = mcpLocations.get(directory);
+    if (!location) {
+      location = { workspaceId, applied: new Map(), attempts: new Map() };
+      mcpLocations.set(directory, location);
+    }
+    location.workspaceId = workspaceId;
+    // Serialize each folder. Triggers that arrive while a run is in flight
+    // share one follow-up run, which re-reads config and live status, so a
+    // burst coalesces and never reuses a snapshot taken before a change.
+    if (location.queued) {
+      for (const name of options.reconnect ?? []) location.queued.reconnect.add(name);
+      return location.queued.promise;
+    }
+    const owner = location;
+    const reconnect = new Set(options.reconnect);
+    const promise = (owner.tail ?? Promise.resolve()).catch(() => undefined).then(() => {
+      if (owner.queued?.promise === promise) owner.queued = undefined;
+      return reconcileWorkspaceMcp(directory, owner, reconnect);
+    });
+    owner.queued = { promise, reconnect };
+    owner.tail = promise;
+    return promise;
+  }
+
+  async function reconcileWorkspaceMcp(directory: string, location: McpLocation, reconnect: ReadonlySet<string>): Promise<void> {
+    const active = sidecar;
+    if (!active) throw new Error("OpenCode v2 is not running");
+    const runtime = runtimeMcpMap(await readEffectiveRuntimeOpencodeConfig(config, location.workspaceId));
+    const desired = new Map(Object.entries(runtime).flatMap(([name, value]) => {
+      const mapped = mapRuntimeMcpToV2(value);
+      return mapped ? [[name, { config: mapped, fingerprint: JSON.stringify(mapped) }] as const] : [];
+    }));
+    const { applied, attempts } = location;
+    // The engine's live status, not our record of what we sent, decides
+    // whether a connection is healthy. A 204 only means the engine accepted
+    // the config; the connection starts afterwards and can fail (a local app
+    // that was closed), and the engine never retries it on its own.
+    const live = await readLiveMcpStatus(active, directory);
+    const backedOff = (name: string, fingerprint: string) => {
+      const attempt = attempts.get(name);
+      return !reconnect.has(name) && attempt?.fingerprint === fingerprint && Date.now() - attempt.at < waits.mcpRetryMs;
+    };
+    const failures: string[] = [];
+    const remove = async (name: string) => {
+      const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, { method: "DELETE", directory, timeoutMs: 15_000 });
+      if (result.status !== 204 && result.status !== 404) throw new Error(`OpenCode v2 MCP removal failed (${result.status})`);
+      applied.delete(name);
+    };
+    const register = async (name: string, mcpConfig: Record<string, unknown>, fingerprint: string) => {
+      // The engine connects before it answers (up to the startup timeout).
+      const status = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, {
+        method: "PUT", body: { config: mcpConfig }, directory, timeoutMs: 30_000,
+      }).then((result) => result.status, (error) => { warn(`MCP ${name}: ${errorMessage(error)}`); return 0; });
+      if (status !== 204) {
+        attempts.set(name, { fingerprint, at: Date.now() });
+        if (status !== 0) warn(`MCP ${name}: registration failed (${status})`);
+        return;
       }
-      // As in v1, one connection the engine rejects is recorded and skipped;
-      // it never blocks the others or the conversation.
-      const rejected = mcpRejected.get(directory) ?? new Map<string, { fingerprint: string; at: number }>();
-      mcpRejected.set(directory, rejected);
-      for (const [name, mcpConfig] of desired) {
-        const fingerprint = JSON.stringify(mcpConfig);
-        // Leave a healthy or still-starting connection alone: re-registering
-        // replaces and closes a client a running turn may be using. Register
-        // again when the config changed, the engine lost it, or it failed.
-        const liveStatus = live?.get(name);
-        if (applied.get(name) === fingerprint && (!live || (liveStatus !== undefined && liveStatus !== "failed"))) continue;
-        const previousRejection = rejected.get(name);
-        if (previousRejection?.fingerprint === fingerprint && Date.now() - previousRejection.at < waits.mcpRetryMs) continue;
-        const status = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}`, {
-          method: "PUT", body: { config: mcpConfig }, directory, timeoutMs: 30_000,
-        }).then((result) => result.status, (error) => { warn(`MCP ${name}: ${errorMessage(error)}`); return 0; });
-        if (status !== 204) {
-          rejected.set(name, { fingerprint, at: Date.now() });
-          if (status !== 0) warn(`MCP ${name}: registration failed (${status})`);
-          continue;
-        }
-        rejected.delete(name);
-        applied.set(name, fingerprint);
-        changed = true;
+      attempts.delete(name);
+      applied.set(name, fingerprint);
+    };
+    const restart = async (name: string, fingerprint: string) => {
+      // The engine ignores a PUT identical to the config it has, so a failed
+      // connection is restarted with /connect. On a healthy client /connect
+      // closes and reopens it, which is why only unhealthy ones get here.
+      attempts.set(name, { fingerprint, at: Date.now() });
+      warn(`MCP ${name}: connection ${live?.get(name) ?? "missing"}; reconnecting`);
+      const result = await active.fetchJson(`/api/mcp/${encodeURIComponent(name)}/connect`, { method: "POST", directory, timeoutMs: 30_000 });
+      if (result.status !== 204) warn(`MCP ${name}: reconnect failed (${result.status})`);
+    };
+    const tasks: Array<Promise<void>> = [];
+    // Only registrations owned by this mirror are removed. A changed config is
+    // removed before it is registered again, so a failed replacement cannot
+    // leave an old credential or revoked tool active.
+    for (const name of applied.keys()) {
+      const wanted = desired.get(name);
+      if (!wanted) tasks.push(remove(name));
+      else if (wanted.fingerprint !== applied.get(name) && !backedOff(name, wanted.fingerprint)) {
+        tasks.push(remove(name).then(() => register(name, wanted.config, wanted.fingerprint)));
       }
-      if (changed) {
-        // Give just-registered connections a moment so their tools reach the
-        // next turn; a slow server only delays that, it never refuses it.
-        const deadline = Date.now() + waits.mcpSettleMs;
-        while (true) {
-          const statuses = await readLiveMcpStatus(active, directory);
-          const pending = !statuses || [...applied.keys()].some((name) => {
-            const status = statuses.get(name);
-            return status === undefined || status === "pending";
-          });
-          if (!pending) {
-            // A connection that failed to start is backed off like a rejected
-            // registration, and the next sync after `mcpRetryMs` tries again.
-            for (const [name, fingerprint] of applied) {
-              if (statuses?.get(name) !== "failed" || rejected.get(name)?.fingerprint === fingerprint) continue;
-              rejected.set(name, { fingerprint, at: Date.now() });
-              warn(`MCP ${name}: connection failed; will retry`);
-            }
-            break;
-          }
-          if (Date.now() >= deadline) {
-            warn("MCP: connections were still starting when the request proceeded");
-            break;
-          }
-          await delay(100);
-        }
-        // The pinned beta batches MCP ToolsChanged events for 100ms after
-        // connection startup; follow that registry refresh when it happens.
-        await delay(250);
+    }
+    for (const [name, { config: mcpConfig, fingerprint }] of desired) {
+      const status = live?.get(name);
+      if (applied.has(name) && applied.get(name) !== fingerprint) continue;
+      if (!applied.has(name) || (live && status === undefined)) {
+        // New, or the engine lost it (an identical PUT to a live entry is a no-op).
+        if (!backedOff(name, fingerprint)) tasks.push(register(name, mcpConfig, fingerprint));
+        continue;
       }
-    })();
-    mcpInFlight.set(directory, pending);
-    // A failed sync keeps its record as is: only successful registrations are
-    // recorded, and the live status check above catches anything unhealthy.
-    // Clearing every record here would make the next sync remove and re-add
-    // every connection, so tools vanish and return between turns.
-    try { await pending; }
-    finally { if (mcpInFlight.get(directory) === pending) mcpInFlight.delete(directory); }
+      // Connected and starting connections are left alone. `disabled` is only
+      // ever set by an OpenWork repair, and needs_auth is retried only on request.
+      const unhealthy = status === "failed" || status === "disabled" || (status === "needs_auth" && reconnect.has(name));
+      if (status === "connected") attempts.delete(name);
+      else if (unhealthy && !backedOff(name, fingerprint)) tasks.push(restart(name, fingerprint));
+    }
+    for (const result of await Promise.allSettled(tasks)) {
+      if (result.status === "rejected") failures.push(errorMessage(result.reason));
+    }
+    // A failed run keeps its record as is: only successful registrations are
+    // recorded, and the live status check catches anything unhealthy.
+    if (failures.length) throw new Error(failures.join("; "));
+  }
+
+  function checkMcpHealth(): void {
+    for (const [directory, location] of mcpLocations) {
+      void syncWorkspaceMcp(location.workspaceId, directory).catch((error) => warn(`MCP: ${errorMessage(error)}`));
+    }
   }
 
   function status(): EngineV2PreviewStatus {
@@ -553,6 +584,8 @@ export function createEngineV2Preview(options: {
     skippedProviderIds = [...mapped.skippedProviderIds];
     lastMirroredAt = new Date().toISOString();
     pushed();
+    // Re-check folders already in use now, so their next prompt pays nothing.
+    for (const directory of mcpLocations.keys()) void ensureWorkspaceReady(directory).catch(() => undefined);
     const expectedModelIds = specs.flatMap((spec) => spec.models
       .filter(model => (spec.whitelist === undefined || spec.whitelist.includes(model.id)) && !spec.blacklist?.includes(model.id))
       .map((model) => model.id));
@@ -606,9 +639,9 @@ export function createEngineV2Preview(options: {
     const active = sidecar;
     workspaceReadiness.clear();
     sidecar = undefined;
-    workspaceMcp.clear();
-    mcpWorkspaces.clear();
-    mcpRejected.clear();
+    mcpLocations.clear();
+    if (mcpHealthTimer) clearInterval(mcpHealthTimer);
+    mcpHealthTimer = undefined;
     running = false;
     version = undefined;
     pid = undefined;
@@ -655,14 +688,15 @@ export function createEngineV2Preview(options: {
         const global = isEngineGlobalRuntimeConfigId(workspaceId);
         if (global) scheduleMirror();
         // Connections installed through OpenWork also update already-open
-        // locations while a conversation is active. Request admission joins
-        // the same serialized reconciliation rather than racing it.
-        for (const [directory, id] of mcpWorkspaces) {
-          if (global || id === workspaceId) void syncWorkspaceMcp(id, directory).catch((error) => {
+        // locations while a conversation is active.
+        for (const [directory, location] of mcpLocations) {
+          if (global || location.workspaceId === workspaceId) void syncWorkspaceMcp(location.workspaceId, directory).catch((error) => {
             if (sidecar) lastError = `MCP: ${errorMessage(error)}`;
           });
         }
       });
+      mcpHealthTimer = setInterval(checkMcpHealth, waits.mcpHealthMs);
+      mcpHealthTimer.unref?.();
       const unsubscribeEnv = options.env?.onChange(scheduleMirror);
       unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); };
       scheduleMirror();
@@ -767,7 +801,7 @@ export function createEngineV2Preview(options: {
   }
 
   function warmWorkspace(workspaceId: string, directory: string): void {
-    if (!sidecar || mcpWorkspaces.has(directory)) return;
+    if (!sidecar || mcpLocations.has(directory)) return;
     void ensureWorkspaceReady(directory).catch(() => undefined);
     void syncWorkspaceMcp(workspaceId, directory).catch((error) => warn(`MCP: ${errorMessage(error)}`));
   }

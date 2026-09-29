@@ -470,7 +470,7 @@ const POLICIES: Policy[] = [
   { id: "models", label: "Models members can use", kind: "select", options: ["Only models you provide", "Also their own keys"] },
   { id: "invite", label: "Members can invite teammates", kind: "toggle" },
   { id: "cloud-automations", label: "Automations on cloud computers", kind: "toggle" },
-  { id: "sso", label: "Single sign-on (Okta, Entra, Google)", kind: "toggle", enterprise: true },
+  { id: "sso", label: "Single sign-on (Okta, Entra, Google)", kind: "toggle" },
   { id: "desktop", label: "Block local MCP servers on desktops", kind: "toggle", enterprise: true }
 ];
 

@@ -84,6 +84,13 @@ function parseStageOptions(options: string[]): { stage?: string; error?: string 
   return stage === undefined ? {} : { stage };
 }
 
+const PREVIEW_COMPOSITION: Readonly<Record<string, { sources: string[]; seeds: string[] }>> = {
+  "preview-desktop": { sources: ["desktop"], seeds: ["fresh", "blank"] },
+  "preview-den": { sources: ["den"], seeds: ["fresh", "team", "restricted", "workspace"] },
+  "preview-full": { sources: ["den", "desktop"], seeds: ["fresh", "team", "restricted", "workspace"] },
+};
+const WEB_WORLDS: ReadonlySet<string> = new Set(["preview-app-web", "acme-web"]);
+
 export function parseWorldArgs(argv: string[]): WorldCommand {
   const [command, ...args] = argv;
   if (!command || command === "help") {
@@ -336,7 +343,8 @@ async function helpText(options: WorldCliOptions): Promise<string> {
 
 World scripts run in the foreground by default; use --detach for background lifecycle receipts.
 Use --env KEY only for nonsecret configuration whose value must match before reusing a running world. Never select credentials.
---source composes preview-den, preview-desktop, app-web, and acme-web; --seed composes preview-den and preview-desktop. Other worlds reject them.
+Desktop previews on local and Daytona also pass the selected keys to the app (for example OPENWORK_ENGINE_V2_PREVIEW=1 ... --env OPENWORK_ENGINE_V2_PREVIEW).
+--source composes preview-desktop, preview-den, preview-full, preview-app-web, and acme-web; --seed composes preview-desktop, preview-den and preview-full. Other worlds reject them.
 Available world scripts: ${sources.join(", ") || "(none)"}`;
 }
 
@@ -531,9 +539,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
           name: script.name,
           path: displayWorldPath(script.path, options.cwd),
           supportedTargets: targets ?? null,
-          ...(script.name === "preview-desktop" || script.name === "preview-den"
-            ? { sources: script.name === "preview-desktop" ? ["den", "desktop"] : ["den"], seeds: ["fresh", "team", "restricted", "workspace", "blank"] }
-            : script.name === "app-web" || script.name === "acme-web" ? { sources: ["*"], seeds: [] } : {}),
+          ...(PREVIEW_COMPOSITION[script.name] ?? (WEB_WORLDS.has(script.name) ? { sources: ["*"], seeds: [] } : {})),
         };
         if (command.json) print(JSON.stringify(info));
         else print(`${info.name}: ${info.path}\nSupported targets: ${supportedTargetDescription(targets)}${"sources" in info ? `\nSources: ${info.sources?.join(", ")}\nSeeds: ${info.seeds?.join(", ")}` : ""}`);
@@ -569,9 +575,12 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         throw new Error("Daytona Windows requires a blank published preview-desktop release; use --source desktop=release:<version>/<distribution> --seed blank.");
       }
       // These are opt-in for now: never silently accept inputs a recipe cannot apply.
-      const preview = script.name === "preview-desktop" || script.name === "preview-den";
-      const web = script.name === "app-web" || script.name === "acme-web";
-      if (!preview && !web && ((command.sources?.length ?? 0) > 0 || (command.seeds?.length ?? 0) > 0)) {
+      const preview = script.name in PREVIEW_COMPOSITION;
+      const web = WEB_WORLDS.has(script.name);
+      // The evidence viewer reads one pushed app-web source and takes no seed.
+      const evidence = script.name === "evidence-web";
+      if (evidence && (command.seeds?.length ?? 0) > 0) throw new Error("evidence-web does not accept --seed.");
+      if (!preview && !web && !evidence && ((command.sources?.length ?? 0) > 0 || (command.seeds?.length ?? 0) > 0)) {
         throw new Error(`World ${script.name} does not yet declare --source/--seed support. Use its existing script arguments after --.`);
       }
       const resolveRef = gitRefResolver(options.cwd);
@@ -584,14 +593,22 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
           || (place === "local" ? webSource.kind !== "local" : webSource.kind !== "sha")) {
           throw new Error(`${script.name} --source accepts local on this computer or one pushed SHA/ref on remote placements; do not combine it with -- --ref or --seed.`);
         }
-        if (webSource.kind === "sha" && (script.name === "app-web" || place === "freestyle")) {
+        if (webSource.kind === "sha" && (script.name === "preview-app-web" || place === "freestyle")) {
           scriptArgs = ["--ref", webSource.sha, ...command.args];
         }
       }
       const env: NodeJS.ProcessEnv = Object.fromEntries((command.env ?? []).map((key) => [key, process.env[key]]));
       // Existing previews use origin/dev by default. Resolve it before adoption,
       // otherwise a moved branch silently reuses an older running world.
-      if ((preview || script.name === "acme-web") && place === "daytona" && !sources.den && !sources["*"]) {
+      if (script.name === "preview-desktop" && place === "daytona" && !sources["*"]) {
+        // The app alone: pin its source commit, or for a published release the
+        // commit whose preview tooling installs and launches those bytes.
+        const sha = process.env.OPENWORK_EVAL_REF?.trim() || await resolveRef("dev");
+        if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Preview desktop source must be a full reviewed, pushed commit SHA.");
+        const release = command.args.includes("--release") || sources.desktop?.kind === "release";
+        if (release) env.OPENWORK_EVAL_REF = sha;
+        else if (!sources.desktop) sources.desktop = { kind: "sha", sha };
+      } else if ((preview || script.name === "acme-web") && place === "daytona" && !sources.den && !sources["*"]) {
         const pinned = process.env.OPENWORK_EVAL_REF?.trim();
         const sha = pinned ?? await resolveRef("dev");
         if (!/^[0-9a-f]{40}$/.test(sha)) throw new Error("Preview Den source must be a full reviewed, pushed commit SHA.");
@@ -610,12 +627,12 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
         if (acmeSource?.kind !== "sha") throw new Error("Daytona acme-web requires a pinned commit SHA.");
         env.OPENWORK_EVAL_REF = acmeSource.sha;
       }
-      if (place === "daytona" && script.name !== "app-web" && !preview && script.name !== "acme-web") {
+      if (place === "daytona" && script.name !== "preview-app-web" && !preview && script.name !== "acme-web") {
         const pinned = process.env.OPENWORK_EVAL_REF?.trim() || process.env.GITHUB_SHA?.trim() || await resolveRef("dev");
         if (!/^[0-9a-f]{40}$/.test(pinned)) throw new Error("Daytona world source must be a full reviewed, pushed commit SHA.");
         env.OPENWORK_EVAL_REF = pinned;
       }
-      if (preview && Object.keys(sources).length > 0) env[SOURCES_ENV] = JSON.stringify(sources);
+      if ((preview || evidence) && Object.keys(sources).length > 0) env[SOURCES_ENV] = JSON.stringify(sources);
       if (preview && seeds.length > 0) env[SEEDS_ENV] = JSON.stringify(seeds);
       const sourceHash = place === "local" ? await computeLocalSourceHash(options.cwd) : undefined;
       // Keep existing placement-only receipts adoptable when --os was omitted.
@@ -713,6 +730,7 @@ export async function main(argv: string[], options: WorldCliOptions): Promise<nu
           recipeHash,
           invocationHash,
           env,
+          selectedEnvKeys: command.env ?? [],
           place,
           os: target.os,
           print,

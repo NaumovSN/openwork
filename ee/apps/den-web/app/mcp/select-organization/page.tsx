@@ -24,7 +24,7 @@ import {
 import { getRuntimeConfig } from "../../(den)/_lib/runtime-config";
 import { useOrgListWindow } from "../../(den)/_lib/use-org-list-window";
 import { FilterInput } from "../../(den)/dashboard/_components/item-list";
-import { McpReturnLine, mcpIdentityFacts, useMcpRedirect } from "../client-identity";
+import { McpReturnLine, McpUnverifiedAppWarning, mcpIdentityFacts, useMcpRedirect } from "../client-identity";
 import { McpConsentPermissions, McpTechnicalDetails } from "../consent-permissions";
 import { McpStoryTiles, mcpStoryCopy } from "../mcp-story";
 import { useLocationQuery } from "../use-location-query";
@@ -371,6 +371,7 @@ export default function McpSelectOrganizationPage() {
       <McpConsentPermissions scope={requestedScope} actor={actor} />
 
       <div className="flex flex-col gap-3.5">
+        <McpUnverifiedAppWarning redirect={redirect} client={client} />
         <McpReturnLine client={client} redirect={redirect} short />
         {errorMessage ? <SetupErrorLine>{errorMessage}</SetupErrorLine> : null}
         {creating ? (
@@ -393,7 +394,7 @@ export default function McpSelectOrganizationPage() {
           </button>
         )}
         <div className="flex items-start justify-between gap-4">
-          <McpTechnicalDetails scope={requestedScope} clientId={client.clientId} />
+          <McpTechnicalDetails scope={requestedScope} clientId={client.clientId} redirect={redirect} />
           <SetupQuietButton onClick={() => void cancelFlow()} disabled={isBusy || flowState === "loading"}>
             Cancel
           </SetupQuietButton>

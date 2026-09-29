@@ -10,6 +10,8 @@ export type McpClient = {
   logoUri: string | null;
   clientId: string | null;
   loaded: boolean;
+  /** The server accepted the signed query and returned public client metadata. */
+  metadataResolved?: boolean;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -46,8 +48,9 @@ async function loadPublicClient(clientId: string, oauthQuery: string) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ client_id: clientId, oauth_query: oauthQuery }),
   }).catch(() => null);
-  if (!response?.ok) return { name: null, logoUri: null };
-  return readPublicMcpClient(await response.json().catch(() => null));
+  if (!response?.ok) return { name: null, logoUri: null, metadataResolved: false };
+  const payload: unknown = await response.json().catch(() => null);
+  return { ...readPublicMcpClient(payload), metadataResolved: isRecord(payload) };
 }
 
 /**
@@ -56,14 +59,14 @@ async function loadPublicClient(clientId: string, oauthQuery: string) {
  */
 export function useMcpClient(oauthQuery: string): McpClient {
   const clientId = oauthQuery ? new URLSearchParams(oauthQuery).get("client_id") : null;
-  const [loadedClient, setLoadedClient] = useState<{ clientId: string; name: string | null; logoUri: string | null } | null>(null);
+  const [loadedClient, setLoadedClient] = useState<{ clientId: string; name: string | null; logoUri: string | null; metadataResolved: boolean } | null>(null);
 
   useEffect(() => {
     if (!clientId) return;
     let cancelled = false;
     void loadPublicClient(clientId, oauthQuery).then((client) => {
       if (cancelled) return;
-      setLoadedClient({ clientId, name: client.name ?? fallbackMcpClientName(clientId), logoUri: client.logoUri });
+      setLoadedClient({ clientId, name: client.name ?? fallbackMcpClientName(clientId), logoUri: client.logoUri, metadataResolved: client.metadataResolved });
     });
     return () => {
       cancelled = true;
@@ -71,7 +74,7 @@ export function useMcpClient(oauthQuery: string): McpClient {
   }, [clientId, oauthQuery]);
 
   if (clientId && loadedClient?.clientId === clientId) {
-    return { name: loadedClient.name, logoUri: loadedClient.logoUri, clientId, loaded: true };
+    return { name: loadedClient.name, logoUri: loadedClient.logoUri, clientId, loaded: true, metadataResolved: loadedClient.metadataResolved };
   }
   return { name: null, logoUri: null, clientId, loaded: Boolean(oauthQuery) && !clientId };
 }

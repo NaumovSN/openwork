@@ -572,8 +572,12 @@ export async function pressKey(surface: Surface, key: string): Promise<void> {
   const commands = EDITING_COMMANDS[key];
   // Enter needs a text event for native HTML button activation. Keydown alone
   // reaches JS handlers but does not produce the browser's default click.
-  const text = descriptor.key === "Enter" && (descriptor.modifiers & (1 | 2 | 4)) === 0 ? "\r" : undefined;
-  await surface.client.send("Input.dispatchKeyEvent", { type: "keyDown", ...params, ...(text ? { text } : {}), ...(commands ? { commands } : {}) });
+  // CDP does not derive character insertion from the virtual key code. Native
+  // segmented inputs (date/time) need text on plain printable key presses.
+  const text = descriptor.key === "Enter" && (descriptor.modifiers & (1 | 2 | 4)) === 0
+    ? "\r"
+    : descriptor.key.length === 1 && descriptor.modifiers === 0 ? descriptor.key : undefined;
+  await surface.client.send("Input.dispatchKeyEvent", { type: "keyDown", ...params, ...(text === undefined ? {} : { text }), ...(commands ? { commands } : {}) });
   await surface.client.send("Input.dispatchKeyEvent", { type: "keyUp", ...params });
 }
 

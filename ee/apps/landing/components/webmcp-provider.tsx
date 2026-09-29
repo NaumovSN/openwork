@@ -46,6 +46,7 @@ const pricingSummary = {
       highlights: [
         "First 5 seats free on OpenWork Cloud",
         "API access",
+        "SSO / SAML",
         "Extension Marketplace",
         "Bring your own LLM keys, distributed to your team",
       ],
@@ -57,8 +58,8 @@ const pricingSummary = {
       price: "custom",
       cadence: "contact us",
       highlights: [
-        "Everything in Team Starter",
-        "SSO / SAML and SCIM provisioning",
+        "Everything in Team Starter, including SSO",
+        "SCIM provisioning",
         "Bring your own inference — self-hosted or private models",
         "Desktop policies and version controls",
         "Managed deployment, self-hosted or hosted",

@@ -32,6 +32,7 @@ const RECENTS_STORAGE_KEY = "den.command-palette.recents";
 const RECENTS_LIMIT = 8;
 
 const EMPTY_CAPABILITIES: DenOrgCapabilities = {
+  auditLogs: false,
   cloud: false,
   installLinks: false,
   mcpConnections: false,

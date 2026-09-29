@@ -47,7 +47,7 @@ export const claudeCowork3pFaq: FaqEntry[] = [
   {
     question: "Is OpenWork cheaper than Claude Desktop on 3P?",
     answer:
-      "Not on seats: 3P has none, and OpenWork Enterprise is $20 per user. Savings come from routing work to lower-cost models, so check the calculator with your numbers."
+      "Not on seats: 3P has none, and OpenWork Team is $10 per seat after the first 5. Savings come from running a share of work on lower-cost models, so check the calculator with your numbers."
   },
   {
     question: "How do we share skills and MCP servers?",

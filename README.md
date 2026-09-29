@@ -176,7 +176,7 @@ If a second instance cannot get the profile lock it now says so and exits, inste
 To run the OpenWork UI in a browser against a local `openwork-server` (no desktop shell):
 
 ```bash
-pnpm world up dev-headless --detach
+pnpm world up dev-app-web --detach
 ```
 
 `pnpm dev:headless-web` is a compatibility alias for the same script. The alias
@@ -191,15 +191,15 @@ This is an isolated launcher:
 - Proxies Den Cloud calls same-origin: Vite serves `/api/den` (forwarded to the Den control plane) and the app pins its Den API there via `VITE_DEN_API_BASE_URL`, so Cloud calls are never CORS-blocked and stale `localStorage` base URLs are cleared on load
 - Publishes an owner-only runtime manifest at `tmp/dev-headless-web.json` (`0600`), and allows browser calls to the local server only from the web app's own origins — not every site you visit
 - Uses stable ports by default (web `5178`, server `8778`; falls back to free ports when taken, override with `OPENWORK_WEB_PORT` / `OPENWORK_PORT`)
-- Is single-instance as `dev-headless`; stop it with `pnpm world down dev-headless` before launching it again
+- Is single-instance as `dev-app-web`; stop it with `pnpm world down dev-app-web` before launching it again
 - Keeps Vite and the backend under one script lifecycle, so either sibling exiting stops the other instead of leaving an orphan
 - In detached mode, waits for health, prints non-secret outputs and receipt/log paths, and exits
 
 Script-specific options must follow `--`:
 
 ```bash
-pnpm world up dev-headless --detach -- --replace
-pnpm world up dev-headless --detach -- --replace --keep-tokens
+pnpm world up dev-app-web --detach -- --replace
+pnpm world up dev-app-web --detach -- --replace --keep-tokens
 ```
 
 `--replace` restarts the headless runtime with fresh tokens; add
@@ -215,10 +215,10 @@ Open the printed Web URL. Cloud sign-in in headless web uses the **copy/paste** 
 
 Point Den at a local stack with `OPENWORK_DEV_DEN_PROXY_TARGET=http://127.0.0.1:3005` while `pnpm dev:web-local` is running. Set `OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY=0` to disable the Den wiring.
 
-The other checked-in scripts include `worlds/headless-prod-live.ts` and
-`worlds/desktop-prod-live.ts`. Both intentionally share installed production
+The other checked-in scripts include `worlds/live-app-web.ts` and
+`worlds/live-desktop.ts`. Both intentionally share installed production
 state and require their script-specific opt-in after `--`, for example
-`pnpm world up desktop-prod-live -- --allow-shared-state`. List scripts and
+`pnpm world up live-desktop -- --allow-shared-state`. List scripts and
 running receipts with `pnpm world list`. The headless
 production world is hard-limited to loopback; remote-access/public-host settings
 are refused because its browser session uses production credentials.

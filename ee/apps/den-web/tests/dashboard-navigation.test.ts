@@ -17,6 +17,7 @@ const searchBar = readFileSync(
 );
 
 const baseCapabilities: DenOrgCapabilities = {
+  auditLogs: false,
   cloud: true,
   installLinks: true,
   mcpConnections: true,
@@ -79,7 +80,7 @@ describe("dashboard navigation index", () => {
     expect(flattenNavigationForSearch(sections).some((entry) => ["/dashboard/ai-gateway", "/dashboard/inference", "/dashboard/gateway-providers"].includes(entry.href))).toBe(false);
   });
 
-  test("keeps members in Work while admins receive Manage, Observability and Team", () => {
+  test("keeps member work separate from admin management with audit rollout off by default", () => {
     expect(buildFor("member").map((section) => section.label)).toEqual(["Work"]);
     expect(buildFor("member")[0]?.items.map((item) => item.label)).toEqual(["My Library", "OpenWork Web"]);
     expect(buildFor("admin").map((section) => section.label)).toEqual(["Work", "Manage", "Observability", "Team"]);
