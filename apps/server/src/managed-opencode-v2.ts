@@ -1,7 +1,7 @@
 import type { EnginePermissionRule } from "./managed-policy-rules.js";
 import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
 import { gatewayBase } from "./gateway-quota.js";
-import { openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkProviderFiltersV2PluginPath } from "./openwork-extensions-plugin-path.js";
+import { openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkMcpResultsV2PluginPath, openworkProviderFiltersV2PluginPath } from "./openwork-extensions-plugin-path.js";
 import { pathToFileURL } from "node:url";
 // Parallel v2 lane prototype: provider injection is a watched-config write. This module
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
@@ -97,6 +97,8 @@ export function renderOpencodeV2Config(input: {
   skills: string[];
   gatewayQuotaPluginDirectory?: string;
   providerFiltersPluginDirectory?: string;
+  /** Preserves OpenWork Cloud connection reports from Code Mode calls for the chat. */
+  mcpResultsPluginDirectory?: string;
   contextPluginDirectory?: string;
   contextTools?: { url: string; token: string };
 }): Record<string, unknown> {
@@ -164,6 +166,7 @@ export function renderOpencodeV2Config(input: {
       package: pathToFileURL(input.providerFiltersPluginDirectory).href,
       options: { providers: filters },
     }] : []),
+    ...(input.mcpResultsPluginDirectory ? [{ package: pathToFileURL(input.mcpResultsPluginDirectory).href }] : []),
   ];
   return {
     $schema: "https://opencode.ai/config.json",
@@ -183,6 +186,7 @@ export async function createManagedOpencodeV2Server(
   const configDir = join(options.rootDir, "config");
   const gatewayQuotaPluginDirectory = join(options.rootDir, "gateway-quota-plugin");
   const providerFiltersPluginDirectory = join(options.rootDir, "provider-filters-plugin");
+  const mcpResultsPluginDirectory = join(options.rootDir, "mcp-results-plugin");
   const contextPluginDirectory = join(options.rootDir, "context-plugin");
   const password = randomBytes(24).toString("base64url");
   const username = "opencode";
@@ -221,6 +225,10 @@ export async function createManagedOpencodeV2Server(
   await writeFile(join(providerFiltersPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
   await writeFile(join(providerFiltersPluginDirectory, "server.js"),
     `export { default } from ${JSON.stringify(pathToFileURL(openworkProviderFiltersV2PluginPath()).href)};\n`, { mode: 0o600 });
+  await mkdir(mcpResultsPluginDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(join(mcpResultsPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
+  await writeFile(join(mcpResultsPluginDirectory, "server.js"),
+    `export { default } from ${JSON.stringify(pathToFileURL(openworkMcpResultsV2PluginPath()).href)};\n`, { mode: 0o600 });
   if (options.contextTools) {
     await mkdir(contextPluginDirectory, { recursive: true, mode: 0o700 });
     await writeFile(join(contextPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
@@ -330,6 +338,7 @@ export async function createManagedOpencodeV2Server(
       disabledProviderIds,
       gatewayQuotaPluginDirectory,
       providerFiltersPluginDirectory,
+      mcpResultsPluginDirectory,
       contextPluginDirectory,
       contextTools: options.contextTools,
       ...(options.permissions ? { permissions: await options.permissions() } : {}),

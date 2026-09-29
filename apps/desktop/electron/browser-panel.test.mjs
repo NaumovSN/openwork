@@ -2195,6 +2195,84 @@ test("managed policy denial precedes loading and is rechecked after navigation a
   assert.deepEqual(contents.destinations, ["http://localhost:4173/"]);
 });
 
+test("a main-frame connection failure exposes recovery and retries the failed URL until it commits", async () => {
+  const { invoke, views, messages } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const { tabId } = invoke("openwork:browser:createTab", "about:blank", "A");
+  await flush();
+  const view = views()[0];
+  const contents = view.webContents;
+  const failedUrl = "http://localhost:18780/connection-probe";
+  const failure = {
+    code: "page_load_failed",
+    message: "This site refused the connection. Check that it is running, then reload.",
+    url: failedUrl, errorCode: -102, errorDescription: "ERR_CONNECTION_REFUSED",
+  };
+  contents.emit("did-fail-load", -102, "ERR_CONNECTION_REFUSED", failedUrl, true);
+  contents.emit("did-stop-loading");
+  assert.equal(contents.getURL(), "about:blank", "a failed first navigation can leave no committed URL");
+  assert.deepEqual(messages("openwork:browser:state").at(-1).tabs[0].loadError, failure);
+  assert.equal(invoke("openwork:browser:state").tabs[0].url, failedUrl);
+  assert.equal(invoke("openwork:browser:state").tabs[0].label, failedUrl);
+  assert.equal(view.getVisible(), false, "the native blank page must not cover the recovery controls");
+  invoke("openwork:browser:hide");
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  assert.equal(view.getVisible(), false, "layout updates must not cover recovery");
+
+  navigation.load = async (url, page) => {
+    page.emit("did-fail-load", -102, "ERR_CONNECTION_REFUSED", url, true);
+    throw new Error("ERR_CONNECTION_REFUSED");
+  };
+  try {
+    invoke("openwork:browser:reload");
+    await flush();
+    assert.equal(contents.loads.at(-1), failedUrl, "retry uses the failed destination, not about:blank");
+    assert.deepEqual(invoke("openwork:browser:state").tabs[0].loadError, failure);
+    assert.equal(view.getVisible(), false);
+  } finally { navigation.load = async () => {}; }
+
+  invoke("openwork:browser:reload");
+  await flush();
+  assert.equal(invoke("openwork:browser:state").activeTabId, tabId);
+  assert.equal(invoke("openwork:browser:state").tabs[0].loadError, null);
+  assert.equal(contents.getURL(), failedUrl);
+  assert.equal(view.getVisible(), true, "a successful retry restores the native page");
+});
+
+test("iframe failures and aborted main-frame navigation leave the existing page visible", async () => {
+  const { invoke, views } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  invoke("openwork:browser:createTab", "about:blank", "A");
+  await flush();
+  const view = views()[0];
+  for (const [code, description, mainFrame] of [[-102, "ERR_CONNECTION_REFUSED", false], [-3, "ERR_ABORTED", true]]) {
+    view.webContents.emit("did-fail-load", code, description, "https://page.example/", mainFrame);
+    assert.equal(invoke("openwork:browser:state").tabs[0].loadError, null);
+    assert.equal(view.getVisible(), true);
+  }
+});
+
+test("a background page failure stays with its tab and clears after another destination commits", async () => {
+  const { invoke, views } = createPanel();
+  invoke("openwork:browser:show", PANEL_BOUNDS, "A");
+  const first = invoke("openwork:browser:createTab", "about:blank", "A");
+  const second = invoke("openwork:browser:createTab", "about:blank", "A");
+  await flush();
+  views()[0].webContents.emit("did-fail-load", -106, "ERR_INTERNET_DISCONNECTED", "https://page.example/", true);
+  const state = invoke("openwork:browser:state");
+  assert.equal(state.activeTabId, second.tabId);
+  assert.equal(state.tabs[0].loadError.code, "page_load_failed");
+  assert.equal(state.tabs[1].loadError, null);
+  assert.equal(views()[1].getVisible(), true);
+  invoke("openwork:browser:selectTab", first.tabId);
+  assert.equal(views()[0].getVisible(), false);
+  invoke("openwork:browser:navigate", "https://working.example/");
+  await flush();
+  assert.equal(invoke("openwork:browser:state").tabs[0].url, "https://working.example/");
+  assert.equal(invoke("openwork:browser:state").tabs[0].loadError, null);
+  assert.equal(views()[0].getVisible(), true);
+});
+
 test("managed subresource warnings survive aborted navigation and persist until a document commits", async () => {
   let failureCode = "policy_unavailable";
   const { invoke, views, policies } = createPanel(async ({ url }) => {
@@ -2222,6 +2300,7 @@ test("managed subresource warnings survive aborted navigation and persist until 
     ["did-navigate-in-page", "https://page.example/#section", true],
     ["did-start-navigation", "https://page.example/aborted", false, true],
     ["did-fail-provisional-load", -3, "ERR_ABORTED", "https://page.example/aborted", true],
+    ["did-fail-load", -20, "ERR_BLOCKED_BY_CLIENT", "https://page.example/blocked", true],
     ["did-stop-loading"],
   ]) {
     contents.emit(event, ...args);

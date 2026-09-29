@@ -140,4 +140,6 @@ test("new tasks cannot inherit disabled Auto, while other models and saved conve
     expect(auto).toMatchObject({ providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID });
   }
   expect(modelForNewTask(auto, { code: null })).toEqual(auto);
+  expect(modelForNewTask(auto, undefined, true)).toBeNull();
+  expect(modelForNewTask(local, undefined, true)).toEqual(local);
 });

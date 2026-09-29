@@ -11,6 +11,7 @@ import { LEGACY_ORG_PROXY_HEADER } from "../../middleware/user-organizations.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { registerOrgCoreRoutes } from "./core.js"
 import { registerOrgDashboardRoutes } from "./dashboards.js"
+import { registerOrgMcpAppCatalogRoutes } from "./mcp-app-catalog.js"
 import { registerDeleteOrganizationRoutes } from "./delete-organization.js"
 import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
 import { registerOrgEgressDiagnosticRoutes } from "./egress-diagnostics.js"
@@ -70,6 +71,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgWorkflowRunRoutes(app)
   registerOrgWorkflowRoutes(app)
   registerOrgDashboardRoutes(app)
+  registerOrgMcpAppCatalogRoutes(app)
   registerOrgDesktopPolicyRoutes(app)
   registerOrgEgressDiagnosticRoutes(app)
   registerOrgInferenceRoutes(app)

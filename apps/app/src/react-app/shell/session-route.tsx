@@ -1,6 +1,6 @@
 /** @jsxImportSource react */
 import { freeAutoSwitchedOff, modelForNewTask } from "@/app/lib/inference-access";
-import { useAutoAccess, useObservedAutoAccessStatus } from "@/react-app/domains/cloud/auto-access-ui";
+import { useAutoAccess, useObservedAutoAccessSnapshot } from "@/react-app/domains/cloud/auto-access-ui";
 import { newSessionDraftSlot, newSessionDraftOwnerKey, openNewSessionDraft } from "@/react-app/domains/session/chat/new-session-destination";
 import { getSessionDraft, clearSessionDraft } from "@/react-app/domains/session/sync/draft-store";
 import { acknowledgePendingSession, beginPendingConversation, bindPendingConversationWorkspace, createPendingConversation, ensurePendingConversationGroup, pendingConversationAutoSendPayload, pendingConversationForRoute, publishPendingSideChat, usePendingConversationStore, withPendingSessionPublication, type PendingConversation } from "@/react-app/domains/session/chat/pending-conversation-store";
@@ -557,8 +557,13 @@ export function SessionRoute() {
     workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? selectedWorkspaceId, opencodeBaseUrl, localRuntime: isDesktopRuntime() });
   const workspaceDefault = useWorkspaceDefaultModel(workspaceDefaultScope);
   const configuredNewTaskModel = workspaceDefault?.model ?? local.prefs.defaultModel;
-  const observedAutoStatus = useObservedAutoAccessStatus();
-  const newTaskModel = modelForNewTask(configuredNewTaskModel, observedAutoStatus);
+  // This route creates the provider below; use its same scope when choosing a new-task default.
+  const autoAccessWorkspace = { openworkServerClient: selectedWorkspaceEndpoint?.client ?? null,
+    workspaceId: selectedWorkspaceEndpoint?.workspaceId ?? "" };
+  const observedAutoSnapshot = useObservedAutoAccessSnapshot(autoAccessWorkspace);
+  const observedAutoStatus = observedAutoSnapshot?.status === "success" ? observedAutoSnapshot.data : undefined;
+  const autoChecking = isDesktopRuntime() && observedAutoSnapshot?.status !== "error" && !observedAutoStatus;
+  const newTaskModel = modelForNewTask(configuredNewTaskModel, observedAutoStatus, autoChecking);
   const newTaskVariant = workspaceDefault ? workspaceDefault.variant : local.prefs.modelVariant ?? null;
   const changeNewTaskModel = useCallback((model: ModelRef, variant: string | null = null) => {
     const scope = workspaceModelScope({ profileId: modelProfileId,
@@ -1150,7 +1155,7 @@ export function SessionRoute() {
     providerListQuery.data,
     restrictToCloudProviders,
   ]);
-  const { query: initialAutoAccess } = useAutoAccess(entitledModelOptions.some(isAutoModel));
+  const { query: initialAutoAccess } = useAutoAccess(entitledModelOptions.some(isAutoModel) || Boolean(configuredNewTaskModel && isAutoModel(configuredNewTaskModel)), autoAccessWorkspace);
   useEffect(() => {
     if ((initialAutoAccess.isPending && initialAutoAccess.fetchStatus !== "idle") || freeAutoSwitchedOff(initialAutoAccess.data)) return;
     if (!isDesktopRuntime() || loading || selectedSessionId || workspaceDefault || workspaceSessionGroups.some((group) => group.status !== "ready")) return;
@@ -2464,9 +2469,9 @@ export function SessionRoute() {
     const scope = workspaceModelScope({ profileId: modelProfileId, workspaceId: endpoint.workspaceId,
       opencodeBaseUrl: endpoint.opencodeBaseUrl, localRuntime: isDesktopRuntime() });
     const { model, variant } = resolveNewTaskModel(scope, { model: local.prefs.defaultModel, variant: local.prefs.modelVariant ?? null });
-    const availableModel = modelForNewTask(model, observedAutoStatus);
+    const availableModel = modelForNewTask(model, observedAutoStatus, autoChecking);
     if (availableModel?.providerID && availableModel.modelID) useSessionModelStore.getState().setModel(sessionId, availableModel, variant);
-  }, [local.prefs.defaultModel, local.prefs.modelVariant, modelProfileId, observedAutoStatus]);
+  }, [local.prefs.defaultModel, local.prefs.modelVariant, modelProfileId, observedAutoStatus, autoChecking]);
 
   const handleCreateTaskInWorkspaceWithOpenMode = useCallback(async (
     workspaceId: string,

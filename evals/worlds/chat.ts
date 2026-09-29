@@ -515,7 +515,11 @@ export async function restartUpdateTaskWorld(seed: Seed) {
     window.__openworkUpdaterEvalBridge = {
       getChannel: async () => ({ channel: "stable", currentVersion }),
       setChannel: async (channel) => ({ channel, currentVersion }),
-      check: async () => ({ available: true, channel: "stable", currentVersion, latestVersion: "9.9.9" }),
+      // Like the main process, report the staged build to checks that must preserve it.
+      check: async (_channel?: string, _targetVersion?: string, options?: { preserveStaged?: boolean }) => ({
+        available: true, channel: "stable", currentVersion, latestVersion: "9.9.9",
+        ...(options?.preserveStaged ? { stagedVersion: "9.9.9" } : {}),
+      }),
       download: async () => ({ ok: true }),
       // Do not replace a binary in a journey. Unlike the download-only fixture,
       // confirmation goes through real main-process app.relaunch()/app.quit().
@@ -661,7 +665,12 @@ async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: bool
   }
   const workspacePath = seed.tmpPath("model-picker");
   const app = options.disabledAutoDesktop
-    ? await seed.desktop({ name: "model-picker-disabled-auto", den, as: "admin", env: { OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1" } })
+    ? await seed.desktop({ name: "model-picker-disabled-auto", den, as: "admin", env: {
+      OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1", OPENWORK_DEV_MODE: "1",
+      OPENWORK_DEV_FREE_RELEASE_SECRET: "fixture-free-release-secret-000000000000000000",
+      OPENWORK_FREE_INFERENCE_ORIGIN: new URL(witness.url).origin,
+      OPENWORK_DEV_FREE_CONTROL_PLANE: den.ref.apiUrl,
+    } })
     : await seed.appWeb({ name: "model-picker", workspacePath, webPort, den: den.ref });
   await addInitScript(app.client, browserScript((providerId) => {
     const originalFetch = window.fetch.bind(window);
@@ -698,8 +707,9 @@ async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: bool
   await configureProvider(seed, app, workspace.workspaceId, organization.providerID, organization.modelID, {
     enabled_providers: [auto.providerID, byok.providerID, organization.providerID, "openwork"],
     provider: {
-      [auto.providerID]: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Free", options: providerOptions,
-        models: { [auto.modelID]: { name: "GPT-5.6 Luna" } } },
+      // Native Auto belongs to the local relay; do not replace it with a mock BYOK provider.
+      ...(options.disabledAutoDesktop ? {} : { [auto.providerID]: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Free", options: providerOptions,
+        models: { [auto.modelID]: { name: "GPT-5.6 Luna" } } } }),
       openwork: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Models", options: providerOptions,
         models: { "hosted-model": { name: "Hosted witness" } } },
       [byok.providerID]: { npm: "@ai-sdk/openai-compatible", name: "BYOK provider", options: providerOptions,

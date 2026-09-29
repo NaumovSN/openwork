@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
+import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
@@ -46,8 +47,11 @@ export function autoAccessStatusQueryKey(auth: Pick<DenAuthStore, "status" | "ve
   return ["auto-access", baseUrl, workspaceId, auth.status, auth.verifiedIdentity];
 }
 
-export function useObservedAutoAccessSnapshot() {
-  const workspace = useWorkspaceMaybe();
+export type AutoAccessWorkspace = { openworkServerClient: OpenworkServerClient | null; workspaceId: string };
+
+export function useObservedAutoAccessSnapshot(override?: AutoAccessWorkspace) {
+  const context = useWorkspaceMaybe();
+  const workspace = override ?? context;
   const auth = useDenAuth();
   const client = useQueryClient();
   const queryKey = autoAccessStatusQueryKey(auth, workspace?.openworkServerClient?.baseUrl, workspace?.workspaceId);
@@ -55,8 +59,8 @@ export function useObservedAutoAccessSnapshot() {
   return useSyncExternalStore(subscribe, () => client.getQueryState<DesktopFreeAccessStatus>(queryKey), () => undefined);
 }
 
-export function useObservedAutoAccessStatus() {
-  const snapshot = useObservedAutoAccessSnapshot();
+export function useObservedAutoAccessStatus(override?: AutoAccessWorkspace) {
+  const snapshot = useObservedAutoAccessSnapshot(override);
   return snapshot?.status === "success" ? snapshot.data : undefined;
 }
 
@@ -105,8 +109,9 @@ export function AutoAccessFooter(props: { available: boolean; syncing?: boolean 
  * Pickers, the footer and the first-use caption all call it; react-query
  * dedupes them. Read-only views use `useObservedAutoAccessSnapshot`.
  */
-export function useAutoAccess(available: boolean) {
-  const workspace = useWorkspaceMaybe();
+export function useAutoAccess(available: boolean, override?: AutoAccessWorkspace) {
+  const context = useWorkspaceMaybe();
+  const workspace = override ?? context;
   const auth = useDenAuth();
   const client = workspace?.openworkServerClient;
   const query = useQuery({

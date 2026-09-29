@@ -155,6 +155,7 @@ test('registered case metadata names exact files, supported execution axes, and 
     },
     { spec: 'agent-background-journey.e2e.test.ts', id: 'AGENT-VIS-03', engines: ['v2'] },
     { spec: 'agent-connection-journey.e2e.test.ts', id: 'AGENT-VIS-04', engines: ['v1', 'v2'] },
+    { spec: 'agent-connection-sign-in-journey.e2e.test.ts', id: 'AGENT-VIS-06', engines: ['v1', 'v2'] },
     { spec: 'agent-visibility-journey.e2e.test.ts', id: 'AGENT-VIS-01', engines: ['v1', 'v2'] },
     { spec: 'agent-visibility-journey.e2e.test.ts', id: 'AGENT-VIS-02', engines: ['v1', 'v2'] },
     {

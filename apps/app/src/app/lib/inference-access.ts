@@ -48,8 +48,8 @@ export function freeAutoSwitchedOff(status: { code?: string | null } | null | un
 }
 
 /** New tasks cannot inherit a switched-off starter; saved conversation identities stay intact. */
-export function modelForNewTask(model: ModelRef | null, status: { code?: string | null } | null | undefined): ModelRef | null {
-  return model && isAutoModel(model) && freeAutoSwitchedOff(status) ? null : model;
+export function modelForNewTask(model: ModelRef | null, status: { code?: string | null } | null | undefined, pending = false): ModelRef | null {
+  return model && isAutoModel(model) && (pending || freeAutoSwitchedOff(status)) ? null : model;
 }
 
 export function autoAccessWallFromError(value: unknown, model?: ModelRef | null, depth = 0): AutoAccessWall | null {
