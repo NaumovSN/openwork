@@ -19,7 +19,7 @@ import { openworkRuntimeConfigFilePath } from "./openwork-runtime-config.js";
 const ready: DesktopFreeAccessStatus = {
   state: "ready", code: null, currentVersion: "0.20.0", minimumVersion: "0.20.0",
   providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID,
-  allowance: { limitUsd: 1, usedUsd: 0.2, reservedUsd: 0, remainingUsd: 0.8, resetsAt: "2030-01-07T00:00:00Z" },
+  allowance: { limitUsd: 1, usedUsd: 0.2, remainingUsd: 0.8, resetsAt: "2030-01-07T00:00:00Z" },
 };
 const memberReady: DesktopFreeAccessStatus = { ...ready, allowance: { ...ready.allowance!, limitUsd: 5, remainingUsd: 4.8 } };
 const credentialPath = "/api/den/v1/inference/free/credential";

@@ -6,7 +6,7 @@ import { isOwnedProvider, ownedProvider } from "./provider-config.js";
 import { readRelaySettings } from "./settings.js";
 
 const base: DesktopFreeAccessStatus = { state: "unavailable", code: "anonymous_unavailable", currentVersion: "1.0.0", minimumVersion: null, providerID: "openwork-free", modelID: DESKTOP_FREE_MODEL_ID, allowance: null };
-const allowance = { limitUsd: 1, usedUsd: 0, reservedUsd: 0, remainingUsd: 1, resetsAt: "2026-10-01T00:00:00.000Z" };
+const allowance = { limitUsd: 1, usedUsd: 0, remainingUsd: 1, resetsAt: "2026-10-01T00:00:00.000Z" };
 
 test("task routes: sends open, abort and delete end, anything else is ignored", () => {
   expect(taskRoute("POST", "/opencode2/api/session/s%201/message")).toEqual({ kind: "start", sessionID: "s 1" });

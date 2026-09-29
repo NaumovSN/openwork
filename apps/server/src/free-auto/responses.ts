@@ -20,10 +20,10 @@ export function parseStatus(payload: unknown, base: DesktopFreeAccessStatus): De
   const allowance = payload.allowance;
   let validatedAllowance: DesktopFreeAccessStatus["allowance"] = null;
   if (isRecord(allowance) && typeof allowance.limitUsd === "number" && typeof allowance.usedUsd === "number"
-    && typeof allowance.reservedUsd === "number" && typeof allowance.remainingUsd === "number" && typeof allowance.resetsAt === "string"
+    && typeof allowance.remainingUsd === "number" && typeof allowance.resetsAt === "string"
     && Number.isFinite(Date.parse(allowance.resetsAt))
-    && [allowance.limitUsd, allowance.usedUsd, allowance.reservedUsd, allowance.remainingUsd].every((value) => Number.isFinite(value) && value >= 0)) {
-    validatedAllowance = { limitUsd: allowance.limitUsd, usedUsd: allowance.usedUsd, reservedUsd: allowance.reservedUsd, remainingUsd: allowance.remainingUsd, resetsAt: allowance.resetsAt };
+    && [allowance.limitUsd, allowance.usedUsd, allowance.remainingUsd].every((value) => Number.isFinite(value) && value >= 0)) {
+    validatedAllowance = { limitUsd: allowance.limitUsd, usedUsd: allowance.usedUsd, remainingUsd: allowance.remainingUsd, resetsAt: allowance.resetsAt };
   }
   const state = payload.state;
   if (state !== "ready" && state !== "update_required" && state !== "unavailable" && state !== "exhausted") throw new Error("Invalid desktop free status state.");
@@ -35,7 +35,7 @@ export function parseStatus(payload: unknown, base: DesktopFreeAccessStatus): De
     ...(Array.isArray(payload.catalog) ? { catalog: payload.catalog.filter(isRecommendation) } : {}),
   };
 }
-const EXHAUSTED_CODES = ["anonymous_limit_exceeded", "anonymous_reservation_does_not_fit", "free_allowance_exhausted"];
+const EXHAUSTED_CODES = ["anonymous_limit_exceeded", "free_allowance_exhausted"];
 /** The status a gateway rejection implies. */
 export function statusFromRejection(payload: Record<string, unknown>, base: DesktopFreeAccessStatus): DesktopFreeAccessStatus {
   const code = typeof payload.code === "string" ? payload.code : "anonymous_unavailable";
