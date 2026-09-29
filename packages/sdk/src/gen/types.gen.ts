@@ -1019,7 +1019,6 @@ export type InferenceAccessResponse = {
     modelID: string | null;
     weeklyLimitUsd: number | null;
     usedUsd: number | null;
-    reservedUsd: number | null;
     remainingUsd: number | null;
     resetsAt: string | null;
     reason:
@@ -1028,7 +1027,6 @@ export type InferenceAccessResponse = {
       | "free_disabled"
       | "accounting_unavailable"
       | "free_allowance_exhausted"
-      | "free_request_in_progress"
       | "upstream_unavailable"
       | null;
     canUpgrade: false;

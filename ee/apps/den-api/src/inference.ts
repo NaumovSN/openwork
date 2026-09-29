@@ -1,10 +1,8 @@
 import { peopleMemberCondition } from "./setup-agent-members.js"
-import { and, asc, eq, gt, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   InferenceKeyTable,
   InferenceFreeUsageBucketTable,
-  InferenceFreeReservationTable,
-  InferenceFreeControlTable,
   InferenceOrgLimitPolicyTable,
   InferenceOrgUpstreamProviderKeyTable,
   InferenceOrgUsageBucketTable,
@@ -79,7 +77,7 @@ export async function freeAutoBlockedByDesktopPolicy(input: Pick<FreeMemberInput
 
 export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<InferenceAccess> {
   const unavailable = (reason: "not_eligible" | "admin_disabled" | "accounting_unavailable") => ({
-    ...freeInferenceAccess({ config: env.inferenceFree, reason }), usedUsd: null, reservedUsd: null, remainingUsd: null,
+    ...freeInferenceAccess({ config: env.inferenceFree, reason }), usedUsd: null, remainingUsd: null,
   })
   try {
     const [row] = await db.select({ metadata: OrganizationTable.metadata, nowMs: sql<number>`unix_timestamp(current_timestamp(3)) * 1000` })
@@ -88,7 +86,7 @@ export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<
         eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt))).limit(1)
     if (!row) return unavailable("not_eligible")
     assertManagedModelsAllowed(row.metadata)
-    if (inferenceSubscribed(row.metadata)) return { kind: "paid", modelID: null, weeklyLimitUsd: null, usedUsd: null, reservedUsd: null,
+    if (inferenceSubscribed(row.metadata)) return { kind: "paid", modelID: null, weeklyLimitUsd: null, usedUsd: null,
       remainingUsd: null, resetsAt: null, reason: null, canUpgrade: false }
     if (!freeInferenceOrganizationAllowed(row.metadata)) return unavailable("admin_disabled")
     const now = new Date(Number(row.nowMs))
@@ -96,15 +94,9 @@ export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<
     if (await paidEntitlementMismatch(input.organizationId)) return unavailable("not_eligible")
     if (await freeAutoBlockedByDesktopPolicy(input)) return unavailable("admin_disabled")
     const identity = freeHash("member", input.userId)
-    const [bucket] = await db.select().from(InferenceFreeUsageBucketTable).where(and(
-      eq(InferenceFreeUsageBucketTable.scope, "member"), eq(InferenceFreeUsageBucketTable.identity_hash, identity),
-      eq(InferenceFreeUsageBucketTable.window_type, "weekly"), eq(InferenceFreeUsageBucketTable.window_start_at, freeInferenceWindow(now).start))).limit(1)
-    const [pending] = await db.select({ id: InferenceFreeReservationTable.request_id }).from(InferenceFreeReservationTable).where(and(
-      eq(InferenceFreeReservationTable.principal_hash, identity), inArray(InferenceFreeReservationTable.status, ["held", "dispatched"]),
-      gt(InferenceFreeReservationTable.expires_at, now))).limit(1)
-    const [control] = await db.select().from(InferenceFreeControlTable).where(eq(InferenceFreeControlTable.id, "free-auto")).limit(1)
-    return freeInferenceAccess({ config: env.inferenceFree, now, bucket,
-      reason: control?.blocked ? "accounting_unavailable" : pending ? "free_request_in_progress" : null })
+    const [bucket] = await db.select({ used_amount: InferenceFreeUsageBucketTable.used_amount }).from(InferenceFreeUsageBucketTable).where(and(
+      eq(InferenceFreeUsageBucketTable.identity_hash, identity), eq(InferenceFreeUsageBucketTable.window_start_at, freeInferenceWindow(now).start))).limit(1)
+    return freeInferenceAccess({ config: env.inferenceFree, now, bucket })
   } catch (error) {
     return unavailable(error instanceof ManagedModelsPolicyError && error.code === "managed_models_disabled_for_dpa" ? "admin_disabled" : "accounting_unavailable")
   }

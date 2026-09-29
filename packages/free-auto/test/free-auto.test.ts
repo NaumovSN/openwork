@@ -5,7 +5,7 @@ import {
   desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeVersionError, isDesktopFreeSignableRoute, leadingZeroBits,
   lowestDesktopVersion, parseDesktopReleases, supportedDesktopReleases,
 } from "../src/index.js";
-import { freeRequestReservation, freeUsageAmount, parseInstallRamp, rampedDeviceAmount, DEFAULT_INSTALL_RAMP } from "../src/accounting.js";
+import { freeUsageAmount, parseInstallRamp, rampedDeviceAmount, DEFAULT_INSTALL_RAMP } from "../src/accounting.js";
 import { deriveReleaseSecret, matchReleaseTag, releaseKeyFingerprint, releaseTag, sha256Hex, solveSessionPow, startSessionPow, verifySessionPow } from "../src/node.js";
 
 const base = { publicKey: "k".repeat(59) + "=", machineId: "c".repeat(64), appVersion: "1.2.3", platform: "darwin" as const, arch: "arm64" as const, timestamp: 1, nonce: "7b1f0c2e-5a6d-4b8c-9d0e-1f2a3b4c5d6e" };
@@ -92,10 +92,9 @@ describe("release window", () => {
 });
 
 describe("accounting", () => {
-  test("cost from token counts, the reservation, and the activity ramp", () => {
+  test("cost from token counts and the activity ramp", () => {
     const prices = { inputPrice: 0.25, outputPrice: 1.2 };
     expect(freeUsageAmount(prices, 1_000_000, 0)).toBe(25_000_000);
-    expect(freeRequestReservation({ ...prices, maxInputTokens: 1000, maxCompletionTokens: 1000 })).toBe(Math.ceil(freeUsageAmount(prices, 1000, 1000) * 1.1));
     const ramp = parseInstallRamp(DEFAULT_INSTALL_RAMP, 100_000_000);
     expect(ramp.map((step) => step.minutes)).toEqual([0, 10, 20, 30]);
     expect(rampedDeviceAmount({ installRamp: ramp, deviceWeeklyAmount: 100_000_000 }, 25 * 60000)).toBe(50_000_000);

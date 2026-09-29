@@ -58,20 +58,18 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
     ipNewIdentitiesPerDay: integer("ANONYMOUS_IP_NEW_IDENTITIES_PER_DAY", 5, 1, 1000),
     sessionPowBits: integer("ANONYMOUS_SESSION_POW_BITS", DESKTOP_FREE_SESSION_POW_BITS, 0, DESKTOP_FREE_SESSION_POW_MAX_BITS),
     sessionPowRounds: integer("ANONYMOUS_SESSION_POW_ROUNDS", DESKTOP_FREE_SESSION_POW_ROUNDS, 1, DESKTOP_FREE_SESSION_POW_MAX_ROUNDS),
-    ipDailyAmount: integer("ANONYMOUS_IP_DAILY_MICRO_USD", 5000000, 1, 100000000) * 100,
     globalDailyAmount: integer("ANONYMOUS_GLOBAL_DAILY_MICRO_USD", 100000000, 1, 1000000000) * 100,
     globalMonthlyAmount: integer("ANONYMOUS_GLOBAL_MONTHLY_MICRO_USD", 3000000000, 1, 10000000000) * 100,
-    memberGlobalDailyAmount: integer("INFERENCE_FREE_GLOBAL_DAILY_MICRO_USD", 100000000, 1, 1000000000) * 100,
-    memberGlobalMonthlyAmount: integer("INFERENCE_FREE_GLOBAL_MONTHLY_MICRO_USD", 3000000000, 1, 10000000000) * 100,
-    globalInflight: integer("ANONYMOUS_GLOBAL_INFLIGHT", 20, 1, 1000),
     tokenTtlSeconds: integer("ANONYMOUS_TOKEN_TTL_SECONDS", 3600, 60, 86400),
+    /** How long OpenAI may take to start answering, like paid Models' upstream timeout. A started answer is never cut off. */
     requestTimeoutMs: integer("ANONYMOUS_REQUEST_TIMEOUT_MS", 60000, 1000, 300000),
-    maxInputTokens: integer("ANONYMOUS_MAX_INPUT_TOKENS", 131072, 4096, 131072),
-    maxCompletionTokens: integer("ANONYMOUS_MAX_COMPLETION_TOKENS", 4096, 1, 16384),
+    /** Charged when OpenAI never reports a request's usage (the stream broke or the client left); OpenAI has no usage webhook. */
+    unreportedUsageAmount: integer("INFERENCE_FREE_UNREPORTED_USAGE_MICRO_USD", 40000, 0, 10000000) * 100,
     // OpenAI list prices for the free model, in USD per million tokens.
     inputPrice: integer("INFERENCE_FREE_INPUT_PRICE_MICRO_USD_PER_MILLION", 250000, 1, 100000000) / 1000000,
     outputPrice: integer("INFERENCE_FREE_OUTPUT_PRICE_MICRO_USD_PER_MILLION", 1200000, 1, 100000000) / 1000000,
     maxBodyBytes: integer("ANONYMOUS_MAX_BODY_BYTES", 262144, 1024, 1048576),
+    /** The largest single response frame the meter buffers; the answer as a whole is not capped. */
     maxResponseBytes: integer("ANONYMOUS_MAX_RESPONSE_BYTES", 2097152, 16384, 16777216),
     trustProxyHops: integer("ANONYMOUS_TRUST_PROXY_HOPS", 0, 0, 8),
     trustedProxyIps: (environment.ANONYMOUS_TRUSTED_PROXY_IPS ?? "").split(",").map((value) => value.trim()).filter(Boolean),
