@@ -28,7 +28,9 @@ test("a member with a saved Auto default can choose a working model while free a
     expect(await probe.storage("openwork.defaultModel")).toBe(`${world.auto.providerID}/${world.auto.modelID}`);
     await user.see("composer", { editable: true });
     expect((await probe.dom('button[aria-label="Change model"]')).elements.map((element) => element.text)).not.toContain("Auto");
-    await user.type("composer", draft);
+    await user.see({ role: "button", label: "Change model" }, { text: "Organization witness" });
+    await user.type("composer", draft, { verify: true });
+    expect((await probe.composer()).draftText).toBe(draft);
     await quiet();
     await user.screenshot();
   });
@@ -37,7 +39,7 @@ test("a member with a saved Auto default can choose a working model while free a
     await user.see(option(world.byok));
     await user.see(option(world.organization));
     await quiet();
-    await user.see("composer", { text: draft });
+    expect((await probe.composer()).draftText).toBe(draft);
     await user.screenshot();
   });
   await step("choosing BYOK preserves the draft and leaves free access switched off", async () => {
