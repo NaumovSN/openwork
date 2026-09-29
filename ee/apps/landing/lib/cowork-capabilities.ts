@@ -28,8 +28,6 @@ export type CapabilityCell = {
 
 export type CapabilityRow = {
   label: string;
-  /** Short name used in the takeaway sentence. */
-  short?: string;
   cells: Record<ProductKey, CapabilityCell>;
 };
 
@@ -75,7 +73,6 @@ export const capabilityGroups: CapabilityGroup[] = [
       },
       {
         label: "Desktop app for Linux",
-        short: "a Linux app",
         cells: {
           enterprise: partial(A.linux, "Claude Desktop on Linux is in beta."),
           thirdParty: partial(A.config, "Linux settings are documented, but the 3P install guide lists only macOS and Windows."),
@@ -96,7 +93,6 @@ export const capabilityGroups: CapabilityGroup[] = [
       },
       {
         label: "Your skills and connections inside Claude Code, Codex, and Cursor",
-        short: "your setup inside other agents",
         cells: {
           enterprise: no(A.matrix),
           thirdParty: no(A.matrix),
@@ -184,7 +180,6 @@ export const capabilityGroups: CapabilityGroup[] = [
     rows: [
       {
         label: "Any model, including open-weight and self-hosted",
-        short: "any model",
         cells: {
           enterprise: no(A.pricing),
           thirdParty: partial(A.gateway, "Claude models; others only through an Anthropic-compatible gateway you run."),
@@ -243,7 +238,6 @@ export const capabilityGroups: CapabilityGroup[] = [
       },
       {
         label: "Self-host the control plane, with open source code",
-        short: "a control plane you host",
         cells: { enterprise: no(A.overview), thirdParty: no(A.adminConsole), openwork: yes("/docs/start-here/self-host") }
       }
     ]
@@ -280,13 +274,6 @@ export function plannedCount(key: ProductKey, rows: CapabilityRow[] = capability
   return rows.filter((row) => row.cells[key].planned).length;
 }
 
-/** Rows where OpenWork is Yes and neither Claude column is. */
-export function openworkOnlyRows(rows: CapabilityRow[] = capabilityRows): CapabilityRow[] {
-  return rows.filter(
-    (row) => row.cells.openwork.value === "yes" && row.cells.enterprise.value !== "yes" && row.cells.thirdParty.value !== "yes"
-  );
-}
-
 export function supportLabel(value: Support): string {
   if (value === "yes") return "Yes";
   if (value === "partial") return "Partial";
@@ -299,15 +286,6 @@ export function totalsText(totals: SupportTotals): string {
 
 export function capabilitySubtitle(): string {
   return `${capabilityRows.length} capabilities, checked against each vendor's own docs. Yes, Partial, or No for what ships today.`;
-}
-
-/** One data-driven sentence under the totals. */
-export function capabilityTakeaway(): string {
-  const enterprise = supportTotals("enterprise");
-  const openwork = supportTotals("openwork");
-  const only = openworkOnlyRows().map((row) => row.short ?? row.label.toLowerCase());
-  const list = only.length > 1 ? `${only.slice(0, -1).join(", ")}, and ${only[only.length - 1]}` : only.join("");
-  return `Claude Enterprise covers the most today, ${enterprise.yes} of ${enterprise.total}; OpenWork has ${openwork.yes} plus ${openwork.partial} partial, with ${plannedCount("openwork")} gaps on the public roadmap, and is the only Yes for ${list}.`;
 }
 
 /** Footnote numbers for cells with a note, in reading order. */
@@ -355,8 +333,6 @@ export function capabilityMarkdown(): string {
     ...body,
     totals,
     price,
-    "",
-    `**${capabilityTakeaway()}**`,
     "",
     "Planned means the OpenWork gap is on the [public roadmap](https://openworklabs.com/roadmap) and is not counted as Yes.",
     "",

@@ -10,6 +10,7 @@ import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, livePro
 import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
 import type { MockAgentWorkload, MockMcpHandle } from "@openwork/labs";
 import { chatContinuity } from "./chat-continuity.ts";
+import { readDefaultDesktopPolicy } from "./desktop-policies.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
@@ -713,6 +714,62 @@ export async function modelPicker(seed: Seed) {
   return { app, den, workspace, session, auto, byok, favorite, recent, organization,
     requests: () => witness.agentRequests(),
   };
+}
+
+/**
+ * A member's desktop with one organization-managed provider (assigned in Den) and one personal provider added
+ * on the device, after which an admin picks "Only models you provide" in the AI Gateway's "Who can use models"
+ * (allowCustomProviders off).
+ */
+export async function modelAccessPicker(seed: Seed) {
+  const mock = seed.mock({});
+  const den = await seed.den({ mocks: { agent: mock } });
+  const witness = den.mocks.agent;
+  const created = await seed.api(den.admin, "/v1/llm-providers", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Organization provider", source: "custom", allMembers: true, memberIds: [], teamIds: [],
+      apiKey: "synthetic-managed-key",
+      customConfig: {
+        id: "managed-organization", name: "Organization provider", npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: `${witness.url}/v1` }, env: ["MANAGED_FIXTURE_API_KEY"],
+        models: [{ id: "organization-model", name: "Organization witness", tool_call: true }],
+      },
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const provider = isRecord(created.body) && isRecord(created.body.llmProvider) ? created.body.llmProvider : null;
+  const organizationProviderId = provider && typeof provider.id === "string" ? provider.id : null;
+  if (created.response.status !== 201 || !organizationProviderId) throw new Error(`Organization provider setup failed: HTTP ${created.response.status}`);
+  const app = await seed.desktop({ name: "model-access-picker", den, as: "admin" });
+  const workspace = await seed.workspace(app, seed.tmpPath("model-access-picker"), { create: true });
+  const personal = { providerID: "personal-byok", modelID: "byok-model" };
+  // A key the member added on this device before the policy existed. The org's model stays the default.
+  const added = await seed.evalIn(app, browserScript(async (workspaceId, opencodeJson) => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    if (!port || !token) return "missing local server credentials";
+    const call = (path: string, init: RequestInit) => fetch("http://127.0.0.1:" + port + path, {
+      ...init, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" } });
+    const patched = await call("/workspace/" + encodeURIComponent(workspaceId) + "/config", { method: "PATCH", body: JSON.stringify({ opencode: JSON.parse(opencodeJson) }) });
+    if (!patched.ok) return "config " + patched.status;
+    const reloaded = await call("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
+    return reloaded.ok || reloaded.status === 504 || reloaded.status === 503 ? "ok" : "reload " + reloaded.status;
+  }, [workspace.workspaceId, JSON.stringify({ provider: {
+    [personal.providerID]: { npm: "@ai-sdk/openai-compatible", name: "Personal provider",
+      options: { baseURL: `${witness.url}/v1`, apiKey: "sk-personal" }, models: { [personal.modelID]: { name: "Personal witness" } } },
+  } })]), { awaitPromise: true });
+  if (added !== "ok") throw new Error(`Adding the personal provider failed: ${String(added)}`);
+  // Saved the way the AI Gateway dialog saves "Only models you provide".
+  const stored = await readDefaultDesktopPolicy(seed, den.admin);
+  const policy = { ...(isRecord(stored.policy) ? stored.policy : {}), allowCustomProviders: false };
+  const updated = await seed.api(den.admin, `/v1/desktop-policies/${String(stored.id)}`, {
+    method: "PATCH", body: JSON.stringify({ policyName: stored.policyName, policy }), signal: AbortSignal.timeout(30_000),
+  });
+  if (!updated.response.ok) throw new Error(`Saving model access failed: HTTP ${updated.response.status}`);
+  await seed.evalIn(app, () => { location.reload(); return true; });
+  const session = await seedSessionRetry(seed, app, { title: "Only models you provide" });
+  return { app, den, workspace, session, policy, personal, organization: { providerID: organizationProviderId, modelID: "organization-model" } };
 }
 
 /** Model picker contract through a real native engine and a synthetic provider. */

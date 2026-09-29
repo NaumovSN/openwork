@@ -121,8 +121,8 @@ describe("Landing social metadata", () => {
   test("preserves authored roadmap and migration social overrides", () => {
     for (const path of ["roadmap/page.tsx", "docs/roadmap/page.tsx"]) {
       const metadata = readMetadata(join(appDirectory, path));
-      expect(metadata.openGraph?.title).toBe("OpenWork Roadmap | Your workspace, on every surface");
-      expect(metadata.openGraph?.description).toBe("The roadmap for the OpenWork desktop app, portable agent capabilities, hosted workspaces, and every surface where work happens.");
+      expect(metadata.openGraph?.title).toBe("OpenWork Roadmap | A workspace for everyone, on any platform");
+      expect(metadata.openGraph?.description).toBe("What is ready, being built, and coming soon across every OpenWork product.");
       expect(metadata.openGraph?.url).toBe("https://openworklabs.com/roadmap");
       expect(metadata.alternates?.canonical).toBe("/roadmap");
     }

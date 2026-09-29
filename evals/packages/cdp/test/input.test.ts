@@ -293,6 +293,30 @@ test("paste shortcuts dispatch Chromium's native paste command", async () => {
   }
 });
 
+test("plain printable key presses include text for native date and time segments, not shortcuts", async () => {
+  const surface = surfaceReturning(null);
+  const events: unknown[] = [];
+  surface.client.send = async (method, params) => {
+    assert.equal(method, "Input.dispatchKeyEvent");
+    events.push(params);
+    return {};
+  };
+  await pressKey(surface, "1");
+  await pressKey(surface, "a");
+  await pressKey(surface, "Space");
+  await pressKey(surface, "Control+a");
+  assert.deepEqual(events, [
+    { type: "keyDown", key: "1", code: "Digit1", windowsVirtualKeyCode: 49, modifiers: 0, text: "1" },
+    { type: "keyUp", key: "1", code: "Digit1", windowsVirtualKeyCode: 49, modifiers: 0 },
+    { type: "keyDown", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 0, text: "a" },
+    { type: "keyUp", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 0 },
+    { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32, modifiers: 0, text: " " },
+    { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32, modifiers: 0 },
+    { type: "keyDown", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 2 },
+    { type: "keyUp", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 2 },
+  ]);
+});
+
 test("click readiness waits for stable geometry rather than hitting a moving menu option", async () => {
   const surface = surfaceReturning(null);
   let inspections = 0;

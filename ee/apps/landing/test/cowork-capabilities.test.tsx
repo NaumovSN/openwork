@@ -10,9 +10,6 @@ import {
   capabilityColumns,
   capabilityGroups,
   capabilityRows,
-  capabilityTakeaway,
-  openworkOnlyRows,
-  plannedCount,
   supportLabel,
   supportTotals
 } from "../lib/cowork-capabilities";
@@ -62,17 +59,13 @@ describe("Claude Cowork capability matrix data", () => {
       expect(totals.partial).toBe(values.filter((value) => value === "partial").length);
       expect(totals.yes + totals.partial + totals.no).toBe(capabilityRows.length);
     }
-    const takeaway = capabilityTakeaway();
-    expect(takeaway).toContain(`${supportTotals("enterprise").yes} of ${capabilityRows.length}`);
-    expect(takeaway).toContain(`${plannedCount("openwork")} gaps on the public roadmap`);
-    for (const row of openworkOnlyRows()) expect(takeaway).toContain(row.short ?? row.label.toLowerCase());
   });
 });
 
 describe.each(Object.entries(pages))("capability matrix on %s", (path, html) => {
   const text = decode(html);
 
-  test("renders every group, row, total, and the takeaway", () => {
+  test("renders every group, row, and total, with no takeaway sentence", () => {
     expect(html).toContain("<table");
     for (const group of capabilityGroups) expect(text).toContain(group.label);
     for (const row of capabilityRows) expect(text).toContain(row.label);
@@ -81,7 +74,7 @@ describe.each(Object.entries(pages))("capability matrix on %s", (path, html) => 
       const totals = supportTotals(column.key);
       if (totals.partial > 0) expect(text).toContain(`+${totals.partial} partial`);
     }
-    expect(text).toContain(capabilityTakeaway());
+    expect(text).not.toContain("covers the most today");
     expect(text).toContain(`Sources, checked ${capabilitiesCheckedAt}`);
     expect(html).toContain('href="/roadmap"');
   });
@@ -99,6 +92,6 @@ describe.each(Object.entries(pages))("capability matrix on %s", (path, html) => 
       expect(markdown).toMatch(new RegExp(`\\| ${row.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\| ${cells.map((cell) => `${cell}[^|]*`).join("\\| ")}\\|`));
     }
     expect(markdown).toContain(`| **Yes, of ${capabilityRows.length}** |`);
-    expect(markdown).toContain(capabilityTakeaway());
+    expect(markdown).not.toContain("covers the most today");
   });
 });

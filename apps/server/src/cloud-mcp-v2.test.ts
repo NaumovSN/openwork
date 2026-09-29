@@ -31,7 +31,7 @@ test("native diagnostics use scoped authenticated APIs and never fall back to v1
   expect(resolve(workspace)).toBeUndefined();
 });
 
-test("v2 repair mirrors and reconnects the requested MCP; v1 and remote repairs retain their owner", async () => {
+test("a v2 refresh hands the requested names to the folder's reconciler and never restarts them itself; v1 and remote repairs retain their owner", async () => {
   const operations: string[] = [];
   const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
     operations.push(`${request.method} ${new URL(request.url).pathname}`);
@@ -41,13 +41,14 @@ test("v2 repair mirrors and reconnects the requested MCP; v1 and remote repairs 
   let chatRouting = true;
   const register = createRoutedCloudMcpRegistrar({
     status: () => status(chatRouting), connection: () => ({ url: `http://127.0.0.1:${server.port}`, username: "fixture", password: "fixture" }),
-    ensureWorkspaceReady: async () => { operations.push("ready"); },
-    syncWorkspaceMcp: async () => { operations.push("sync"); },
+    syncWorkspaceMcp: async (id, directory, options) => { operations.push(`sync ${id} ${directory} ${options?.reconnect?.join(",")}`); },
   }, async () => { operations.push("v1-or-remote"); return { status: "ok", syncedNames: [], failures: [] }; });
-  expect((await register(config, workspace, ["openwork-cloud"])).status).toBe("ok");
-  expect(operations).toEqual(["ready", "sync", "POST /api/mcp/openwork-cloud/connect"]);
+  expect((await register(config, workspace, ["openwork-direct-a", "openwork-direct-b"])).status).toBe("ok");
+  expect((await register(config, workspace)).syncedNames).toEqual(["openwork-cloud"]);
+  // No engine request of its own: in particular no unconditional /connect.
+  expect(operations).toEqual([`sync fixture ${workspace.path} openwork-direct-a,openwork-direct-b`, `sync fixture ${workspace.path} openwork-cloud`]);
   await register(config, { ...workspace, workspaceType: "remote" });
   chatRouting = false;
   await register(config, workspace);
-  expect(operations.slice(3)).toEqual(["v1-or-remote", "v1-or-remote"]);
+  expect(operations.slice(2)).toEqual(["v1-or-remote", "v1-or-remote"]);
 });

@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
+import { and, asc, count, desc, eq, inArray, isNull, notExists, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import {
   AuthUserTable,
   ConfigObjectAccessGrantTable,
@@ -63,14 +63,14 @@ import {
 } from "./github-discovery.js"
 import { planConnectorImportedResourceCleanup, uniqueIds } from "./connector-cleanup.js"
 import {
-  DEFAULT_ANTHROPIC_MARKETPLACE_DESCRIPTION,
-  DEFAULT_ANTHROPIC_MARKETPLACE_LOGO_URL,
-  DEFAULT_ANTHROPIC_MARKETPLACE_NAME,
-  DEFAULT_ANTHROPIC_STARTER_PLUGINS,
   DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
   DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
   DEFAULT_OPENWORK_MARKETPLACE_NAME,
   type DefaultMarketplacePluginEntry,
+  RETIRED_STARTER_MARKETPLACE_DESCRIPTION,
+  RETIRED_STARTER_MARKETPLACE_LOGO_URL,
+  RETIRED_STARTER_MARKETPLACE_NAME,
+  RETIRED_STARTER_PLUGIN_NAMES,
 } from "./default-marketplaces.js"
 import { db } from "../../../db.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
@@ -3092,21 +3092,7 @@ async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext)
     if (!organization) throw new Error("Organization not found while provisioning default marketplaces.")
 
     const now = new Date()
-    const anthropicMarketplace = await ensureDefaultMarketplace({
-      context,
-      createdAt: now,
-      database: tx,
-      description: DEFAULT_ANTHROPIC_MARKETPLACE_DESCRIPTION,
-      logoUrl: DEFAULT_ANTHROPIC_MARKETPLACE_LOGO_URL,
-      name: DEFAULT_ANTHROPIC_MARKETPLACE_NAME,
-    })
-    await ensureDefaultMarketplacePlugins({
-      context,
-      createdAt: now,
-      database: tx,
-      entries: DEFAULT_ANTHROPIC_STARTER_PLUGINS,
-      marketplaceId: anthropicMarketplace.id,
-    })
+    await retireStarterPlaceholders({ database: tx, organizationId, retiredAt: now })
 
     const marketplace = await ensureDefaultMarketplace({
       context,
@@ -3127,29 +3113,26 @@ async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext)
 }
 
 async function defaultOpenWorkMarketplaceSeedComplete(organizationId: OrganizationId) {
+  const retirable = await findRetirableStarterPlaceholders(db, organizationId)
+  if (retirable.memberships.length > 0 || retirable.emptyMarketplaceIds.length > 0) {
+    return false
+  }
+
   const defaultMarketplaces = await db
     .select({ id: MarketplaceTable.id, logoUrl: MarketplaceTable.logoUrl, name: MarketplaceTable.name })
     .from(MarketplaceTable)
     .where(and(
       eq(MarketplaceTable.organizationId, organizationId),
-      inArray(MarketplaceTable.name, [DEFAULT_ANTHROPIC_MARKETPLACE_NAME, DEFAULT_OPENWORK_MARKETPLACE_NAME]),
+      eq(MarketplaceTable.name, DEFAULT_OPENWORK_MARKETPLACE_NAME),
       eq(MarketplaceTable.status, "active"),
       isNull(MarketplaceTable.deletedAt),
     ))
-  const marketplaceIdByName = new Map(defaultMarketplaces.map((marketplace) => [marketplace.name, marketplace.id]))
-  const anthropicMarketplaceId = marketplaceIdByName.get(DEFAULT_ANTHROPIC_MARKETPLACE_NAME)
-  const openWorkMarketplaceId = marketplaceIdByName.get(DEFAULT_OPENWORK_MARKETPLACE_NAME)
-  if (!anthropicMarketplaceId || !openWorkMarketplaceId) {
-    return false
-  }
-  if (!defaultMarketplaces.some((marketplace) => marketplace.name === DEFAULT_ANTHROPIC_MARKETPLACE_NAME && marketplace.logoUrl === DEFAULT_ANTHROPIC_MARKETPLACE_LOGO_URL)) {
-    return false
-  }
-  if (!defaultMarketplaces.some((marketplace) => marketplace.name === DEFAULT_OPENWORK_MARKETPLACE_NAME && marketplace.logoUrl === DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL)) {
+  const openWorkMarketplaceId = defaultMarketplaces.find((marketplace) => marketplace.logoUrl === DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL)?.id
+  if (!openWorkMarketplaceId) {
     return false
   }
 
-  const marketplaceIds = [anthropicMarketplaceId, openWorkMarketplaceId]
+  const marketplaceIds = [openWorkMarketplaceId]
   const marketplaceGrantRows = await db
     .select({ marketplaceId: MarketplaceAccessGrantTable.marketplaceId, role: MarketplaceAccessGrantTable.role })
     .from(MarketplaceAccessGrantTable)
@@ -3165,9 +3148,7 @@ async function defaultOpenWorkMarketplaceSeedComplete(organizationId: Organizati
     return false
   }
 
-  const anthropicPluginEntries = DEFAULT_ANTHROPIC_STARTER_PLUGINS
-  const openWorkPluginEntries = DEFAULT_OPENWORK_EXTENSION_MANIFESTS.map((manifest) => ({ description: manifest.description, name: manifest.name }))
-  const defaultPluginEntries = [...anthropicPluginEntries, ...openWorkPluginEntries]
+  const defaultPluginEntries = DEFAULT_OPENWORK_EXTENSION_MANIFESTS.map((manifest) => ({ description: manifest.description, name: manifest.name }))
   const defaultPluginRows = await db
     .select({ id: PluginTable.id, name: PluginTable.name, description: PluginTable.description })
     .from(PluginTable)
@@ -3204,11 +3185,7 @@ async function defaultOpenWorkMarketplaceSeedComplete(organizationId: Organizati
   }
 
   const expectedMemberships = new Set<string>()
-  for (const entry of anthropicPluginEntries) {
-    const pluginId = pluginIdByEntry.get(defaultMarketplacePluginEntryKey(entry))
-    if (pluginId) expectedMemberships.add(defaultMarketplacePluginMembershipKey(anthropicMarketplaceId, pluginId))
-  }
-  for (const entry of openWorkPluginEntries) {
+  for (const entry of defaultPluginEntries) {
     const pluginId = pluginIdByEntry.get(defaultMarketplacePluginEntryKey(entry))
     if (pluginId) expectedMemberships.add(defaultMarketplacePluginMembershipKey(openWorkMarketplaceId, pluginId))
   }
@@ -3224,6 +3201,89 @@ async function defaultOpenWorkMarketplaceSeedComplete(organizationId: Organizati
     ))
   const memberships = new Set(membershipRows.map((membership) => defaultMarketplacePluginMembershipKey(membership.marketplaceId, membership.pluginId)))
   return Array.from(expectedMemberships).every((membership) => memberships.has(membership))
+}
+
+/**
+ * Starter placeholders are plugins the system put into the retired starter
+ * marketplace that never gained a source or any contents. Anything imported,
+ * filled in, or added by a person stays.
+ */
+async function findRetirableStarterPlaceholders(database: typeof db | DbTransaction, organizationId: OrganizationId) {
+  const starterMarketplaces = await database
+    .select({ description: MarketplaceTable.description, id: MarketplaceTable.id, logoUrl: MarketplaceTable.logoUrl })
+    .from(MarketplaceTable)
+    .where(and(
+      eq(MarketplaceTable.organizationId, organizationId),
+      eq(MarketplaceTable.name, RETIRED_STARTER_MARKETPLACE_NAME),
+      isNull(MarketplaceTable.deletedAt),
+    ))
+  if (starterMarketplaces.length === 0) {
+    return { emptyMarketplaceIds: [], memberships: [] }
+  }
+  const starterMarketplaceIds = starterMarketplaces.map((marketplace) => marketplace.id)
+
+  const memberships = await database
+    .select({ id: MarketplacePluginTable.id, pluginId: PluginTable.id })
+    .from(MarketplacePluginTable)
+    .innerJoin(PluginTable, eq(PluginTable.id, MarketplacePluginTable.pluginId))
+    .where(and(
+      eq(MarketplacePluginTable.organizationId, organizationId),
+      inArray(MarketplacePluginTable.marketplaceId, starterMarketplaceIds),
+      eq(MarketplacePluginTable.membershipSource, "system"),
+      isNull(MarketplacePluginTable.removedAt),
+      eq(PluginTable.organizationId, organizationId),
+      inArray(PluginTable.name, [...RETIRED_STARTER_PLUGIN_NAMES]),
+      isNull(PluginTable.sourceFormat),
+      isNull(PluginTable.sourceRepositoryUrl),
+      isNull(PluginTable.deletedAt),
+      notExists(database
+        .select({ id: PluginConfigObjectTable.id })
+        .from(PluginConfigObjectTable)
+        .where(and(
+          eq(PluginConfigObjectTable.pluginId, PluginTable.id),
+          isNull(PluginConfigObjectTable.removedAt),
+        ))),
+    ))
+
+  // Only the untouched starter marketplace goes, and only once nothing else is in it.
+  const untouchedMarketplaceIds = starterMarketplaces
+    .filter((marketplace) => marketplace.logoUrl === RETIRED_STARTER_MARKETPLACE_LOGO_URL && marketplace.description === RETIRED_STARTER_MARKETPLACE_DESCRIPTION)
+    .map((marketplace) => marketplace.id)
+  if (untouchedMarketplaceIds.length === 0) {
+    return { emptyMarketplaceIds: [], memberships }
+  }
+  const activeMemberships = await database
+    .select({ id: MarketplacePluginTable.id, marketplaceId: MarketplacePluginTable.marketplaceId })
+    .from(MarketplacePluginTable)
+    .where(and(
+      eq(MarketplacePluginTable.organizationId, organizationId),
+      inArray(MarketplacePluginTable.marketplaceId, untouchedMarketplaceIds),
+      isNull(MarketplacePluginTable.removedAt),
+    ))
+  const retiringMembershipIds = new Set(memberships.map((membership) => membership.id))
+  const keptMarketplaceIds = new Set(activeMemberships
+    .filter((membership) => !retiringMembershipIds.has(membership.id))
+    .map((membership) => membership.marketplaceId))
+  const emptyMarketplaceIds = untouchedMarketplaceIds.filter((marketplaceId) => !keptMarketplaceIds.has(marketplaceId))
+
+  return { emptyMarketplaceIds, memberships }
+}
+
+async function retireStarterPlaceholders(input: { database: DbTransaction; organizationId: OrganizationId; retiredAt: Date }) {
+  const { emptyMarketplaceIds, memberships } = await findRetirableStarterPlaceholders(input.database, input.organizationId)
+  if (memberships.length > 0) {
+    await input.database.update(MarketplacePluginTable)
+      .set({ removedAt: input.retiredAt })
+      .where(inArray(MarketplacePluginTable.id, memberships.map((membership) => membership.id)))
+    await input.database.update(PluginTable)
+      .set({ deletedAt: input.retiredAt, status: "deleted", updatedAt: input.retiredAt })
+      .where(inArray(PluginTable.id, uniqueIds(memberships.map((membership) => membership.pluginId))))
+  }
+  if (emptyMarketplaceIds.length > 0) {
+    await input.database.update(MarketplaceTable)
+      .set({ deletedAt: input.retiredAt, status: "deleted", updatedAt: input.retiredAt })
+      .where(inArray(MarketplaceTable.id, emptyMarketplaceIds))
+  }
 }
 
 function defaultMarketplacePluginEntryKey(entry: DefaultMarketplacePluginEntry) {

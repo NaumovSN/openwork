@@ -1474,7 +1474,7 @@ export function SessionPage(props: SessionPageProps) {
             data-sidebar-hidden={!shellConfig.sidebar || !sidebarOpen || isMobile}
             className={cn(
               "window-titlebar flex shrink-0 items-center justify-between gap-3 border-b border-border bg-dls-surface px-3 electron:titlebar-drag @container/titlebar lg:px-4 mac:bg-transparent",
-              props.mainContentHeaderActionsRef && "min-h-13",
+              props.mainContentHeaderActionsRef ? "min-h-13" : "lg:pr-1",
               (!shellConfig.sidebar || !sidebarOpen || isMobile) && "mac:mac-window-controls-inset",
             )}
           >
@@ -1556,32 +1556,6 @@ export function SessionPage(props: SessionPageProps) {
                   <TooltipContent>Find in conversation ({isMacPlatform() ? "⌘F" : "Ctrl+F"})</TooltipContent>
                 </Tooltip>
               ) : null}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      className={cn(
-                        "hidden rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground lg:inline-flex",
-                        sidePanelOpen && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
-                      )}
-                      aria-label={sidePanelOpen ? "Close side panel" : "Open side panel"}
-                      aria-pressed={sidePanelOpen}
-                      onClick={() => {
-                        if (sidePanelOpen) {
-                          closeRightPane();
-                        } else {
-                          openGeneralSidePanel();
-                        }
-                      }}
-                    >
-                      <PanelRight size={16} />
-                    </Button>
-                  }
-                />
-                <TooltipContent>{sidePanelOpen ? "Close side panel" : "Open side panel"}</TooltipContent>
-              </Tooltip>
               {showCloudSignIn ? (
                 <Button
                   variant="secondary"
@@ -1645,6 +1619,32 @@ export function SessionPage(props: SessionPageProps) {
                   Reset notifications
                 </Button>
               ) : null}
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      className={cn(
+                        "hidden rounded-xl text-gray-10 transition-colors hover:bg-muted hover:text-foreground lg:inline-flex",
+                        sidePanelOpen && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+                      )}
+                      aria-label={sidePanelOpen ? "Close side panel" : "Open side panel"}
+                      aria-pressed={sidePanelOpen}
+                      onClick={() => {
+                        if (sidePanelOpen) {
+                          closeRightPane();
+                        } else {
+                          openGeneralSidePanel();
+                        }
+                      }}
+                    >
+                      <PanelRight size={16} />
+                    </Button>
+                  }
+                />
+                <TooltipContent>{sidePanelOpen ? "Close side panel" : "Open side panel"}</TooltipContent>
+              </Tooltip>
             </div>}
           </header>}
 

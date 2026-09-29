@@ -266,6 +266,12 @@ export interface LaunchScriptWorldOptions {
   recipeHash?: string;
   invocationHash?: string;
   env?: NodeJS.ProcessEnv;
+  /**
+   * Keys the person selected with `--env`. Only these are recorded in the
+   * selection marker that launchers forward to apps; keys the CLI adds itself
+   * (sources, seeds, pinned refs) are not selections.
+   */
+  selectedEnvKeys?: readonly string[];
   place?: string;
   os?: string;
   print: (line: string) => void;
@@ -284,7 +290,7 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     ...options.env,
-    OPENWORK_WORLD_SELECTED_ENV_KEYS: JSON.stringify(Object.keys(options.env ?? {}).sort()),
+    OPENWORK_WORLD_SELECTED_ENV_KEYS: JSON.stringify([...(options.selectedEnvKeys ?? Object.keys(options.env ?? {}))].sort()),
     OPENWORK_WORLD_SNAPSHOT_DIR: options.snapshotDirectory,
     [LEDGER_ENV]: ledgerPath(options.snapshotDirectory, stagedName),
     [EVENTS_ENV]: eventPath,

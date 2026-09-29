@@ -55,7 +55,7 @@ function records(value: unknown): Record<string, unknown>[] {
   })
 }
 
-test("free Auto SQL and 0114 upgrade in an owned random database", { skip: !adminUrl, timeout: 60000 }, async (t) => {
+test("free Auto SQL and 0115 upgrade in an owned random database", { skip: !adminUrl, timeout: 60000 }, async (t) => {
   assert.ok(adminUrl)
   const databaseName = `free_auto_test_${randomBytes(12).toString("hex")}`
   assert.match(databaseName, /^free_auto_test_[a-f0-9]{24}$/)
@@ -97,13 +97,13 @@ test("free Auto SQL and 0114 upgrade in an owned random database", { skip: !admi
   close.push(() => connection.end(), () => otherConnection.end())
   const db = application.db
   const rows = async (statement: string, values: unknown[] = []) => records((await connection.query(statement, values))[0])
-  const before = snapshotSchema.parse(JSON.parse(await readFile(new URL("../../../packages/den-db/drizzle/meta/0113_snapshot.json", import.meta.url), "utf8")))
-  const after = snapshotSchema.parse(JSON.parse(await readFile(new URL("../../../packages/den-db/drizzle/meta/0114_snapshot.json", import.meta.url), "utf8")))
+  const before = snapshotSchema.parse(JSON.parse(await readFile(new URL("../../../packages/den-db/drizzle/meta/0114_snapshot.json", import.meta.url), "utf8")))
+  const after = snapshotSchema.parse(JSON.parse(await readFile(new URL("../../../packages/den-db/drizzle/meta/0115_snapshot.json", import.meta.url), "utf8")))
   const baseline = ["user", "organization", "member", "org_subscriptions", "gateway_providers", "inference_keys", "inference_org_limit_policies", "inference_org_usage_buckets", "inference_usage_ledger_entries", "inference_usage_ledger_bucket_charges", "gateway_request_logs", "gateway_usage_rollups", "desktop_policy", "desktop_policy_member", "team", "team_member"]
   for (const name of baseline) await connection.query(baselineSql(before.tables[name]))
   await connection.query("INSERT INTO gateway_providers (id,organization_id,created_by_org_membership_id,provider_id,name,model_ids,provider_config,settings) VALUES ('old-provider','org-fixture','member-fixture','fixture','Existing provider',JSON_ARRAY('kept-model'),JSON_OBJECT(),JSON_OBJECT())")
-  await t.test("0114 executes over 0113 table shapes and preserves old rows with empty default pins", async () => {
-    const migration = await readFile(new URL("../../../packages/den-db/drizzle/0114_free_auto_and_provider_pins.sql", import.meta.url), "utf8")
+  await t.test("0115 executes over 0114 table shapes and preserves old rows with empty default pins", async () => {
+    const migration = await readFile(new URL("../../../packages/den-db/drizzle/0115_free_auto_and_provider_pins.sql", import.meta.url), "utf8")
     const statements = migration.split("--> statement-breakpoint").map((value) => value.trim()).filter(Boolean)
     assert.equal(statements.length, 23)
     for (const statement of statements) await connection.query(statement)
@@ -120,7 +120,7 @@ test("free Auto SQL and 0114 upgrade in an owned random database", { skip: !admi
         ...Object.values(after.tables[name].uniqueConstraints).flatMap((key) => key.columns.map((col) => ({ name: key.name, col, nonUnique: 0 }))),
         ...Object.values(after.tables[name].indexes).flatMap((key) => key.columns.map((col) => ({ name: key.name, col, nonUnique: key.isUnique ? 0 : 1 }))),
       ].sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
-      assert.deepEqual(indexes, expected, `${name} indexes match generated 0114 snapshot`)
+      assert.deepEqual(indexes, expected, `${name} indexes match generated 0115 snapshot`)
     }
     // Guests have no account: nothing in their tables can point at an organization, member, user or key.
     const guestColumns = await rows("SELECT TABLE_NAME AS tableName, COLUMN_NAME AS name FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND (TABLE_NAME LIKE 'anonymous_inference_%' OR TABLE_NAME='desktop_free_proof_nonces')")
@@ -129,7 +129,7 @@ test("free Auto SQL and 0114 upgrade in an owned random database", { skip: !admi
     await connection.query("INSERT INTO gateway_providers (id,organization_id,created_by_org_membership_id,provider_id,name,provider_config,settings) VALUES ('new-provider','org-fixture','member-fixture','fixture','New provider',JSON_OBJECT(),JSON_OBJECT())")
     assert.deepEqual(await rows("SELECT id, JSON_LENGTH(pinned_model_ids) AS pins FROM gateway_providers ORDER BY id"), [{ id: "new-provider", pins: 0 }, { id: "old-provider", pins: 0 }])
     assert.deepEqual(await rows("SELECT JSON_UNQUOTE(JSON_EXTRACT(model_ids,'$[0]')) AS model FROM gateway_providers WHERE id='old-provider'"), [{ model: "kept-model" }])
-    t.diagnostic(`Applied ${statements.length} generated 0114 statements; verified twelve new tables, every column/index, guest tables free of account references, and pin defaults`)
+    t.diagnostic(`Applied ${statements.length} generated 0115 statements; verified twelve new tables, every column/index, guest tables free of account references, and pin defaults`)
   })
   const { createFreeAllowanceStore } = await import("../src/free/shared/allowance.js")
   const { findMemberFreePrincipal, freePrincipalHash, memberFreePrincipalAllowed } = await import("../src/free/shared/principal.js")

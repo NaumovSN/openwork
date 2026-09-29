@@ -116,6 +116,11 @@ const EnvSchema = z.object({
   WORKER_ACTIVITY_BASE_URL: z.string().optional(),
   DEN_AUTOMATIONS_ENABLED: z.string().optional(),
   DEN_DASHBOARDS_ENABLED: z.string().optional(),
+  // Default-on deployment kill switches; the per-org auditLogs capability stays opt-in.
+  DEN_AUDIT_CAPTURE_ENABLED: z.enum(["true", "false"]).default("true"),
+  DEN_AUDIT_VISIBILITY_ENABLED: z.enum(["true", "false"]).default("true"),
+  // Explicit installation entitlement, separate from feature availability and capture preference.
+  DEN_AUDIT_SELF_HOSTED_ENABLED: z.enum(["true", "false"]).default("false"),
   DEN_OPENWORK_WEB_ENABLED: z.string().optional(),
   DEN_AUTOMATIONS_RUNTIME_ENABLED: z.string().optional(),
   DEN_AUTOMATIONS_POLL_INTERVAL_MS: z.string().optional(),
@@ -830,6 +835,9 @@ export const env = {
     runnerClaimDeadlineMs: automationTuning(parsed.DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS, 900_000),
   },
   dashboardsEnabled,
+  auditCaptureEnabled: parsed.DEN_AUDIT_CAPTURE_ENABLED === "true",
+  auditVisibilityEnabled: parsed.DEN_AUDIT_VISIBILITY_ENABLED === "true",
+  auditSelfHostedEnabled: parsed.DEN_AUDIT_SELF_HOSTED_ENABLED === "true",
   corsHandledByEdge,
   openworkWebEnabled,
   inferenceFree: readFreeInferenceConfig(process.env),

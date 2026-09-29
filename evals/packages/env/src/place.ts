@@ -338,7 +338,7 @@ export function resolvePlace(env: NodeJS.ProcessEnv = process.env): Place {
   // Explicit values must not silently fall through to a local runtime.
   const target = targetFromEnv(env);
   if (target.provider === "freestyle") {
-    throw new Error("Freestyle placement supports app-web and acme-web; this recipe does not support Freestyle.");
+    throw new Error("Freestyle placement supports preview-desktop, preview-app-web and acme-web; this recipe does not support Freestyle.");
   }
   // Den stays in its own Linux Daytona sandbox even when a release desktop
   // targets Windows. The preview recipe provisions that Windows VM separately.

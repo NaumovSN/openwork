@@ -25,20 +25,17 @@ export function createNativeCloudMcpResolver(preview: Pick<EngineV2Preview, "sta
   };
 }
 
-export function createRoutedCloudMcpRegistrar(preview: Pick<EngineV2Preview, "status" | "connection" | "ensureWorkspaceReady" | "syncWorkspaceMcp">, v1: CloudMcpRuntimeRegistrar): CloudMcpRuntimeRegistrar {
+export function createRoutedCloudMcpRegistrar(preview: Pick<EngineV2Preview, "status" | "connection" | "syncWorkspaceMcp">, v1: CloudMcpRuntimeRegistrar): CloudMcpRuntimeRegistrar {
   const nativeEngineForWorkspace = createNativeCloudMcpResolver(preview);
   return async (config, workspace, onlyNames, options) => {
-    const engine = nativeEngineForWorkspace(workspace);
-    if (!engine) return v1(config, workspace, onlyNames, options);
+    if (!nativeEngineForWorkspace(workspace)) return v1(config, workspace, onlyNames, options);
+    const names = onlyNames ?? ["openwork-cloud"];
     try {
-      await preview.ensureWorkspaceReady(workspace.path);
-      await preview.syncWorkspaceMcp(workspace.id, workspace.path);
-      // A repair may have disconnected an unchanged registration. The mirror
-      // skips unchanged config, so explicitly reconnect only the requested names.
-      for (const name of onlyNames ?? ["openwork-cloud"]) {
-        await engine.request(`/api/mcp/${encodeURIComponent(name)}/connect`, workspace.path, "POST");
-      }
-      return { status: "ok", syncedNames: onlyNames ?? ["openwork-cloud"], failures: [] };
+      // The folder's reconciler registers changed config and restarts only
+      // connections that are not healthy (including one a repair
+      // disconnected). A healthy connection is never restarted by a refresh.
+      await preview.syncWorkspaceMcp(workspace.id, workspace.path, { reconnect: names });
+      return { status: "ok", syncedNames: names, failures: [] };
     } catch (error) {
       if (options?.throwOnFailure) throw error;
       return { status: "failed", syncedNames: [], failures: [{ name: "openwork-cloud", message: error instanceof Error ? error.message : "OpenCode v2 MCP registration failed" }] };

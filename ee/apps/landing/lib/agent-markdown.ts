@@ -20,7 +20,7 @@ const home = `# OpenWork
 - **Open in your browser** — [OpenWork Web](https://app.openworklabs.com)
 - **Team plans** — [Pricing](https://openworklabs.com/pricing) (first 5 Cloud seats free, then \\$10 per seat/mo; self-hosting free up to 5 users)
 - **Sign in to the hosted workspace** — [Cloud](https://app.openworklabs.com)
-- **SSO / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
+- **SCIM / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
 - **Docs** — [openworklabs.com/docs](https://openworklabs.com/docs)
 - **Compare with Claude Cowork** — [Claude Cowork alternative](https://openworklabs.com/alternatives/claude-cowork)
 - **Migrate from Claude Cowork** — [Migration guide](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork)
@@ -73,20 +73,21 @@ const pricing = `# OpenWork pricing — free, team, and enterprise
 
 - First 5 seats free on OpenWork Cloud
 - API access
+- SSO / SAML
 - Extension Marketplace
 - Bring your own LLM keys, distributed to your team
 - CTA: [Start team plan](https://app.openworklabs.com/dashboard/billing)
 
 ## Enterprise — Custom pricing
 
-- Everything in Team Starter
-- SSO / SAML and SCIM provisioning
+- Everything in Team Starter, including SSO
+- SCIM provisioning
 - Bring your own inference — self-hosted or private models
 - Desktop policies and version controls — admins decide which providers, models, extensions, and app versions employees can use; the desktop app enforces it automatically
 - Managed deployment — self-hosted in your environment or hosted by OpenWork
 - Custom skill development and MCP consulting
 - Enterprise rollout support and custom commercial terms
-- Existing organizations already using SSO or desktop policies keep full access (grandfathered)
+- Existing organizations already using SCIM or desktop policies keep full access (grandfathered)
 - CTA: [Talk to us](https://openworklabs.com/enterprise#book)
 
 Prices exclude taxes.
