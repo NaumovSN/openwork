@@ -39,7 +39,7 @@ let authenticated = true
 const originalFetch = globalThis.fetch
 let fixtureEnv: typeof import("../src/env.js").env
 let restoreFixtureEnv = () => {}
-let encodeIdentity: typeof import("../src/capability-sources/slack-preview.js").encodeSlackAccountIdentity
+let encodeIdentity: typeof import("../src/capability-sources/slack-policy.js").encodeSlackAccountIdentity
 
 function json(value: unknown, status = 200, headers?: HeadersInit) {
   const responseHeaders = new Headers(headers)
@@ -87,9 +87,9 @@ beforeAll(async () => {
     return response
   }, { preconnect: originalFetch.preconnect })
   fixtureEnv = (await import("../src/env.js")).env
-  const savedEnv = { slackEnabled: fixtureEnv.slackEnabled, slackOrganizationId: fixtureEnv.slackOrganizationId, slackWorkspaceId: fixtureEnv.slackWorkspaceId, slackClientId: fixtureEnv.slackClientId, slackClientSecret: fixtureEnv.slackClientSecret, slackApiBaseUrl: fixtureEnv.slackApiBaseUrl }
+  const savedEnv = { slackEnabled: fixtureEnv.slackEnabled, orgMode: fixtureEnv.orgMode, slackClientId: fixtureEnv.slackClientId, slackClientSecret: fixtureEnv.slackClientSecret, slackApiBaseUrl: fixtureEnv.slackApiBaseUrl }
   restoreFixtureEnv = () => { Object.assign(fixtureEnv, savedEnv) }
-  encodeIdentity = (await import("../src/capability-sources/slack-preview.js")).encodeSlackAccountIdentity
+  encodeIdentity = (await import("../src/capability-sources/slack-policy.js")).encodeSlackAccountIdentity
   const { registerSlackRoutes } = await import("../src/routes/org/slack.js")
   app = new Hono<{ Variables: OrgRouteVariables }>()
   registerSlackRoutes(app)
@@ -105,8 +105,7 @@ beforeEach(() => {
   account.scopes = [...allScopes]
   account.externalAccountId = encodeIdentity({ workspaceId: "TSYNTHETIC", userId: "U001" })
   fixtureEnv.slackEnabled = true
-  fixtureEnv.slackOrganizationId = organizationId
-  fixtureEnv.slackWorkspaceId = "TSYNTHETIC"
+  fixtureEnv.orgMode = "multi_org"
   fixtureEnv.slackClientId = "synthetic-client"
   fixtureEnv.slackClientSecret = "synthetic-secret"
   fixtureEnv.slackApiBaseUrl = "https://slack.com/api"
@@ -226,11 +225,10 @@ test("RTS eligibility rejection never falls back to legacy search", async () => 
   expect(calls.map((call) => new URL(call.url).pathname)).toEqual(["/api/assistant.search.context"])
 })
 
-for (const state of ["disabled", "other_org", "other_workspace", "unverified_identity", "connect_disabled", "disconnected"]) {
+for (const state of ["disabled", "single_org", "unverified_identity", "connect_disabled", "disconnected"]) {
   test(`retained search and thread routes reject ${state} before downstream HTTP`, async () => {
     if (state === "disabled") fixtureEnv.slackEnabled = false
-    if (state === "other_org") fixtureEnv.slackOrganizationId = createDenTypeId("organization")
-    if (state === "other_workspace") account.externalAccountId = encodeIdentity({ workspaceId: "TOTHER", userId: "U001" })
+    if (state === "single_org") fixtureEnv.orgMode = "single_org"
     if (state === "unverified_identity") account.externalAccountId = "U001"
     if (state === "connect_disabled") policyEnabled = false
     if (state === "disconnected") connected = false

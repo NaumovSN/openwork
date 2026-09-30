@@ -43,6 +43,7 @@ import { registerTelemetryRoutes } from "./routes/telemetry/index.js"
 import { registerVersionRoutes } from "./routes/version/index.js"
 import { registerWebhookRoutes } from "./routes/webhooks/index.js"
 import { registerSlackAppHomeRoutes } from "./routes/slack-app-home.js"
+import { getSlackHomeToken } from "./capability-sources/slack-installations.js"
 import { registerWorkerRoutes } from "./routes/workers/index.js"
 import { registerCloudWorkerCompatibilityPreflightRoute } from "./routes/workers/compatibility.js"
 import type { AuthContextVariables } from "./session.js"
@@ -278,7 +279,7 @@ registerAutomationRoutes(app, { enabled: env.automations.runtimeEnabled })
 registerOrgRoutes(app)
 registerVersionRoutes(app)
 registerWebhookRoutes(app)
-registerSlackAppHomeRoutes(app, signedWebhookRoute)
+registerSlackAppHomeRoutes(app, signedWebhookRoute, getSlackHomeToken)
 registerWorkerRoutes(app)
 registerMcpTokenRoutes(app)
 registerMcpRoutes(app)

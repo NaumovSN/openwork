@@ -3,7 +3,7 @@ import type { Env, Hono, MiddlewareHandler } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { env } from "../env.js"
-import { slackPreviewPolicyError, slackWorkspaceAllowed } from "../capability-sources/slack-preview.js"
+import { slackCloudPolicyError } from "../capability-sources/slack-policy.js"
 
 const verificationSchema = z.object({
   type: z.literal("url_verification"),
@@ -31,7 +31,6 @@ function homeView() {
     type: "home",
     blocks: [
       { type: "header", text: { type: "plain_text", text: "OpenWork Connect" } },
-      { type: "context", elements: [{ type: "plain_text", text: "Internal validation. Synthetic conversations only." }] },
       { type: "section", fields: [
         { type: "mrkdwn", text: "*Read access*\nOnly conversations you authorize" },
         { type: "mrkdwn", text: "*Posting and replies*\nNot supported" },
@@ -92,15 +91,16 @@ async function slackRequest(method: "auth.test" | "views.publish", token: string
  * The app passes its existing signedWebhookRoute policy marker so this standalone
  * signature boundary does not import the member-auth/database dependency graph.
  */
-export function registerSlackAppHomeRoutes<E extends Env>(app: Hono<E>, signedWebhookRoute: MiddlewareHandler<E>) {
+export function registerSlackAppHomeRoutes<E extends Env>(app: Hono<E>, signedWebhookRoute: MiddlewareHandler<E>, homeToken: (workspaceId: string, signal: AbortSignal) => Promise<string | null>) {
   const deliveries = new Map<string, number>()
   let publicationsInFlight = 0
   app.post("/v1/slack/events", describeRoute({ hide: true, security: [] }), signedWebhookRoute, async (c) => {
     c.header("Cache-Control", "no-store")
     c.header("X-Slack-No-Retry", "1")
     const deadline = AbortSignal.timeout(2000)
-    const organizationId = env.slackOrganizationId
-    if (!organizationId || slackPreviewPolicyError(organizationId)) return c.json({ error: "policy_blocked" }, 403)
+    if (slackCloudPolicyError()) return c.json({ error: "policy_blocked" }, 403)
+    const clientId = env.slackClientId
+    const clientSecret = env.slackClientSecret
     const timestamp = c.req.header("x-slack-request-timestamp") ?? ""
     const signature = c.req.header("x-slack-signature") ?? ""
     const secret = env.slackSigningSecret
@@ -121,31 +121,38 @@ export function registerSlackAppHomeRoutes<E extends Env>(app: Hono<E>, signedWe
     } catch {
       return c.json({ error: "invalid_body" }, 400)
     }
-    if (slackPreviewPolicyError(organizationId)) return c.json({ error: "policy_blocked" }, 403)
+    if (slackCloudPolicyError() || secret !== env.slackSigningSecret) return c.json({ error: "policy_blocked" }, 403)
     const verification = verificationSchema.safeParse(payload)
     if (verification.success) {
-      // Slack's documented URL verification has no team ID. A supplied team must still match.
-      if (verification.data.team_id !== undefined && !slackWorkspaceAllowed(verification.data.team_id)) return c.json({ error: "policy_blocked" }, 403)
+      // Verification is app-level and authenticated by the signing secret.
       return c.json({ challenge: verification.data.challenge })
     }
     const event = homeEventSchema.safeParse(payload)
     if (!event.success) return c.json({ error: "unsupported_event" }, 400)
-    if (!slackWorkspaceAllowed(event.data.team_id)) return c.json({ error: "policy_blocked" }, 403)
-    const botToken = env.slackBotToken
-    if (!botToken) return c.json({ error: "home_unavailable" }, 503)
     for (const [id, expiresAt] of deliveries) if (expiresAt < Date.now()) deliveries.delete(id)
-    if (deliveries.has(event.data.event_id)) return c.json({ ok: true })
+    const deliveryId = `${event.data.team_id}:${event.data.event_id}`
+    if (deliveries.has(deliveryId)) return c.json({ ok: true })
     if (deliveries.size >= 256 || publicationsInFlight >= 4) return c.json({ error: "delivery_limit" }, 429)
-    deliveries.set(event.data.event_id, Number(timestamp) * 1000 + 300_000)
+    deliveries.set(deliveryId, Number(timestamp) * 1000 + 300_000)
     publicationsInFlight++
+    let cancelTokenWait: (() => void) | undefined
     try {
+      // Storage/refresh is inside the same response deadline as Slack HTTP.
+      const botToken = await Promise.race([homeToken(event.data.team_id, deadline), new Promise<never>((_resolve, reject) => {
+        cancelTokenWait = () => reject(new Error("Slack Home timed out"))
+        deadline.addEventListener("abort", cancelTokenWait, { once: true })
+      })])
+      deadline.throwIfAborted()
+      if (!botToken) return c.json({ error: "home_unavailable" }, 503)
       const identity = authSchema.parse(await slackRequest("auth.test", botToken, {}, deadline))
-      if (slackPreviewPolicyError(organizationId) || identity.team_id !== event.data.team_id || !slackWorkspaceAllowed(identity.team_id)) return c.json({ error: "policy_blocked" }, 403)
+      if (slackCloudPolicyError() || identity.team_id !== event.data.team_id || secret !== env.slackSigningSecret
+        || clientId !== env.slackClientId || clientSecret !== env.slackClientSecret) return c.json({ error: "policy_blocked" }, 403)
       publishedSchema.parse(await slackRequest("views.publish", botToken, { user_id: event.data.event.user, view: homeView() }, deadline))
       return c.json({ ok: true })
     } catch {
       return c.json({ error: "home_unavailable" }, deadline.aborted ? 504 : 502)
     } finally {
+      if (cancelTokenWait) deadline.removeEventListener("abort", cancelTokenWait)
       publicationsInFlight--
     }
   })

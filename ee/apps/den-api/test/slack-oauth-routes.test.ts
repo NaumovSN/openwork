@@ -65,7 +65,13 @@ const storage = {
           rows.set(table, existing)
           return [{ insertId: value.id }]
         }
-        return { execute: run, then(resolve: (value: unknown) => unknown) { return run().then(resolve) } }
+        return { execute: run, then(resolve: (value: unknown) => unknown) { return run().then(resolve) },
+          async onDuplicateKeyUpdate(input: { set: Record<string, unknown> }) {
+            const current = rows.get(table)?.find(row => row.clientId === value.clientId && row.workspaceId === value.workspaceId)
+            if (current) Object.assign(current, input.set)
+            else await run()
+          },
+        }
       },
     }
   },
@@ -123,7 +129,7 @@ const statusSchema = z.object({ connected: z.boolean(), externalAccountId: z.str
 beforeAll(async () => {
   env = (await import("../src/env.js")).env
   Object.assign(env, {
-    slackEnabled: true, slackOrganizationId: organizationId, slackWorkspaceId: "TTEST001",
+    slackEnabled: true, orgMode: "multi_org",
     slackClientId: "synthetic-client", slackClientSecret: "synthetic-secret",
     slackApiBaseUrl: `${server.url.origin}/api`,
   })
@@ -159,7 +165,7 @@ beforeEach(() => {
   callerOrganizationId = organizationId
   callerUserId = userId
   Object.assign(env, {
-    slackEnabled: true, slackOrganizationId: organizationId, slackWorkspaceId: "TTEST001",
+    slackEnabled: true, orgMode: "multi_org",
     slackClientId: "synthetic-client", slackClientSecret: "synthetic-secret",
   })
   rows = new Map<unknown, Record<string, unknown>[]>([
@@ -402,6 +408,39 @@ test("refresh cannot change the Slack member even when OAuth and auth.test agree
   expect((await status()).externalAccountId).toBe("slack:TTEST001:UTEST001")
 })
 
+test("refresh cannot silently move a connected member to a different Slack workspace", async () => {
+  await connectExpiringGrant()
+  tokenBody = { ok: true, team: { id: "TOTHER001" }, id: "UTEST001", token_type: "user", access_token: "wrong-workspace-token", refresh_token: "rotated", expires_in: 3600 }
+  identityBody = { ok: true, team_id: "TOTHER001", user_id: "UTEST001" }
+  await expect(nativeToken()).rejects.toBeInstanceOf(oauth.OAuthTokenExchangeError)
+  expect((await status()).externalAccountId).toBe("slack:TTEST001:UTEST001")
+})
+
+test("an explicit new authorization can replace the member's workspace without changing configuration", async () => {
+  expect((await callback(await start())).status).toBe(200)
+  tokenBody = { ok: true, team: { id: "TOTHER001" }, authed_user: { id: "UOTHER001", token_type: "user", access_token: "new-workspace-token", scope: "search:read.public,channels:history" } }
+  identityBody = { ok: true, team_id: "TOTHER001", user_id: "UOTHER001" }
+  expect((await callback(await start())).status).toBe(200)
+  expect((await status()).externalAccountId).toBe("slack:TOTHER001:UOTHER001")
+  expect(rows.get(schema.ConnectedAccountTable)?.filter(row => row.providerId === "slack")).toHaveLength(1)
+})
+
+test("OAuth saves each optional Home installation separately from member read credentials", async () => {
+  tokenBody = { ok: true, team: { id: "TTEST001" }, token_type: "bot", bot_user_id: "UBOT001", access_token: "first-home-token",
+    authed_user: { id: "UTEST001", token_type: "user", access_token: "first-user-token", scope: "search:read.public,channels:history" } }
+  expect((await callback(await start())).status).toBe(200)
+  tokenBody = { ok: true, team: { id: "TOTHER001" }, token_type: "bot", bot_user_id: "UBOT002", access_token: "second-home-token",
+    authed_user: { id: "UTEST001", token_type: "user", access_token: "second-user-token", scope: "search:read.public,channels:history" } }
+  identityBody = { ok: true, team_id: "TOTHER001", user_id: "UTEST001" }
+  expect((await callback(await start())).status).toBe(200)
+  expect(rows.get(schema.SlackInstallationTable)).toMatchObject([
+    { clientId: "synthetic-client", workspaceId: "TTEST001", accessToken: "first-home-token" },
+    { clientId: "synthetic-client", workspaceId: "TOTHER001", accessToken: "second-home-token" },
+  ])
+  expect(await nativeToken()).toMatchObject({ accessToken: "second-user-token" })
+  expect(JSON.stringify(await status())).not.toContain("token")
+})
+
 test("refresh is blocked before contacting Slack after disable and cannot restore a disconnected account", async () => {
   await connectExpiringGrant()
   Object.assign(env, { slackEnabled: false })
@@ -475,14 +514,17 @@ test("missing granted scopes never become the requested optional permissions", a
   expect((await status()).scopes).toEqual([])
 })
 
-test("an unapproved organization cannot start, inspect, configure, or refresh native Slack", async () => {
+test("another Cloud organization can authorize its own workspace without operator configuration", async () => {
   callerOrganizationId = otherOrganizationId
-  for (const path of ["/v1/oauth-providers/slack/connect/start", "/v1/mcp-connections/slack/connect/start", "/v1/oauth-providers/slack/status", "/v1/oauth-providers/slack/client"]) {
-    expect((await request(path)).status).toBe(403)
-  }
+  tokenBody = { ok: true, team: { id: "TOTHER001" }, authed_user: { id: "UTEST001", token_type: "user", access_token: "other-workspace-token", scope: "search:read.public,channels:history" } }
+  identityBody = { ok: true, team_id: "TOTHER001", user_id: "UTEST001" }
+  expect((await callback(await start())).status).toBe(200)
+  expect(await status()).toMatchObject({ connected: true, externalAccountId: "slack:TOTHER001:UTEST001" })
   expect((await request("/v1/oauth-providers/slack/client", "POST", { clientId: "alternate" })).status).toBe(403)
-  expect(await nativeToken("slack", otherOrganizationId)).toEqual({ error: "not_connected" })
-  expect(tokenRequests).toBe(0)
+  callerOrganizationId = organizationId
+  expect((await status()).connected).toBe(false)
+  expect(await nativeToken()).toEqual({ error: "not_connected" })
+  expect(tokenRequests).toBe(1)
 })
 
 test("missing platform credentials do not ask a member to create or configure a Slack app", async () => {
@@ -525,16 +567,16 @@ test("a disconnect or newer start during exchange defeats the late callback", as
 })
 
 test.each([
-  { slackEnabled: false }, { slackWorkspaceId: "TOTHER001" }, { slackOrganizationId: otherOrganizationId },
+  { slackEnabled: false }, { orgMode: "single_org" },
 ])("configuration gate changes during exchange prevent callback persistence (%#)", async (configuration) => {
   const authorize = await start()
   onTokenRequest = async () => { Object.assign(env, configuration) }
   expect((await callback(authorize)).status).toBe(400)
-  Object.assign(env, { slackEnabled: true, slackWorkspaceId: "TTEST001", slackOrganizationId: organizationId })
+  Object.assign(env, { slackEnabled: true, orgMode: "multi_org" })
   expect((await status()).connected).toBe(false)
 })
 
-test("a connected account cannot be reused after preview disable or workspace rotation", async () => {
+test("a connected account cannot be reused after disable or a switch to single-org hosting", async () => {
   expect((await callback(await start())).status).toBe(200)
   const registry = await import("../src/capability-sources/provider-registry.js")
   const provider = registry.getNativeOAuthProvider("slack")
@@ -542,9 +584,9 @@ test("a connected account cannot be reused after preview disable or workspace ro
   const input = { provider, credentialProviderId: "slack", organizationId, orgMembershipId: memberId }
   Object.assign(env, { slackEnabled: false })
   expect(await oauth.getValidAccessToken(input)).toEqual({ error: "not_connected" })
-  Object.assign(env, { slackEnabled: true, slackWorkspaceId: "TOTHER001" })
+  Object.assign(env, { slackEnabled: true, orgMode: "single_org" })
   expect(await oauth.getValidAccessToken(input)).toEqual({ error: "not_connected" })
-  expect(await status()).toEqual({ connected: false, externalAccountId: null, scopes: null })
+  expect((await request("/v1/oauth-providers/slack/status")).status).toBe(403)
   expect(tokenRequests).toBe(1)
 })
 

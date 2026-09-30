@@ -1,10 +1,10 @@
-# ENG-76: Native Slack Connect design interview
+# ENG-76: Native Slack for OpenWork Cloud
 
-Status: **Approved for implementation.** The user confirmed the design and requested implementation. App creation or distribution, live credential changes, flag enablement, and outreach still require separate approval.
+Status: **Approved for implementation; scope revised 2026-09-30.** Build the multi-workspace hosted integration and demo it before pursuing Slack approval. Live app setup, credentials, deployment enablement, and provider outreach have not been performed.
 
 ## Working-integration milestone
 
-Prove a member can use OpenWork desktop with hosted OpenWork Connect to authorize Slack, find discussions, read thread context, and receive an answer with source links. Marketplace submission is not required for this milestone. The live proof uses synthetic conversations in an OpenWork-owned validation workspace, not ordinary business conversations or external customers' workspaces.
+Prove Cloud members in different OpenWork organizations can authorize their own Slack workspaces, find discussions, read thread context, and receive source-linked answers without customer developer setup. A synthetic multi-workspace demo precedes provider approval. Slack Marketplace/RTS distribution approval is now part of the launch path, not a prerequisite to building this integration. A separately arranged live internal demo uses synthetic conversations in an OpenWork-owned workspace.
 
 ## Agreed product scope
 
@@ -26,13 +26,13 @@ The original issue calls for preserving the enterprise BYO-app path. The propose
 
 ## Availability boundary
 
-The code can support a later external rollout, but initial availability is fail-closed and restricted to OpenWork's internal organization and the designated Slack validation workspace. Checking only the OpenWork organization is insufficient because an internal tester could otherwise authorize an external Slack workspace.
+The integration targets hosted multi-org Cloud. OpenWork configures one platform app. Workspace/member identities are verified from Slack OAuth and `auth.test`; customers never supply workspace IDs, client credentials, or app registrations. One member-owned account slot remains supported; explicit reauthorization can select a different workspace, while refresh must retain both workspace and member identity.
 
-A server-enforced gate controls availability, not provider authorization. External organizations and workspaces remain disabled until their distribution authorization and search eligibility are established and external enablement is explicitly approved. Everyday internal use of real conversations also requires a separate enablement decision after retention and model-processing behavior are addressed.
+A default-off server deployment gate controls release, not provider authorization. Once enabled on Cloud, it serves every organization whose Connect policy permits it; no internal-workspace allowlist is required. Keep the public production release disabled until Slack distribution/search eligibility and real-data processing decisions are resolved. Controlled synthetic demo deployments can exercise the completed architecture before approval.
 
-The current general Connect switch is default-on and is not a sufficient native Slack rollout barrier. Implementation uses the default-off deployment flag `DEN_SLACK_ENABLED` with explicit `DEN_SLACK_ORGANIZATION_ID` and `DEN_SLACK_WORKSPACE_ID` bindings. OAuth and capability routes also respect the general organization Connect policy. No customer-admin setting can configure the platform app or create additional native Slack account slots; existing external MCP/BYO settings remain separate.
+`DEN_SLACK_ENABLED` and `DEN_ORG_MODE=multi_org` enable the platform app; single-org enterprise deployments remain excluded. OAuth and capability routes also respect general organization Connect policy. No customer-admin setting can override the platform OAuth app or create additional native Slack slots. App Home uses encrypted per-workspace installation grants returned by OAuth, not a deployment-wide bot token.
 
-See [ADR 0001](adr/0001-internal-first-native-slack-rollout.md).
+See [ADR 0002](adr/0002-cloud-slack-before-distribution-approval.md) and [Cloud setup](slack-cloud-setup.md).
 
 ## Acceptance proof
 
@@ -45,9 +45,9 @@ The agreed live journey is:
 5. Use two internal test members to prove one member cannot retrieve another member's inaccessible private conversations.
 6. Demonstrate usable partial consent without claiming unsearched categories had no results.
 
-The rollout boundary also needs negative verification: blocked organizations/workspaces must not connect or execute by bypassing the UI, and disabling availability must prevent later use of already known capability names. These checks do not require or authorize installing the app into an external workspace.
+The proof also covers two synthetic Slack workspaces and two OpenWork organizations with the same platform configuration. A new organization must authorize its own account rather than reuse another organization's grant. Cross-workspace thread requests must use the caller's token and fail when inaccessible. Disabled deployments, single-org deployments, and disabled organization Connect policy must reject retained capabilities.
 
-No live proof, app creation, fixture provisioning, or test execution has occurred during this interview.
+Synthetic verification receipts are recorded in `docs/evidence/eng-76/verification.md`; no live Slack proof is claimed.
 
 ## Implementation and activation facts
 

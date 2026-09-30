@@ -6,8 +6,7 @@ const organizationId = createDenTypeId("organization")
 const memberId = createDenTypeId("member")
 const settings = {
   slackEnabled: true,
-  slackOrganizationId: organizationId,
-  slackWorkspaceId: "TVALIDATION",
+  orgMode: "multi_org",
   slackClientId: "synthetic-client",
   slackClientSecret: "synthetic-secret",
   mcpConnectionsGatingEnabled: false,
@@ -40,8 +39,7 @@ const { listBlockedNativeProviderAccountEntries, listNativeProviderUsableEntries
 
 beforeEach(() => {
   settings.slackEnabled = true
-  settings.slackOrganizationId = organizationId
-  settings.slackWorkspaceId = "TVALIDATION"
+  settings.orgMode = "multi_org"
   settings.slackClientId = "synthetic-client"
   settings.slackClientSecret = "synthetic-secret"
   connectEnabled = true
@@ -51,7 +49,7 @@ afterAll(() => mock.restore())
 
 const entriesForMember = () => listNativeProviderUsableEntries({ organizationId, orgMembershipId: memberId })
 
-test("an enabled internal member gets a Slack connection without configuring an OAuth app", async () => {
+test("a Cloud member gets a Slack connection without configuring an OAuth app or workspace", async () => {
   const entries = await entriesForMember()
   expect(entries).toHaveLength(1)
   expect(entries[0]).toMatchObject({
@@ -128,32 +126,32 @@ test("management-only rows are not advertised to new members or borrowed across 
   expect(await listBlockedNativeProviderAccountEntries({ organizationId: createDenTypeId("organization"), orgMembershipId: memberId })).toEqual([])
 })
 
-test("management keeps stale-workspace and unavailable-app grants visible only for cleanup", async () => {
-  account = { ...connectedSlackAccount(), externalAccountId: "slack:TOTHER:USYNTHETIC" }
+test("management keeps unverified and unavailable-app grants visible only for cleanup", async () => {
+  account = { ...connectedSlackAccount(), externalAccountId: "unverified" }
   expect((await listBlockedNativeProviderAccountEntries({ organizationId, orgMembershipId: memberId }))[0]).toMatchObject({ policyBlocked: true, connectedForMe: true })
   account = connectedSlackAccount()
   settings.slackClientSecret = ""
   expect((await listBlockedNativeProviderAccountEntries({ organizationId, orgMembershipId: memberId }))[0]).toMatchObject({ policyBlocked: true, connectedForMe: true })
 })
 
-test("an account for another Slack workspace is not shown as connected", async () => {
+test("an account for another verified Slack workspace is connected without operator configuration", async () => {
   account = { ...connectedSlackAccount(), externalAccountId: "slack:TOTHER:USYNTHETIC" }
   const entries = await entriesForMember()
-  expect(entries[0]?.connectedForMe).toBe(false)
-  expect(entries[0]?.externalAccountId).toBeUndefined()
+  expect(entries[0]?.connectedForMe).toBe(true)
+  expect(entries[0]?.externalAccountId).toBe("slack:TOTHER:USYNTHETIC")
 })
 
-test("an external organization never receives the internal platform app", async () => {
+test("another Cloud organization receives the same centrally configured app", async () => {
   expect(await listNativeProviderUsableEntries({
     organizationId: createDenTypeId("organization"),
     orgMembershipId: memberId,
-  })).toEqual([])
+  })).toMatchObject([{ id: "slack", connectedForMe: false }])
 })
 
-test("missing workspace approval, missing credentials, and disabled Connect all fail closed", async () => {
-  settings.slackWorkspaceId = ""
+test("single-org deployments, missing credentials, and disabled Connect all fail closed", async () => {
+  settings.orgMode = "single_org"
   expect(await entriesForMember()).toEqual([])
-  settings.slackWorkspaceId = "TVALIDATION"
+  settings.orgMode = "multi_org"
   settings.slackClientSecret = ""
   expect(await entriesForMember()).toEqual([])
   settings.slackClientSecret = "synthetic-secret"

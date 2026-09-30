@@ -799,6 +799,13 @@
       "when": 1790605372888,
       "tag": "0114_audit_operation_capture",
       "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "5",
+      "when": 1790784624528,
+      "tag": "0115_slack_cloud_installations",
+      "breakpoints": true
     }
   ]
 }

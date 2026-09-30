@@ -16,7 +16,7 @@ async function openConnections(user: User) {
   await user.click({ role: "option", label: /^Connectors/ });
 }
 
-test("an internal member connects their own Slack, reads linked excerpts, and cannot lend private access to another member", async ({ world, user, probe, step, evidence }) => {
+test("Cloud members connect different Slack workspaces without configuration and keep private access isolated", async ({ world, user, probe, step, evidence }) => {
   const second = user.on(world.secondApp);
   const secondProbe = probe.on(world.secondApp);
   const privateConversation = world.slack.conversations.find(entry => entry.type === "private_channel");
@@ -47,7 +47,7 @@ test("an internal member connects their own Slack, reads linked excerpts, and ca
     }
   });
 
-  await step("before: internal Slack is available without asking the member for developer credentials", async () => {
+  await step("before: Cloud Slack is available without asking the member for developer credentials", async () => {
     await user.see("composer", { editable: true });
     await openConnections(user);
     await user.see({ role: "button", label: "Connect Slack" });
@@ -151,36 +151,33 @@ test("an internal member connects their own Slack, reads linked excerpts, and ca
     evidence.recordAssertionEvidence("Native search remains usable with read-only gateway authority", "The token mint returned exactly mcp:read. Executing the discovered GET search capability succeeded and caused one internal Slack RTS POST; no mcp:write or Slack write scope was granted.", true);
   });
 
-  await step("a member cannot authorize a workspace outside the internal validation boundary", async () => {
+  await step("another Slack workspace connects automatically and cannot read the first workspace", async () => {
     await second.see("composer", { editable: true });
     await openConnections(second);
     await second.click({ role: "button", label: "Connect Slack" });
     const consent = user.on(await world.oauthSurface(world.secondApp));
     await consent.see({ text: "Synthetic Slack consent" });
     await consent.screenshot();
-    await consent.click({ role: "button", text: "Authorize blocked workspace" });
-    await probe.eventually(() => world.slack.calls().filter(call => call.path === "/api/oauth.v2.access" && call.workspace === "TBLOCKEDFIXTURE").length, {
-      within: 30_000, label: "the blocked workspace is returned by the provider", until: count => count === 1,
-    });
-    // Wait for the callback's observable completion, not merely token issuance.
-    await consent.see({ role: "heading", text: "Connection failed" }, { timeoutMs: 30_000 });
-    await consent.see({ text: "Slack authorization must belong to a member of the approved validation workspace." });
-    expect(await world.connection("second")).toMatchObject({ connectedForMe: false });
-    const denied = await world.memberRequest("second", "/v1/capabilities/slack/search?query=Amber%20launch");
-    expect(denied.status).toBeGreaterThanOrEqual(400);
-    expect(denied.status).toBeLessThan(500);
-    expect(world.slack.calls().filter(call => call.workspace === "TBLOCKEDFIXTURE" && call.path === "/api/assistant.search.context")).toEqual([]);
-    evidence.recordAssertionEvidence("An internal OpenWork account cannot authorize an unapproved Slack workspace", `The synthetic provider returned TBLOCKEDFIXTURE; no account was connected, direct search returned HTTP ${denied.status}, and no search used that workspace token.`, true);
+    await consent.click({ role: "button", text: "Authorize another workspace" });
+    await consent.see({ role: "heading", text: "You're connected" }, { timeoutMs: 30_000 });
+    const connected = await world.connection("second");
+    expect(connected).toMatchObject({ connectedForMe: true });
+    expect(JSON.stringify(connected)).toContain(world.slack.otherWorkspace);
+    const found = await world.memberRequest("second", "/v1/capabilities/slack/search?query=Amber%20launch");
+    expect(found.status).toBe(200);
+    expect(found.text).toContain(world.slack.otherConversations[0].text);
+    const denied = await world.memberRequest("second", `/v1/capabilities/slack/threads?channelId=${privateConversation.id}&ts=${privateConversation.ts}`);
+    expect(denied).toMatchObject({ status: 404, body: { error: "not_found" } });
+    expect(denied.text).not.toContain(privateConversation.text);
+    expect(world.slack.calls().findLast(call => call.path === "/api/conversations.replies")).toMatchObject({ workspace: world.slack.otherWorkspace, error: "channel_not_found" });
+    evidence.recordAssertionEvidence("A second Slack workspace connects without environment changes and retains its own access boundary", "OAuth and auth.test identified another workspace automatically. Its search returned that workspace's fixtures; a guessed thread from the original workspace returned not_found using the second workspace's token.", true);
     await consent.screenshot();
   });
 
   await step("the second member connects a separate Slack identity with the same read permissions", async () => {
-    // Reload clears only the finished failed flow; it does not seed a grant.
-    await second.reload();
-    await second.see("composer", { editable: true });
-    await openConnections(second);
-    await second.click({ role: "button", label: "Connect Slack" });
-    const consent = user.on(await world.oauthSurface(world.secondApp));
+    // Explicit reauthorization replaces the one member-owned workspace slot.
+    await second.navigate(await world.startAuthorization("second"));
+    const consent = second;
     await consent.see({ text: "Synthetic Slack consent" });
     await consent.click({ role: "button", text: "Authorize member two" });
     const connected = await probe.eventually(() => world.connection("second"), {
@@ -191,7 +188,8 @@ test("an internal member connects their own Slack, reads linked excerpts, and ca
     const secondIdentity = world.slack.calls().find(call => call.path === "/api/auth.test" && call.member === "second");
     expect(secondIdentity?.tokenId).toBeTruthy();
     expect(secondIdentity?.tokenId).not.toBe(firstIdentity?.tokenId);
-    await second.press("Escape");
+    await second.navigate(world.secondAppUrl);
+    await second.see("composer", { editable: true });
     evidence.recordAssertionEvidence("Each member authorizes a distinct user token", "Both accounts completed the same read-only OAuth request, but auth.test observed different user-token fingerprints and different Slack user IDs in the same synthetic workspace.", true);
     await second.screenshot();
   });
@@ -263,27 +261,34 @@ test("an internal member connects their own Slack, reads linked excerpts, and ca
     await user.navigate(world.appUrl);
   });
 
-  await step("an organization outside the rollout cannot bypass the hidden connection with known routes or capability names", async () => {
+  await step("another Cloud organization gets Slack but must authorize its own account", async () => {
     await user.see("composer", { editable: true });
-    const authenticated = await world.memberRequest("blocked", "/v1/org");
-    expect(authenticated).toMatchObject({ status: 200, body: { organization: { id: world.blockedOrganizationId } } });
+    const authenticated = await world.memberRequest("other", "/v1/org");
+    expect(authenticated).toMatchObject({ status: 200, body: { organization: { id: world.otherOrganizationId } } });
     const before = world.slack.calls().length;
     const responses = [];
     for (const path of ["/v1/mcp-connections/slack/connect/start", "/v1/oauth-providers/slack/connect/start"]) {
-      responses.push(await world.memberRequest("blocked", path));
+      responses.push(await world.memberRequest("other", path));
     }
-    responses.push(await world.memberRequest("blocked", "/v1/capabilities/slack/search?query=Amber%20launch"));
-    responses.push(await world.memberRequest("blocked", `/v1/capabilities/slack/threads?channelId=${privateConversation.id}&ts=${privateConversation.ts}`));
-    expect(responses.every(response => response.status === 403 || response.status === 404)).toBe(true);
-    expect(responses.slice(2)).toEqual([
-      expect.objectContaining({ status: 403, body: expect.objectContaining({ error: "policy_blocked" }) }),
-      expect.objectContaining({ status: 403, body: expect.objectContaining({ error: "policy_blocked" }) }),
-    ]);
-    const retained = await world.mcp("blocked", "execute_capability", { name: retainedSearchName, query: { query: "Amber launch" } });
+    responses.push(await world.memberRequest("other", "/v1/capabilities/slack/search?query=Amber%20launch"));
+    responses.push(await world.memberRequest("other", `/v1/capabilities/slack/threads?channelId=${privateConversation.id}&ts=${privateConversation.ts}`));
+    expect(responses.slice(0, 2).every(response => response.status === 200)).toBe(true);
+    expect(responses.slice(2).every(response => response.status === 409)).toBe(true);
+    const retained = await world.mcp("other", "execute_capability", { name: retainedSearchName, query: { query: "Amber launch" } });
     expect(retained.status).toBe(200);
-    expect(world.objects(retained.body).some(entry => entry.error === "policy_blocked")).toBe(true);
+    expect(world.objects(retained.body).some(entry => entry.error === "needs_connection")).toBe(true);
     expect(world.slack.calls()).toHaveLength(before);
-    evidence.recordAssertionEvidence("The organization gate is enforced below the UI", `Both OAuth start aliases, search and threads returned ${responses.map(response => response.status).join(" / ")}; replaying the first member's discovered capability was rejected. Provider call count stayed ${before}. All organizations are synthetic.`, true);
+    await user.navigate(await world.startAuthorization("other"));
+    await user.click({ role: "button", text: "Authorize another workspace" });
+    await user.see({ role: "heading", text: "You're connected" }, { timeoutMs: 30_000 });
+    expect(await world.connection("other")).toMatchObject({ connectedForMe: true });
+    const ownSearch = await world.memberRequest("other", "/v1/capabilities/slack/search?query=Amber%20launch");
+    expect(ownSearch.status).toBe(200);
+    expect(ownSearch.text).toContain(world.slack.otherConversations[0].text);
+    expect(JSON.stringify(await world.connection("first"))).toContain("TSYNTHETIC");
+    evidence.recordAssertionEvidence("The same app serves another Cloud organization without sharing a member grant", "Both start aliases were available in the second organization. Search and retained capability execution required its own connection; after browser OAuth its own workspace search succeeded. No platform configuration was changed.", true);
+    await user.screenshot();
+    await user.navigate(world.appUrl);
   });
 
   await step("a disabled deployment rejects an already authorized member's retained capability", async () => {

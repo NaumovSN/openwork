@@ -16,7 +16,7 @@ provider eligibility, app-distribution, or live-activation proof.
   native results, and only renders content/links/limits present in tool results.
 - Fixtures: two Slack user identities, four synthetic conversation categories,
   a private-message canary, a 105-message thread served in a two-message page,
-  and one deliberately disallowed workspace ID. No outside identities/data.
+  and a second workspace with distinct conversations. No outside identities/data.
 - No OAuth client/connector is created through an admin setup API. The native
   `slack` alias must be supplied by Den from test-process-only configuration.
 - The isolated Den children reject fetches to `slack.com` and its subdomains.
@@ -26,28 +26,27 @@ provider eligibility, app-distribution, or live-activation proof.
 
 The world calls `seed.den` twice:
 
-1. An isolated gate-off Den creates the scratch database, internal organization,
-   two members and a separate synthetic blocked organization.
+1. An isolated gate-off Den creates the scratch database, a Cloud organization,
+   two members and a separate synthetic Cloud organization.
 2. An isolated gate-on Den uses `provision: false` and an explicit `DATABASE_URL`
    override pointing only to the first process's `openwork_eval_*` database.
    Its otherwise unused scratch database remains owned/cleaned up by testkit.
 
-This avoids needing an organization ID before provisioning and tests gate-off
+This tests multi-organization authorization without an allowlist and gate-off
 replay against the same stored grant and issued token. No running process's
 flag changes, no database credential injection, and no `.env` edits are needed.
 Only the second Den child receives:
 
 - `DEN_SLACK_ENABLED=true`
-- `DEN_SLACK_ORGANIZATION_ID=<world-created internal organization ID>`
-- `DEN_SLACK_WORKSPACE_ID=TSYNTHETIC`
 - `DEN_SLACK_CLIENT_ID=eng-76-synthetic-client`
 - `DEN_SLACK_CLIENT_SECRET=eng-76-synthetic-secret-not-a-credential`
 - `DEN_SLACK_API_BASE_URL=<owned loopback origin>/api`
 - `DEN_SLACK_OAUTH_AUTHORIZE_URL=<owned loopback origin>/oauth/v2/authorize`
 - `DEN_SLACK_OAUTH_TOKEN_URL=<owned loopback origin>/api/oauth.v2.access`
 
-All values are synthetic and process-scoped. Both children clear inherited
-Slack bot/signing credentials. Native API search is **GET**
+All values are synthetic and process-scoped. Both children use `DEN_ORG_MODE=multi_org`
+and clear inherited Slack signing credentials. Workspace and member identity are
+discovered through OAuth/auth.test, never configured. Native API search is **GET**
 `/v1/capabilities/slack/search`; MCP invokes its discovered name with `query`,
 not `body`. The optional `conversationTypes` query value is comma-separated.
 The upstream RTS method remains POST. Threads remain GET.

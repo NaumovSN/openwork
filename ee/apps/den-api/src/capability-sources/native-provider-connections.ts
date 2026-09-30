@@ -12,7 +12,7 @@ import {
 } from "./provider-registry.js"
 import { getConnectedAccount } from "./oauth-credentials.js"
 import { getNativeOAuthClient } from "./native-oauth-client.js"
-import { parseSlackAccountIdentity, slackPreviewPolicyError, slackWorkspaceAllowed } from "./slack-preview.js"
+import { parseSlackAccountIdentity, slackCloudPolicyError } from "./slack-policy.js"
 import { readProviderTenantId } from "./oauth-tenant.js"
 import { listExternalMcpConnections, listUsableNativeProviderConnections } from "./external-mcp-connections.js"
 import { memberFacingMcpConnectionsEnabled } from "./external-mcp-rollout.js"
@@ -124,7 +124,7 @@ export type NativeProviderPolicyError = { kind: "policy_blocked"; message: strin
 
 export async function nativeProviderConnectionPolicyError(organizationId: DenTypeId<"organization">, nativeProviderKey?: string): Promise<NativeProviderPolicyError | null> {
   if (nativeProviderKey === "slack") {
-    const slackPolicy = slackPreviewPolicyError(organizationId)
+    const slackPolicy = slackCloudPolicyError()
     if (slackPolicy) return slackPolicy
   }
   const [organization] = await db
@@ -157,7 +157,7 @@ export async function listNativeProviderUsableEntries(input: {
     teamIds: input.teamIds ?? [],
   })
   for (const connection of connections) {
-    // The managed Slack preview uses its single literal account slot only.
+    // Cloud Slack uses one member-owned account slot and a platform OAuth app.
     if (!connection.nativeProviderKey || connection.nativeProviderKey === "slack") continue
     const provider = NATIVE_OAUTH_PROVIDERS[connection.nativeProviderKey]
     if (!provider) continue
@@ -198,7 +198,7 @@ export async function listNativeProviderUsableEntries(input: {
       providerId: provider.providerId,
     })
     const slackIdentity = parseSlackAccountIdentity(storedAccount?.externalAccountId ?? null)
-    const account = provider.providerId !== "slack" || (slackIdentity && slackWorkspaceAllowed(slackIdentity.workspaceId))
+    const account = provider.providerId !== "slack" || slackIdentity
       ? storedAccount
       : null
     const entry = buildNativeProviderEntry(provider, {
@@ -241,8 +241,8 @@ export async function listBlockedNativeProviderAccountEntries(input: {
   const identity = parseSlackAccountIdentity(account.externalAccountId)
   const client = await getNativeOAuthClient(input.organizationId, "slack")
   const message = policy?.message
-    ?? (!identity || !slackWorkspaceAllowed(identity.workspaceId)
-      ? "This saved Slack account is outside the approved validation workspace. An OpenWork administrator controls preview access; you can still disconnect your account."
+    ?? (!identity
+      ? "This saved Slack account has no verified workspace and member identity. Disconnect it and connect again."
       : !client
         ? "The OpenWork-supplied Slack app is unavailable. An OpenWork administrator can restore it; you can still disconnect your account."
         : null)

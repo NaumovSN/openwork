@@ -4,6 +4,7 @@ import {
   index,
   mysqlEnum,
   mysqlTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -108,6 +109,20 @@ export const ConnectedAccountTable = mysqlTable(
       table.providerId,
     ),
   ],
+)
+
+/** App installation authority is separate from every member's read credential. */
+export const SlackInstallationTable = mysqlTable(
+  "slack_installation",
+  {
+    clientId: varchar("client_id", { length: 512 }).notNull(),
+    workspaceId: varchar("workspace_id", { length: 64 }).notNull(),
+    accessToken: encryptedTextColumn("access_token").notNull(),
+    refreshToken: encryptedTextColumn("refresh_token"),
+    expiresAt: timestamp("expires_at", { fsp: 3 }),
+    updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+  },
+  (table) => [primaryKey({ columns: [table.clientId, table.workspaceId] })],
 )
 
 export const externalMcpAuthTypeValues = ["oauth", "apikey", "none"] as const

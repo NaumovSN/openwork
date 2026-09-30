@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 export type SlackConversationType = "public_channel" | "private_channel" | "im" | "mpim";
 export type SlackFixtureMember = "first" | "second";
 export const slackFixtureWorkspace = "TSYNTHETIC";
+export const slackFixtureOtherWorkspace = "TOTHERSYNTHETIC";
 export const slackFixtureClientId = "eng-76-synthetic-client";
 export const slackFixtureClientSecret = "eng-76-synthetic-secret-not-a-credential";
 export const slackFixtureScopes = [
@@ -80,6 +81,7 @@ export async function startNativeSlackFixture() {
     { type: "mpim", id: "GSYNTHGROUP", name: "synthetic-group", text: `Amber launch group-message check is complete. GROUP-${nonce}`, ts: "1780000003.000001", members: ["first"] },
   ];
   const calls: SlackHttpWitness[] = [];
+  const otherConversations = conversations.map(conversation => ({ ...conversation, id: `${conversation.id}OTHER`, text: `Other workspace: ${conversation.text}` }));
   const authorizations: Array<{ clientId: string; scopes: string[]; botScopes: string[]; statePresent: boolean; redirectUri: string }> = [];
   const codes = new Map<string, Grant>();
   const tokens = new Map<string, Grant>();
@@ -108,17 +110,17 @@ export async function startNativeSlackFixture() {
         // Chrome applies form-action to the redirect chain as well. Permit only
         // the already validated, test-owned callback origin—not arbitrary hosts.
         response.writeHead(200, { "content-type": "text/html", "cache-control": "no-store", "content-security-policy": `default-src 'none'; form-action 'self' ${new URL(redirectUri).origin}` });
-        response.end(`<!doctype html><html><title>Synthetic Slack consent</title><h1>Synthetic Slack consent</h1><p>Read synthetic conversations using your own member identity. No messages will be sent.</p>${button("first", "Authorize member one")}${button("second", "Authorize member two")}${button("public", "Authorize public access only")}${button("blocked", "Authorize blocked workspace")}</html>`);
+        response.end(`<!doctype html><html><title>Synthetic Slack consent</title><h1>Synthetic Slack consent</h1><p>Read synthetic conversations using your own member identity. No messages will be sent.</p>${button("first", "Authorize member one")}${button("second", "Authorize member two")}${button("public", "Authorize public access only")}${button("other", "Authorize another workspace")}</html>`);
         return;
       }
       if (url.pathname === "/consent") {
         const id = url.searchParams.get("flow") ?? "";
         const flow = pending.get(id);
         const choice = url.searchParams.get("choice");
-        if (!flow || !["first", "second", "public", "blocked"].includes(choice ?? "")) { json(response, { error: "invalid_consent" }, 400); return; }
+        if (!flow || !["first", "second", "public", "other"].includes(choice ?? "")) { json(response, { error: "invalid_consent" }, 400); return; }
         pending.delete(id);
         const code = `synthetic-code-${randomUUID()}`;
-        codes.set(code, { member: choice === "second" ? "second" : "first", workspace: choice === "blocked" ? "TBLOCKEDFIXTURE" : slackFixtureWorkspace,
+        codes.set(code, { member: choice === "second" ? "second" : "first", workspace: choice === "other" ? slackFixtureOtherWorkspace : slackFixtureWorkspace,
           scopes: choice === "public" ? publicScopes : slackFixtureScopes, redirectUri: flow.redirectUri });
         const callback = new URL(flow.redirectUri);
         callback.searchParams.set("state", flow.state);
@@ -154,6 +156,7 @@ export async function startNativeSlackFixture() {
       calls.push(observed);
       const fail = (error: string) => { observed.error = error; json(response, { ok: false, error }); };
       if (!grant) { fail("invalid_auth"); return; }
+      const workspaceConversations = grant.workspace === slackFixtureOtherWorkspace ? otherConversations : conversations;
       if (url.pathname === "/api/auth.test") {
         json(response, { ok: true, team_id: grant.workspace, user_id: grant.member === "first" ? "USYNTHFIRST" : "USYNTHSECOND",
           team: "Synthetic validation workspace", user: grant.member, url: "https://synthetic.slack.com/" }); return;
@@ -164,7 +167,7 @@ export async function startNativeSlackFixture() {
         if (params.action_token !== undefined || types.some(type => !channelType(type))) { fail("invalid_arguments"); return; }
         if (types.some(type => channelType(type) && !grant.scopes.includes(scopeForType[type]))) { fail("missing_scope"); return; }
         if (list(params.content_types).some(type => type !== "messages")) { fail("fixture_disallows_file_search"); return; }
-        const visible = conversations.filter(conversation => types.includes(conversation.type) && conversation.members.includes(grant.member));
+        const visible = workspaceConversations.filter(conversation => types.includes(conversation.type) && conversation.members.includes(grant.member));
         observed.returnedChannels = visible.map(conversation => conversation.id);
         observed.returnedMessages = visible.length;
         json(response, { ok: true, results: { messages: visible.map(conversation => ({
@@ -174,7 +177,7 @@ export async function startNativeSlackFixture() {
           context_messages: { before: [], after: [] },
         })) }, response_metadata: { next_cursor: "" } }); return;
       }
-      const conversation = conversations.find(entry => entry.id === params.channel);
+      const conversation = workspaceConversations.find(entry => entry.id === params.channel);
       if (!conversation || !conversation.members.includes(grant.member)) { fail("channel_not_found"); return; }
       if (url.pathname === "/api/conversations.replies") {
         if (!grant.scopes.includes(historyForType[conversation.type])) { fail("missing_scope"); return; }
@@ -201,7 +204,7 @@ export async function startNativeSlackFixture() {
   origin = `http://127.0.0.1:${address.port}`;
   return {
     origin, apiUrl: `${origin}/api`, authorizeUrl: `${origin}/oauth/v2/authorize`, tokenUrl: `${origin}/api/oauth.v2.access`,
-    conversations, source,
+    conversations, otherConversations, otherWorkspace: slackFixtureOtherWorkspace, source,
     allowCallbackOrigin(value: string) {
       const url = new URL(value);
       if (url.hostname !== "127.0.0.1" || url.protocol !== "http:") throw new Error("Synthetic callback must be owned loopback HTTP");

@@ -1,5 +1,7 @@
 # ENG-76 native Slack validation — operational draft
 
+**Historical draft, superseded 2026-09-30. Do not apply this configuration.** The current hosted multi-workspace setup is [Slack Cloud setup](slack-cloud-setup.md). Organization/workspace-ID and global bot-token environment settings below have been removed from the implementation.
+
 **Disabled. No live activation is authorized by this document.** Implementation approval covers code and synthetic tests, not Slack app creation, installation, distribution, fixture provisioning, credential changes, flag enablement, outreach, or real Slack API calls. No live app settings or token grants were inspected. Primary setup documentation was retrieved on **2026-09-28**.
 
 The [approved scope](eng-76-native-slack-connect.md), [rollout ADR](adr/0001-internal-first-native-slack-rollout.md), and [provider research](research/eng-76-slack-web-api-feasibility.md) remain controlling. This is a preparation checklist, not Marketplace approval, provider eligibility confirmation, or legal clearance.

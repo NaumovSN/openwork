@@ -11,7 +11,7 @@ import {
   type ConnectedAccountRow,
 } from "./oauth-credentials.js"
 import { getNativeOAuthClient, type NativeOAuthClient } from "./native-oauth-client.js"
-import { encodeSlackAccountIdentity, parseSlackAccountIdentity, slackPreviewPolicyError, slackWorkspaceAllowed } from "./slack-preview.js"
+import { encodeSlackAccountIdentity, parseSlackAccountIdentity, slackCloudPolicyError } from "./slack-policy.js"
 
 /**
  * Shared native OAuth authorization-code driver, with PKCE where supported.
@@ -186,7 +186,23 @@ type TokenResponse = {
   scope?: string
   slackWorkspaceId?: string
   slackUserId?: string
+  slackHomeGrant?: SlackHomeGrant
 }
+
+export type SlackHomeGrant = {
+  accessToken: string
+  refreshToken: string | null
+  expiresAt: Date | null
+}
+
+const slackBotGrantSchema = z.object({
+  token_type: z.literal("bot"),
+  access_token: z.string().trim().min(1),
+  bot_user_id: z.string().regex(/^[UW][A-Z0-9]{1,63}$/),
+  team: z.object({ id: z.string().regex(/^T[A-Z0-9]{1,63}$/) }),
+  refresh_token: z.string().min(1).optional(),
+  expires_in: z.number().nonnegative().optional(),
+})
 
 const slackTokenResponseSchema = z.object({
   ok: z.literal(true),
@@ -396,10 +412,8 @@ async function readBoundedTokenResponse(response: Response): Promise<string> {
 export function slackOAuthConfigurationIsCurrent(input: {
   organizationId: string
   client: NativeOAuthClient
-  workspaceId: string | undefined
 }): boolean {
-  return !slackPreviewPolicyError(input.organizationId)
-    && env.slackWorkspaceId === input.workspaceId
+  return !slackCloudPolicyError()
     && env.slackClientId === input.client.clientId
     && env.slackClientSecret === input.client.clientSecret
 }
@@ -430,11 +444,10 @@ export async function validateSlackTokenIdentity(tokens: TokenResponse, expected
   }
   const parsed = slackAuthTestSchema.safeParse(body)
   if (!parsed.success
-    || !slackWorkspaceAllowed(parsed.data.team_id)
     || (tokens.slackWorkspaceId !== undefined && tokens.slackWorkspaceId !== parsed.data.team_id)
     || (tokens.slackUserId !== undefined && tokens.slackUserId !== parsed.data.user_id)
   ) {
-    throw new OAuthTokenExchangeError("Slack authorization must belong to a member of the approved validation workspace.", "oauth_identity_invalid")
+    throw new OAuthTokenExchangeError("Slack could not verify a matching workspace and member identity. Connect again.", "oauth_identity_invalid")
   }
   const identity = encodeSlackAccountIdentity({ workspaceId: parsed.data.team_id, userId: parsed.data.user_id })
   if (expectedAccountId !== undefined && identity !== expectedAccountId) {
@@ -530,11 +543,17 @@ async function postTokenRequest(input: {
     }
     // Authorization-code replies can also contain a top-level bot grant.
     // Only authed_user is the member's grant here; never substitute a top-level token.
+    const bot = slackBotGrantSchema.safeParse(body)
     return {
       ...parsed.data.authed_user,
       scope: parsed.data.authed_user.scope ?? "",
       slackWorkspaceId: parsed.data.team?.id,
       slackUserId: parsed.data.authed_user.id,
+      ...(bot.success ? { slackHomeGrant: {
+        accessToken: bot.data.access_token,
+        refreshToken: bot.data.refresh_token ?? null,
+        expiresAt: bot.data.expires_in === undefined ? null : new Date(Date.now() + bot.data.expires_in * 1000),
+      } } : {}),
     }
   }
   return parseOAuthTokenResponse(body)
@@ -593,7 +612,7 @@ export async function getValidAccessToken(input: {
   orgMembershipId: DenTypeId<"member">
 }): Promise<{ accessToken: string; account: ConnectedAccountRow } | { error: "not_connected" | "client_not_configured" }> {
   if (input.provider.providerId === "slack"
-    && (input.credentialProviderId !== "slack" || slackPreviewPolicyError(input.organizationId))
+    && (input.credentialProviderId !== "slack" || slackCloudPolicyError())
   ) return { error: "not_connected" }
   const account = await getConnectedAccount({
     organizationId: input.organizationId,
@@ -606,7 +625,7 @@ export async function getValidAccessToken(input: {
 
   if (input.provider.providerId === "slack") {
     const identity = parseSlackAccountIdentity(account.externalAccountId)
-    if (slackPreviewPolicyError(input.organizationId) || !identity || !slackWorkspaceAllowed(identity.workspaceId)) {
+    if (slackCloudPolicyError() || !identity) {
       return { error: "not_connected" }
     }
   }
@@ -624,13 +643,12 @@ export async function getValidAccessToken(input: {
     return { error: "client_not_configured" }
   }
 
-  const slackWorkspaceId = env.slackWorkspaceId
   const refreshed = await refreshTokens({ provider: input.provider, client, refreshToken: account.refreshToken })
   const slackIdentity = input.provider.providerId === "slack"
     ? await validateSlackTokenIdentity(refreshed, account.externalAccountId ?? "")
     : undefined
   if (input.provider.providerId === "slack" && !slackOAuthConfigurationIsCurrent({
-    organizationId: input.organizationId, client, workspaceId: slackWorkspaceId,
+    organizationId: input.organizationId, client,
   })) return { error: "not_connected" }
   const expiresAt = refreshed.expires_in !== undefined ? new Date(Date.now() + refreshed.expires_in * 1000) : null
   const updated = await refreshConnectedAccountForActiveMember({
@@ -655,7 +673,7 @@ export async function getValidAccessToken(input: {
     } : {}),
   })
   if (input.provider.providerId === "slack" && !slackOAuthConfigurationIsCurrent({
-    organizationId: input.organizationId, client, workspaceId: slackWorkspaceId,
+    organizationId: input.organizationId, client,
   })) return { error: "not_connected" }
   if (updated?.accessToken) {
     return { accessToken: updated.accessToken, account: updated }
@@ -669,7 +687,7 @@ export async function getValidAccessToken(input: {
     providerId: input.credentialProviderId,
   })
   if (input.provider.providerId === "slack" && (
-    !slackOAuthConfigurationIsCurrent({ organizationId: input.organizationId, client, workspaceId: slackWorkspaceId })
+    !slackOAuthConfigurationIsCurrent({ organizationId: input.organizationId, client })
     || current?.externalAccountId !== slackIdentity
   )) return { error: "not_connected" }
   if (

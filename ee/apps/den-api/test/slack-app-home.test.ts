@@ -15,7 +15,6 @@ process.env.BETTER_AUTH_URL = "https://den.example.test"
 process.env.OPENWORK_DEV_MODE = "1"
 process.env.DEN_SLACK_ENABLED = "false"
 process.env.DEN_SLACK_SIGNING_SECRET = "synthetic-signing-secret"
-process.env.DEN_SLACK_BOT_TOKEN = "synthetic-home-token"
 process.env.DEN_SLACK_API_BASE_URL = "http://127.0.0.1:1/api"
 
 const signingSecret = "synthetic-signing-secret"
@@ -25,6 +24,8 @@ let publishResult: unknown = { ok: true }
 let onAuthRequest: () => void = () => {}
 let authDelayMs = 0
 let publishDelayMs = 0
+let tokens = new Map<string, string>()
+let tokenLookup: (workspaceId: string, signal: AbortSignal) => Promise<string | null>
 const downstream = createServer(async (req, res) => {
   let body = ""
   for await (const chunk of req) body += chunk
@@ -52,10 +53,12 @@ before(async () => {
 beforeEach(() => {
   calls.length = 0
   env.slackEnabled = true
-  env.slackOrganizationId = "org_synthetic_validation"
-  env.slackWorkspaceId = "TTEST001"
+  env.orgMode = "multi_org"
+  env.slackClientId = "synthetic-client"
+  env.slackClientSecret = "synthetic-secret"
   env.slackSigningSecret = signingSecret
-  env.slackBotToken = "synthetic-home-token"
+  tokens = new Map([["TTEST001", "synthetic-home-token"], ["TOTHER001", "synthetic-other-home-token"]])
+  tokenLookup = async workspaceId => tokens.get(workspaceId) ?? null
   authResult = { ok: true, team_id: "TTEST001", bot_id: "BTEST001" }
   publishResult = { ok: true }
   onAuthRequest = () => {}
@@ -64,7 +67,7 @@ beforeEach(() => {
   app = new Hono()
   // The production signedWebhookRoute policy marker is also pass-through;
   // signature verification is exercised in full by the registered endpoint.
-  register(app, async (_c, next) => { await next() })
+  register(app, async (_c, next) => { await next() }, (workspaceId, signal) => tokenLookup(workspaceId, signal))
 })
 after(async () => {
   downstream.closeAllConnections()
@@ -104,15 +107,12 @@ test("unsigned, stale, future, and body-tampered requests are rejected before ve
   assert.equal(calls.length, 0)
 })
 
-test("verification stays unavailable while the deployment gate or validation identity is missing", async () => {
+test("verification stays unavailable while disabled or on a single-org deployment", async () => {
   const value = { type: "url_verification", challenge: "synthetic-challenge" }
   env.slackEnabled = false
   assert.equal((await send(value)).status, 403)
   env.slackEnabled = true
-  env.slackOrganizationId = undefined
-  assert.equal((await send(value)).status, 403)
-  env.slackOrganizationId = "org_synthetic_validation"
-  env.slackWorkspaceId = undefined
+  env.orgMode = "single_org"
   assert.equal((await send(value)).status, 403)
   assert.equal(calls.length, 0)
 })
@@ -129,7 +129,6 @@ test("an approved Home visit publishes only compact read-only connection help", 
       type: "home",
       blocks: [
         { type: "header", text: { type: "plain_text", text: "OpenWork Connect" } },
-        { type: "context", elements: [{ type: "plain_text", text: "Internal validation. Synthetic conversations only." }] },
         { type: "section", fields: [
           { type: "mrkdwn", text: "*Read access*\nOnly conversations you authorize" },
           { type: "mrkdwn", text: "*Posting and replies*\nNot supported" },
@@ -141,10 +140,22 @@ test("an approved Home visit publishes only compact read-only connection help", 
   })
 })
 
-test("a signed foreign workspace cannot verify or publish Home", async () => {
-  for (const value of [event("TOTHER001"), { type: "url_verification", challenge: "synthetic", team_id: "TOTHER001" }]) {
-    assert.equal((await send(value)).status, 403)
-  }
+test("a workspace without an installation cannot borrow a different workspace's bot token", async () => {
+  assert.equal((await send(event("TUNKNOWN"))).status, 503)
+  assert.equal(calls.length, 0)
+})
+
+test("a second workspace gets its own installed token without environment configuration", async () => {
+  authResult = { ok: true, team_id: "TOTHER001", bot_id: "BOTHER001" }
+  assert.equal((await send(event("TOTHER001"))).status, 200)
+  assert.ok(calls.every(call => call.authorization === "Bearer synthetic-other-home-token"))
+})
+
+test("an unavailable installation store cannot exceed the response deadline", async () => {
+  tokenLookup = () => new Promise(() => {})
+  const start = performance.now()
+  assert.equal((await send(event())).status, 504)
+  assert.ok(performance.now() - start < 2800)
   assert.equal(calls.length, 0)
 })
 
@@ -154,8 +165,8 @@ test("a wrong-workspace bot token cannot publish even for an approved event", as
   assert.deepEqual(calls.map(call => call.path), ["/api/auth.test"])
 })
 
-test("changing the validation organization during auth.test blocks publication", async () => {
-  onAuthRequest = () => { env.slackOrganizationId = "org_other_synthetic" }
+test("rotating the platform app during auth.test blocks publication", async () => {
+  onAuthRequest = () => { env.slackClientId = "rotated-client" }
   assert.equal((await send(event())).status, 403)
   assert.deepEqual(calls.map(call => call.path), ["/api/auth.test"])
 })
@@ -245,11 +256,11 @@ test("oversized provider responses fail safely without publication", async () =>
   assert.deepEqual(calls.map(call => call.path), ["/api/auth.test"])
 })
 
-test("the validation organization is rechecked after receiving the signed body", async () => {
+test("the Cloud rollout is rechecked after receiving the signed body", async () => {
   const body = JSON.stringify(event())
   const stream = new ReadableStream<Uint8Array>({
     pull(controller) {
-      env.slackOrganizationId = "org_other_synthetic"
+      env.slackEnabled = false
       controller.enqueue(new TextEncoder().encode(body))
       controller.close()
     },

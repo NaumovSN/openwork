@@ -25,7 +25,8 @@ import {
   slackOAuthConfigurationIsCurrent,
 } from "../../capability-sources/generic-oauth.js"
 import { getNativeOAuthClient } from "../../capability-sources/native-oauth-client.js"
-import { parseSlackAccountIdentity, slackPreviewPolicyError, slackWorkspaceAllowed } from "../../capability-sources/slack-preview.js"
+import { parseSlackAccountIdentity, slackCloudPolicyError } from "../../capability-sources/slack-policy.js"
+import { saveSlackInstallation } from "../../capability-sources/slack-installations.js"
 import { connectCallbackPage } from "../../capability-sources/oauth-callback-page.js"
 import { revokeAccountsBeforeOAuthClientIdentityChange } from "../../capability-sources/oauth-client-rotation.js"
 import {
@@ -351,7 +352,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       const { provider, credentialProviderId } = resolved
 
       if (provider.providerId === "slack") {
-        return c.json({ error: "forbidden", message: slackPreviewPolicyError(payload.organization.id)?.message
+        return c.json({ error: "forbidden", message: slackCloudPolicyError()?.message
           ?? "The native Slack preview uses an OpenWork-supplied app. Organization app configuration is not supported." }, 403)
       }
       const body = c.req.valid("json")
@@ -656,7 +657,6 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
         return c.json({ error: "invalid_request", message: "No pending connection for this state." }, 400)
       }
 
-      const slackWorkspaceId = env.slackWorkspaceId
       try {
         const tokens = await exchangeCodeForTokens({
           provider,
@@ -676,11 +676,11 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
 
         if (provider.providerId === "slack" && (
           !slackOAuthConfigurationIsCurrent({
-            organizationId: statePayload.organizationId, client, workspaceId: slackWorkspaceId,
+            organizationId: statePayload.organizationId, client,
           })
           || await nativeProviderConnectionPolicyError(statePayload.organizationId, "slack")
         )) {
-          throw new OAuthTokenExchangeError("Slack preview configuration changed. Restart Connect if the preview is still available.", "oauth_reauthentication_required")
+          throw new OAuthTokenExchangeError("Slack configuration changed. Restart Connect if Slack is still available.", "oauth_reauthentication_required")
         }
         const saved = await completeConnectedAccountForActiveMember({
           organizationId: statePayload.organizationId,
@@ -704,6 +704,18 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
             name: provider.displayName,
             message: "This OpenWork connection request is no longer active.",
           }), 400)
+        }
+        if (provider.providerId === "slack" && tokens.slackHomeGrant) {
+          const identity = parseSlackAccountIdentity(externalAccountId)
+          if (identity && slackOAuthConfigurationIsCurrent({ organizationId: statePayload.organizationId, client })) {
+            try {
+              await saveSlackInstallation(client.clientId, identity.workspaceId, tokens.slackHomeGrant)
+            } catch {
+              // Member authorization succeeded; optional static Home storage
+              // must not turn that into a misleading failed connection.
+              console.warn("slack_home_installation_unavailable", { requestId: c.get("requestId") })
+            }
+          }
         }
       } catch (error) {
         const requestId = c.get("requestId")
@@ -788,7 +800,7 @@ export function registerOAuthProviderRoutes<T extends { Variables: OrgRouteVaria
       })
       if (resolved.provider.providerId === "slack" && account?.accessToken) {
         const identity = parseSlackAccountIdentity(account.externalAccountId)
-        if (!identity || !slackWorkspaceAllowed(identity.workspaceId)) {
+        if (!identity) {
           return c.json({ providerId, connected: false, externalAccountId: null, scopes: null })
         }
       }

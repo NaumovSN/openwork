@@ -5,7 +5,7 @@ import { readHeadlessRuntimeManifest, resolveHeadlessWorldRuntimePaths } from "@
 import { connect, debuggerUrlFor, listTargets, type Surface } from "@openwork/cdp";
 import { denFetch, type DenSession } from "@openwork/behaviors";
 import { resolveEvalEngine, SkipError, type Place, type Seed } from "@openwork/env";
-import { slackFixtureClientId, slackFixtureClientSecret, slackFixtureWorkspace, startNativeSlackFixture } from "../packages/labs/src/mock-native-slack.ts";
+import { slackFixtureClientId, slackFixtureClientSecret, startNativeSlackFixture } from "../packages/labs/src/mock-native-slack.ts";
 import { slackIncomplete, slackLimited, slackResultObjects, slackSearchHits, startNativeSlackModel } from "../packages/labs/src/native-slack-model.ts";
 
 export const nativeSlackPrompts = {
@@ -50,9 +50,9 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
   const slack = setup.use(await startNativeSlackFixture());
   const model = setup.use(await startNativeSlackModel(Object.values(nativeSlackPrompts)));
   const preload = new URL("../packages/labs/src/native-slack-egress.mjs", import.meta.url);
-  const isolated = { NODE_OPTIONS: `--import=${preload.href}`, NODE_ENV: "test", OPENWORK_DEV_MODE: "1", RESEND_API_KEY: "", SMTP_HOST: "", SENTRY_DSN: "", DEN_SLACK_SIGNING_SECRET: "", DEN_SLACK_BOT_TOKEN: "" };
-  const gateOff = await seed.den({ web: false, org: { name: "ENG-76 synthetic internal", members: { first: {}, second: {} } }, env: {
-    ...isolated, DEN_SLACK_ENABLED: "false", DEN_SLACK_ORGANIZATION_ID: "", DEN_SLACK_WORKSPACE_ID: "",
+  const isolated = { NODE_OPTIONS: `--import=${preload.href}`, NODE_ENV: "test", OPENWORK_DEV_MODE: "1", DEN_ORG_MODE: "multi_org", RESEND_API_KEY: "", SMTP_HOST: "", SENTRY_DSN: "", DEN_SLACK_SIGNING_SECRET: "" };
+  const gateOff = await seed.den({ web: false, org: { name: "ENG-76 synthetic Cloud", members: { first: {}, second: {} } }, env: {
+    ...isolated, DEN_SLACK_ENABLED: "false",
     DEN_SLACK_CLIENT_ID: "", DEN_SLACK_CLIENT_SECRET: "", DEN_SLACK_API_BASE_URL: slack.apiUrl,
     DEN_SLACK_OAUTH_AUTHORIZE_URL: slack.authorizeUrl, DEN_SLACK_OAUTH_TOKEN_URL: slack.tokenUrl,
   } });
@@ -62,12 +62,12 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
   }
   const organization = object(object((await seed.api(gateOff.admin, "/v1/org")).body).organization);
   const organizationId = text(organization.id);
-  const other = await seed.api(gateOff.admin, "/v1/org", { method: "POST", body: JSON.stringify({ name: "ENG-76 synthetic blocked organization" }) });
-  if (!other.response.ok) throw new Error("Could not arrange the synthetic blocked organization");
-  const blockedOrganizationId = text(object(object(other.body).organization).id);
+  const other = await seed.api(gateOff.admin, "/v1/org", { method: "POST", body: JSON.stringify({ name: "ENG-76 second Cloud organization" }) });
+  if (!other.response.ok) throw new Error("Could not arrange the second synthetic organization");
+  const otherOrganizationId = text(object(object(other.body).organization).id);
   const enabled = await seed.den({ web: false, provision: false, env: {
     ...isolated, DATABASE_URL: database.url,
-    DEN_SLACK_ENABLED: "true", DEN_SLACK_ORGANIZATION_ID: organizationId, DEN_SLACK_WORKSPACE_ID: slackFixtureWorkspace,
+    DEN_SLACK_ENABLED: "true",
     DEN_SLACK_CLIENT_ID: slackFixtureClientId, DEN_SLACK_CLIENT_SECRET: slackFixtureClientSecret,
     DEN_SLACK_API_BASE_URL: slack.apiUrl, DEN_SLACK_OAUTH_AUTHORIZE_URL: slack.authorizeUrl, DEN_SLACK_OAUTH_TOKEN_URL: slack.tokenUrl,
   } });
@@ -77,9 +77,9 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
   if (!first || !second) throw new Error("Both synthetic members must be provisioned");
   const sessions = {
     first: { ...first, ...enabled.ref }, second: { ...second, ...enabled.ref },
-    blocked: { ...gateOff.admin, ...enabled.ref },
+    other: { ...gateOff.admin, ...enabled.ref },
   };
-  const orgFor = (identity: keyof typeof sessions) => identity === "blocked" ? blockedOrganizationId : organizationId;
+  const orgFor = (identity: keyof typeof sessions) => identity === "other" ? otherOrganizationId : organizationId;
   const memberRequest = async (identity: keyof typeof sessions, path: string, method = "GET", body?: unknown, disabled = false) => {
     const session = disabled ? { ...sessions[identity], ...gateOff.ref } : sessions[identity];
     const result = await denFetch(session, path, { method, headers: { authorization: `Bearer ${session.token}`, "x-openwork-org-id": orgFor(identity) },
@@ -95,10 +95,10 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
     }
     return { ...sessions[identity], ...(disabled ? gateOff.ref : {}), token: text(minted.token) };
   }
-  const tokens = { first: await mint("first"), second: await mint("second"), blocked: await mint("blocked") };
+  const tokens = { first: await mint("first"), second: await mint("second"), other: await mint("other") };
   // Each deployment needs its own valid audience-bound bearer. A wrong-audience
   // rejection would not witness the Slack rollout policy at all.
-  const disabledTokens = { first: await mint("first", true), second: await mint("second", true), blocked: await mint("blocked", true) };
+  const disabledTokens = { first: await mint("first", true), second: await mint("second", true), other: await mint("other", true) };
   const makeApp = async (identity: "first" | "second") => {
     const directory = seed.tmpPath(`native-slack-${identity}`);
     await mkdir(directory, { recursive: true });
@@ -153,13 +153,14 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
   const resources = setup.move();
   return {
     app: memberOne.app, secondApp: memberTwo.app, slack, model, engine, engineVersion, first: sessions.first, second: sessions.second,
-    organizationId, blockedOrganizationId, workspaceId: memberOne.workspace.workspaceId, memberRequest, searchHits: slackSearchHits, incomplete: slackIncomplete, limited: slackLimited, objects: slackResultObjects,
+    organizationId, otherOrganizationId, workspaceId: memberOne.workspace.workspaceId, memberRequest, searchHits: slackSearchHits, incomplete: slackIncomplete, limited: slackLimited, objects: slackResultObjects,
     prompt: nativeSlackPrompts,
     appRequest(identity: "first" | "second", path: string) {
       return (identity === "first" ? memberOne : memberTwo).request(path);
     },
     appUrl: new URL(`#/workspace/${memberOne.workspace.workspaceId}/session`, memberOne.app.webUrl).toString(),
-    async connection(identity: "first" | "second") {
+    secondAppUrl: new URL(`#/workspace/${memberTwo.workspace.workspaceId}/session`, memberTwo.app.webUrl).toString(),
+    async connection(identity: keyof typeof sessions) {
       const result = await memberRequest(identity, "/v1/mcp-connections?scope=usable");
       if (result.status !== 200) throw new Error(`Native connection list failed: ${result.status}`);
       return slackResultObjects(result.body).find(entry => entry.id === "slack");
@@ -178,7 +179,7 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
       }
       throw new Error("Connect did not open an observable loopback Slack OAuth page; no real provider was contacted");
     },
-    async startAuthorization(identity: "first" | "second") {
+    async startAuthorization(identity: keyof typeof sessions) {
       const started = await memberRequest(identity, "/v1/oauth-providers/slack/connect/start");
       if (started.status !== 200) throw new Error(`Native OAuth start failed: ${started.status}`);
       const authorizeUrl = new URL(text(object(started.body).authorizeUrl));

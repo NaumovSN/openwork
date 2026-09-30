@@ -24,6 +24,10 @@ _Avoid_: Zero setup, approval-free connection
 A member's authorized Slack identity within one Slack workspace.
 _Avoid_: Slack app, shared organization account
 
+**Slack app installation**:
+The workspace's authorization of the OpenWork-supplied app, distinct from each member's permission to search their own conversations. Its bot grant supports the connection/help surface, not member lookups.
+_Avoid_: Connected Slack account, shared search token
+
 **Slack conversation**:
 A public channel, private channel, one-to-one direct message, or group direct message in Slack.
 _Avoid_: Channel (when direct messages are also included)
