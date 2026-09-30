@@ -3,7 +3,8 @@ import type { DesktopFreeVersionError } from "./protocol.js";
 /**
  * Which desktop releases may use signed-out Auto: the newest `count` stable
  * releases plus any stable release published within `minDays`, minus blocked
- * ones. Prereleases never qualify.
+ * ones. A build newer than all of them (an alpha, or a release not yet listed)
+ * also qualifies; its release tag still has to match its exact version.
  */
 const identifier = "(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)";
 const semver = new RegExp(`^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(${identifier}(?:\\.${identifier})*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`);
@@ -39,11 +40,13 @@ export function supportedDesktopReleases(releases: readonly DesktopRelease[], wi
 export function lowestDesktopVersion(versions: readonly string[]): string | null {
   return versions.length ? versions.reduce((lowest, version) => (compareDesktopVersions(version, lowest) ?? 0) < 0 ? version : lowest) : null;
 }
-export function desktopFreeVersionError(currentVersion: string, supported: readonly string[] | null): DesktopFreeVersionError | null {
+export function desktopFreeVersionError(currentVersion: string, supported: readonly string[] | null, blocked: readonly string[] = []): DesktopFreeVersionError | null {
   const minimumVersion = supported ? lowestDesktopVersion(supported) : null;
   if (!minimumVersion) return { code: "desktop_version_unavailable", currentVersion, minimumVersion: null,
     message: "The supported desktop version cannot be verified. Auto is temporarily unavailable." };
-  if (!supported?.includes(currentVersion)) return { code: "desktop_update_required", currentVersion, minimumVersion,
+  const newest = supported!.reduce((highest, version) => (compareDesktopVersions(version, highest) ?? 0) > 0 ? version : highest);
+  const ahead = (compareDesktopVersions(currentVersion, newest) ?? -1) > 0 && !blocked.includes(currentVersion.replace(/\+.*$/, ""));
+  if (!supported?.includes(currentVersion) && !ahead) return { code: "desktop_update_required", currentVersion, minimumVersion,
     message: `Update OpenWork Desktop to ${minimumVersion} or newer to use Auto.` };
   return null;
 }

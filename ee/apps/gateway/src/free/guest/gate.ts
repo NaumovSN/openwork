@@ -34,11 +34,12 @@ export async function checkDesktopFreeRequest(request: Request, bodyHash: string
     const supported = releases ? supportedDesktopReleases(releases, { count: config.supportedReleaseCount, minDays: config.supportedReleaseMinDays, blocked: config.blockedReleases }, dependencies.now?.()) : null
     const minimumVersion = supported ? lowestDesktopVersion(supported) : null
     // A dev-secret proof comes from an unversioned developer build; it is not held to the release window.
-    let versionError = proof.releaseSource === "dev" ? null : desktopFreeVersionError(proof.appVersion, supported)
-    // No released build ever sent an untagged (v2) proof, so one only comes from an unkeyed or forged client.
+    let versionError = proof.releaseSource === "dev" ? null : desktopFreeVersionError(proof.appVersion, supported, config.blockedReleases)
+    // An untagged (v2) proof comes from a build made without the release key (a local build, or an older alpha),
+    // or from a forged client. It is new enough, so asking to update would be wrong: say this build can't use Auto.
     if (!versionError && proof.version === 2) {
-      versionError = { code: "desktop_update_required", currentVersion: proof.appVersion, minimumVersion,
-        message: `Update OpenWork Desktop to ${minimumVersion} or newer to use Auto.` }
+      versionError = { code: "desktop_build_unverified", currentVersion: proof.appVersion, minimumVersion,
+        message: "This build of OpenWork can't use Auto. Install an official release to use it." }
     }
     if (request.signal.aborted) return { error: desktopFreeGateError(503, "desktop_proof_unavailable") }
     return { proof, minimumVersion, versionError }

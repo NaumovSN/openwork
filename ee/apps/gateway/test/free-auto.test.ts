@@ -369,6 +369,21 @@ test("only supported releases pass: version outside the window, unsupported mode
   assert.equal((await blocked.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 426, "a yanked release is refused at once")
 })
 
+test("a tagged alpha newer than the newest release may use Auto until its release ships; older or blocked alphas may not", async () => {
+  const alpha = "1.2.4-alpha.3244+4d3cfbd"
+  const ahead = guestFor(alpha)
+  const status = await (await fixture().app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${ahead.token}`, undefined, { version: alpha, source: ahead.source }))).json()
+  assert.equal(status.state, "ready")
+  const shipped = "1.2.3-alpha.9+abc1234"
+  const behind = guestFor(shipped)
+  assert.equal((await fixture().app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${behind.token}`, undefined, { version: shipped, source: behind.source }))).status, 200)
+  assert.equal((await (await fixture().app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${behind.token}`, undefined, { version: shipped, source: behind.source }))).json()).state, "update_required", "an alpha of an already released version is behind that release")
+  const blocked = fixture({ config: { ...config, blockedReleases: ["1.2.4-alpha.3244"] } })
+  assert.equal((await (await blocked.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${ahead.token}`, undefined, { version: alpha, source: ahead.source }))).json()).state, "update_required")
+  const untagged = guestFor("1.2.4-alpha.1+abc")
+  assert.equal((await (await fixture().app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${untagged.token}`, undefined, { version: "1.2.4-alpha.1+abc", source: untagged.source, proofVersion: 2 }))).json()).code, "desktop_build_unverified")
+})
+
 test("the release tag must come from the secret of the claimed version, the previous master key overlaps, dev secrets only count in dev mode", async () => {
   const f = fixture()
   const ok = await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))
@@ -397,13 +412,13 @@ test("switched-off guest Auto says free_disabled, not unavailable, on every gues
   assert.equal(f.requests.length, 0)
 })
 
-test("an untagged (v2) proof is always refused with the update wall, since no released build sends one", async () => {
+test("an untagged (v2) proof from a current build says the build can't use Auto, not that it needs an update", async () => {
   const f = fixture()
   const response = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))
-  assert.equal(response.status, 426)
-  assert.equal((await response.json()).error.code, "desktop_update_required")
+  assert.equal(response.status, 503)
+  assert.equal((await response.json()).error.code, "desktop_build_unverified")
   const status = await (await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`, undefined, { proofVersion: 2 }))).json()
-  assert.equal(status.state, "update_required")
+  assert.deepEqual([status.state, status.code], ["unavailable", "desktop_build_unverified"])
   assert.equal(f.requests.length, 0)
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))).status, 200, "a tagged release proof still works")
 })

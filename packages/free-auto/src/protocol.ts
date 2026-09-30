@@ -94,7 +94,7 @@ export type DesktopFreeAccessStatus = {
   defaultPinned?: boolean;
 };
 export type DesktopFreeVersionError = {
-  code: "desktop_update_required" | "desktop_version_unavailable";
+  code: "desktop_update_required" | "desktop_version_unavailable" | "desktop_build_unverified";
   currentVersion: string;
   minimumVersion: string | null;
   message: string;
