@@ -302,8 +302,8 @@ test("members use the regular OpenWork Models routes: Auto only, member allowanc
   assert.equal(f.requests.length, 1)
 })
 
-test("the proxy sends unsubscribed organizations to free Auto and keeps subscribed ones on paid Models", async () => {
-  for (const [metadata, free] of [[{}, true], [{ inference: { enabled: false } }, true], [{ inference: { enabled: true, tier: "tier1" } }, false]] as const) {
+test("the proxy sends Auto to free Auto for every organization and keeps other models on paid Models", async () => {
+  const routeFor = (metadata: Record<string, unknown>) => {
     const served: string[] = []
     const app = new Hono()
     registerProxyRoutes(app, {
@@ -316,11 +316,20 @@ test("the proxy sends unsubscribed organizations to free Auto and keeps subscrib
       async insertRequestLog() {},
       async freeMember(c) { served.push("free"); return c.json({ ok: true }) },
     })
-    const response = await app.fetch(new Request(`https://gateway.test${MEMBER_FREE_CHAT_PATH}`, { method: "POST", body: prompt,
-      headers: { authorization: `Bearer ${memberKey}`, "content-type": "application/json" } }))
-    assert.deepEqual(served, free ? ["free"] : [], JSON.stringify(metadata))
-    if (!free) assert.notEqual(response.status, 200)
+    const call = (path: string, body?: string) => app.fetch(new Request(`https://gateway.test${path}`, { method: body === undefined ? "GET" : "POST", body,
+      headers: { authorization: `Bearer ${memberKey}`, ...(body === undefined ? {} : { "content-type": "application/json" }) } }))
+    return { served, call }
   }
+  for (const metadata of [{}, { inference: { enabled: false } }, { inference: { enabled: true, tier: "tier1" } }]) {
+    const route = routeFor(metadata)
+    assert.equal((await route.call(MEMBER_FREE_CHAT_PATH, prompt)).status, 200, JSON.stringify(metadata))
+    assert.deepEqual(route.served, ["free"], JSON.stringify(metadata))
+  }
+  const paying = routeFor({ inference: { enabled: true, tier: "tier1" } })
+  assert.equal((await paying.call(MEMBER_FREE_STATUS_PATH)).status, 200, "a paying organization's members can check their free Auto allowance")
+  const paid = await paying.call(MEMBER_FREE_CHAT_PATH, JSON.stringify({ model: "openai/gpt-6-sol", messages: [{ role: "user", content: "hello" }] }))
+  assert.notEqual(paid.status, 200)
+  assert.deepEqual(paying.served, ["free"], "other models stay on paid Models")
 })
 
 test("a member key never reaches the guest routes and a guest token never reaches the member handler", async () => {
@@ -555,13 +564,13 @@ function memberCall(app: Hono, path: string, init: RequestInit = {}) {
 }
 const memberChat = { method: "POST", body: prompt, headers: { "content-type": "application/json" } }
 
-test("member status carries org Auto pin policy while guests remain pinned and unpinning does not remove the model", async () => {
+test("member status carries org Auto pin policy, guests are unpinned by default, and unpinning does not remove the model", async () => {
   const f = fixture({}, undefined, { defaultPinned: async () => false })
   const memberStatus = await memberCall(f.memberApp, MEMBER_FREE_STATUS_PATH)
   assert.equal(memberStatus.status, 200)
   assert.equal((await memberStatus.json()).defaultPinned, false)
   const guestStatus = await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))
-  assert.equal((await guestStatus.json()).defaultPinned, true)
+  assert.equal((await guestStatus.json()).defaultPinned, false)
   const catalog = await memberCall(f.memberApp, MEMBER_FREE_MODELS_PATH)
   assert.equal(catalog.status, 200)
   assert.equal((await catalog.json()).data[0].id, INFERENCE_FREE_MODEL_ID)

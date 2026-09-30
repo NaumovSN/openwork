@@ -76,8 +76,12 @@ describe("one catalog for every picker", () => {
 describe("free Auto before it is switched on", () => {
   const status = (code: string | null, state = "unavailable") => ({ providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID, state, code });
   test("Auto does not appear while the Gateway reports it switched off, or before its first check answers", () => {
-    for (const code of ["free_disabled", "inference_disabled", "free_not_offered"]) {
+    for (const code of ["free_disabled", "inference_disabled"]) {
       expect(keys(catalogFor(["opencode", AUTO_PROVIDER_ID, "anthropic"], { autoStatus: status(code) }).options)).toEqual(["anthropic/claude-opus-4-6"]);
+    }
+    // Running, but not for this organization: Auto stays listed so the picker can say why.
+    for (const code of ["free_not_enrolled", "free_not_offered", "not_eligible"]) {
+      expect(keys(catalogFor(["opencode", AUTO_PROVIDER_ID, "anthropic"], { autoStatus: status(code) }).options)).toContain(`${AUTO_PROVIDER_ID}/${AUTO_MODEL_ID}`);
     }
     expect(keys(catalogFor(["opencode", AUTO_PROVIDER_ID, "anthropic"], { autoPending: true }).options)).toEqual(["anthropic/claude-opus-4-6"]);
     // With nothing else connected, a switched-off Auto still leaves the built-in Zen starter, exactly as today.

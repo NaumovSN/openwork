@@ -15,7 +15,7 @@ let metadata: Record<string, unknown> = {}
 const reads: string[] = []
 const writes: string[] = []
 const summary: FreeInferenceProviderSummary = {
-  state: "available", reason: null, defaultPinned: true, modelGroup: { id: "free", name: "Free" }, catalog: [],
+  state: "available", reason: null, defaultPinned: false, modelGroup: { id: "free", name: "Free" }, catalog: [],
   allowance: { usageScope: "organization", allowanceScope: "person", windowStartAt: "2026-09-14T00:00:00.000Z", resetsAt: "2026-09-21T00:00:00.000Z",
     weeklyLimitUsd: 5, joinedMembers: 3, eligibleMembers: 3, exhaustedMembers: 1, usedUsd: 2, requestCount: 4 },
 }
@@ -31,6 +31,7 @@ mock.module("../src/inference.js", () => ({
   getFreeInferenceProviderSummary: async (orgId: string) => { reads.push(orgId); if (failRead) throw new Error("Unavailable"); return { ...summary, defaultPinned: freeInferenceDefaultPinned(metadata) } },
   getMemberInferenceAccess: async () => { throw new Error("Personal balances must not supply organization metrics") },
   ensureMemberFreeInferenceCredential: async () => { throw new Error("Pins must not issue credentials") },
+  issueMemberFreeInferenceCredential: async () => { throw new Error("Pins must not issue credentials") },
   getInferenceStatus: async () => { throw new Error("Pins must not read paid accounting") },
   setInferenceEnabled: async () => { throw new Error("Pins must not enable inference") },
   allowFreeInferenceOffer: async () => { throw new Error("Pins must not change the free Auto opt-out") },

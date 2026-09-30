@@ -4525,7 +4525,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get my free Auto credential
    *
-   * Issues or reuses the member's OpenWork Models key for an organization without a Models subscription. Until the organization subscribes, the Gateway serves only free Auto on it, within the member's weekly allowance. Subscribed organizations and admin opt-outs are refused.
+   * Issues or reuses the member's OpenWork Models key for free Auto, within the member's weekly allowance. Organizations with an OpenWork Models subscription get it too; Auto is never billed to them. A refusal names its reason: free_not_enrolled (the organization is not in the rollout), free_not_offered (the organization turned the free starter model off) or not_eligible.
    */
   public postV1InferenceFreeCredential<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).post<
@@ -14041,6 +14041,7 @@ export class DenClient extends HeyApiClient {
       channelIds?: Array<string>;
       shadowMode?: boolean;
       dailyLimit?: number;
+      model?: string | null;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -14055,6 +14056,7 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "channelIds" },
             { in: "body", key: "shadowMode" },
             { in: "body", key: "dailyLimit" },
+            { in: "body", key: "model" },
           ],
         },
       ],

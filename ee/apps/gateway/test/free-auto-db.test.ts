@@ -404,16 +404,18 @@ test("free Auto SQL and 0116 upgrade in an owned random database", { skip: !admi
     })
   }
 
-  await t.test("an organization Stripe still collects for is refused free Auto even when its Models flag is lost", async () => {
-    const member = await person(), subscriptionId = createDenTypeId("orgSubscription")
-    await db.insert(OrgSubscriptionTable).values({ id: subscriptionId, organization_id: member.input.organizationId, type: "inference",
-      status: "past_due", stripe_customer_id: "cus_fixture", stripe_subscription_id: `sub_${randomUUID()}` })
-    assert.equal(await findMemberFreePrincipal(member.key, db), null)
-    assert.equal(await memberFreePrincipalAllowed(member.principal, replica.db), false)
-    assert.equal(await ensureMemberFreeInferenceCredential(member.input), null)
-    assert.equal((await getMemberInferenceAccess(member.input)).reason, "not_eligible")
-    await db.update(OrgSubscriptionTable).set({ status: "canceled" }).where(eq(OrgSubscriptionTable.id, subscriptionId))
-    assert.ok(await findMemberFreePrincipal(member.key, db), "once Stripe gives up, the organization is unsubscribed")
+  await t.test("an organization that pays for OpenWork Models still gets free Auto on its members' Models key", async () => {
+    const member = await person()
+    await db.insert(OrgSubscriptionTable).values({ id: createDenTypeId("orgSubscription"), organization_id: member.input.organizationId, type: "inference",
+      status: "active", stripe_customer_id: "cus_fixture", stripe_subscription_id: `sub_${randomUUID()}` })
+    await db.update(OrganizationTable).set({ metadata: { inference: { enabled: true, tier: "tier1" }, inferenceFree: { rolloutEnabled: true } } })
+      .where(eq(OrganizationTable.id, member.input.organizationId))
+    assert.ok(await findMemberFreePrincipal(member.key, db))
+    assert.equal(await memberFreePrincipalAllowed(member.principal, replica.db), true)
+    assert.equal((await ensureMemberFreeInferenceCredential(member.input))?.apiKey, member.credential.apiKey, "Auto rides on the member's existing Models key")
+    const access = await getMemberInferenceAccess(member.input)
+    assert.deepEqual([access.kind, access.reason], ["free", null])
+    assert.equal((await admit(member.principal)).length, 1, "admitted against the member's free weekly allowance")
   })
 
   await t.test("an organization rollout change blocks existing keys, status and admission without affecting another organization or guests", async () => {
@@ -439,19 +441,15 @@ test("free Auto SQL and 0116 upgrade in an owned random database", { skip: !admi
     assert.equal((await bucket(pilot.principal)).used_amount, 100000, "reenabling does not reset spend")
   })
 
-  await t.test("subscription, DPA and admin policy deny free Auto; a revoked key cannot start a request but a finished one is still charged", async () => {
+  await t.test("DPA and admin policy deny free Auto; a revoked key cannot start a request but a finished one is still charged", async () => {
     const member = await person(), windows = await admit(member.principal)
     await db.update(OrganizationTable).set({ metadata: { dpaSigned: true } }).where(eq(OrganizationTable.id, member.input.organizationId))
     await assert.rejects(ensureMemberFreeInferenceCredential(member.input), { code: "managed_models_disabled_for_dpa" })
     await assert.rejects(otherStore.admit(member.principal), { code: "managed_models_disabled_for_dpa" })
-    for (const metadata of [{ inferenceFree: { offerAllowed: false } }, { inference: { enabled: true, tier: "tier1" } }]) {
-      await db.update(OrganizationTable).set({ metadata }).where(eq(OrganizationTable.id, member.input.organizationId))
-      assert.equal(await ensureMemberFreeInferenceCredential(member.input), null, JSON.stringify(metadata))
-      assert.equal(await findMemberFreePrincipal(member.key, db), null, JSON.stringify(metadata))
-      assert.equal((await otherStore.admit(member.principal)).ok, false)
-    }
-    await db.update(OrganizationTable).set({ metadata: { inference: { enabled: true, tier: "tier1" } } }).where(eq(OrganizationTable.id, member.input.organizationId))
-    assert.equal((await getMemberInferenceAccess(member.input)).kind, "paid")
+    await db.update(OrganizationTable).set({ metadata: { inferenceFree: { offerAllowed: false, rolloutEnabled: true } } }).where(eq(OrganizationTable.id, member.input.organizationId))
+    assert.equal(await ensureMemberFreeInferenceCredential(member.input), null)
+    assert.equal(await findMemberFreePrincipal(member.key, db), null)
+    assert.equal((await otherStore.admit(member.principal)).ok, false)
     await db.update(OrganizationTable).set({ metadata: { inferenceFree: { rolloutEnabled: true } } }).where(eq(OrganizationTable.id, member.input.organizationId))
     await db.update(InferenceKeyTable).set({ status: "revoked", revoked_at: new Date() }).where(eq(InferenceKeyTable.id, member.key.id))
     assert.equal(await findMemberFreePrincipal(member.key, replica.db), null)

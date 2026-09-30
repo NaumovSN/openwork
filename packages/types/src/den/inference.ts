@@ -220,9 +220,10 @@ export const freeInferenceProviderSummarySchema = z.object({
   }),
 });
 
+/** Auto is unpinned unless an organization admin pins it for everyone. */
 export function freeInferenceDefaultPinned(metadata: unknown): boolean {
   const free = readOrganizationMetadata(metadata).inferenceFree;
-  return !(typeof free === "object" && free !== null && "defaultPinned" in free && free.defaultPinned === false);
+  return typeof free === "object" && free !== null && "defaultPinned" in free && free.defaultPinned === true;
 }
 
 export function withFreeInferenceDefaultPinned(metadata: Record<string, unknown>, defaultPinned: boolean): Record<string, unknown> {

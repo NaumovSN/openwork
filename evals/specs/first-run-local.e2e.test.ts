@@ -4,9 +4,9 @@ import { localFirstRunWorld } from "../worlds/first-run.ts";
 
 const test = spec.world(localFirstRunWorld);
 
-test("first launch opens an empty signed-out workspace and runs the first prompt without onboarding", async ({ world, user, probe, step }) => {
+test("first launch opens an empty signed-out workspace and runs the first prompt without onboarding", async ({ world, user, probe, step, evidence }) => {
   await step("Start directly in the normal empty app", async () => {
-    await user.see({ text: /What should we work on\?/ }, { timeoutMs: 180_000 });
+    await user.see({ text: /What do you need done\?/ }, { timeoutMs: 180_000 });
     await user.see("composer", { editable: true, text: "" });
     await user.see("Run task");
     await user.see({ testId: "account-status-menu" }, { text: /Sign in/ });
@@ -18,6 +18,7 @@ test("first launch opens an empty signed-out workspace and runs the first prompt
     await user.notSee({ text: /Something went wrong/ });
     expect(await probe.storage("openwork.den.authToken")).toBeNull();
     expect(await probe.storage("openwork.den.activeOrgId")).toBeNull();
+    evidence.recordAssertionEvidence("First launch opens the normal empty app", "The empty-state heading, an empty editable composer, Run task and Sign in are visible; no onboarding, welcome, folder or model chooser, or error appears; no Den session is stored.", true);
   });
 
   const composer = await probe.composer();
@@ -40,6 +41,7 @@ test("first launch opens an empty signed-out workspace and runs the first prompt
     await user.see({ role: "button", label: "Change model" });
     await user.see({ text: "Big Pickle" });
     expect(await probe.storage("openwork.defaultModel")).toBe("opencode/big-pickle");
+    evidence.recordAssertionEvidence("The default folder is ready without a blank session", `Workspace ${workspaceId} is the only local workspace (OpenWork Chat) with no sessions and no messages; the default model is opencode/big-pickle.`, true);
   });
 
   await step("The first prompt runs on the default provider without setup", async () => {
@@ -63,5 +65,6 @@ test("first launch opens an empty signed-out workspace and runs the first prompt
     await user.notSee({ text: /Something went wrong/ });
     await user.notSee({ text: "Power your first task" });
     await user.notSee({ text: "How did you hear about OpenWork?" });
+    evidence.recordAssertionEvidence("The first prompt runs on the default provider", `The prompt and the reply appear; ${requests.length} agent request(s) reached the mock, with a final request on big-pickle; no provider, busy or subscription error appears.`, true);
   });
 });

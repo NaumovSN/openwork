@@ -53,7 +53,7 @@ test("disabled enrollment issues no key and touches no free tables", async () =>
 })
 
 test("joined member of an unsubscribed organization gets an OpenWork Models key for the regular routes", async () => {
-  results = [[{ metadata: {} }], [], [person], []]
+  results = [[{ metadata: {} }], [person], []]
   const credential = await ensureMemberFreeInferenceCredential(input)
   expect(credential?.apiKey).toMatch(/^ow_inf_/)
   expect(credential?.baseURL).toBe("https://inference.example.test/api/v1")
@@ -66,45 +66,33 @@ test("joined member of an unsubscribed organization gets an OpenWork Models key 
 test("credential issuance reuses the member's active key and rotates a key that no longer matches", async () => {
   const apiKey = `ow_inf_${"a".repeat(43)}`
   const existing = { id: "existing-key", encryptedKey: apiKey, keyHash: await inferenceBearerKeyStorageDigest(inferenceBearerKey(apiKey)) }
-  results = [[{ metadata: {} }], [], [person], [existing]]
+  results = [[{ metadata: {} }], [person], [existing]]
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toBe(apiKey)
   expect(writes).toEqual([])
-  results = [[{ metadata: {} }], [], [person], [{ ...existing, keyHash: "stale" }]]
+  results = [[{ metadata: {} }], [person], [{ ...existing, keyHash: "stale" }]]
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).not.toBe(apiKey)
   expect(writes.map((write) => write.table)).toEqual([InferenceKeyTable, InferenceKeyTable])
   expect(writes[0].value).toMatchObject({ status: "revoked" })
 })
 
-test("subscribed organizations use paid Models instead of free Auto", async () => {
+test("organizations that pay for OpenWork Models still get free Auto on the member's Models key", async () => {
   const subscribed = { inference: { enabled: true, tier: "tier1" } }
-  results = [[{ metadata: subscribed }]]
-  expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
-  results = [[{ metadata: subscribed, nowMs: now.getTime() }]]
-  expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "paid", modelID: null, remainingUsd: null })
-  expect(writes).toEqual([])
-})
-
-test("an organization Stripe still collects for is never downgraded to free Auto when its Models flag is lost", async () => {
-  for (const status of ["active", "trialing", "past_due", "incomplete"]) {
-    results = [[{ metadata: {} }], [{ status }]]
-    expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
-    results = [[{ metadata: {}, nowMs: now.getTime() }], [{ status }]]
-    expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "unavailable", reason: "not_eligible" })
-  }
-  // Once Stripe has given up, the organization is unsubscribed and free Auto may serve it.
-  results = [[{ metadata: {} }], [{ status: "canceled" }], [person], []]
+  results = [[{ metadata: subscribed }], [person], []]
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toMatch(/^ow_inf_/)
+  results = [[{ metadata: subscribed, nowMs: now.getTime() }], [{ used_amount: 0 }]]
+  expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "free", reason: null, remainingUsd: 5 })
+  expect(results).toEqual([])
 })
 
 test("an organization that turns off the free starter model gets no free Auto", async () => {
   desktopPolicy = { allowCustomProviders: true, allowZenModel: false }
   expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
-  results = [[{ metadata: {}, nowMs: now.getTime() }], []]
+  results = [[{ metadata: {}, nowMs: now.getTime() }]]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "unavailable", reason: "admin_disabled" })
   expect(writes).toEqual([])
   // Only models the organization provides, with the free starter model on, still offers Auto.
   desktopPolicy = { allowCustomProviders: false, allowZenModel: true }
-  results = [[{ metadata: {} }], [], [person], []]
+  results = [[{ metadata: {} }], [person], []]
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toMatch(/^ow_inf_/)
 })
 
@@ -119,7 +107,7 @@ test("DPA policy rejects provisioning and status without touching paid credentia
 test("admin opt-out and missing active membership deny issuance", async () => {
   results = [[{ metadata: { inferenceFree: { offerAllowed: false } } }]]
   expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
-  results = [[{ metadata: {} }], [], []]
+  results = [[{ metadata: {} }], []]
   expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
   results = [[]]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "unavailable", reason: "not_eligible", remainingUsd: null })
@@ -127,19 +115,19 @@ test("admin opt-out and missing active membership deny issuance", async () => {
 })
 
 test("member status reports this week's usage against the allowance and never offers a paid model", async () => {
-  results = [[{ metadata: {}, nowMs: now.getTime() }], [], [{ used_amount: 0 }]]
+  results = [[{ metadata: {}, nowMs: now.getTime() }], [{ used_amount: 0 }]]
   const access = await getMemberInferenceAccess(input)
   expect(access).toMatchObject({ kind: "free", reason: null, canUpgrade: false, weeklyLimitUsd: 5, usedUsd: 0, remainingUsd: 5 })
   expect(access.catalog?.map((model) => model.modelID)).toEqual(["openai/gpt-5.6-luna"])
-  results = [[{ metadata: {}, nowMs: now.getTime() }], [], [{ used_amount: Number.MAX_SAFE_INTEGER }]]
+  results = [[{ metadata: {}, nowMs: now.getTime() }], [{ used_amount: Number.MAX_SAFE_INTEGER }]]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "exhausted", reason: "free_allowance_exhausted", remainingUsd: 0 })
   expect(writes).toEqual([])
 })
 
-test("Auto pin policy defaults on and updates only its metadata leaf", () => {
+test("Auto is unpinned by default, an admin pin is explicit, and updates touch only its metadata leaf", () => {
   const metadata = { dpaSigned: true, inference: { enabled: false }, inferenceFree: { offerAllowed: false, other: "retained" }, capabilities: { gatewayDashboard: false } }
-  expect(freeInferenceDefaultPinned(null)).toBe(true)
-  expect(freeInferenceDefaultPinned({})).toBe(true)
+  expect(freeInferenceDefaultPinned(null)).toBe(false)
+  expect(freeInferenceDefaultPinned({})).toBe(false)
   const unpinned = withFreeInferenceDefaultPinned(metadata, false)
   expect(unpinned).toEqual({ ...metadata, inferenceFree: { ...metadata.inferenceFree, defaultPinned: false } })
   expect(freeInferenceDefaultPinned(unpinned)).toBe(false)
@@ -147,12 +135,14 @@ test("Auto pin policy defaults on and updates only its metadata leaf", () => {
   expect(() => freeInferenceDefaultPinned("{")).toThrow()
   expect(freeInferenceOrganizationAllowed(unpinned)).toBe(false)
   expect(freeInferenceOrganizationAllowed(JSON.stringify(unpinned))).toBe(false)
-  expect(withFreeInferenceDefaultPinned(unpinned, true)).toEqual({ ...metadata, inferenceFree: { ...metadata.inferenceFree, defaultPinned: true } })
+  const pinned = withFreeInferenceDefaultPinned(unpinned, true)
+  expect(pinned).toEqual({ ...metadata, inferenceFree: { ...metadata.inferenceFree, defaultPinned: true } })
+  expect(freeInferenceDefaultPinned(pinned)).toBe(true)
   expect(metadata.inferenceFree).not.toHaveProperty("defaultPinned")
 })
 
 test("member pin policy is authoritative without changing model availability", async () => {
-  results = [[{ metadata: { inferenceFree: { defaultPinned: false } }, nowMs: now.getTime() }], [], []]
+  results = [[{ metadata: { inferenceFree: { defaultPinned: false } }, nowMs: now.getTime() }], []]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: false, kind: "free", modelID: "openai/gpt-5.6-luna" })
   results = [[{ metadata: { dpaSigned: true, inferenceFree: { defaultPinned: true } }, nowMs: now.getTime() }]]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: true, kind: "unavailable", reason: "admin_disabled" })
@@ -214,9 +204,9 @@ test("pilot rollout defaults off and only enrolled organizations issue keys or r
     expect(results).toEqual([])
   }
   const metadata = { inferenceFree: { rolloutEnabled: true } }
-  results = [[{ metadata }], [], [person], []]
+  results = [[{ metadata }], [person], []]
   expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toMatch(/^ow_inf_/)
-  results = [[{ metadata, nowMs: now.getTime() }], [], []]
+  results = [[{ metadata, nowMs: now.getTime() }], []]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "free", reason: null })
   configuration.inferenceFree.enabled = false
   expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()

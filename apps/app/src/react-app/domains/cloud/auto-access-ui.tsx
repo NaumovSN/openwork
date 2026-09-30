@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { useSessionActivityStore } from "../session/status/session-activity-store";
 import { useCheckDesktopRestriction } from "./desktop-config-provider";
-import { autoAccessRefreshEvent, autoPickerCopy, autoWallCopy, freeAutoSwitchedOff, openAlternativeModelPicker, type AutoPickerState, type AutoAccessWall, type DesktopFreeAccessStatus } from "@/app/lib/inference-access";
+import { autoAccessRefreshEvent, autoNotOffered, autoPickerCopy, autoWallCopy, freeAutoSwitchedOff, openAlternativeModelPicker, type AutoPickerState, type AutoAccessWall, type DesktopFreeAccessStatus } from "@/app/lib/inference-access";
 import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider";
 import { useDenAuth, type DenAuthStore } from "./den-auth-provider";
 import { isDesktopRuntime } from "@/app/utils";
@@ -69,7 +69,7 @@ export function openAutoProviderSettings() {
   window.location.hash = `${workspace}/settings/ai`;
 }
 
-export function AutoPickerRecovery({ state, onRetry, onReload, hasAlternatives = true }: { state: AutoPickerState; onRetry?: () => void | Promise<unknown>; onReload?: () => void | Promise<unknown>; hasAlternatives?: boolean }) {
+export function AutoPickerRecovery({ state, code, onRetry, onReload, hasAlternatives = true }: { state: AutoPickerState; code?: string | null; onRetry?: () => void | Promise<unknown>; onReload?: () => void | Promise<unknown>; hasAlternatives?: boolean }) {
   const auth = useDenAuth();
   const workspace = useWorkspaceMaybe();
   const client = useQueryClient();
@@ -78,7 +78,7 @@ export function AutoPickerRecovery({ state, onRetry, onReload, hasAlternatives =
   const checkRestriction = useCheckDesktopRestriction();
   const activeWork = useSessionActivityStore((store) => Object.values(store.statusesByWorkspaceId[workspace?.workspaceId ?? ""] ?? {}).some((status) => ["thinking", "responding", "compacting", "waiting"].includes(status)));
   const observed = useObservedAutoAccessStatus();
-  const copy = autoPickerCopy(state, auth.isSignedIn, observed?.minimumVersion);
+  const copy = autoPickerCopy(state, auth.isSignedIn, observed?.minimumVersion, code ?? observed?.code);
   const run = async (action: () => void | Promise<unknown>) => {
     if (busy) return;
     setBusy(true); setFailed(false);
@@ -145,6 +145,7 @@ function AutoAccessFooterContent({ available, syncing = false }: { available: bo
   const { query, auth } = useAutoAccess(available);
   if ((!available && !syncing) || freeAutoSwitchedOff(query.data)) return null;
   const status = syncing || query.isFetching ? "Syncing Auto…"
+    : autoNotOffered(query.data) ? autoPickerCopy("not_offered", auth.isSignedIn, null, query.data?.code).subtitle.replace(/^Free · /, "Auto: ")
     : query.isError || query.data?.state === "unavailable" ? "Auto status unavailable"
     : query.data?.state === "exhausted" ? "Free limit used up"
     : query.data?.state === "update_required" ? "Update required for Auto"

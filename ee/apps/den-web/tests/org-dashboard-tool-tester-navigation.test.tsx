@@ -36,7 +36,7 @@ function denFlowFixture(): ReturnType<typeof flow.useDenFlow> {
     retryDesktopAuthHandoff: unexpectedAction, showAuthFeedback: false,
     submitAuth: unexpectedAction, submitVerificationCode: unexpectedAction,
     resendVerificationCode: unexpectedAction, cancelVerification: unexpectedAction,
-    beginSocialAuth: unexpectedAction, signOut: unexpectedAction,
+    beginSocialAuth: unexpectedAction, signOut: unexpectedAction, revalidateSession: unexpectedAction,
     updateUserProfile: unexpectedAction, resolveUserLandingRoute: unexpectedAction,
     billingSummary: null, billingBusy: false, billingError: null, orgLimitError: null,
     clearOrgLimitError: unexpectedAction, refreshBilling: unexpectedAction,

@@ -26,7 +26,7 @@ const test = spec.world(packagedActivatedLaunchWorld, { needs: { env: ["OPENWORK
 const ACTIVATION_GATE_HEADING = "Link this app to your organization";
 const SIGN_IN_HEADING = "Welcome to OpenWork";
 /** Local work stays behind the forced sign-in surface. */
-const SESSION_HEADING = "What should we work on?";
+const SESSION_HEADING = "What do you need done?";
 
 /** Heading of the root error boundary's recovery screen (app-error-boundary.tsx). */
 const RECOVERY_HEADING = /OpenWork hit an unexpected error|OpenWork couldn't start/;
