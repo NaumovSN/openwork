@@ -7,6 +7,8 @@ Evidence: current, public, first-party Slack terms, developer documentation, and
 
 ## Scope and conclusion
 
+**Product-scope update, 2026-09-30:** the user subsequently requested hosted Cloud support across workspaces without per-workspace configuration, built and demonstrated before Slack approval. Marketplace/RTS approval is part of the launch path. The interview inputs below describe the earlier scope; current implementation scope is [ENG-76](../eng-76-native-slack-connect.md) and [ADR 0002](../adr/0002-cloud-slack-before-distribution-approval.md). Provider eligibility findings remain relevant to release, not a blocker to synthetic implementation/demo work.
+
 Interview inputs, not provider findings: OpenWork supplies the Slack app; members need no developer setup, although workspace approval and member consent are acceptable. The initial workflow is **find discussions → read threads → answer in OpenWork with source links**, without sending messages. A working integration is the completion target; Slack Marketplace submission is excluded. Official Slack MCP is excluded as a product decision.
 
 **The HTTP methods and member OAuth flow exist, but an unlisted, externally supplied, commercially connected OpenWork integration is not established as an authorized delivery path.** Direct Web API calls do not remove Slack's commercial-distribution terms. The preferred search API also expressly excludes unlisted distributed apps, while the legacy search route has material usage restrictions. These are decision gates, not merely implementation details or rate-limit tuning. [S1], [S3], [S5], [S6], [S7], [S8]

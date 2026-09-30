@@ -279,6 +279,20 @@ test("excess concurrent Home deliveries are refused rather than queued", async (
   assert.equal(calls.filter(call => call.path === "/api/views.publish").length, 4)
 })
 
+test("timed-out storage waits retain their admission slots until they settle", async () => {
+  const releases: (() => void)[] = []
+  tokenLookup = () => new Promise(resolve => { releases.push(() => resolve("synthetic-home-token")) })
+  const responses = await Promise.all(Array.from({ length: 4 }, (_, index) => send(event("TTEST001", `EvWAIT${index}`))))
+  assert.ok(responses.every(response => response.status === 504))
+  assert.equal((await send(event("TTEST001", "EvWAITOVERFLOW"))).status, 429)
+  assert.equal(releases.length, 4)
+  for (const release of releases) release()
+  await setTimeout(0)
+  assert.equal(calls.length, 0)
+  tokenLookup = async () => "synthetic-home-token"
+  assert.equal((await send(event("TTEST001", "EvRECOVERED"))).status, 200)
+})
+
 test("a signed URL verification returns the challenge without calling Slack", async () => {
   // Whitespace is signed too: reparsing/reserializing before HMAC must not work.
   const body = JSON.stringify({ type: "url_verification", challenge: "synthetic-challenge" }, null, 2)

@@ -136,12 +136,10 @@ export function registerSlackAppHomeRoutes<E extends Env>(app: Hono<E>, signedWe
     deliveries.set(deliveryId, Number(timestamp) * 1000 + 300_000)
     publicationsInFlight++
     let cancelTokenWait: (() => void) | undefined
-    try {
-      // Storage/refresh is inside the same response deadline as Slack HTTP.
-      const botToken = await Promise.race([homeToken(event.data.team_id, deadline), new Promise<never>((_resolve, reject) => {
-        cancelTokenWait = () => reject(new Error("Slack Home timed out"))
-        deadline.addEventListener("abort", cancelTokenWait, { once: true })
-      })])
+    // Keep storage work counted until it actually settles: SQL acquisition and
+    // row-lock waits cannot be cancelled by racing the HTTP response deadline.
+    const publication = (async () => {
+      const botToken = await homeToken(event.data.team_id, deadline)
       deadline.throwIfAborted()
       if (!botToken) return c.json({ error: "home_unavailable" }, 503)
       const identity = authSchema.parse(await slackRequest("auth.test", botToken, {}, deadline))
@@ -149,11 +147,17 @@ export function registerSlackAppHomeRoutes<E extends Env>(app: Hono<E>, signedWe
         || clientId !== env.slackClientId || clientSecret !== env.slackClientSecret) return c.json({ error: "policy_blocked" }, 403)
       publishedSchema.parse(await slackRequest("views.publish", botToken, { user_id: event.data.event.user, view: homeView() }, deadline))
       return c.json({ ok: true })
+    })().finally(() => { publicationsInFlight-- })
+    try {
+      // Storage/refresh is inside the same response deadline as Slack HTTP.
+      return await Promise.race([publication, new Promise<never>((_resolve, reject) => {
+        cancelTokenWait = () => reject(new Error("Slack Home timed out"))
+        deadline.addEventListener("abort", cancelTokenWait, { once: true })
+      })])
     } catch {
       return c.json({ error: "home_unavailable" }, deadline.aborted ? 504 : 502)
     } finally {
       if (cancelTokenWait) deadline.removeEventListener("abort", cancelTokenWait)
-      publicationsInFlight--
     }
   })
 }
