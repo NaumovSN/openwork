@@ -1,0 +1,310 @@
+name: Den Contract Conflicts
+
+# PRs that change Den routes commit the regenerated contract
+# (packages/docs/openapi.json and packages/sdk/src/gen). Any two of them
+# conflict on those files as soon as one merges, and the fix is always the
+# same: merge dev and run `pnpm den:contract`. This workflow does that for
+# same-repo PRs whose only conflicts are generated contract files and leaves
+# every other conflict to the author.
+#
+# The push uses the diff-warden app token so the PR's checks run again on the
+# new head. That key lives in the warden-clearance environment, reachable only
+# from dev, so PR events dispatch a run on dev instead of pushing themselves.
+# PR code merges and regenerates in a job without secrets; the job that pushes
+# runs no PR code and takes only the generated files from it.
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - "packages/docs/openapi.json"
+      - "packages/sdk/src/gen/**"
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches:
+      - dev
+    paths:
+      - "packages/docs/openapi.json"
+      - "packages/sdk/src/gen/**"
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to resolve (empty checks every open PR into dev)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: den-contract-conflicts-${{ github.event_name }}-${{ github.event.pull_request.number || inputs.pr || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dispatch:
+    name: Hand a conflicting PR to the dev run
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Dispatch when GitHub reports a conflict
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          # GitHub computes mergeability asynchronously after a push.
+          for _ in $(seq 1 12); do
+            mergeable="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq '.mergeable')"
+            [ "$mergeable" != "null" ] && break
+            sleep 5
+          done
+          if [ "$mergeable" != "false" ]; then
+            echo "#$PR has no merge conflict (mergeable=$mergeable)."
+            exit 0
+          fi
+          gh workflow run den-contract-conflicts.yml --repo "$GITHUB_REPOSITORY" --ref dev -f pr="$PR"
+          echo "#$PR conflicts with dev; dispatched a resolution run on dev."
+
+  plan:
+    name: Find PRs whose only conflicts are the generated contract
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      base_sha: ${{ steps.plan.outputs.base_sha }}
+      prs: ${{ steps.plan.outputs.prs }}
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: dev
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Classify each PR's merge with dev
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_PR: ${{ inputs.pr }}
+        run: |
+          set -euo pipefail
+          base_sha="$(git rev-parse HEAD)"
+          if [ -n "$INPUT_PR" ]; then
+            numbers="$INPUT_PR"
+          else
+            numbers="$(gh pr list --repo "$GITHUB_REPOSITORY" --base dev --state open --limit 300 --json number --jq '.[].number')"
+          fi
+
+          prs='[]'
+          for number in $numbers; do
+            IFS=$'\t' read -r state base head_repo head_ref < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$number" \
+              --jq '[.state, .base.ref, .head.repo.full_name // "", .head.ref] | @tsv')
+            if [ "$state" != "open" ] || [ "$base" != "dev" ] || [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+              echo "#$number: skipped, not an open same-repo PR into dev"
+              continue
+            fi
+            if ! git fetch --quiet --no-tags origin "refs/heads/$head_ref"; then
+              echo "#$number: skipped, could not fetch $head_ref"
+              continue
+            fi
+            head_sha="$(git rev-parse FETCH_HEAD)"
+            verdict="$(node scripts/ci/den-contract-conflicts.mjs --base "$base_sha" --head "$head_sha")"
+            echo "#$number ($head_ref): $verdict"
+            if [ "$(jq -r .status <<<"$verdict")" = "generated" ]; then
+              prs="$(jq -c --argjson number "$number" --arg ref "$head_ref" --arg sha "$head_sha" \
+                '. + [{number: $number, ref: $ref, sha: $sha}]' <<<"$prs")"
+            fi
+          done
+
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+          echo "prs=$prs" >> "$GITHUB_OUTPUT"
+          printf '## Den contract conflicts\n\nResolving against dev %s: %s\n' "$base_sha" "$prs" >> "$GITHUB_STEP_SUMMARY"
+
+  regenerate:
+    name: "Regenerate the contract for #${{ matrix.pr.number }}"
+    needs: plan
+    if: needs.plan.outputs.prs != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        pr: ${{ fromJSON(needs.plan.outputs.prs) }}
+    # Loading the live app initializes Better Auth's OAuth resource registry,
+    # which needs a reachable database even though generation never reads one.
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: openwork_den_contract_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -ppassword"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: mysql://root:password@127.0.0.1:3306/openwork_den_contract_ci
+      DEN_DB_ENCRYPTION_KEY: local-dev-db-encryption-key-please-change-1234567890
+    steps:
+      - name: Checkout the PR head
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ matrix.pr.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Merge dev with dev's generated contract as a placeholder
+        env:
+          BASE_SHA: ${{ needs.plan.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          git -c user.name=ci -c user.email=ci@localhost merge --no-ff --no-commit "$BASE_SHA" || true
+          git checkout "$BASE_SHA" -- packages/docs/openapi.json packages/sdk/src/gen
+          unresolved="$(git diff --name-only --diff-filter=U)"
+          if [ -n "$unresolved" ]; then
+            echo "::error::Conflicts outside the generated contract:"$'\n'"$unresolved"
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24
+      - name: Setup pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 11.4.0
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build den-api workspace dependencies
+        run: pnpm --filter @openwork-ee/den-api build:workspace-dependencies
+      - name: Prepare the throwaway schema-export database
+        run: pnpm --filter @openwork-ee/den-db exec node --import tsx ./node_modules/drizzle-kit/bin.cjs push --force
+        env:
+          NODE_OPTIONS: --conditions=development
+      - name: Regenerate the OpenAPI snapshot and SDK from the merged source
+        run: pnpm den:contract
+
+      - name: Upload the regenerated contract
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: den-contract-${{ matrix.pr.number }}
+          path: |
+            packages/docs/openapi.json
+            packages/sdk/src/gen/
+          if-no-files-found: error
+          retention-days: 1
+
+  push:
+    name: "Push the resolved merge to #${{ matrix.pr.number }}"
+    needs: [plan, regenerate]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.prs != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: warden-clearance
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        pr: ${{ fromJSON(needs.plan.outputs.prs) }}
+    steps:
+      - name: Download the regenerated contract
+        id: artifact
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: den-contract-${{ matrix.pr.number }}
+          path: ${{ runner.temp }}/contract
+
+      - name: Report a failed regeneration
+        if: steps.artifact.outcome != 'success'
+        env:
+          PR: ${{ matrix.pr.number }}
+        run: |
+          echo "::warning::#$PR: the contract did not regenerate; the conflict needs a manual 'pnpm den:contract'."
+          printf -- '- #%s: regeneration failed, left for the author\n' "$PR" >> "$GITHUB_STEP_SUMMARY"
+
+      # Unscoped permissions on purpose: when dev changed workflow files, the
+      # merge commit touches them and the push needs the workflows permission.
+      # This job runs no PR code.
+      - name: Mint push token
+        if: steps.artifact.outcome == 'success'
+        id: app
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          app-id: ${{ secrets.WARDEN_APP_ID }}
+          private-key: ${{ secrets.WARDEN_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+
+      - name: Checkout the PR branch
+        if: steps.artifact.outcome == 'success'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ matrix.pr.ref }}
+          token: ${{ steps.app.outputs.token }}
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Merge dev, take the regenerated contract, and push
+        if: steps.artifact.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          BASE_SHA: ${{ needs.plan.outputs.base_sha }}
+          HEAD_SHA: ${{ matrix.pr.sha }}
+          REF: ${{ matrix.pr.ref }}
+          PR: ${{ matrix.pr.number }}
+          CONTRACT: ${{ runner.temp }}/contract
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$HEAD_SHA" ]; then
+            echo "#$PR moved since planning; its next push or dev change retries."
+            printf -- '- #%s: head moved, skipped\n' "$PR" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # The artifact came from PR code: accept exactly the generated paths.
+          # upload-artifact roots it at packages/, their common parent.
+          unexpected="$(cd "$CONTRACT" && find . ! -type d ! -type f -o -type f ! -path ./docs/openapi.json ! -path './sdk/src/gen/*')"
+          if [ -n "$unexpected" ] || [ ! -f "$CONTRACT/docs/openapi.json" ] || [ ! -d "$CONTRACT/sdk/src/gen" ]; then
+            echo "::error::Artifact holds more than the generated contract:"$'\n'"$unexpected"
+            exit 1
+          fi
+
+          bot_id="$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          git config user.name "${APP_SLUG}[bot]"
+          git config user.email "${bot_id}+${APP_SLUG}[bot]@users.noreply.github.com"
+
+          git merge --no-ff --no-commit "$BASE_SHA" || true
+          rm -rf packages/sdk/src/gen
+          mkdir -p packages/sdk/src/gen
+          cp "$CONTRACT/docs/openapi.json" packages/docs/openapi.json
+          cp -R "$CONTRACT/sdk/src/gen/." packages/sdk/src/gen/
+          git add -A packages/docs/openapi.json packages/sdk/src/gen
+          unresolved="$(git diff --name-only --diff-filter=U)"
+          if [ -n "$unresolved" ]; then
+            echo "::error::Conflicts outside the generated contract:"$'\n'"$unresolved"
+            exit 1
+          fi
+
+          git commit --quiet \
+            -m "chore: merge dev and regenerate the Den API contract" \
+            -m "Only packages/docs/openapi.json and packages/sdk/src/gen conflicted with dev, so both were regenerated with 'pnpm den:contract' from the merged route source."
+          # Not forced: if the author pushed meanwhile, this is rejected and the next run retries.
+          git push origin "HEAD:refs/heads/$REF"
+          printf -- '- #%s: merged dev %s and pushed the regenerated contract\n' "$PR" "$BASE_SHA" >> "$GITHUB_STEP_SUMMARY"

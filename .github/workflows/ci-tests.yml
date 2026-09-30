@@ -103,7 +103,7 @@ jobs:
       - name: Build MCP App resources required by the server
         run: pnpm --filter @openwork/mcp-apps build
       - name: Verify immutable runtime and authoring contracts
-        run: node --test scripts/ci/workflow-authoring-gate.test.mjs && pnpm --filter @openwork/codemode test && pnpm --filter @openwork-ee/den-api test:authoring
+        run: node --test scripts/ci/workflow-authoring-gate.test.mjs scripts/ci/den-contract-conflicts.test.mjs && pnpm --filter @openwork/codemode test && pnpm --filter @openwork-ee/den-api test:authoring
       - name: Verify shared encrypted receipt retention against Redis
         env:
           WORKFLOW_AUTHORING_TEST_REDIS_URL: redis://127.0.0.1:6379
