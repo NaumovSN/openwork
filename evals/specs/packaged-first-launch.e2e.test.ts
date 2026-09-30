@@ -75,7 +75,7 @@ test("a packaged flavor renders its first-launch surface without a render crash"
   } else {
     expect(usable.some((control) => control.tag === "button" && control.text === "Sign in to OpenWork"), "Sign in must remain visible and enabled").toBe(true);
     expect(usable.some((control) => control.tag === "button" && control.text === "Paste sign-in code"), "Sign-in code disclosure must remain visible and enabled").toBe(true);
-    expect(final.rootText, "a cloud install let local work start before sign-in").not.toContain("What should we work on?");
+    expect(final.rootText, "a cloud install let local work start before sign-in").not.toContain("What do you need done?");
   }
   const exceptions = world.exceptions();
   const knownRejections = exceptions.filter(isKnownRejection);
