@@ -513,9 +513,9 @@ export const buildReply = "The Quick order pricer is ready in this conversation.
  * create_app and opens an existing one with launch input, both through
  * Connect, and each App's own tools run in the conversation.
  */
-export async function mcpAppServersChat(seed: Seed) {
+export async function mcpAppServersChat(seed: Seed, benchmark = false) {
   const den = await seed.den({
-    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_APP_MCP_SERVERS_ENABLED: "true" },
+    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_APP_MCP_SERVERS_ENABLED: "true", ...(benchmark ? { OPENWORK_MCP_APP_TIMINGS: "1" } : {}) },
     org: { name: `App servers chat ${Date.now()}` },
     mocks: { inventory: seed.mock({ allowUnauthenticatedMcp: true, tools: [inventoryTool, reserveTool] }) },
   });
@@ -544,6 +544,10 @@ export async function mcpAppServersChat(seed: Seed) {
     return record(record(JSON.parse(data ? data.slice(5) : raw)).result);
   };
   const { created, tools } = await composeOrderCalculator(seed, den.admin, connection.id, call);
+  const performanceApps = [];
+  if (benchmark) for (let i = 0; i < 10; i++) performanceApps.push(appSummary(await call("create_app", {
+    ...appSource("revision one", { title: `Performance App ${i}`, sampleOrder: true }), tools,
+  })));
   // Each prompt is matched on its own turn, since they share one conversation.
   const configured = await fetch(`${den.mocks.inventory.url}/admin/agent-workloads`, {
     method: "POST", headers: { "content-type": "application/json" },
@@ -564,6 +568,7 @@ export async function mcpAppServersChat(seed: Seed) {
   const workspacePath = seed.tmpPath("mcp-app-servers-chat");
   const denOrigin = new URL(den.ref.apiUrl);
   const app = await seed.appWeb({ name: "mcp-app-servers-chat", workspacePath, headless: true,
+    ...(benchmark ? { env: { OPENWORK_MCP_APP_TIMINGS: "1" } } : {}),
     ...(denOrigin.protocol === "https:" ? { syntheticPreactivatedDenOrigin: denOrigin.origin } : {}) });
   const workspace = await seed.workspace(app, workspacePath);
   await configureProvider(seed, app, workspace.workspaceId, "app-chat-model", "app-chat-model", {
@@ -587,7 +592,19 @@ export async function mcpAppServersChat(seed: Seed) {
     : await reconcileDraftHost(hostSetup));
   if (reconciled.status !== 200 || reconciled.phase !== "ready" || reconciled.diagnostic !== "ready") throw new Error(`Cloud reconcile failed: ${JSON.stringify(reconciled)}`);
   return {
-    app, session, den, created,
+    app, session, den, created, performanceApps, workspace,
+    async profileIndex() {
+      const response = await fetch(`${den.ref.apiUrl}/mcp/agent`, {
+        method: "POST", headers: { authorization: `Bearer ${field(minted.body, "appHostToken")}`, "content-type": "application/json",
+          accept: "application/json, text/event-stream", "x-openwork-mcp-client-capabilities": "mcp-app-host-v1" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: ++sequence, method: "resources/read", params: { uri: indexUri } }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) throw new Error("Benchmark index unavailable");
+      const raw = await response.text();
+      const data = raw.split("\n").find(line => line.startsWith("data:"));
+      if (record(JSON.parse(data ? data.slice(5) : raw)).error) throw new Error("Benchmark index rejected");
+    },
     inventoryCalls: (options: { sinceIso?: string; atLeast?: number } = {}) => den.mocks.inventory.toolCalls({ name: toolNames.connection, atLeast: 0, ...options }),
     reservations: (options: { sinceIso?: string; atLeast?: number } = {}) => den.mocks.inventory.toolCalls({ name: toolNames.reserve, atLeast: 0, ...options }),
     /** Clicks a button from the App's own script: a click the host does not trust as user input. */

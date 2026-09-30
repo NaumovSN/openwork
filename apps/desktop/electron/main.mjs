@@ -36,7 +36,6 @@ import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { createNativeContextMenus } from "./context-menu.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
-import { createBrowserLoginSync } from "./browser-login-sync.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { createWorkspaceStore } from "./workspace-store.mjs";
 import {
@@ -1453,7 +1452,6 @@ const quitSequencer = createQuitSequencer({
   stop: async () => {
     showShutdownScreen();
     desktopAutomationRunner.stop();
-    browserLoginSync.shutdown();
     await Promise.all([
       disposeRuntimeBeforeQuit(),
       uiControlServer.stop(),
@@ -2859,41 +2857,6 @@ if (isDevMode && !app.isPackaged) {
     return open;
   });
 }
-const browserLoginEvalSeam = !app.isPackaged && process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC === "1";
-const browserLoginSync = createBrowserLoginSync({
-  statePath: path.join(app.getPath("userData"), "browser-login-sync.json"),
-  initialPolicyAllowed:
-    DESKTOP_DISTRIBUTION.flavor === "public"
-    && initialRunnerBootstrap.requireSignin !== true,
-  confirmUserAction: browserLoginEvalSeam
-    ? async () => true
-    : async ({ action, source, sites = [] }) => {
-      const sourceLabel = source ? `${source.label} · ${source.profile}` : "Supported browser profiles on this computer";
-      /** @type {import("electron").MessageBoxOptions} */
-      const options = {
-        type: "warning",
-        buttons: [action === "resume" ? "Resume sync" : action === "configure" ? "Enable sync" : action === "discover" ? "Look for browsers" : "Read sites", "Cancel"],
-        defaultId: 1,
-        cancelId: 1,
-        title: action === "resume" ? "Resume browser login sync?" : action === "configure" ? "Enable browser login sync?" : action === "discover" ? "Look for browser profiles?" : "Read logins from this browser?",
-        message: sourceLabel,
-        detail: action === "resume"
-          ? "OpenWork will resume reading the sites you selected from this profile. It never changes the source browser."
-          : action === "configure"
-            ? `OpenWork will keep reading login cookies for these sites until you pause or disconnect: ${sites.join(", ")}. It never changes the source browser.`
-            : action === "discover"
-              ? "OpenWork will look only for supported browser profile locations. It will not read cookie databases until you choose a profile and confirm again."
-              : "OpenWork will read login metadata from this profile so you can choose sites. Nothing syncs until you confirm those sites, and the source browser is never changed.",
-        noLink: true,
-      };
-      const result = mainWindow
-        ? await dialog.showMessageBox(mainWindow, options)
-        : await dialog.showMessageBox(options);
-      return result.response === 0;
-    },
-});
-browserLoginSync.registerIpc(ipcMain, { evalSeam: browserLoginEvalSeam });
-
 registerMigrationIpc({ app, ipcMain });
 const { ensureAutoUpdater } = registerUpdaterIpc({
   app,

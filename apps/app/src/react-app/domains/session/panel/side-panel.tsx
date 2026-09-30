@@ -44,7 +44,6 @@ import {
   getNativeMenuPoint,
   hasNativeBrowserOccluder,
 } from "./utils";
-import { LoginSyncCard } from "../../browser-logins/login-sync-card";
 import { createBrowserBoundsSync } from "./browser-bounds-sync";
 
 type SidePanelProps = {
@@ -766,10 +765,7 @@ export function SidePanel({
           />
         ) : null}
         {activeTab?.type === "browser" ? (
-          <>
-            <LoginSyncCard />
-            <BrowserPanelContent sessionId={sessionId} tab={activeTab} onClose={onClose} />
-          </>
+          <BrowserPanelContent sessionId={sessionId} tab={activeTab} onClose={onClose} />
         ) : activeTab?.type === "app" ? (
           <div className="min-h-0 flex-1 overflow-hidden"><AppArtifact key={activeTab.id} appId={activeTab.appId} revisionId={activeTab.revisionId} receiptId={activeTab.receiptId} onClose={onClose} /></div>
         ) : activeTab?.type === "artifact" ? (

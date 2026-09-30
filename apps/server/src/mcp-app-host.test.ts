@@ -202,7 +202,7 @@ async function startFixtureMcp(
   }));
   mcp.setRequestHandler(ReadResourceRequestSchema, async ({ params }) => {
     resourceReads += 1;
-    if (params.uri !== RESOURCE_URI && params.uri !== UPDATED_RESOURCE_URI
+    if (params.uri !== RESOURCE_URI && params.uri !== UPDATED_RESOURCE_URI && params.uri !== activeResourceUri
       && !(connectionOptions && params.uri === CONNECTION_RESOURCE)) throw new Error("not found");
     const content = params.uri === UPDATED_RESOURCE_URI ? { text: UPDATED_RESOURCE_HTML } : resourceContent;
     return {
@@ -320,8 +320,8 @@ async function startFixtureMcp(
     calls,
     hideLaunch: () => { launchVisible = false; },
     removeLaunch: () => { launchPresent = false; },
-    activateUpdatedResource: async () => {
-      activeResourceUri = UPDATED_RESOURCE_URI;
+    activateUpdatedResource: async (uri = UPDATED_RESOURCE_URI) => {
+      activeResourceUri = uri;
       // A stateful SDK server transport owns one initialized MCP session. The
       // host deliberately creates a fresh client for each exact resolution,
       // so reset the fixture transport before exercising the second lookup.
@@ -339,7 +339,7 @@ async function configuredFixture(
 ): Promise<{
   config: ServerConfig;
   root: string;
-  activateUpdatedResource: () => Promise<void>;
+  activateUpdatedResource: (uri?: string) => Promise<void>;
   catalogReads: () => number;
   resourceReads: () => number;
   setResourceContent: (content: { text?: string; blob?: string }) => void;
@@ -1284,6 +1284,38 @@ describe("MCP Apps host transport", () => {
 });
 
 describe("MCP App guarded dashboard refresh", () => {
+  test("built revision HTML is reused while bindings, new revisions and private principals stay live", async () => {
+    const { mcpAppResourceUri } = await import("@openwork/types/mcp-app");
+    const id = `cob_01mcpapp${"a".repeat(18)}`;
+    const uri = mcpAppResourceUri(id, `cov_01mcpapp${"b".repeat(18)}`);
+    const nextUri = mcpAppResourceUri(id, `cov_01mcpapp${"c".repeat(18)}`);
+    const fixture = await configuredFixture("openwork-built-app-cache-", undefined, connectMcpAppHostName(id), id);
+    const input = { serverConfig: fixture.config, workspaceId: WORKSPACE_ID, workspaceRoot: fixture.root,
+      context: { sessionId: null, readOnly: false }, launch: { connectionId: id, toolName: "render_fixture", resourceUri: uri } };
+    await fixture.activateUpdatedResource(uri);
+    const first = await resolveConnectMcpAppResource(input);
+    const reopened = await resolveConnectMcpAppResource(input);
+    expect(first.launchId).not.toBe(reopened.launchId);
+    expect(fixture.resourceReads()).toBe(1);
+    await callMcpAppTool({ ...input, serverName: first.serverName, name: "read_detail", resourceUri: uri,
+      sessionId: null, launchId: first.launchId });
+    expect(fixture.resourceReads()).toBe(1);
+    await fixture.activateUpdatedResource(nextUri);
+    expect((await resolveConnectMcpAppResource(input)).resourceUri).toBe(nextUri);
+    expect(fixture.resourceReads()).toBe(2);
+    await expect(callMcpAppTool({ ...input, serverName: first.serverName, name: "read_detail", resourceUri: uri,
+      sessionId: null, launchId: first.launchId })).rejects.toMatchObject({ code: "stale_launch_context" });
+    const runtime = await readRuntimeOpencodeConfig(fixture.config, WORKSPACE_ID);
+    const url = runtime.mcp?.["openwork-cloud"]?.url;
+    if (typeof url !== "string") throw new Error("Missing fixture URL");
+    await writeOpenWorkConnectMcpAppHostAuthorization(fixture.config, WORKSPACE_ID, "Bearer another-principal", url);
+    await resolveConnectMcpAppResource(input);
+    expect(fixture.resourceReads()).toBe(3);
+    fixture.hideLaunch();
+    await expect(resolveConnectMcpAppResource(input)).rejects.toMatchObject({ code: "tool_not_visible" });
+    expect(fixture.resourceReads()).toBe(3);
+  });
+
   test.each(["direct", "same-server", "connect"])("advertises a guard only for the original read-only launch tool: %s", async (route) => {
     const connectionId = route === "connect" ? "emc_fixture_refresh" : undefined;
     const serverName = connectionId ? connectMcpAppHostName(connectionId) : "fixture";

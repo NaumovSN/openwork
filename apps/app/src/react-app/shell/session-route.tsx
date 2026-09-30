@@ -22,7 +22,7 @@ import { buildDiagnosticsBundleJson } from "@/app/lib/diagnostics-bundle";
 import { downloadTextAsFile } from "@/app/lib/download";
 import { canCreateWorkspaces } from "@/app/lib/workspace-creation-policy";
 import { createClient, isPromptAdmissionUnknown, unwrap } from "@/app/lib/opencode";
-import { createClientV2, isOpencodeV2BaseUrl, v2PromptText, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText, V2_SESSION_ARCHIVE_UNAVAILABLE } from "@/app/lib/opencode-v2-adapter";
 import { abortSessionSafe, forkSession, listCommands, revertSession, shellInSession, unrevertSession } from "@/app/lib/opencode-session";
 import { composeNativeSessionHistory, getNativeSessionMessages } from "@/app/lib/opencode-session-native";
 import { prefetchOpeningSessionHistory, sessionHistoryIdentity, sessionHistoryRuntimeOwner, useSessionHistoryRuntimeOwners } from "@/react-app/domains/session/surface/session-history";
@@ -1664,7 +1664,7 @@ export function SessionRoute() {
                     desktopTransport: isOpencodeV2BaseUrl(opencodeBaseUrl) ? undefined : "main",
                   });
                   assertCurrent();
-                  onPrepared?.(v2PromptText(parts));
+                  onPrepared?.(v2AcknowledgementText(parts));
                   const result = await promptClient.session.promptAsync({
                     sessionID: targetSessionId,
                     messageID: draft.messageId,
@@ -2024,7 +2024,7 @@ export function SessionRoute() {
                     desktopTransport: isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl) ? undefined : "main",
                   });
                   assertCurrent();
-                  onPrepared?.(v2PromptText(parts));
+                  onPrepared?.(v2AcknowledgementText(parts));
                   const result = await promptClient.session.promptAsync({
                     sessionID: targetSessionId,
                     messageID: draft.messageId,

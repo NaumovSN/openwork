@@ -46,6 +46,13 @@
       "development": "./src/workflows.ts",
       "default": "./src/workflows.ts"
     },
+    "./mcp-app-timing": {
+      "types": "./src/mcp-app-timing.ts",
+      "development": "./src/mcp-app-timing.ts",
+      "bun": "./src/mcp-app-timing.ts",
+      "browser": "./src/mcp-app-timing.ts",
+      "default": "./dist/mcp-app-timing.js"
+    },
     "./mcp-app": {
       "types": "./src/mcp-app.ts",
       "development": "./src/mcp-app.ts",

@@ -701,6 +701,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       name: attachment.name,
       kind: isImageAttachment(attachment) ? "image" : "file",
       previewUrl: attachment.previewUrl,
+      mime: attachment.mimeType,
+      bytes: attachment.size,
     })),
     [props.attachments],
   );

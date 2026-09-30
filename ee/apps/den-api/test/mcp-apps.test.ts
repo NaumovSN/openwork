@@ -200,6 +200,27 @@ test("compiler output satisfies the stored contract and generic redaction return
 })
 
 describe.skipIf(!process.env.DEN_TEST_DATABASE_URL)("authored MCP Apps with isolated database fixtures", () => {
+  test("one request shares definition/resource access; new requests, revisions and principals recheck it", async () => {
+    const editor = await actor(undefined, "owner")
+    const viewer = await actor(editor.organizationContext.organization.id)
+    const app = await apps.createMcpApp({ resolveTools, context: editor, ...source })
+    const scan = spyOn(marketplace, "listAccessibleMarketplaceCapabilityReferences")
+    try {
+      const request = { ...access(editor), appId: app.appId, requestScope: {} }
+      await apps.loadMcpAppServerDefinition(request)
+      await apps.loadMcpAppResource({ ...request, revisionId: app.revisionId })
+      expect(scan).toHaveBeenCalledTimes(1)
+      await expect(apps.loadMcpAppServerDefinition({ ...request, ...access(viewer) })).rejects.toThrow("not available")
+      expect(scan).toHaveBeenCalledTimes(2)
+      const next = await apps.updateMcpApp({ resolveTools, context: editor, ...source, appId: app.appId, expectedRevisionId: app.revisionId, title: "New revision" })
+      expect((await apps.loadMcpAppServerDefinition({ ...request, requestScope: {} })).app.revisionId).toBe(next.revisionId)
+      expect(scan).toHaveBeenCalledTimes(3)
+      await store.setPluginLifecycle({ context: editor, pluginId: normalizeDenTypeId("plugin", app.pluginId), action: "archive" })
+      await expect(apps.loadMcpAppServerDefinition({ ...request, requestScope: {} })).rejects.toThrow("not available")
+      expect(scan).toHaveBeenCalledTimes(4)
+    } finally { scan.mockRestore() }
+  })
+
   beforeAll(async () => {
     const url = process.env.DEN_TEST_DATABASE_URL
     if (!url) throw new Error("Set DEN_TEST_DATABASE_URL to an isolated prepared test database.")
