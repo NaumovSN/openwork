@@ -14,12 +14,8 @@ function isRecommendation(value: unknown): value is ManagedModelRecommendation {
     && Array.isArray(value.capabilities) && value.capabilities.every((capability) => typeof capability === "string");
 }
 
-/**
- * A validated status, merged over `base`. A ready status must carry an
- * allowance; guests also need a version floor, because the Gateway version-gates
- * guests while members use their Models key on /api/v1, which is not gated.
- */
-export function parseStatus(payload: unknown, base: DesktopFreeAccessStatus, member = false): DesktopFreeAccessStatus {
+/** A validated status, merged over `base`. A ready status must carry an allowance. */
+export function parseStatus(payload: unknown, base: DesktopFreeAccessStatus): DesktopFreeAccessStatus {
   if (!isRecord(payload)) throw new Error("Invalid desktop free status.");
   const allowance = payload.allowance;
   let validatedAllowance: DesktopFreeAccessStatus["allowance"] = null;
@@ -31,7 +27,7 @@ export function parseStatus(payload: unknown, base: DesktopFreeAccessStatus, mem
   }
   const state = payload.state;
   if (state !== "ready" && state !== "update_required" && state !== "unavailable" && state !== "exhausted") throw new Error("Invalid desktop free status state.");
-  if (state === "ready" && (!validatedAllowance || (!member && typeof payload.minimumVersion !== "string"))) throw new Error("Incomplete desktop free status.");
+  if (state === "ready" && !validatedAllowance) throw new Error("Incomplete desktop free status.");
   return {
     ...base, state, code: typeof payload.code === "string" ? payload.code : null,
     minimumVersion: typeof payload.minimumVersion === "string" ? payload.minimumVersion : null,

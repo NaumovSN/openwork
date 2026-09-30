@@ -9,8 +9,6 @@ import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_
 import { readAutoConfig, FREE_OPENAI_CHAT_URL } from "../src/free/shared/config.js"
 import { freeUsageAmount, rampedDeviceAmount } from "@openwork/free-auto/accounting"
 import { verifyDesktopFreeProof } from "../src/free/guest/proof.js"
-import { createDesktopFreeReleaseSource } from "../src/free/guest/releases-source.js"
-import { desktopFreeVersionError, supportedDesktopReleases, type DesktopRelease } from "@openwork/free-auto"
 import { deriveReleaseSecret, releaseTag, sha256Hex as desktopFreeHash } from "@openwork/free-auto/node"
 import { createAnonymousIdentities, issueAnonymousToken, verifyAnonymousToken, canonicalizeAnonymousAddress } from "../src/free/guest/identity.js"
 import { prepareFreeRequest, readFreeRequest } from "../src/free/shared/request.js"
@@ -31,10 +29,7 @@ const previousReleaseKey = "test-only-previous-master-key-33333333333333333"
 const config = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", ANONYMOUS_INFERENCE_ENABLED: "true",
   INFERENCE_FREE_OPENAI_API_KEY: "sk-fixture-dedicated-free-key", ANONYMOUS_TOKEN_SECRET: "test-only-token-secret-00000000000000000000",
   ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "test-only-accounting-key-1111111111111111111", DESKTOP_FREE_RELEASE_KEY: releaseKey, ANONYMOUS_SESSION_POW_BITS: "8", ANONYMOUS_SESSION_POW_ROUNDS: "2" })
-const day = 86400000
 const now = Date.parse("2026-09-23T12:00:00Z")
-/** Newest first: 1.2.3 (today), 1.2.2 (2 days), 1.2.1 (5 days), 1.2.0 (10 days, within 14-day floor), 1.1.9 (30 days, out). */
-const releases: DesktopRelease[] = [["1.2.3", 0], ["1.2.2", 2], ["1.2.1", 5], ["1.2.0", 10], ["1.1.9", 30]].map(([version, age]) => ({ version: String(version), publishedAt: now - Number(age) * day }))
 const machineId = "c".repeat(64)
 function signer(machine = machineId) {
   const keys = generateKeyPairSync("ed25519")
@@ -112,7 +107,7 @@ function fixture(overrides: Partial<import("../src/free/guest/routes.js").FreeRo
     return upstream(request)
   }
   const app = new Hono()
-  registerAnonymousInferenceRoutes(app, { config, store, releases: async () => releases, now: () => now, clientAddress: () => "127.0.0.1", fetch, ...overrides })
+  registerAnonymousInferenceRoutes(app, { config, store, now: () => now, clientAddress: () => "127.0.0.1", fetch, ...overrides })
   const memberApp = new Hono()
   const handler = createFreeMemberHandler({ config, store: { ...store, family: "member" }, fetch, findMember: async (key) => key.id === keyRow.id ? member : null,
     defaultPinned: async () => true, ...memberOverrides })
@@ -126,7 +121,7 @@ test("free Auto stays off without the dedicated OpenAI key or release key and ne
   assert.equal(defaults.anonymousEnabled, false)
   assert.equal(defaults.member.weeklyBudgetUsd, 5)
   assert.equal(defaults.deviceWeeklyAmount / INFERENCE_USAGE_CONVERSION_FACTOR, 1)
-  assert.deepEqual([defaults.supportedReleaseCount, defaults.supportedReleaseMinDays, defaults.blockedReleases], [3, 14, []])
+  assert.deepEqual([defaults.minimumVersion, defaults.blockedReleases], [null, []], "every desktop version may use Auto unless the server says otherwise")
   const withoutKey = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", ANONYMOUS_INFERENCE_ENABLED: "true", ANONYMOUS_TOKEN_SECRET: "t".repeat(40),
     ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "a".repeat(40), ANONYMOUS_OPENROUTER_API_KEY: "legacy", INFERENCE_FREE_UPSTREAM_API_KEY: "legacy" })
   assert.equal(withoutKey.memberEnabled, false)
@@ -142,6 +137,8 @@ test("free Auto stays off without the dedicated OpenAI key or release key and ne
   assert.equal(readAutoConfig({ OPENWORK_DEV_MODE: "1", DESKTOP_FREE_DEV_RELEASE_SECRET: "d".repeat(40) }).devReleaseSecret, "d".repeat(40))
   assert.throws(() => readAutoConfig({ DESKTOP_FREE_RELEASE_KEY: "s".repeat(40), ANONYMOUS_TOKEN_SECRET: "s".repeat(40) }))
   assert.deepEqual(readAutoConfig({ DESKTOP_FREE_BLOCKED_RELEASES: " v1.2.2, 1.2.1 ,, " }).blockedReleases, ["1.2.2", "1.2.1"])
+  assert.equal(readAutoConfig({ DESKTOP_FREE_MIN_VERSION: "v1.2.0" }).minimumVersion, "1.2.0")
+  assert.throws(() => readAutoConfig({ DESKTOP_FREE_MIN_VERSION: "latest" }), /DESKTOP_FREE_MIN_VERSION/)
   assert.throws(() => readAutoConfig({ INFERENCE_FREE_ENABLED: "true", INFERENCE_FREE_WEEKLY_BUDGET_USD: "1" }))
   assert.throws(() => readAutoConfig({ INFERENCE_FREE_OPENAI_MODEL: "openai/gpt-5.6-luna" }))
   assert.throws(() => readFreeInferenceConfig({ INFERENCE_FREE_MODEL_ID: "paid-model" }))
@@ -150,7 +147,7 @@ test("free Auto stays off without the dedicated OpenAI key or release key and ne
 
 test("disabled endpoints do not verify metadata, write accounting, or dispatch", async () => {
   const off = readAutoConfig({})
-  const f = fixture({ config: off, releases: async () => { throw new Error("must not call") } })
+  const f = fixture({ config: off })
   const handler = createFreeMemberHandler({ config: off, store: f.store, fetch: async () => { throw new Error("must not call") }, findMember: async () => member, defaultPinned: async () => true })
   const memberApp = new Hono().all("/api/v1/*", (c) => handler(c, { ...keyRow } as never))
   assert.equal((await f.app.fetch(session())).status, 503)
@@ -350,38 +347,31 @@ function guestFor(version: string) {
   return { source, token: issueAnonymousToken(createAnonymousIdentities(binding, "127.0.0.1", config), binding, config).token }
 }
 
-test("only supported releases pass: version outside the window, unsupported model and unknown list deny before admission", async () => {
+test("the version the desktop reports passes unless the server blocks it or sets a minimum; unsupported models deny before admission", async () => {
   const f = fixture()
   // A token issued to one build cannot be used with another build's proof.
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { version: "1.2.2" }))).status, 401)
-  const old = guestFor("1.1.9")
-  const response = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${old.token}`, prompt, { version: "1.1.9", source: old.source }))
-  assert.equal(response.status, 426)
-  assert.deepEqual(await response.json(), { error: { code: "desktop_update_required", currentVersion: "1.1.9", minimumVersion: "1.2.0", message: "Update OpenWork Desktop to 1.2.0 or newer to use Auto." } })
-  const floored = guestFor("1.2.0")
-  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${floored.token}`, undefined, { version: "1.2.0", source: floored.source }))).status, 200, "10 days old is inside the 14-day floor")
+  for (const version of ["1.1.9", "1.2.4-alpha.3244+4d3cfbd", "1.2.3-alpha.9+abc1234"]) {
+    const build = guestFor(version)
+    const status = await (await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${build.token}`, undefined, { version, source: build.source }))).json()
+    assert.equal(status.state, "ready", `${version} is not asked to update by default`)
+    assert.equal(status.minimumVersion, version, "desktops that expect a minimum get their own version")
+  }
   assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt.replace(INFERENCE_FREE_MODEL_ID, "paid-model")))).status, 400)
   assert.equal(f.principals.length, 0)
   assert.equal(f.requests.length, 0)
-  const unavailable = fixture({ releases: async () => null })
-  assert.equal((await unavailable.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 503)
-  const blocked = fixture({ config: { ...config, blockedReleases: ["1.2.3"] } })
+  const floor = fixture({ config: { ...config, minimumVersion: "1.2.0" } })
+  const old = guestFor("1.1.9")
+  const response = await floor.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${old.token}`, prompt, { version: "1.1.9", source: old.source }))
+  assert.equal(response.status, 426)
+  assert.deepEqual(await response.json(), { error: { code: "desktop_update_required", currentVersion: "1.1.9", minimumVersion: "1.2.0", message: "Update OpenWork Desktop to 1.2.0 or newer to use Auto." } })
+  assert.equal((await floor.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`))).status, 200)
+  const blocked = fixture({ config: { ...config, blockedReleases: ["1.2.3", "1.2.4-alpha.3244"] } })
   assert.equal((await blocked.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 426, "a yanked release is refused at once")
-})
-
-test("a tagged alpha newer than the newest release may use Auto until its release ships; older or blocked alphas may not", async () => {
-  const alpha = "1.2.4-alpha.3244+4d3cfbd"
-  const ahead = guestFor(alpha)
-  const status = await (await fixture().app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${ahead.token}`, undefined, { version: alpha, source: ahead.source }))).json()
-  assert.equal(status.state, "ready")
-  const shipped = "1.2.3-alpha.9+abc1234"
-  const behind = guestFor(shipped)
-  assert.equal((await fixture().app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${behind.token}`, undefined, { version: shipped, source: behind.source }))).status, 200)
-  assert.equal((await (await fixture().app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${behind.token}`, undefined, { version: shipped, source: behind.source }))).json()).state, "update_required", "an alpha of an already released version is behind that release")
-  const blocked = fixture({ config: { ...config, blockedReleases: ["1.2.4-alpha.3244"] } })
-  assert.equal((await (await blocked.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${ahead.token}`, undefined, { version: alpha, source: ahead.source }))).json()).state, "update_required")
+  const alpha = guestFor("1.2.4-alpha.3244+4d3cfbd")
+  assert.equal((await (await blocked.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${alpha.token}`, undefined, { version: "1.2.4-alpha.3244+4d3cfbd", source: alpha.source }))).json()).state, "update_required", "blocking ignores build metadata")
   const untagged = guestFor("1.2.4-alpha.1+abc")
-  assert.equal((await (await fixture().app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${untagged.token}`, undefined, { version: "1.2.4-alpha.1+abc", source: untagged.source, proofVersion: 2 }))).json()).code, "desktop_build_unverified")
+  assert.equal((await (await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${untagged.token}`, undefined, { version: "1.2.4-alpha.1+abc", source: untagged.source, proofVersion: 2 }))).json()).code, "desktop_build_unverified")
 })
 
 test("the release tag must come from the secret of the claimed version, the previous master key overlaps, dev secrets only count in dev mode", async () => {
@@ -537,52 +527,6 @@ test("only a sane receipt for the free model is charged as reported", () => {
   assert.equal(validFreeReceipt({ ...receipt, eventId: "" }), false)
   assert.equal(validFreeReceipt({ ...receipt, amount: -1 }), false)
   assert.equal(validFreeReceipt(null), false)
-})
-
-test("the support window is the newest releases plus the 14-day floor, minus blocked, never prereleases", () => {
-  const window = { count: 3, minDays: 14, blocked: [] as string[] }
-  assert.deepEqual(supportedDesktopReleases(releases, window, now), ["1.2.3", "1.2.2", "1.2.1", "1.2.0"])
-  assert.deepEqual(supportedDesktopReleases(releases, { ...window, minDays: 0 }, now), ["1.2.3", "1.2.2", "1.2.1"])
-  assert.deepEqual(supportedDesktopReleases(releases, { ...window, count: 1, minDays: 3 }, now), ["1.2.3", "1.2.2"])
-  assert.deepEqual(supportedDesktopReleases(releases, { ...window, blocked: ["1.2.3"] }, now), ["1.2.2", "1.2.1", "1.2.0"])
-  assert.deepEqual(supportedDesktopReleases([...releases, { version: "1.3.0-alpha.1", publishedAt: now }], window, now), ["1.2.3", "1.2.2", "1.2.1", "1.2.0"])
-  assert.equal(desktopFreeVersionError("1.2.3-alpha", ["1.2.3"])?.code, "desktop_update_required")
-  assert.equal(desktopFreeVersionError("1.2.3", ["1.2.3", "1.2.2"]), null)
-  assert.deepEqual(desktopFreeVersionError("1.2.1", ["1.2.3", "1.2.2"]), { code: "desktop_update_required", currentVersion: "1.2.1", minimumVersion: "1.2.2", message: "Update OpenWork Desktop to 1.2.2 or newer to use Auto." })
-  assert.equal(desktopFreeVersionError("1.2.3", null)?.code, "desktop_version_unavailable")
-  assert.equal(desktopFreeVersionError("1.2.3", [])?.code, "desktop_version_unavailable")
-})
-
-test("the release list is cached, served stale through source failures, and malformed sources fail closed", async () => {
-  let clock = 0, calls = 0, fail = false
-  const github = releases.map((release) => ({ tag_name: `v${release.version}`, draft: false, prerelease: false, published_at: new Date(release.publishedAt).toISOString() }))
-  const source = createDesktopFreeReleaseSource({ url: "https://api.github.test/releases", now: () => clock,
-    fetch: async () => { calls++; return fail ? new Response("nope", { status: 500 }) : Response.json([...github, { tag_name: "v1.3.0-alpha.1", draft: false, prerelease: true, published_at: "2026-09-23T00:00:00Z" }, { tag_name: "v9.9.9", draft: true, prerelease: false, published_at: "2026-09-23T00:00:00Z" }]) } })
-  assert.deepEqual((await source())?.map((release) => release.version), ["1.2.3", "1.2.2", "1.2.1", "1.2.0", "1.1.9"])
-  await source()
-  assert.equal(calls, 1)
-  clock = 300001
-  fail = true
-  assert.deepEqual((await source())?.map((release) => release.version), ["1.2.3", "1.2.2", "1.2.1", "1.2.0", "1.1.9"], "a failed refresh serves the last good list")
-  assert.equal(calls, 2)
-  clock = 86400001
-  assert.equal(await source(), null, "stale lists expire after a day")
-  // GitHub's real list carries release notes and assets and is well over 1 MB.
-  const notes = "x".repeat(100_000)
-  const large = createDesktopFreeReleaseSource({ url: "https://api.github.test/releases",
-    fetch: async () => Response.json(github.map((release) => ({ ...release, body: notes, assets: Array.from({ length: 4 }, () => ({ name: notes })) }))) })
-  assert.deepEqual((await large())?.map((release) => release.version), ["1.2.3", "1.2.2", "1.2.1", "1.2.0", "1.1.9"], "a realistic-size GitHub list is accepted")
-  const sent: Array<string | null> = []
-  const recordAuthorization = async (_url: string | URL | Request, init?: RequestInit) => { sent.push(new Headers(init?.headers).get("authorization")); return Response.json(github) }
-  await createDesktopFreeReleaseSource({ url: "https://api.github.com/repos/different-ai/openwork/releases", token: "gh-test-token", fetch: recordAuthorization })()
-  await createDesktopFreeReleaseSource({ url: "https://releases.example.test/list", token: "gh-test-token", fetch: recordAuthorization })()
-  assert.deepEqual(sent, ["Bearer gh-test-token", null], "the GitHub token is only sent to api.github.com")
-  const custom = createDesktopFreeReleaseSource({ url: "https://metadata.test/releases", fetch: async () => Response.json({ releases: [{ version: "v1.2.3", publishedAt: "2026-09-23T00:00:00Z" }] }) })
-  assert.deepEqual(await custom(), [{ version: "1.2.3", publishedAt: Date.parse("2026-09-23T00:00:00Z") }])
-  for (const body of [{ latestAppVersion: "1.2.3" }, [{ tag_name: 1 }], "1.2.3", []]) {
-    const malformed = createDesktopFreeReleaseSource({ url: "https://metadata.test/releases", fetch: async () => Response.json(body) })
-    assert.equal(await malformed(), null, JSON.stringify(body))
-  }
 })
 
 function memberCall(app: Hono, path: string, init: RequestInit = {}) {

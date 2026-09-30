@@ -38,7 +38,7 @@ test("activation idles out, caps, and closes when the last session ends", () => 
 test("status parsing keeps a complete ready status and rejects anything partial", () => {
   const ready = parseStatus({ state: "ready", minimumVersion: "1.0.0", allowance, catalog: [{ nope: true }] }, base);
   expect(ready).toMatchObject({ state: "ready", minimumVersion: "1.0.0", allowance, catalog: [] });
-  expect(() => parseStatus({ state: "ready", allowance }, base)).toThrow();
+  expect(parseStatus({ state: "ready", allowance }, base).minimumVersion).toBeNull();
   expect(() => parseStatus({ state: "ready", minimumVersion: "1.0.0", allowance: { ...allowance, usedUsd: -1 } }, base)).toThrow();
   expect(() => parseStatus({ state: "later" }, base)).toThrow();
   expect(statusFromRejection({ code: "desktop_update_required", minimumVersion: "2.0.0" }, base)).toMatchObject({ state: "update_required", minimumVersion: "2.0.0" });

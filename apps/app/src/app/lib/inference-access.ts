@@ -82,7 +82,7 @@ export function autoAccessWallFromError(value: unknown, model?: ModelRef | null,
     return typeof minimumVersion === "string" && minimumVersion.trim() ? { state: "update", minimumVersion } : { state: "update" };
   }
   if (["anonymous_limit_exceeded", "free_allowance_exhausted"].includes(code)) return { state: "limit" };
-  if (["desktop_version_unavailable", "anonymous_capacity_exceeded", "anonymous_unavailable"].includes(code)) return { state: "unavailable" };
+  if (["anonymous_capacity_exceeded", "anonymous_unavailable"].includes(code)) return { state: "unavailable" };
   if (code === "model_sync_pending") return { state: "sync" };
   for (const key of ["details", "error", "data", "responseBody", "message", "cause"]) {
     const wall = autoAccessWallFromError(Reflect.get(value, key), model, depth + 1);
@@ -105,7 +105,7 @@ export async function preflightAutoSubmission(input: {
 }
 
 export type AutoPickerState = "ready" | "exhausted" | "update_required" | "unavailable" | "sync" | "not_offered";
-/** "v0.18.51 or newer" when the gateway told us the oldest supported release. */
+/** "v0.18.51 or newer" when the gateway told us the lowest version it accepts. */
 export function autoUpdateTarget(minimumVersion?: string | null) {
   const version = minimumVersion?.trim().replace(/^v/, "");
   return version ? `OpenWork v${version} or newer` : "OpenWork";
