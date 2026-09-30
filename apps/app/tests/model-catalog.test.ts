@@ -11,13 +11,17 @@ const auto = option(AUTO_PROVIDER_ID, AUTO_MODEL_ID);
 const local = option("openai", "local");
 const orgA = { ...option("ipr_team", "gwm_a"), organizationPinOrder: 1 };
 const orgB = { ...option("ipr_team", "gwm_b"), organizationPinOrder: 0 };
+const pinnedAuto = { ...auto, defaultPinned: true };
 const catalog = [local, orgA, auto, orgB];
 
 describe("model sources and pins", () => {
-  test("organization pins precede personal pins, preserve order, and Auto is immutable only when available", () => {
-    expect(orderedModelPins(catalog, [local, orgA]).map((model) => model.modelID)).toEqual([AUTO_MODEL_ID, "gwm_b", "gwm_a", "local"]);
+  test("organization pins precede personal pins, preserve order, and Auto is pinned only when an admin pins it", () => {
+    expect(orderedModelPins(catalog, [local, orgA]).map((model) => model.modelID)).toEqual(["gwm_b", "gwm_a", "local"]);
+    expect(orderedModelPins([local, orgA, pinnedAuto, orgB], [local]).map((model) => model.modelID)).toEqual([AUTO_MODEL_ID, "gwm_b", "gwm_a", "local"]);
+    expect(orderedModelPins(catalog, [auto]).map((model) => model.modelID)).toEqual(["gwm_b", "gwm_a", AUTO_MODEL_ID], "people can pin Auto themselves");
     expect(immutableModelPin(orgA)).toBe(true);
-    expect(immutableModelPin(auto)).toBe(true);
+    expect(immutableModelPin(pinnedAuto)).toBe(true);
+    expect(immutableModelPin(auto)).toBe(false);
     expect(immutableModelPin(local)).toBe(false);
     expect(orderedModelPins([local], [auto])).toEqual([]);
   });
@@ -32,8 +36,8 @@ describe("model sources and pins", () => {
   test("cycles skip inaccessible and disabled personal pins", () => {
     const stale = option("missing", "stale");
     const disabled = { ...local, disabled: true };
-    expect(nextPinnedModel([disabled, auto], [stale, local], stale)).toEqual(auto);
-    expect(nextPinnedModel([disabled, auto], [stale, local], auto)).toBeNull();
+    expect(nextPinnedModel([disabled, pinnedAuto], [stale, local], stale)).toEqual(pinnedAuto);
+    expect(nextPinnedModel([disabled, pinnedAuto], [stale, local], pinnedAuto)).toBeNull();
     expect(nextModelSource(catalog, orderedModelPins(catalog, [local]), auto)).toEqual(local);
   });
   test("maps Gateway, local, and legacy organization sources independently of display names", () => {

@@ -93,14 +93,15 @@ export function withAutoDefaultPin(options: readonly ModelOption[], status?: { p
 }
 
 export function immutableModelPin(model: ModelCatalogOption) {
-  return (isAutoModel(model) && model.defaultPinned !== false) || model.organizationPinOrder !== undefined;
+  // Auto is pinned for everyone only when an organization admin pins it; otherwise it pins like any model.
+  return (isAutoModel(model) && model.defaultPinned === true) || model.organizationPinOrder !== undefined;
 }
 
 export function orderedModelPins(options: readonly ModelCatalogOption[], personal: readonly ModelRef[]) {
   const available = options.filter((option) => !option.disabled);
   const byKey = new Map(available.map((option) => [modelRefKey(option), option]));
   const ordered = [
-    ...available.filter((option) => isAutoModel(option) && option.defaultPinned !== false),
+    ...available.filter((option) => isAutoModel(option) && option.defaultPinned === true),
     ...available.filter((option) => option.organizationPinOrder !== undefined).sort((a, b) => a.organizationPinOrder! - b.organizationPinOrder!),
     ...personal.flatMap((model) => { const option = byKey.get(modelRefKey(model)); return option ? [option] : []; }),
   ];

@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ActionContextMenu } from "@/components/ui/action-context-menu";
 import { ProviderIcon } from "@/react-app/design-system/provider-icon";
 import { AutoPickerRecovery, useObservedAutoAccessSnapshot } from "@/react-app/domains/cloud/auto-access-ui";
-import { autoPickerCopy, freeAutoSwitchedOff, type AutoPickerState } from "@/app/lib/inference-access";
+import { autoNotOffered, autoPickerCopy, freeAutoSwitchedOff, type AutoPickerState } from "@/app/lib/inference-access";
 import type { MenuAction } from "@/components/ui/action-menu-model";
 import { Command, CommandCollection, CommandGroup, CommandGroupLabel, CommandHeader, CommandInput, CommandItem, CommandList, CommandPanel } from "@/components/ui/command";
 import { immutableModelPin, isAutoModel, isPinModelShortcut, markExplicitModelChoice, modelGroups, modelSource, modelSubtitle, modelTitle, orderedModelPins, retainedModelCopy, withAutoDefaultPin, MODEL_SOURCE_LABELS, type ModelGroup, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
@@ -55,7 +55,7 @@ export type ModelPickerListProps = {
   onRetryAuto?: () => void | Promise<unknown>;
 };
 
-type AutoRowState = { model: ModelRef; state: AutoPickerState };
+type AutoRowState = { model: ModelRef; state: AutoPickerState; code?: string | null };
 export function ModelPickerList(props: ModelPickerListProps) {
   return isAutoModel(props.current) || props.options.some(isAutoModel) || props.openWorkModelsSyncing
     ? <AutoStatusModelPickerList {...props} /> : <ModelPickerRows {...props} />;
@@ -67,10 +67,10 @@ function AutoStatusModelPickerList(props: ModelPickerListProps) {
   const availableAuto = props.options.find(isAutoModel);
   const auto = isAutoModel(props.current) ? props.current : availableAuto;
   const matches = auto && status && modelRefKey(auto) === modelRefKey(status);
-  const state = props.openWorkModelsSyncing ? "sync" : snapshot?.status === "error" ? "unavailable" : matches ? status.state : "ready";
+  const state: AutoPickerState = props.openWorkModelsSyncing ? "sync" : snapshot?.status === "error" ? "unavailable" : matches ? (autoNotOffered(status) ? "not_offered" : status.state) : "ready";
   const switchedOff = freeAutoSwitchedOff(status);
   const blockedByPolicy = props.retainedSelection !== undefined && props.retainedSelection.reason !== "unavailable" && isAutoModel(props.current);
-  return <ModelPickerRows {...props} retainedSelection={switchedOff && isAutoModel(props.current) ? undefined : props.retainedSelection} options={withAutoDefaultPin(switchedOff ? props.options.filter((option) => !isAutoModel(option)) : props.options, status)} openWorkModelsSyncing={!switchedOff && !blockedByPolicy && props.openWorkModelsSyncing} autoRow={!switchedOff && !blockedByPolicy && auto ? { model: auto, state } : undefined} />;
+  return <ModelPickerRows {...props} retainedSelection={switchedOff && isAutoModel(props.current) ? undefined : props.retainedSelection} options={withAutoDefaultPin(switchedOff ? props.options.filter((option) => !isAutoModel(option)) : props.options, status)} openWorkModelsSyncing={!switchedOff && !blockedByPolicy && props.openWorkModelsSyncing} autoRow={!switchedOff && !blockedByPolicy && auto ? { model: auto, state, code: status?.code } : undefined} />;
 }
 
 /** Context-menu rows show the chord that triggers the same command (DESIGN S6). */
@@ -170,7 +170,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
               const active = modelRefKey(current) === key;
               const autoState = autoRow && modelRefKey(autoRow.model) === key ? autoRow.state : undefined;
               const blocked = !canSelect(option);
-              const subtitle = autoState ? autoPickerCopy(autoState, false).subtitle : active && failed ? `${modelSubtitle(option)}${modelSubtitle(option) ? " · " : ""}availability not verified` : modelSubtitle(option);
+              const subtitle = autoState ? autoPickerCopy(autoState, false, undefined, autoRow?.code).subtitle : active && failed ? `${modelSubtitle(option)}${modelSubtitle(option) ? " · " : ""}availability not verified` : modelSubtitle(option);
               const pinLabel = pinned.has(key) ? "Unpin" : "Pin to top";
               const actions: MenuAction[] = [
                 { type: "item", id: "pin", label: fixed ? "Pinned by your org" : pinLabel, webContent: fixed ? undefined : menuChord(pinLabel, "⇧P"), disabled: fixed || blocked, onSelect: () => toggle(option) },
@@ -209,7 +209,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
         {retained?.reason === "unavailable" && catalogState?.onRetry ? <Button size="sm" variant="outline" disabled={retryBusy || catalogState.refreshing} onClick={() => void retry()}>Refresh</Button> : null}
         {retained?.reason === "disabled" && onOpenProviderSettings ? <Button size="sm" variant="outline" onClick={onOpenProviderSettings}>AI providers</Button> : null}
       </div> : null}
-      {autoRow && autoRow.state !== "ready" ? <AutoPickerRecovery state={autoRow.state} onRetry={onRetryAuto} onReload={onReloadWorkspace} hasAlternatives={Boolean(alternativeKey)} />
+      {autoRow && autoRow.state !== "ready" ? <AutoPickerRecovery state={autoRow.state} code={autoRow.code} onRetry={onRetryAuto} onReload={onReloadWorkspace} hasAlternatives={Boolean(alternativeKey)} />
         : openWorkModelsSyncing ? <AutoPickerRecovery state="sync" onReload={onReloadWorkspace} /> : null}
       {focusAlternative && !alternativeKey && hasOptions && onConnectProvider ? <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-2 text-sm"><span className="text-muted-foreground">Nothing else is connected in this workspace.</span><Button size="sm" variant="outline" onClick={onConnectProvider}>Connect a provider</Button></div> : null}
       {footer}
