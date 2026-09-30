@@ -126,7 +126,7 @@ test(`ACT-WHOLE ${resolveEvalEngine()}: a person follows a whole conversation fr
   });
   await step("a model switch keeps historical model identity, and Stop leaves an ordinary composer", async () => {
     await user.click({ role: "button", label: "Change model" });
-    await user.type({ placeholder: "Search models..." }, "Second fixture model");
+    await user.type({ role: "combobox", label: "Search all models" }, "Second fixture model");
     await user.click({ role: "option", label: /^Second fixture model/ });
     await user.press("Escape");
     await send(world.stopPrompt);
