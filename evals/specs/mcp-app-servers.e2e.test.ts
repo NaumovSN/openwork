@@ -379,6 +379,8 @@ chatTest("an owner prompts OpenWork's chat to build an App and to open one, and 
     await agent.send(reopenPrompt);
     await user.see({ text: reopenReply }, { timeoutMs: 120_000 });
     await user.see({ text: newerNote }, { timeoutMs: 30_000 });
+    calculator = await focus(appTitle);
+    await calculator.see({ role: "heading", label: appTitle });
     expect((await probe.dom(`[data-mcp-app-resource="${world.created.resourceUri}"] iframe`)).elements).toHaveLength(1);
     await user.screenshot();
     evidence.recordAssertionEvidence("Only an App's newest card stays live", `For "${reopenPrompt}" the model opened ${appTitle} a second time. The conversation shows one live ${appTitle}, the new card, and the earlier card now reads "${newerNote}", so the App is not loaded twice.`, true);

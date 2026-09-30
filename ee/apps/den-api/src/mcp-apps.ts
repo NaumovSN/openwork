@@ -1,3 +1,5 @@
+import { PerformanceObserver } from "node:perf_hooks";
+import { timeMcpApp } from "@openwork/types/mcp-app-timing";
 import { createHash } from "node:crypto"
 import { and, desc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { ConfigObjectTable, ConfigObjectVersionTable, PluginConfigObjectTable, PluginTable } from "@openwork-ee/den-db/schema"
@@ -50,7 +52,7 @@ export class McpAppError extends Error {
 
 type Revision = typeof ConfigObjectVersionTable.$inferSelect
 type DatabaseReader = Pick<typeof db, "select">
-export type McpAppAccessInput = { organizationId: string; member: McpMemberIdentity | null; enabled?: boolean }
+export type McpAppAccessInput = { organizationId: string; member: McpMemberIdentity | null; enabled?: boolean; requestScope?: object }
 export type McpAppResource = { app: McpAppSummary; html: string; csp: McpAppCsp; resourceDigest: string }
 /** An App a member may use, without its compiled HTML. */
 export type McpAppEntry = { appId: string; pluginId: string; revisionId: string; title: string; description: string | null; serverPath: string }
@@ -400,7 +402,7 @@ export async function readMcpApp(input: { context: PluginArchActorContext; appId
 
 async function accessibleAppPlugins(input: McpAppAccessInput): Promise<Map<string, string>> {
   const apps = new Map<string, string>()
-  for (const reference of await listAccessibleMarketplaceCapabilityReferences(input)) {
+  for (const reference of await timeMcpApp("den.marketplace-access-scan", () => listAccessibleMarketplaceCapabilityReferences(input))) {
     if (reference.objectType === "app" && !apps.has(reference.configObjectId)) apps.set(reference.configObjectId, reference.pluginId)
   }
   return apps
@@ -451,17 +453,21 @@ async function organizationHasApps(organizationId: DenTypeId<"organization">): P
   return row !== undefined
 }
 
-export async function listAccessibleMcpApps(input: McpAppAccessInput): Promise<McpAppEntry[]> {
+async function listAccessibleMcpAppsUntimed(input: McpAppAccessInput): Promise<McpAppEntry[]> {
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
   if (!await organizationHasApps(organizationId)) return []
   const apps = await accessibleAppPlugins(input)
   if (apps.size === 0) return []
-  return (await latestAuthoredApps(organizationId, [...apps.keys()].map(appId))).flatMap((row): McpAppEntry[] => {
+  return (await timeMcpApp("den.latest-authored-apps", () => latestAuthoredApps(organizationId, [...apps.keys()].map(appId)))).flatMap((row): McpAppEntry[] => {
     const pluginId = apps.get(row.id)
     return pluginId
       ? [{ appId: row.id, pluginId, revisionId: row.revisionId, title: row.title, description: row.description, serverPath: mcpAppServerPath(row.id) }]
       : []
   }).sort((left, right) => left.title.localeCompare(right.title) || left.appId.localeCompare(right.appId))
+}
+
+export function listAccessibleMcpApps(input: McpAppAccessInput): Promise<McpAppEntry[]> {
+  return timeMcpApp("den.accessible-apps", () => listAccessibleMcpAppsUntimed(input))
 }
 
 /**
@@ -482,7 +488,7 @@ export async function isActiveMcpApp(input: { organizationId: string; appId: str
   return await activeApp(normalizeDenTypeId("organization", input.organizationId), appId(id.data)) !== null
 }
 
-async function accessibleRevision(input: McpAppAccessInput & { appId: string }) {
+async function accessibleRevisionUncached(input: McpAppAccessInput & { appId: string }) {
   const id = appId(input.appId)
   const pluginId = (await accessibleAppPlugins(input)).get(id)
   if (!pluginId) return notFound()
@@ -492,6 +498,18 @@ async function accessibleRevision(input: McpAppAccessInput & { appId: string }) 
   const payload = current && compiledRevision(current)
   if (!current || !payload) return notFound()
   return { id, pluginId, organizationId, current, payload }
+}
+
+// HTTP callers supply a fresh scope per request. No Plugin access survives that request.
+const requestRevisions = new WeakMap<object, Map<string, ReturnType<typeof accessibleRevisionUncached>>>()
+function accessibleRevision(input: McpAppAccessInput & { appId: string }) {
+  if (!input.requestScope) return accessibleRevisionUncached(input)
+  let revisions = requestRevisions.get(input.requestScope)
+  if (!revisions) { revisions = new Map(); requestRevisions.set(input.requestScope, revisions) }
+  const key = JSON.stringify([input.organizationId, input.member?.orgMembershipId, input.member?.teamIds, input.enabled, input.appId])
+  let revision = revisions.get(key)
+  if (!revision) { revision = accessibleRevisionUncached(input); revisions.set(key, revision) }
+  return revision
 }
 
 /** The member's current view of one App's own MCP server. */
@@ -519,4 +537,13 @@ export async function loadMcpAppResource(input: McpAppAccessInput & { appId: str
     csp: payload.csp,
     resourceDigest: payload.resourceDigest,
   }
+}
+
+// Opt-in numeric profiling only; never emit request payloads or identities.
+if (process.env.OPENWORK_MCP_APP_TIMINGS === "1") {
+  new PerformanceObserver(list => {
+    for (const entry of list.getEntries()) if (entry.name.startsWith("openwork.mcp-app.")) {
+      console.log("MCP_APP_TIMING", JSON.stringify({ stage: entry.name, durationMs: entry.duration }))
+    }
+  }).observe({ entryTypes: ["measure"] })
 }

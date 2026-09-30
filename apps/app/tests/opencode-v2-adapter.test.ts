@@ -6,16 +6,20 @@ import {
   createV2EventTranslationState,
   mapV2McpStatuses,
   translateV2Event,
+  v2AcknowledgementText,
   v2PromptText,
   type V2MappedMessage,
 } from "../src/app/lib/opencode-v2-adapter";
+import { attachmentNoteText } from "../src/app/lib/v2-prompt-context";
+import { snapshotToUIMessages } from "../src/react-app/domains/session/sync/usechat-adapter";
+import { connectorPrompt } from "../src/react-app/domains/session/surface/composer/connector-token";
 import { parseDynamicToolUIPart } from "../src/react-app/domains/session/sync/parse-tool-parts";
 import { codeModeToolCalls } from "../src/lib/code-mode-tools";
 import { connectionFromChatToolPart } from "../src/components/tools/error-attribution";
 import type { ToolPart } from "@opencode-ai/sdk/v2/client";
 import { getModelBehaviorControls, getModelBehaviorOptions } from "../src/app/lib/model-behavior";
 import { catalogFastVariants, fastVariantId, nativeModelVariants } from "@openwork/types/cloud-model-fast";
-import { mentionPromptParts } from "../src/react-app/domains/session/sync/mention-parts";
+import { composerPillPromptParts } from "../src/react-app/domains/session/surface/composer/composer-pills";
 import { subscribeProviderCatalogChanges } from "../src/app/lib/provider-events";
 
 describe("MCP status", () => {
@@ -169,7 +173,7 @@ describe("explicit native skill attachments", () => {
     };
     try {
       const capability = "plugin:plg_cobalt:cob_release";
-      const parts = mentionPromptParts({ type: "connect-skill", slug: "cobalt", name: "Cobalt", marketplace: "Releases", capability })
+      const parts = composerPillPromptParts({ kind: "connect-skill", slug: "cobalt", name: "Cobalt", marketplace: "Releases", capability })
         .map(part => legacy && part.synthetic ? { ...part, metadata: { openworkSelectedSkill: { id: capability } } } : part);
       const result = await createClientV2("http://localhost:4096/opencode2", "/workspace", {}).session.promptAsync({ sessionID: "ses_cloud", model: { providerID: "witness", modelID: "model" }, parts });
       expect(result.error).toBeUndefined();
@@ -189,7 +193,7 @@ describe("explicit native skill attachments", () => {
       return jsonResponse({ data: request.url.endsWith("/skill") ? [{ id: "native-release", name: "release" }] : { effect: "allow" } });
     };
     try {
-      const selected = mentionPromptParts({ type: "skill", name: "release" });
+      const selected = composerPillPromptParts({ kind: "skill", name: "release" });
       expect(selected[1]).toMatchObject({ synthetic: true, text: "Load [skill release] and follow its instructions." });
       const parts = [{ type: "text", text: "Prepare a report " }, ...selected, selected[1]];
       expect(v2PromptText(parts)).toBe("Prepare a report [skill release]");
@@ -211,7 +215,7 @@ describe("explicit native skill attachments", () => {
     try {
       const result = await createClientV2("http://localhost:4096/opencode2", "/workspace", {}).session.promptAsync({
         sessionID: "ses_skills", model: { providerID: "witness", modelID: "model" },
-        parts: mentionPromptParts({ type: "skill", name: "release" }),
+        parts: composerPillPromptParts({ kind: "skill", name: "release" }),
       });
       expect(result.error).toMatchObject({ message: expect.stringContaining("Nothing was sent") });
       expect(methods).toEqual(["GET"]);
@@ -235,7 +239,7 @@ describe("explicit native skill attachments", () => {
     try {
       const result = await createClientV2("http://localhost:4096/opencode2", "/workspace", {}).session.promptAsync({
         sessionID: "ses_skills", model: { providerID: "witness", modelID: "model" },
-        parts: mentionPromptParts({ type: "skill", name: "release" }),
+        parts: composerPillPromptParts({ kind: "skill", name: "release" }),
       });
       expect(result.error).toMatchObject({ message: expect.stringContaining("Nothing was sent") });
       expect(paths).toEqual(["/opencode2/api/skill", "/opencode2/api/session/ses_skills/permission"]);
@@ -2770,5 +2774,66 @@ describe("v2 question forms", () => {
       expect((await client.session.promptAsync(parameters)).response.status).toBe(503);
       expect(requests.map((item) => item.method)).toEqual(["POST", "PUT"]);
     } finally { globalThis.fetch = originalFetch; }
+  });
+});
+
+describe("sent user turns show what the person sent", () => {
+  const clip = {
+    filename: "clip.mp4", mime: "video/mp4", bytes: 19_293_798,
+    workspacePath: ".opencode/openwork/inbox/chat-attachments/ses_sent/a-clip.mp4",
+    url: "file:///workspace/.opencode/openwork/inbox/chat-attachments/ses_sent/a-clip.mp4",
+  };
+  const note = {
+    type: "text", synthetic: true, text: attachmentNoteText([clip]),
+    metadata: { openworkAttachments: [{ filename: clip.filename, mime: clip.mime, url: clip.url, bytes: clip.bytes }] },
+  };
+  const pasted = "first line\nsecond line\nthird line";
+
+  async function transcript(text: string) {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => jsonResponse({ data: [{ id: "msg_sent", type: "user", time: { created: 1 }, text }] });
+    try {
+      const result = await createClientV2("http://opencode.test/opencode2", "/workspace", {}).session.messages({ sessionID: "ses_sent" });
+      return snapshotToUIMessages({ messages: result.data ?? [] })[0]?.parts ?? [];
+    } finally { globalThis.fetch = originalFetch; }
+  }
+
+  test("the model prompt keeps the attachment note and pill instruction; the transcript shows only the words, chips and collapsed pasted text", async () => {
+    const parts = [note, { type: "text", text: "Summarize " }, ...composerPillPromptParts({ kind: "connector", name: "GitHub" }),
+      { type: "text", text: " using " }, { type: "text", text: pasted, metadata: { openworkPastedText: true } }];
+    const prompt = v2PromptText(parts);
+    expect(prompt.startsWith(`Summarize [connector GitHub] using <pasted-text>\n${pasted}\n</pasted-text>\n\n<openwork-context>\n`)).toBe(true);
+    expect(prompt).toContain(note.text);
+    expect(prompt).toContain(connectorPrompt("GitHub"));
+
+    const shown = await transcript(prompt);
+    const text = shown.flatMap((part) => part.type === "text" ? [part.text] : []).join("");
+    expect(text).toBe(`Summarize [connector GitHub] using ${pasted}`);
+    expect(text).not.toContain("Attached files were copied");
+    expect(text).not.toContain(connectorPrompt("GitHub"));
+    expect(shown.find((part) => part.type === "text" && part.text === pasted)).toMatchObject({ providerMetadata: { opencode: { pastedText: true } } });
+    expect(shown.filter((part) => part.type === "file")).toEqual([expect.objectContaining({
+      filename: "clip.mp4", url: clip.url, providerMetadata: { opencode: expect.objectContaining({ bytes: clip.bytes }) },
+    })]);
+    expect(v2AcknowledgementText(shown)).toBe(v2AcknowledgementText(parts));
+  });
+
+  test("an attachment-only turn has no visible text and still correlates with its send", async () => {
+    const shown = await transcript(v2PromptText([note]));
+    expect(shown.map((part) => part.type)).toEqual(["file"]);
+    expect(v2AcknowledgementText(shown)).toBe(v2AcknowledgementText([note]));
+    expect(v2AcknowledgementText([note]).trim()).not.toBe("");
+  });
+
+  test("a turn stored before the context block hides its inline note", async () => {
+    const shown = await transcript(`${note.text}Describe the clip.`);
+    expect(shown.flatMap((part) => part.type === "text" ? [part.text] : [])).toEqual(["Describe the clip."]);
+    expect(shown.filter((part) => part.type === "file")).toHaveLength(1);
+  });
+
+  test("words without hidden context are sent and shown unchanged", async () => {
+    const parts = [{ type: "text", text: "Plain request" }];
+    expect(v2PromptText(parts)).toBe("Plain request");
+    expect(await transcript("Plain request")).toEqual([expect.objectContaining({ type: "text", text: "Plain request" })]);
   });
 });

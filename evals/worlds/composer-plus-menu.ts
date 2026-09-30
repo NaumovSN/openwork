@@ -116,6 +116,20 @@ export async function plusMenuWeb(seed: Seed) {
       skills, stagedFiles, skillPrompt, skillReply, attachPrompt, attachReply,
       /** Everything the engine sent the model provider, serialized per request. */
       providerBodies: () => providerRequests.map((request) => JSON.stringify(request)),
+      // TODO(primitive): paste text through the clipboard. CDP cannot write the
+      // clipboard, so this dispatches the paste event the composer handles.
+      async pasteIntoComposer(text: string) {
+        const pasted = await seed.evalIn(app, browserScript((value: string) => {
+          const editor = document.querySelector<HTMLElement>('[contenteditable="true"]');
+          if (!editor) return false;
+          editor.focus();
+          const transfer = new DataTransfer();
+          transfer.setData("text/plain", value);
+          editor.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: transfer }));
+          return true;
+        }, [text]));
+        if (pasted !== true) throw new Error("The composer editor was not found for pasting");
+      },
       [Symbol.asyncDispose]: dispose,
     };
   } catch (error) { await dispose(); throw error; }

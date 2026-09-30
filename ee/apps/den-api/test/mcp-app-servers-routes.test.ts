@@ -72,6 +72,8 @@ let scopes = new Set(["mcp:read", "mcp:write"])
 let enabled = true
 // The organization's appMcpServers capability, off by default outside these tests.
 let appsEnabled = true
+// The organization the App was built in, as the App server's membership-scoped lookup sees it.
+let appHome: { id: string; name: string } | null = null
 let editor = true
 let visible = true
 let memberPresent = true
@@ -97,10 +99,12 @@ let useMarketplaceFixture = false
 
 function rowsFor(table: unknown): unknown[] {
   if (table === OrganizationTable) return [{ metadata: { capabilities: { mcpConnections: enabled, appMcpServers: appsEnabled } } }]
+  if (table === ConfigObjectTable && appHome) return [appHome]
   if (!useMarketplaceFixture) return []
   if (table === ConfigObjectTable) return [{
     configObject: { id: appId, objectType: "app", title: source.title, description: null },
     plugin: { id: pluginId, name: "Test Plugin" }, marketplace: null,
+    id: organizationId, name: "App test",
   }]
   if (table === MemberTable) return [{ id: memberId, role: "member" }]
   if (table === PluginAccessGrantTable && grant) return [{ resourceId: pluginId, orgMembershipId: memberId, orgWide: false, teamId: null, removedAt: null, role: "viewer" }]
@@ -409,7 +413,7 @@ test("each App's own MCP server exposes only its launch tool, declared tools, an
       uri: appSummary.resourceUri, mimeType: "text/html;profile=mcp-app", text: expect.stringContaining("compiled-marker"),
     })
     await expect(client.readResource({ uri: mcpAppResourceUri(otherAppId, revisionId) })).rejects.toThrow("not an available revision")
-    expect(resourceReads).toEqual([{ organizationId, member, enabled: true, appId, revisionId }])
+    expect(resourceReads).toEqual([{ organizationId, member, enabled: true, appId, revisionId, requestScope: expect.any(Object) }])
     await expect(client.callTool({ name: "search_capabilities", arguments: { query: "project" } })).rejects.toThrow("is not available on Project explorer")
   })
 
@@ -585,4 +589,21 @@ test("only a built App's launch tells the model the App is shown; a provider's A
     const ordinary = await client.callTool({ name: "execute_capability", arguments: { name: `plugin:${pluginId}:${otherAppId}` } })
     expect(JSON.stringify(ordinary.content)).not.toContain(MCP_APP_SHOWN_NOTE)
   })
+})
+
+test("an App refuses a client signed in to another organization and names the one to use", async () => {
+  current = appSummary
+  appHome = { id: createDenTypeId("organization"), name: "Pricing team" }
+  try {
+    await expect(withClient(appSummary.serverPath, async () => undefined)).rejects.toThrow("This App belongs to Pricing team. Switch to Pricing team in OpenWork, then connect the App again.")
+  } finally {
+    appHome = null
+  }
+  // Apps turned off for the token's organization say so instead of a bare refusal.
+  appsEnabled = false
+  try {
+    await expect(withClient(appSummary.serverPath, async () => undefined)).rejects.toThrow("Apps built in OpenWork are turned off for this organization")
+  } finally {
+    appsEnabled = true
+  }
 })

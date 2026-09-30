@@ -12,7 +12,7 @@ import { captureAnalyticsEvent } from "@/app/lib/analytics";
 import { abortSession } from "@/app/lib/opencode-session";
 import { hasTerminalSessionReply, interruptSessionTurn, sessionHasPendingSubmission, sessionNeedsStop, sessionWorkHeld, submitAfterInterruption, submitImmediateSessionTurn, subscribeSessionInterruption } from "@/app/lib/opencode-interruption";
 import { createClient, createPromptMessageID, isPromptAdmissionUnknown, promptAdmissionFailure, readPromptAdmission, unwrap } from "@/app/lib/opencode";
-import { createClientV2, isOpencodeV2BaseUrl, v2PromptText } from "@/app/lib/opencode-v2-adapter";
+import { createClientV2, isOpencodeV2BaseUrl, v2AcknowledgementText } from "@/app/lib/opencode-v2-adapter";
 import * as opencodeSessionNative from "@/app/lib/opencode-session-native";
 import type { NativeSessionSnapshotTarget } from "@/app/lib/opencode-session-native";
 import { isDesktopRuntime } from "@/app/lib/runtime-env";
@@ -65,8 +65,7 @@ import { isComputerTarget } from "./composer/computer-mentions";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./composer/mention-encoding";
 import { desktopBridge, openDesktopUrl } from "@/app/lib/desktop";
 import { parseSlashCommandInvocation } from "./composer/slash-command";
-import { parseConnectSkillToken } from "./composer/connect-skill-token";
-import { connectorPrompt, parseConnectorToken } from "./composer/connector-token";
+import { COMPOSER_DRAFT_TOKEN_RE, composerPillText, parseComposerPillToken } from "./composer/composer-pills";
 import { createPastedTextChip, resolvePastedTextPlaceholders } from "./composer/pasted-text";
 import {
   canAdmitNextQueuedItem,
@@ -84,7 +83,7 @@ import { useReactRenderWatchdog } from "@/react-app/shell/react-render-watchdog"
 import { SessionDebugPanel } from "./debug-panel";
 import { runSessionBranchAction, useSessionBranchAction } from "./session-branch-action";
 import { deriveComposerHistory, deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
-import { pendingMessageParts, useDisplayedMessages } from "./use-displayed-messages";
+import { pendingDraftTextParts, pendingMessageParts, useDisplayedMessages } from "./use-displayed-messages";
 import {
   ADMISSION_OUTCOME_GRACE_MS,
   createSingleFlight,
@@ -1547,8 +1546,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
       const match = item.autoAccessWall ? undefined : baseRenderedMessages.find((message) => message.role === "user"
         && !matchedIds.has(message.id)
         && (message.id === (item.serverMessageId ?? pending.messageId) || (!item.serverMessageId && isOpencodeV2BaseUrl(props.opencodeBaseUrl) && !previousMessageIds.includes(message.id)
-          && Boolean(acknowledgementText?.trim()) && v2PromptText(message.parts) === acknowledgementText)));
-      const { parts, attachmentsReady } = pendingMessageParts(text, pending.attachments, match?.parts);
+          && Boolean(acknowledgementText?.trim()) && v2AcknowledgementText(message.parts) === acknowledgementText)));
+      const { parts, attachmentsReady } = pendingMessageParts(text, pending.attachments, match?.parts, pendingDraftTextParts(pending.parts));
       if (!match) {
         const submissionIds = new Set(item.submissionMessageIds);
         const previousIndex = messages.findLastIndex((message) => submissionIds.has(message.id) || precedingPendingIds.has(message.id));
@@ -2057,12 +2056,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
   ): ComposerDraft => {
     const sourceMentions = sourceComposer?.mentions ?? mentions;
     const sourcePasteParts = sourceComposer?.pasteParts ?? pasteParts;
-    const parts: ComposerPart[] = text.split(/(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|@[^\s@]+)/).flatMap((segment, index, segments) => {
+    const parts: ComposerPart[] = text.split(COMPOSER_DRAFT_TOKEN_RE).flatMap((segment, index, segments) => {
       if (!segment) return [] as ComposerDraft["parts"];
-      const connectorName = parseConnectorToken(segment);
-      if (connectorName) {
-        return [{ type: "text", text: connectorPrompt(connectorName) } satisfies ComposerDraft["parts"][number]];
+      const pill = parseComposerPillToken(segment);
+      if (pill?.kind === "connector") return [{ type: "connector", name: pill.name } satisfies ComposerDraft["parts"][number]];
+      if (pill?.kind === "connect-skill") {
+        return [{ type: "connect-skill", slug: pill.slug, name: pill.name, marketplace: pill.marketplace, capability: pill.capability } satisfies ComposerDraft["parts"][number]];
       }
+      if (pill?.kind === "skill") return [{ type: "skill", name: pill.name } satisfies ComposerDraft["parts"][number]];
       const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
       if (attachmentMatch) {
         // Attachment chips are visual tokens only; bytes travel via draft.attachments.
@@ -2074,14 +2075,6 @@ export function SessionSurface(props: SessionSurfaceProps) {
         if (target) {
           return [{ type: "paste", id: target.id, label: target.label, text: target.text, lines: target.lines } satisfies ComposerDraft["parts"][number]];
         }
-      }
-      const connectSkill = parseConnectSkillToken(segment);
-      if (connectSkill) {
-        return [{ type: "connect-skill", ...connectSkill } satisfies ComposerDraft["parts"][number]];
-      }
-      const skillMatch = segment.match(/^\[skill (.+)\]$/);
-      if (skillMatch?.[1]) {
-        return [{ type: "skill", name: skillMatch[1] } satisfies ComposerDraft["parts"][number]];
       }
       if (segment.startsWith("@")) {
         const value = decodeComposerMentionValue(segment.slice(1));
@@ -2099,14 +2092,11 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // the actual pasted content instead of "[pasted text <label>]".
     let resolved = resolvePastedTextPlaceholders(text, sourcePasteParts);
     resolved = resolved.replace(/\[attachment [^\]]+\]/g, "");
-    resolved = resolved.replace(/\[connect-skill [^\]]+\]/g, (match) => {
-      const token = parseConnectSkillToken(match);
-      return token ? `/${token.slug}` : match;
-    });
-    resolved = resolved.replace(/\[skill ([^\]]+)\]/g, (_match, name: string) => `the \"${name}\" skill`);
-    resolved = resolved.replace(/\[connector [^\]]+\]/g, (match) => {
-      const name = parseConnectorToken(match);
-      return name ? connectorPrompt(name) : match;
+    // Pills keep their short visible text; their instructions travel as
+    // synthetic parts and never expand into the user's message.
+    resolved = resolved.replace(/\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]/g, (match) => {
+      const pill = parseComposerPillToken(match);
+      return pill ? composerPillText(pill) : match;
     });
     for (const value of Object.keys(sourceMentions)) {
       resolved = resolved.replaceAll(`@${encodeComposerMentionValue(value)}`, `@${value}`);

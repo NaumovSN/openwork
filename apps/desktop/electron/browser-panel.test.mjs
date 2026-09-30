@@ -659,6 +659,19 @@ async function loadPreload(t) {
   return exposed.__OPENWORK_ELECTRON__.browser;
 }
 
+test("preload keeps browsing available without exposing browser login sync, even with the legacy eval flag", async (t) => {
+  const previous = process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC;
+  process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC = "1";
+  t.after(() => {
+    if (previous === undefined) delete process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC;
+    else process.env.OPENWORK_EVAL_BROWSER_LOGIN_SYNC = previous;
+  });
+  const browser = await loadPreload(t);
+  assert.equal(Object.hasOwn(exposed.__OPENWORK_ELECTRON__, "browserLogins"), false);
+  await browser.createTab("https://example.test", "A");
+  assert.deepEqual(preloadCalls, [{ channel: "openwork:browser:createTab", args: ["https://example.test", "A"] }]);
+});
+
 test("preload routes only trusted unmodified primary anchor clicks, never scripts or middle clicks", async (t) => {
   const descriptors = new Map(["HTMLAnchorElement", "location"].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const mainFrame = Object.getOwnPropertyDescriptor(process, "isMainFrame");
