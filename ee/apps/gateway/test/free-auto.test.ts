@@ -431,7 +431,7 @@ test("an OpenAI error charges nothing; a transport failure charges the fixed est
   assert.deepEqual(transport.receipts, [null])
 })
 
-test("request validation preserves ordinary OpenAI input and denies provider routing", async () => {
+test("like paid Models, the request is forwarded as sent, with only the model, usage and routing fields adjusted", async () => {
   const value = { model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hello" }], stream: true, max_tokens: 64000,
     tools: [{ type: "function", function: { name: "run", parameters: { type: "object" } } }] }
   const body = JSON.parse(prepareFreeRequest(value, config).body)
@@ -440,7 +440,19 @@ test("request validation preserves ordinary OpenAI input and denies provider rou
   assert.equal(body.max_completion_tokens, 64000, "the client's own output limit passes through, as on paid Models")
   assert.equal(JSON.parse(prepareFreeRequest({ ...value, max_tokens: undefined }, config).body).max_completion_tokens, undefined)
   for (const extra of [{ provider: { allow_fallbacks: true } }, { usage: { include: true } }, { reasoning: { effort: "none" } }, { models: ["x"] }]) {
-    assert.throws(() => prepareFreeRequest({ ...value, ...extra }, config), JSON.stringify(extra))
+    const routed = JSON.parse(prepareFreeRequest({ ...value, ...extra }, config).body)
+    assert.equal(Object.keys(extra).some((key) => key in routed), false, `${JSON.stringify(extra)} is an OpenRouter field and is dropped, not refused`)
+  }
+  const engine = { ...value, prompt_cache_key: "session-1", tool_choice: "auto", reasoning_effort: "low",
+    tools: [{ type: "function", function: { name: "openwork-google-workspace_gmail_create_draft_with_uploaded_attachments", description: "x", parameters: { type: "object" }, strict: false } }],
+    messages: [{ role: "system", content: [{ type: "text", text: "system", cache_control: { type: "ephemeral" } }] }, { role: "user", content: "hello" }] }
+  const forwarded = JSON.parse(prepareFreeRequest(engine, config).body)
+  assert.deepEqual([forwarded.prompt_cache_key, forwarded.tool_choice, forwarded.reasoning_effort, forwarded.model], ["session-1", "auto", "low", config.upstreamModel])
+  assert.deepEqual(forwarded.tools, engine.tools, "tool names and shapes are forwarded as the engine sent them")
+  assert.deepEqual(forwarded.messages, engine.messages)
+  assert.equal(JSON.parse(prepareFreeRequest(value, config).body).reasoning_effort, "none", "no effort requested: the cheapest")
+  for (const refused of [{ ...value, model: "openai/gpt-6-sol" }, { ...value, messages: [] }, { ...value, messages: "hello" }, null]) {
+    assert.throws(() => prepareFreeRequest(refused, config), /Auto needs a chat completion request/)
   }
   const large = { ...value, messages: Array.from({ length: 300 }, () => ({ role: "user", content: "x".repeat(1024) })),
     tools: Array.from({ length: 70 }, (_, index) => ({ type: "function", function: { name: `tool_${index}`, description: "x".repeat(10000),
@@ -452,7 +464,6 @@ test("request validation preserves ordinary OpenAI input and denies provider rou
   assert.equal(config.maxBodyBytes, 32 * 1024 * 1024)
   const largeBody = JSON.stringify(large)
   assert.deepEqual((await readFreeRequest(new Request("https://free.test", { method: "POST", headers: { "content-type": "application/json" }, body: largeBody }), config.maxBodyBytes, new AbortController().signal)).value, large)
-  assert.throws(() => prepareFreeRequest({ ...value, messages: [{ role: "user", content: [{ type: "image_url", image_url: "remote" }] }] }, config))
   await assert.rejects(readFreeRequest(new Request("https://free.test", { method: "POST", headers: { "content-type": "application/json" }, body: prompt }), 1, new AbortController().signal))
 })
 

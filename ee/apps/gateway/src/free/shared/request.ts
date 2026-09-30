@@ -1,61 +1,30 @@
-import { z } from "zod"
 import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
 import { sha256Hex } from "@openwork/free-auto/node"
 import type { AutoConfig } from "./config.js"
 import { FreeRequestError } from "./errors.js"
 
-const name = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/)
-const schema = z.strictObject({
-  model: z.literal(INFERENCE_FREE_MODEL_ID),
-  messages: z.array(z.strictObject({
-    role: z.enum(["system", "developer", "user", "assistant", "tool"]),
-    content: z.union([z.string(), z.array(z.union([
-      z.strictObject({ type: z.literal("text"), text: z.string() }),
-      z.strictObject({ type: z.literal("image_url"), image_url: z.strictObject({ url: z.string(), detail: z.enum(["auto", "low", "high"]).optional() }) }),
-      z.strictObject({ type: z.literal("input_audio"), input_audio: z.strictObject({ data: z.string(), format: z.enum(["wav", "mp3"]) }) }),
-      z.strictObject({ type: z.literal("file"), file: z.strictObject({ file_id: z.string().optional(), file_data: z.string().optional(), filename: z.string().optional() }) }),
-    ]))]).nullish(),
-    name: z.string().optional(), tool_call_id: z.string().optional(), refusal: z.string().nullish(),
-    tool_calls: z.array(z.strictObject({ id: z.string().min(1).max(256), type: z.literal("function"),
-      function: z.strictObject({ name, arguments: z.string() }) })).nullish(),
-  })).min(1),
-  tools: z.array(z.strictObject({ type: z.literal("function"), function: z.strictObject({ name,
-    description: z.string().nullish(), parameters: z.record(z.string(), z.unknown()).nullish(), strict: z.boolean().nullish() }) })).nullish(),
-  tool_choice: z.union([z.enum(["auto", "none", "required"]), z.strictObject({ type: z.literal("function"), function: z.strictObject({ name }) })]).nullish(),
-  parallel_tool_calls: z.boolean().nullish(),
-  max_tokens: z.number().int().positive().nullish(),
-  max_completion_tokens: z.number().int().positive().nullish(),
-  stream: z.boolean().optional(), stream_options: z.strictObject({ include_usage: z.boolean().optional() }).nullish(),
-  n: z.number().int().positive().nullish(),
-  temperature: z.number().nullish(), top_p: z.number().nullish(),
-  stop: z.union([z.string(), z.array(z.string())]).nullish(), seed: z.number().int().nullish(),
-  presence_penalty: z.number().nullish(), frequency_penalty: z.number().nullish(),
-  logprobs: z.boolean().nullish(), top_logprobs: z.number().int().nullish(),
-  logit_bias: z.record(z.string(), z.number()).nullish(), user: z.string().nullish(),
-  metadata: z.record(z.string(), z.string()).nullish(),
-  reasoning_effort: z.literal("none").nullish(),
-  verbosity: z.enum(["low", "medium", "high"]).nullish(),
-  response_format: z.union([z.strictObject({ type: z.enum(["text", "json_object"]) }), z.strictObject({ type: z.literal("json_schema"),
-    json_schema: z.strictObject({ name: z.string(), description: z.string().optional(), schema: z.record(z.string(), z.unknown()), strict: z.boolean().optional() }) })]).nullish(),
-})
+// OpenRouter-only routing fields. Free Auto calls OpenAI directly, which does not know them, so they are dropped.
+const ROUTING_FIELDS = ["provider", "models", "route", "transforms", "usage", "plugins", "reasoning"]
+function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value) }
+
+/**
+ * Like paid Models, the request is forwarded as the client sent it. Free Auto only requires its own model and some
+ * messages, swaps in the real model, and asks for usage on streams so the real cost can be charged.
+ */
 export function prepareFreeRequest(value: unknown, config: AutoConfig) {
-  const parsed = schema.safeParse(value)
-  if (!parsed.success) throw new FreeRequestError(400, "unsupported_free_inference_input", "Auto requires a valid chat completion request. This input was not sent.")
-  const request = parsed.data
-  // OpenAI Chat Completions with the dedicated free key; the client never chooses the model or routing.
-  const messages = request.messages.map(({ refusal, ...message }) => refusal == null ? message : { ...message, refusal })
-  const body = JSON.stringify({ model: config.upstreamModel, messages,
-    ...(request.tools != null ? { tools: request.tools } : {}), ...(request.tool_choice != null ? { tool_choice: request.tool_choice } : {}),
-    ...(request.parallel_tool_calls != null ? { parallel_tool_calls: request.parallel_tool_calls } : {}),
-    ...(request.response_format != null ? { response_format: request.response_format } : {}),
-    ...(request.verbosity != null ? { verbosity: request.verbosity } : {}),
-    ...Object.fromEntries(["n", "temperature", "top_p", "stop", "seed", "presence_penalty", "frequency_penalty", "logprobs", "top_logprobs", "logit_bias", "user", "metadata"]
-      .filter((name) => Reflect.get(request, name) != null).map((name) => [name, Reflect.get(request, name)])),
-    stream: request.stream === true, ...(request.stream ? { stream_options: { include_usage: true } } : {}),
-    ...(request.max_completion_tokens ?? request.max_tokens ? { max_completion_tokens: request.max_completion_tokens ?? request.max_tokens } : {}),
-    reasoning_effort: "none", store: false,
-  })
-  return { body, stream: request.stream === true, choices: request.n ?? 1 }
+  if (!record(value) || value.model !== INFERENCE_FREE_MODEL_ID || !Array.isArray(value.messages) || value.messages.length === 0) {
+    throw new FreeRequestError(400, "unsupported_free_inference_input", "Auto needs a chat completion request for the Auto model with at least one message. This input was not sent.")
+  }
+  const request = Object.fromEntries(Object.entries(value).filter(([key]) => !ROUTING_FIELDS.includes(key) && key !== "stream_options"))
+  const stream = value.stream === true
+  const outputLimit = value.max_completion_tokens ?? value.max_tokens
+  delete request.max_tokens
+  const body = JSON.stringify({ reasoning_effort: "none", ...request, model: config.upstreamModel, stream,
+    ...(stream ? { stream_options: { include_usage: true } } : {}),
+    ...(outputLimit != null ? { max_completion_tokens: outputLimit } : {}),
+    store: false })
+  const choices = typeof value.n === "number" && Number.isSafeInteger(value.n) && value.n > 0 ? value.n : 1
+  return { body, stream, choices }
 }
 
 export async function readFreeRequest(request: Request, maxBytes: number, signal: AbortSignal) {

@@ -69,6 +69,12 @@ test("the relay owns only the provider entry it wrote, and settings fall back on
   const token = `owf_local_${"b".repeat(43)}`;
   expect(isOwnedProvider(ownedProvider(token, 4321))).toBe(true);
   expect(isOwnedProvider({ ...ownedProvider(token, 4321), name: "Mine" })).toBe(false);
+  const current = ownedProvider(token, 4321);
+  const model = Object.values(current.models)[0];
+  expect(model.limit).toEqual({ context: 1_050_000, input: 922_000, output: 128_000 });
+  const earlierBuild = { ...current, models: { [model.id]: { ...model, limit: { context: 135_168, input: 131_072, output: 4_096 } } } };
+  expect(isOwnedProvider(earlierBuild)).toBe(true);
+  expect(isOwnedProvider({ ...current, models: { [model.id]: { ...model, limit: { context: 8_000, input: 8_000, output: 1_000 } } } })).toBe(false);
   const settings = readRelaySettings({ OPENWORK_FREE_SESSION_POW_BITS: "40", OPENWORK_FREE_HEARTBEAT_MS: "-1", OPENWORK_DISABLE_FREE_INFERENCE: "yes" });
   expect(settings).toMatchObject({ origin: "https://inference.openworklabs.com", pow: { bits: 19, rounds: 8 }, heartbeatMs: 60_000, disabledByEnvironment: true, allowLocalDen: false });
 });

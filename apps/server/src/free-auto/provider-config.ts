@@ -2,11 +2,15 @@ import { ANONYMOUS_INFERENCE_MODEL_ID, ANONYMOUS_INFERENCE_PROVIDER_NAME, LOCAL_
 import { isRecord } from "./http.js";
 
 /** The engine-facing provider entry this service owns in the runtime OpenCode config. */
-function generatedModel(id = ANONYMOUS_INFERENCE_MODEL_ID) {
+/** The model's own limits, as with paid Models; the Gateway does not cap Auto's context or output. */
+const AUTO_LIMIT = { context: 1_050_000, input: 922_000, output: 128_000 };
+/** Written by earlier builds; still ours, and rewritten to the current shape on the next start. */
+const PREVIOUS_AUTO_LIMIT = { context: 135_168, input: 131_072, output: 4_096 };
+function generatedModel(id = ANONYMOUS_INFERENCE_MODEL_ID, limit = AUTO_LIMIT) {
   return {
     id, name: "GPT-5.6 Luna", attachment: false, reasoning: false, temperature: false, tool_call: true,
     options: { reasoningEffort: "none" },
-    limit: { context: 135_168, input: 131_072, output: 4_096 },
+    limit,
     modalities: { input: ["text"], output: ["text"] },
   };
 }
@@ -30,5 +34,6 @@ export function isOwnedProvider(value: unknown): boolean {
     || !isRecord(value.models) || Object.keys(value.models).length !== 1) return false;
   const model = value.models[ANONYMOUS_INFERENCE_MODEL_ID];
   if (!isRecord(model) || !hasExactKeys(model, Object.keys(generatedModel()))) return false;
-  return Object.entries(generatedModel()).every(([key, expected]) => JSON.stringify(model[key]) === JSON.stringify(expected));
+  return [generatedModel(), generatedModel(ANONYMOUS_INFERENCE_MODEL_ID, PREVIOUS_AUTO_LIMIT)]
+    .some((generated) => Object.entries(generated).every(([key, expected]) => JSON.stringify(model[key]) === JSON.stringify(expected)));
 }
