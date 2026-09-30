@@ -1,5 +1,37 @@
 # ENG-76 implementation verification
 
+## Rebase verification — 2026-09-30
+
+Rebased all ten commits onto `origin/dev` at `628ffa455`. Conflict resolution
+preserves dev's audit/App test chains and adds the Slack suites; the OpenAPI
+snapshot and SDK were regenerated from the combined routes. The checked code
+head is `8ee0bedf4`.
+
+- `pnpm --filter @openwork-ee/den-api test:slack-native`: exit 0, 124 passed.
+- `pnpm --filter @openwork-ee/den-web test:slack-native`: exit 0, 11 passed.
+- `pnpm --filter @openwork/app exec bun test tests/native-slack-connection-view.test.tsx`:
+  exit 0, 12 passed.
+- Den API (`exec tsc --noEmit --pretty false`), Den web, and SDK typechecks passed.
+- `pnpm api:lint`: exit 0, 0 errors and 39 warnings.
+- `pnpm evals:e2e native-slack-connect --local --engine v2`: exit 0,
+  1 passed, 0 failed, 0 skipped, 128 seconds. Placement: `local (--local)`;
+  cold-booted against the synthetic providers with both pinned engines and
+  temporary Chrome. The evidence record has 12 passing expectations and ten
+  unvalidated screenshots; automated visual verification remains incomplete.
+  Run receipt: `evals/results/.testkit/cli-run-1790775626981-9902.json`.
+- App typecheck: exit 2, `mcp-app-frame.tsx:871` uses `Promise.withResolvers`
+  outside the configured TypeScript library. The exact single-package command
+  reproduced the same error on a clean `628ffa455` control checkout.
+- `pnpm evals:typecheck`: exit 1, `mcp-app-servers.e2e.test.ts:10` supplies a
+  world with an incompatible second parameter. The exact command reproduced
+  the same single error on the clean control after installing both workspace
+  dependency sets. Neither type error was introduced by this branch.
+
+Commands above also supplied `--config.verify-deps-before-run=false`.
+Generation required rebuilding workspace dependencies added by dev and a
+disposable local Docker MySQL schema for auth initialization. The earlier
+2026-09-28 suite and screenshot results below describe the pre-rebase tree.
+
 ## Result
 
 Native Slack is implemented behind a default-off organization/workspace gate.
