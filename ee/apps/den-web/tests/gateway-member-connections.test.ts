@@ -109,7 +109,7 @@ describe("member model connections", () => {
     expect(getLibraryModelsRoute("example")).toBe("/dashboard/library?show=models");
     expect(getLibraryModelRoute("example", "ipr_1")).toBe("/dashboard/library/models/ipr_1");
     const nav = buildDashboardNavSections({ orgSlug: "example", access: getOrgAccessFlags("member", false),
-      capabilities: { cloud: false, installLinks: false, mcpConnections: false, openworkWeb: false, orgManagedDashboards: false, workflows: false },
+      capabilities: { auditLogs: false, cloud: false, installLinks: false, mcpConnections: false, openworkWeb: false, orgManagedDashboards: false, workflows: false },
       orgMode: "single_org", runtimeConfigLoaded: true,
     });
     const labels = nav.flatMap((section) => section.items).map((item) => item.label);

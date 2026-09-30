@@ -1,7 +1,7 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { ArrowUpRight, ShieldAlert } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
+import { ArrowUpRight, ShieldAlert, Square } from "lucide-react"
 
 import {
   Collapsible,
@@ -70,7 +70,9 @@ function agentName(slug: string): string {
  */
 export function SubagentRunLine({ part, className, parentActive = true }: SubagentRunLineProps) {
   const [open, setOpen] = useState(false)
-  const { onOpenSubagentSession, syncDegraded, workspaceId } = useMessageList()
+  const { onOpenSubagentSession, onStopSubagentSession, syncDegraded, workspaceId } = useMessageList()
+  const [stopping, setStopping] = useState(false)
+  const stoppedByPerson = useRef(false)
   const childSessionId = taskChildSessionId(part)
   const child = useSessionActivityStore((state) => (
     childSessionId
@@ -112,12 +114,15 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
     return () => window.clearInterval(interval)
   }, [inFlight, startedAt, part.toolCallId, syncDegraded])
   const title = part.input?.description?.trim().slice(0, 160) || "Sub-agent task"
+  // A helper the person stopped is not a failure (DESIGN.md C5): say "Stopped".
+  const errorText = part.state === "output-error" ? part.errorText : undefined
+  const stopped = isFailed && (stoppedByPerson.current || /abort|interrupt|cancel/i.test(errorText ?? ""))
   const agent = agentName(part.input?.subagent_type ?? "")
   const status = permissionPending
     ? t("session.subagent_permission_needed")
     : questionPending ? t("session.subagent_question_pending")
     : activity === "retrying" ? "Retrying"
-    : activity === "failed" ? "Task reported an error"
+    : activity === "failed" ? (stopped ? "Stopped" : "Task reported an error")
     : activity === "waiting-result" ? "Waiting for task result"
     : activity === "waiting-start" ? "Waiting for task update"
     : activity === "no-new-activity" ? "Still working — waiting for updates"
@@ -167,7 +172,9 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
         data-subagent-session-id={childSessionId}
         data-subagent-activity={activity}
         data-subagent-permission={permissionPending ? "pending" : undefined}
-        className={cn("min-w-0 max-w-full", className)}
+        // The open button stays a direct child of the row: hover styling and
+        // row probes address it as `:scope > button.group`.
+        className={cn("flex min-w-0 max-w-full items-start gap-2", className)}
       >
         <button
           type="button"
@@ -177,6 +184,23 @@ export function SubagentRunLine({ part, className, parentActive = true }: Subage
         >
           {lines}
         </button>
+        {/* Stop just this helper; the turn's own Stop stays in the composer. */}
+        {childRunning && onStopSubagentSession ? (
+          <button
+            type="button"
+            data-subagent-stop=""
+            disabled={stopping}
+            aria-label={stopping ? `${title}. Stopping sub-agent` : `${title}. Stop sub-agent`}
+            className="mt-0.5 flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:bg-muted hover:text-foreground disabled:cursor-default disabled:opacity-50"
+            onClick={() => {
+              stoppedByPerson.current = true
+              setStopping(true)
+              void Promise.resolve(onStopSubagentSession(childSessionId)).finally(() => setStopping(false))
+            }}
+          >
+            <Square className="size-2.5 fill-current" aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
     )
   }

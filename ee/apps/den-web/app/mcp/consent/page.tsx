@@ -15,7 +15,7 @@ import {
 import { denApiCredentials, denBrowserEndpoint } from "../../(den)/_lib/den-api-origin";
 import { describeMcpOAuthError } from "../../(den)/_lib/mcp-oauth-route";
 import { getRuntimeConfig } from "../../(den)/_lib/runtime-config";
-import { McpReturnLine, mcpIdentityFacts, useMcpRedirect } from "../client-identity";
+import { McpReturnLine, McpUnverifiedAppWarning, mcpIdentityFacts, useMcpRedirect } from "../client-identity";
 import { McpConsentPermissions, McpTechnicalDetails } from "../consent-permissions";
 import { McpStoryTiles, mcpStoryCopy } from "../mcp-story";
 import { useLocationQuery } from "../use-location-query";
@@ -136,13 +136,14 @@ export default function McpConsentPage() {
       </div>
       <McpConsentPermissions scope={scope} actor={actor} />
       <div className="flex flex-col gap-3.5">
+        <McpUnverifiedAppWarning redirect={redirect} client={client} />
         <McpReturnLine client={client} redirect={redirect} />
         {error ? <SetupErrorLine>{error}</SetupErrorLine> : null}
         <button type="button" className="den-button-primary w-full" disabled={busy !== null} onClick={() => void decide(true)}>
           {busy === "accept" ? "Authorizing…" : client.name ? `Authorize ${client.name}` : "Authorize this app"}
         </button>
         <div className="flex items-start justify-between gap-4">
-          <McpTechnicalDetails scope={scope} clientId={client.clientId} />
+          <McpTechnicalDetails scope={scope} clientId={client.clientId} redirect={redirect} />
           <SetupQuietButton onClick={() => void decide(false)} disabled={busy !== null}>
             Deny
           </SetupQuietButton>

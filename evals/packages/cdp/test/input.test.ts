@@ -43,6 +43,7 @@ test("parseTarget normalizes bare, structured, and regular-expression targets", 
     composer: false,
   });
   assert.equal(parseTarget({ role: "switch", label: "Check automatically" }).role, "switch");
+  assert.equal(parseTarget({ role: "progressbar", label: "Weekly usage limit remaining" }).role, "progressbar");
 });
 
 test("mapKey produces CDP key fields and modifier bits", () => {
@@ -138,8 +139,10 @@ test("the browser-side miss report lists every rendered element of the requested
   const menu = [menuItem("Remove Team briefing from dashboard"), menuItem("Delete Team briefing")];
   const dashboardRoot = new HTMLElement("div", { "data-dashboard-page": "" }, "");
   const interactive = [...rail, ...menu];
+  const progressbar = new HTMLElement("div", { role: "progressbar", "aria-label": "Weekly usage limit remaining" }, "");
   const document = {
     querySelectorAll(selector: string) {
+      if (selector.includes('[role="progressbar"]')) return [...interactive, progressbar];
       return selector.includes('[role="menuitem"]') ? interactive : rail;
     },
     querySelector(selector: string) {
@@ -166,6 +169,10 @@ test("the browser-side miss report lists every rendered element of the requested
   await assert.rejects(
     locate(surface, { role: "menuitem", text: "Missing" }),
     /Route #\/dashboard\. Page roots: appHeader=false dashboardPage=true\. Visible menuitem candidates \(2\): menuitem "Remove Team briefing from dashboard", menuitem "Delete Team briefing"\.$/,
+  );
+  await assert.rejects(
+    locate(surface, { role: "progressbar", label: "Missing" }),
+    /Visible progressbar candidates \(1\): progressbar "Weekly usage limit remaining"\./,
   );
   // A role-less miss keeps the historical button/link list, now without the DOM-order cap.
   await assert.rejects(
@@ -284,6 +291,30 @@ test("paste shortcuts dispatch Chromium's native paste command", async () => {
       { type: "keyUp", key: "V", code: "KeyV", windowsVirtualKeyCode: 86, modifiers },
     ]);
   }
+});
+
+test("plain printable key presses include text for native date and time segments, not shortcuts", async () => {
+  const surface = surfaceReturning(null);
+  const events: unknown[] = [];
+  surface.client.send = async (method, params) => {
+    assert.equal(method, "Input.dispatchKeyEvent");
+    events.push(params);
+    return {};
+  };
+  await pressKey(surface, "1");
+  await pressKey(surface, "a");
+  await pressKey(surface, "Space");
+  await pressKey(surface, "Control+a");
+  assert.deepEqual(events, [
+    { type: "keyDown", key: "1", code: "Digit1", windowsVirtualKeyCode: 49, modifiers: 0, text: "1" },
+    { type: "keyUp", key: "1", code: "Digit1", windowsVirtualKeyCode: 49, modifiers: 0 },
+    { type: "keyDown", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 0, text: "a" },
+    { type: "keyUp", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 0 },
+    { type: "keyDown", key: " ", code: "Space", windowsVirtualKeyCode: 32, modifiers: 0, text: " " },
+    { type: "keyUp", key: " ", code: "Space", windowsVirtualKeyCode: 32, modifiers: 0 },
+    { type: "keyDown", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 2 },
+    { type: "keyUp", key: "a", code: "KeyA", windowsVirtualKeyCode: 65, modifiers: 2 },
+  ]);
 });
 
 test("click readiness waits for stable geometry rather than hitting a moving menu option", async () => {

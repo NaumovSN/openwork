@@ -53,7 +53,6 @@ test("a Windows owner previews the exact published OpenWork release and can stop
   let worldReady = false;
   let cleanupFailed = false;
   let desktopSandbox = "";
-  let denSandbox = "";
   try {
     await step("before: an unsupported Windows source cannot allocate a sandbox", async () => {
       assert.equal(await up(["--", "--release", "latest", "--distribution", "public", "--scenario", "blank"]), 1);
@@ -67,13 +66,13 @@ test("a Windows owner previews the exact published OpenWork release and can stop
       assert.ok(value, "the world must have a readiness receipt");
       worldReady = true;
       desktopSandbox = value.outputs.desktopSandbox ?? "";
-      denSandbox = value.outputs.denSandbox ?? "";
-      assert.ok(desktopSandbox && denSandbox && desktopSandbox !== denSandbox);
+      assert.ok(desktopSandbox);
+      assert.equal(value.outputs.denSandbox, undefined, "the app-only preview creates no Den");
       const { stdout } = await exec("daytona", ["info", desktopSandbox, "-f", "json"], { timeout: 30_000 });
       const info: unknown = JSON.parse(stdout);
       assert.ok(record(info) && info.id === desktopSandbox && info.public === false
         && info.snapshot === "windows-medium" && info.autoPauseInterval === 0);
-      evidence.recordAssertionEvidence("isolated release preview allocated", "One private Windows VM runs the exact published x64 release; a separate Linux Den VM uses a pinned source SHA. Neither is a borrowed sandbox.", true);
+      evidence.recordAssertionEvidence("isolated release preview allocated", "One private Windows VM runs the exact published x64 release with no Den; it is not a borrowed sandbox.", true);
       return value;
     });
 
@@ -83,7 +82,7 @@ test("a Windows owner previews the exact published OpenWork release and can stop
       assert.equal(receipt.outputs.releaseVersion, VERSION);
       assert.equal(receipt.outputs.releaseAsset, ASSET);
       assert.equal(receipt.outputs.startup, "cdp-responsive");
-      assert.match(receipt.outputs.denRef ?? "", /^[a-f0-9]{40}$/);
+      assert.match(receipt.outputs.ref ?? "", /^[a-f0-9]{40}$/);
       const { stdout } = await exec("daytona", ["exec", desktopSandbox, "--", "certutil -hashfile C:\\ow\\release.exe SHA256"], { timeout: 60_000 });
       const hash = stdout.match(/\b[a-f0-9]{64}\b/i)?.[0]?.toLowerCase();
       assert.equal(`sha256:${hash}`, receipt.outputs.releaseDigest);
@@ -125,16 +124,16 @@ test("a Windows owner previews the exact published OpenWork release and can stop
       evidence.recordAssertionEvidence("real Windows first launch", "Signed noVNC and CDP respond; the rendered app identifies Windows and version 0.18.52, shows the first-launch composer, and has no seeded Den identity.", true);
     });
 
-    await step("after: stopping the stage removes its two private VMs", async () => {
+    await step("after: stopping the stage removes its private VM", async () => {
       assert.equal(await cli(["down", "preview-desktop", "--stage", stage]), 0);
       worldReady = false;
-      await eventually(async () => !(await sandboxExists(desktopSandbox)) && !(await sandboxExists(denSandbox)), {
-        within: 120_000, intervalMs: 2_000, label: "only this preview's Windows and Den sandboxes are deleted",
+      await eventually(async () => !(await sandboxExists(desktopSandbox)), {
+        within: 120_000, intervalMs: 2_000, label: "only this preview's Windows sandbox is deleted",
       });
       assert.equal(await readScriptWorldSnapshot(receiptPath), undefined);
       if ((await readLedger(ledger)).length > 0) assert.equal(await cli(["down", "preview-desktop", "--stage", stage]), 0);
       assert.deepEqual(await readLedger(ledger), []);
-      evidence.recordAssertionEvidence("world-owned teardown", "Down removes the Windows and Den sandbox identities recorded by this stage; its readiness receipt disappears and no shared sandbox was touched.", true);
+      evidence.recordAssertionEvidence("world-owned teardown", "Down removes the Windows sandbox identity recorded by this stage; its readiness receipt disappears and no shared sandbox was touched.", true);
     });
   } finally {
     if (worldReady || await readScriptWorldSnapshot(receiptPath) || (await readLedger(ledger)).length > 0) {

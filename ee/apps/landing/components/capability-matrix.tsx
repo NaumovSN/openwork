@@ -8,7 +8,6 @@ import {
   capabilityRows,
   capabilitySources,
   capabilitySubtitle,
-  capabilityTakeaway,
   footnoteId,
   seatPrice,
   supportLabel,
@@ -179,8 +178,6 @@ export function CapabilityMatrix({ caption, emphasis }: Props) {
           </tfoot>
         </table>
       </div>
-
-      <p className="mt-6 max-w-[760px] text-[15px] font-semibold leading-[24px] text-[var(--lp-ink)]">{capabilityTakeaway()}</p>
 
       <ol className="mt-6 grid gap-1 text-[12.5px] leading-[19px] text-[var(--lp-muted)] md:grid-cols-2 md:gap-x-8">
         {footnotes.map((note) => (

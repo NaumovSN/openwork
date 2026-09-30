@@ -2,7 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import {
   openworkEnterpriseSeatsMonthly,
+  blendedTokenCostPerUser,
   cumulativeCosts,
+  defaultMixShare,
+  mixLabel,
+  mixShares,
+  perPersonMonthly,
   likelyExceedsTeamLimits,
   needsPremiumSeat,
   tokenCostPerUser,
@@ -30,7 +35,7 @@ const typical = usageProfiles.typical.usage;
 const sonnetTypical = 30.5;
 
 function inputs(overrides: Partial<CumulativeInputs> = {}): CumulativeInputs {
-  return { users: 50, usage: typical, tier: "team", model: sonnet, openModel: null, months: 36, ...overrides };
+  return { users: 50, usage: typical, tier: "team", model: sonnet, mix: null, months: 36, ...overrides };
 }
 
 describe("token cost", () => {
@@ -74,12 +79,12 @@ describe("cumulative costs", () => {
   });
 
   test("50 people at typical usage over 3 years", () => {
-    const result = cumulativeCosts(inputs({ openModel: cheap }));
+    const result = cumulativeCosts(inputs({ mix: { openModel: cheap, openShare: 0.7 } }));
     // Claude Team Premium: 50 × $100 × 36 = $180,000. OpenWork Team: (45 × $10 + 50 × $30.50) × 36 = $71,100.
     expect(result.claude.total).toBeCloseTo(180_000, 6);
     expect(result.openwork.total).toBeCloseTo(71_100, 6);
     expect(result.savings).toBeCloseTo(108_900, 6);
-    expect(result.openModelSavings ?? 0).toBeGreaterThan(result.savings);
+    expect(result.mixSavings ?? 0).toBeGreaterThan(result.savings);
   });
 
   test("prices light usage on Claude Team Standard seats", () => {
@@ -117,15 +122,15 @@ describe("cumulative costs", () => {
     expect(enterprise.savings).toBeCloseTo(0, 6);
   });
 
-  test("1000 people with SSO: volume tiers make OpenWork cheaper on the same model, open model saves more", () => {
-    const result = cumulativeCosts(inputs({ users: 1000, tier: "enterprise", openModel: cheap }));
+  test("1000 people needing enterprise controls: volume tiers make OpenWork cheaper, the mix saves more", () => {
+    const result = cumulativeCosts(inputs({ users: 1000, tier: "enterprise", mix: { openModel: cheap, openShare: 1 } }));
     expect(result.claude.id).toBe("claude-enterprise");
     expect(result.openwork.id).toBe("openwork-enterprise");
     expect(result.claude.total).toBeCloseTo(36 * 1000 * (20 + sonnetTypical), 6);
     // 250 seats at $20 + 750 at $16 = $17,000/mo vs Claude's $20,000/mo.
     expect(result.openwork.seatsMonthly).toBe(17_000);
     expect(result.savings).toBeCloseTo(36 * 3_000, 6);
-    expect(result.openModelSavings).toBeCloseTo(36 * (3_000 + 1000 * (sonnetTypical - tokenCostPerUser(cheap, typical))), 6);
+    expect(result.mixSavings).toBeCloseTo(36 * (3_000 + 1000 * (sonnetTypical - tokenCostPerUser(cheap, typical))), 6);
   });
 
   test("OpenWork Enterprise volume tiers are graduated", () => {
@@ -138,7 +143,7 @@ describe("cumulative costs", () => {
     expect(openworkEnterpriseSeatsMonthly(251)).toBeGreaterThan(openworkEnterpriseSeatsMonthly(250));
   });
 
-  test("SSO at 250 people or fewer is the same price on the same model", () => {
+  test("enterprise controls at 250 people or fewer is the same price on the same model", () => {
     const result = cumulativeCosts(inputs({ users: 200, tier: "enterprise" }));
     expect(result.savings).toBeCloseTo(0, 6);
   });
@@ -184,16 +189,72 @@ describe("cumulative costs", () => {
     expect(result.claude3p.monthly).toBeLessThan(result.openwork.monthly);
   });
 
-  test("adds an open-model line with the same seats and cheaper tokens", () => {
-    expect(cumulativeCosts(inputs()).openModel).toBeNull();
-    const result = cumulativeCosts(inputs({ openModel: cheap }));
-    const open = result.openModel;
-    if (!open) throw new Error("missing open model line");
-    expect(open.modelLabel).toBe("Cheap");
-    expect(open.seatsMonthly).toBe(result.openwork.seatsMonthly);
-    expect(open.tokensMonthly).toBeCloseTo(50 * tokenCostPerUser(cheap, typical), 6);
-    expect(result.openModelSavings).toBeCloseTo(result.claude.total - open.total, 6);
-    expect(result.openModelSavings ?? 0).toBeGreaterThan(0);
+  test("adds a model-mix line with the same seats and blended tokens", () => {
+    expect(cumulativeCosts(inputs()).mix).toBeNull();
+    expect(cumulativeCosts(inputs({ mix: { openModel: cheap, openShare: 0 } })).mix).toBeNull();
+    expect(cumulativeCosts(inputs({ mix: { openModel: cheap, openShare: 0 } })).mixSavings).toBeNull();
+    const result = cumulativeCosts(inputs({ mix: { openModel: cheap, openShare: 0.7 } }));
+    const mix = result.mix;
+    if (!mix) throw new Error("missing mix line");
+    expect(mix.id).toBe("openwork-team");
+    expect(mix.modelLabel).toBe("70% Cheap, 30% Sonnet");
+    expect(mix.seatsMonthly).toBe(result.openwork.seatsMonthly);
+    expect(mix.tokensMonthly).toBeCloseTo(50 * (0.7 * tokenCostPerUser(cheap, typical) + 0.3 * sonnetTypical), 6);
+    expect(result.mixSavings).toBeCloseTo(result.claude.total - mix.total, 6);
+  });
+});
+
+describe("model mix", () => {
+  test("offers 0, 50, 70, and 90 percent, defaulting to 70", () => {
+    expect([...mixShares]).toEqual([0, 0.5, 0.7, 0.9]);
+    expect(defaultMixShare).toBe(0.7);
+  });
+
+  test("blends token cost by the open-model share", () => {
+    const cheapTypical = tokenCostPerUser(cheap, typical);
+    const blend = (openShare: number) => blendedTokenCostPerUser(sonnet, { openModel: cheap, openShare }, typical);
+    expect(blend(0)).toBeCloseTo(sonnetTypical, 6);
+    expect(blend(0.5)).toBeCloseTo(0.5 * cheapTypical + 0.5 * sonnetTypical, 6);
+    expect(blend(0.7)).toBeCloseTo(0.7 * cheapTypical + 0.3 * sonnetTypical, 6);
+    expect(blend(0.9)).toBeCloseTo(0.9 * cheapTypical + 0.1 * sonnetTypical, 6);
+    expect(blend(1)).toBeCloseTo(cheapTypical, 6);
+    expect(blend(2)).toBeCloseTo(cheapTypical, 6);
+  });
+
+  test("labels the mix open model first", () => {
+    expect(mixLabel(sonnet, { openModel: cheap, openShare: 0.9 })).toBe("90% Cheap, 10% Sonnet");
+  });
+
+  test("real prices: 50 people, typical, 3 years, by share", () => {
+    const realSonnet = modelPrices.find((price) => price.id === "claude-sonnet-5");
+    const deepseek = modelPrices.find((price) => price.id === "deepseek-v4-pro");
+    if (!realSonnet || !deepseek) throw new Error("expected default models");
+    const totals = mixShares.map(
+      (openShare) =>
+        cumulativeCosts({ ...inputs(), model: realSonnet, mix: { openModel: deepseek, openShare } }).mix?.total ?? null
+    );
+    const same = cumulativeCosts({ ...inputs(), model: realSonnet }).openwork.total;
+    expect(totals[0]).toBeNull();
+    // Each step toward the open model costs less than the last.
+    let previous = same;
+    for (const total of totals.slice(1)) {
+      if (total === null) throw new Error("expected a mix line");
+      expect(total).toBeLessThan(previous);
+      previous = total;
+    }
+  });
+
+  test("rounds cost per person per month to whole dollars", () => {
+    const result = cumulativeCosts(inputs({ mix: { openModel: cheap, openShare: 0.7 } }));
+    expect(perPersonMonthly(result.claude, 50)).toBe(100);
+    // (45 × $10 + 50 × $30.50) / 50 = $39.50 → $40.
+    expect(perPersonMonthly(result.openwork, 50)).toBe(40);
+    const mix = result.mix;
+    if (!mix) throw new Error("missing mix line");
+    expect(perPersonMonthly(mix, 50)).toBe(Math.round(mix.monthly / 50));
+    expect(Number.isInteger(perPersonMonthly(mix, 50))).toBe(true);
+    // 200 people on Claude Enterprise: ($4,000 + 200 × $30.50) / 200 = $50.50 → $51.
+    expect(perPersonMonthly(cumulativeCosts(inputs({ users: 200 })).claude, 200)).toBe(51);
   });
 });
 

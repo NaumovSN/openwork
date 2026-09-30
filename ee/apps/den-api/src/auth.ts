@@ -1215,7 +1215,22 @@ export const auth = betterAuth({
           if ("dpaSigned" in metadata) {
             throw new APIError("FORBIDDEN", { message: "dpaSigned is reserved for internal platform administration." });
           }
+          const free = metadata.inferenceFree;
+          if (free && typeof free === "object" && "rolloutEnabled" in free) {
+            throw new APIError("FORBIDDEN", { message: "inferenceFree.rolloutEnabled is reserved for internal platform administration." });
+          }
+          if ("plan" in metadata) {
+            throw new APIError("FORBIDDEN", { message: "plan is reserved for internal platform administration." });
+          }
           const capabilities = metadata.capabilities;
+          if (capabilities && typeof capabilities === "object" && "auditLogs" in capabilities) {
+            throw new APIError("FORBIDDEN", { message: "capabilities.auditLogs is reserved for internal platform administration." });
+          }
+          for (const key of ["slackAssistant", "slackAssistantHeadless"]) {
+            if (capabilities && typeof capabilities === "object" && key in capabilities) {
+              throw new APIError("FORBIDDEN", { message: `capabilities.${key} is reserved for internal platform administration.` });
+            }
+          }
           if (capabilities && typeof capabilities === "object" && "gatewayDashboard" in capabilities) {
             const retainedCapabilities = { ...capabilities };
             delete retainedCapabilities.gatewayDashboard;

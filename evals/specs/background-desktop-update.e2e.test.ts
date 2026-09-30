@@ -116,13 +116,23 @@ test("updates download outside Settings and offer a persistent, optional restart
   await user.notSee({ text: "Ready when you are." });
   await world.openSettings();
   await user.see({ text: "Restart to update" });
+  // Re-enabling automatic checks after the interval looks for a newer release
+  // than the ready one; the feed has none, so nothing downloads again.
   await user.click({ role: "switch", label: "Check automatically" });
-  expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: true, checks: 6, downloads: 3 });
+  await probe.eventually(world.snapshot, {
+    within: 5_000, label: "an automatic check while ready finds nothing newer",
+    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "checks") === 7,
+  });
+  expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: true, checks: 7, downloads: 3 });
   await world.openWorkspace();
   await world.returnToApp();
+  await probe.eventually(world.snapshot, {
+    within: 5_000, label: "returning after the interval checks again while ready",
+    until: (value) => typeof value === "object" && value !== null && Reflect.get(value, "checks") === 8,
+  });
   await user.see({ text: "Restart to update" });
   const ready = await world.snapshot();
-  expect(ready).toMatchObject({ checks: 6, downloads: 3, installs: 0, installAttempts: 0, updateInTitlebar: true, updateInSidebar: false });
+  expect(ready).toMatchObject({ checks: 8, downloads: 3, installs: 0, installAttempts: 0, updateInTitlebar: true, updateInSidebar: false });
   evidence.recordAssertionEvidence("Manual download retries reach one ready update with automatic checks enabled again", JSON.stringify(ready), true);
   await user.looks([
     "A compact neutral Restart to update button sits in the titlebar with the app's other controls",
@@ -174,10 +184,11 @@ test("updates download outside Settings and offer a persistent, optional restart
     await world.returnToApp();
     await world.openSettings();
     await user.see({ text: "Couldn't install the update" });
-    expect(await world.snapshot()).toMatchObject({ checks: index + 6, downloads: index + 3, installAttempts: index + 1, installs: 0 });
+    // Each restart looks for a newer release once before installing; Check now adds one more.
+    expect(await world.snapshot()).toMatchObject({ checks: index * 2 + 9, downloads: index + 3, installAttempts: index + 1, installs: 0 });
     if (index === 0) {
       await user.click({ role: "switch", label: "Check automatically" });
-      expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: false, checks: 6, downloads: 3 });
+      expect(await world.snapshot()).toMatchObject({ automaticChecksEnabled: false, checks: 9, downloads: 3 });
     }
     await user.click({ role: "button", text: "Check now" });
     await probe.eventually(world.snapshot, {

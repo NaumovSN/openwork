@@ -136,6 +136,7 @@ export function PricingGrid(props: PricingGridProps) {
       badge: "Recommended",
       features: [
         { text: "Everything in Free, unlimited users", icon: Users },
+        { text: "SSO / SAML", icon: Shield },
         { text: "Extension Marketplace", icon: Library },
         { text: "Bring your own LLM keys, distributed to your team", icon: KeyRound },
         { text: "Cloud automations", icon: Clock },
@@ -147,14 +148,15 @@ export function PricingGrid(props: PricingGridProps) {
     {
       id: "enterprise",
       title: "Enterprise",
-      price: "$20",
-      priceSub: "per user / month, billed annually",
+      price: "Custom pricing",
+      priceSub: "",
+      isCustomPricing: true,
       ctaLabel: "Talk to us",
       href: props.callUrl,
       external: /^https?:\/\//.test(props.callUrl),
       features: [
-        { text: "Everything in Team", icon: Users },
-        { text: "SSO / SAML and SCIM provisioning", icon: Shield },
+        { text: "Everything in Team, including SSO", icon: Users },
+        { text: "SCIM provisioning", icon: Shield },
         { text: "Usage and adoption analytics", icon: SlidersHorizontal },
         { text: "Desktop policies and version controls", icon: SlidersHorizontal },
         { text: "Audit log and spend observability", icon: FileText },
@@ -162,7 +164,7 @@ export function PricingGrid(props: PricingGridProps) {
         { text: "Bring your own inference — self-hosted or private models", icon: Server },
         { text: "Standard SLA support included", icon: Plug },
       ],
-      footer: "Same price cloud or self-hosted. Annual contract with a 60-day opt-out. Volume pricing above 250 users.",
+      footer: "Annual contract with a 60-day opt-out. Same terms cloud or self-hosted.",
     },
   ];
 
@@ -221,12 +223,12 @@ export function PricingGrid(props: PricingGridProps) {
       </div>
 
       <p className="text-center text-[12px] font-medium text-gray-500">
-        Add-ons are available on Team and Enterprise. Prices exclude taxes. Paid plans cost the same on OpenWork Cloud
+        Add-ons are available on Team and Enterprise. Prices exclude taxes. Team costs the same on OpenWork Cloud
         and self-hosted. No deployment fees.
       </p>
       <p className="text-center text-[12px] font-medium text-gray-500">
         Self-hosting the control plane is free for organizations with up to 5 users (excluding Enterprise Features such as
-        SSO, analytics, desktop policies, and white-labeling), free for development and testing, and
+        SCIM, analytics, desktop policies, and white-labeling), free for development and testing, and
         free to evaluate for 30 days at any size with all features — see the{" "}
         <a
           href="https://github.com/different-ai/openwork/blob/dev/ee/LICENSE"

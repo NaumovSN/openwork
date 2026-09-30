@@ -182,9 +182,9 @@ The same provider is available in the world CLI (export `FREESTYLE_API_KEY` in
 the invoking shell, or use Node's `--env-file` option):
 
 ```sh
-pnpm world up app-web --place freestyle --detach --timeout 800000 -- --ref <full-pushed-sha>
-pnpm world outputs app-web --reveal
-pnpm world down app-web
+pnpm world up preview-app-web --place freestyle --detach --timeout 800000 -- --ref <full-pushed-sha>
+pnpm world outputs preview-app-web --reveal
+pnpm world down preview-app-web
 ```
 
 World teardown deletes its owned VM, with a resource ledger for interrupted

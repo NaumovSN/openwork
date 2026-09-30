@@ -20,6 +20,7 @@ import {
   getAutomationsRoute,
   getBackgroundAgentsRoute,
   getApiKeysRoute,
+  getAuditLogsRoute,
   getBrandAppearanceRoute,
   getBillingRoute,
   getCustomLlmProvidersRoute,
@@ -225,6 +226,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
 
   if (pathname === dashboardRoot) {
     return "Home";
+  }
+  if (pathname.startsWith(getAuditLogsRoute(orgSlug))) {
+    return "Audit logs";
   }
   if (pathname.startsWith(getAnalyticsRoute(orgSlug))) {
     return "Analytics";
@@ -437,6 +441,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     orgSlug: activeOrg?.slug ?? null,
     access,
     capabilities: orgContext?.capabilities ?? {
+      auditLogs: false,
       cloud: false,
       installLinks: false,
       mcpConnections: false,

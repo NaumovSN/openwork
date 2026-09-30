@@ -4,6 +4,7 @@ import { allocateFreePort } from "@openwork/cdp";
 import type { Place, Seed } from "@openwork/env";
 import { readAvailableModels, selectModel, signInDesktopAs, waitUntilInteractive } from "@openwork/behaviors";
 import { engineParity } from "./engine-parity.ts";
+import { readDefaultDesktopPolicy } from "./desktop-policies.ts";
 
 export function parityRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Expected a response object");
@@ -15,7 +16,7 @@ function string(value: unknown): string {
 }
 
 /** Real Den + Gateway + MySQL. Only the upstream model response is synthetic. */
-export async function engineGatewayParity(seed: Seed, context: { place: Place }) {
+export async function engineGatewayParity(seed: Seed, context: { place: Place }, options: { onlyProvidedModels?: boolean } = {}) {
   await using setup = new AsyncDisposableStack();
   const port = await allocateFreePort();
   const gatewayUrl = `http://127.0.0.1:${port}`;
@@ -26,6 +27,15 @@ export async function engineGatewayParity(seed: Seed, context: { place: Place })
     GATEWAY_ENABLED: "true", GATEWAY_PROXY_BASE_URL: gatewayUrl, GATEWAY_PUBLIC_BASE_URL: gatewayUrl,
     GATEWAY_EGRESS_ALLOWED_ORIGINS: new URL(mock.url).origin,
   }, org: { name: "Engine parity", members: { member: { name: "Parity Member" } } } });
+  if (options.onlyProvidedModels) {
+    // Model access "Only models you provide", saved as the AI Gateway dialog does, before the member signs in.
+    const stored = await readDefaultDesktopPolicy(seed, den.admin);
+    const policy = { ...(parityRecord(stored.policy ?? {})), allowCustomProviders: false };
+    const updated = await seed.api(den.admin, `/v1/desktop-policies/${String(stored.id)}`, {
+      method: "PATCH", body: JSON.stringify({ policyName: stored.policyName, policy }),
+    });
+    if (!updated.response.ok) throw new Error(`Saving model access failed: ${updated.response.status}`);
+  }
   const base = setup.use(await engineParity(seed, context, { mock, env: {
     OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "1", OPENWORK_DEV_DEN_PROXY_TARGET: den.ref.webUrl,
     OPENWORK_DEV_HEADLESS_DEN_API_TARGET: den.ref.apiUrl,
@@ -86,6 +96,10 @@ export async function engineGatewayParity(seed: Seed, context: { place: Place })
   return {
     ...base, den, models,
     readModels: () => readAvailableModels(base.app),
+    async engineConfig() {
+      const result = await base.request(`/workspace/${workspaceId}/opencode/config`);
+      return parityRecord(result.body);
+    },
     nativeEvents: () => observer?.events ?? [],
     async nativeModelIds() {
       if (base.engine !== "v2") return [];
@@ -146,4 +160,9 @@ export async function engineGatewayParity(seed: Seed, context: { place: Place })
     },
     async [Symbol.asyncDispose]() { await resources.disposeAsync(); },
   };
+}
+
+/** The same real Gateway world, for an organization whose model access is "Only models you provide". */
+export function engineGatewayModelAccess(seed: Seed, context: { place: Place }) {
+  return engineGatewayParity(seed, context, { onlyProvidedModels: true });
 }

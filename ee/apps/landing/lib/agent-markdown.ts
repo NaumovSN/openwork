@@ -20,7 +20,7 @@ const home = `# OpenWork
 - **Open in your browser** — [OpenWork Web](https://app.openworklabs.com)
 - **Team plans** — [Pricing](https://openworklabs.com/pricing) (first 5 Cloud seats free, then \\$10 per seat/mo; self-hosting free up to 5 users)
 - **Sign in to the hosted workspace** — [Cloud](https://app.openworklabs.com)
-- **SSO / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
+- **SCIM / audit / procurement** — [Enterprise](https://openworklabs.com/enterprise)
 - **Docs** — [openworklabs.com/docs](https://openworklabs.com/docs)
 - **Compare with Claude Cowork** — [Claude Cowork alternative](https://openworklabs.com/alternatives/claude-cowork)
 - **Migrate from Claude Cowork** — [Migration guide](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork)
@@ -37,7 +37,7 @@ const home = `# OpenWork
 A free, open-source desktop app (macOS, Windows, Linux) for doing work with AI agents on your own files. Built on OpenCode; an open-source alternative to Claude Cowork and Codex.
 
 ### Is OpenWork free?
-Yes — the desktop app is free and open source with bring-your-own keys. On OpenWork Cloud, Team Starter includes your first 5 seats free, then \\$10 per seat/mo; self-hosting is free for organizations up to 5 users; Enterprise is custom.
+Yes — the desktop app is free and open source with bring-your-own keys. On OpenWork Cloud, Team includes your first 5 seats free, then \\$10 per seat/mo; self-hosting is free for organizations up to 5 users; Enterprise is custom.
 
 ### Which models does it support?
 Any model OpenCode supports: OpenAI, Anthropic, Google, local models — 50+ providers.
@@ -59,34 +59,35 @@ Backed by Y Combinator.
 
 const pricing = `# OpenWork pricing — free, team, and enterprise
 
-> OpenWork has three tiers: free open-source desktop, Team Starter with the first 5 OpenWork Cloud seats free then \\$10 per seat/mo, and custom Enterprise. Self-hosting is free for organizations up to 5 users.
+> OpenWork has three tiers: free open-source desktop, Team with the first 5 OpenWork Cloud seats free then \\$10 per seat/mo, and custom Enterprise. Self-hosting is free for organizations up to 5 users.
 
-## Solo — Free
+## Free
 
 - Open-source desktop app
-- macOS and Linux downloads
+- macOS, Windows, and Linux downloads
 - Bring your own provider keys
 - Free forever
 - CTA: [Get Started for free](https://app.openworklabs.com?mode=sign-up)
 
-## Team Starter — \\$10 / seat / month
+## Team — \\$10 / seat / month
 
 - First 5 seats free on OpenWork Cloud
 - API access
+- SSO / SAML
 - Extension Marketplace
 - Bring your own LLM keys, distributed to your team
 - CTA: [Start team plan](https://app.openworklabs.com/dashboard/billing)
 
 ## Enterprise — Custom pricing
 
-- Everything in Team Starter
-- SSO / SAML and SCIM provisioning
+- Everything in Team, including SSO
+- SCIM provisioning
 - Bring your own inference — self-hosted or private models
 - Desktop policies and version controls — admins decide which providers, models, extensions, and app versions employees can use; the desktop app enforces it automatically
 - Managed deployment — self-hosted in your environment or hosted by OpenWork
 - Custom skill development and MCP consulting
 - Enterprise rollout support and custom commercial terms
-- Existing organizations already using SSO or desktop policies keep full access (grandfathered)
+- Existing organizations already using SCIM or desktop policies keep full access (grandfathered)
 - CTA: [Talk to us](https://openworklabs.com/enterprise#book)
 
 Prices exclude taxes.

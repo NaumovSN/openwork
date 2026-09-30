@@ -6,11 +6,16 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent, type PointerEve
 import {
   anthropicPricingCheckedAt,
   cumulativeCosts,
+  defaultMixShare,
+  describeEnterpriseVolumeTiers,
+  mixShares,
+  perPersonMonthly,
   planPrices,
   pricingSources,
   usageProfileIds,
   usageProfiles,
   type CostSeries,
+  type MixShare,
   type Tier,
   type UsageProfileId
 } from "../lib/cowork-cost";
@@ -21,8 +26,6 @@ import { LpSectionHeader } from "./lp-primitives";
 type Props = {
   defaultUsers?: number;
   defaultTier?: Tier;
-  /** "plan" compares the Claude plan for the tier; "3p" compares Claude Desktop on Bedrock, Vertex, or Foundry. */
-  claudeSide?: "plan" | "3p";
   heading?: string;
 };
 
@@ -194,7 +197,7 @@ type ChartLine = {
   stroke: string;
   width: number;
   pattern: LinePattern;
-  /** Stroke opacity; the light Claude-on-3P line stays at or above 3:1 against the panel. */
+  /** Stroke opacity; lighter lines stay at or above 3:1 against the panel. */
   opacity: number;
 };
 
@@ -496,7 +499,18 @@ function LineSwatch({ line }: { line: ChartLine }) {
   );
 }
 
-type ResultCard = { key: string; title: string; headline: string; detail: string; line: ChartLine | undefined };
+type ResultCard = {
+  key: string;
+  title: string;
+  headline: string;
+  perPerson: string;
+  detail: string;
+  line: ChartLine | undefined;
+};
+
+function percent(share: number): string {
+  return `${Math.round(share * 100)}%`;
+}
 
 /** Plain verdict for Claude total minus OpenWork total. Says so when Claude is cheaper. */
 function verdict(delta: number): string {
@@ -512,7 +526,6 @@ function shortClaudeModel(label: string): string {
 export function CoworkCostCalculator({
   defaultUsers = 50,
   defaultTier = "team",
-  claudeSide = "plan",
   heading = "What will your team spend?"
 }: Props) {
   const id = useId();
@@ -520,7 +533,7 @@ export function CoworkCostCalculator({
   const [profile, setProfile] = useState<UsageProfileId>("typical");
   const [tier, setTier] = useState<Tier>(defaultTier);
   const [modelId, setModelId] = useState("claude-sonnet-5");
-  const [openOn, setOpenOn] = useState(true);
+  const [mixShare, setMixShare] = useState<MixShare>(defaultMixShare);
   const [openModelId, setOpenModelId] = useState("deepseek-v4-pro");
   const [years, setYears] = useState<Years>(3);
 
@@ -534,44 +547,34 @@ export function CoworkCostCalculator({
     usage: usageProfiles[profile].usage,
     tier,
     model,
-    openModel: openOn ? openModel : null,
+    mix: { openModel, openShare: mixShare },
     months: years * 12
   });
 
-  const claudeLine = claudeSide === "3p" ? result.claude3p : result.claude;
+  const claudeLine = result.claude;
   const period = periodLabel(years);
   // "Claude Team, Premium seats" -> vendor "Claude Team", seat "Premium seats".
   const [claudePlanVendor = claudeLine.name, claudeSeat] = result.claude.name.split(", ");
-  const claudeVendor = claudeSide === "3p" ? "Claude on 3P" : claudePlanVendor;
+  const claudeVendor = claudePlanVendor;
   const claudeModelShort = shortClaudeModel(model.label);
   const claudePlanLabel = `${claudePlanVendor} · ${claudeModelShort}${claudeSeat ? ` (${claudeSeat})` : ""}`;
-  const claude3pLabel = `Claude on 3P · ${claudeModelShort}`;
-  const claudeLabel = claudeSide === "3p" ? claude3pLabel : claudePlanLabel;
+  const claudeLabel = claudePlanLabel;
   const openworkLabel = `OpenWork · ${model.label}`;
-  const openModelLabel = result.openModel ? `OpenWork · ${result.openModel.modelLabel}` : "";
+  const openPercent = Math.round(mixShare * 100);
+  const claudePercent = 100 - openPercent;
+  // "DeepSeek V4 Pro" -> "DeepSeek"; the end label stays short enough for the chart gutter.
+  const openModelShort = openModel.label.split(" ")[0] ?? openModel.label;
+  const mixLineLabel = `OpenWork · ${openPercent}/${claudePercent} ${openModelShort} + ${claudeModelShort.split(" ")[0] ?? claudeModelShort}`;
 
   const lines: ChartLine[] = [
     { key: "claude", label: claudeLabel, series: claudeLine, stroke: claudeGray, width: 2.25, pattern: "solid", opacity: 1 },
-    ...(claudeSide === "plan"
-      ? [
-          {
-            key: "3p",
-            label: claude3pLabel,
-            series: result.claude3p,
-            stroke: claudeGray,
-            width: 1.75,
-            pattern: "dotted" as const,
-            opacity: 0.75
-          }
-        ]
-      : []),
     { key: "openwork", label: openworkLabel, series: result.openwork, stroke: accent, width: 2.75, pattern: "solid", opacity: 1 },
-    ...(result.openModel
+    ...(result.mix
       ? [
           {
-            key: "open",
-            label: openModelLabel,
-            series: result.openModel,
+            key: "mix",
+            label: mixLineLabel,
+            series: result.mix,
             stroke: accent,
             width: 2.25,
             pattern: "dashed" as const,
@@ -582,7 +585,7 @@ export function CoworkCostCalculator({
   ];
 
   const notices = [
-    ...(result.claudeTeamUnavailable && claudeSide === "plan"
+    ...(result.claudeTeamUnavailable
       ? [`Claude Team stops at ${planPrices.claudeTeamMaxSeats} seats, so this compares Claude Enterprise.`]
       : []),
     ...(tier === "enterprise" && users > planPrices.openworkEnterpriseVolumeAbove
@@ -591,22 +594,27 @@ export function CoworkCostCalculator({
   ];
 
   const delta = claudeLine.total - result.openwork.total;
+  const claudePerPerson = dollars.format(perPersonMonthly(claudeLine, users));
+  const perPersonText = (series: CostSeries) =>
+    `${claudePerPerson} vs ${dollars.format(perPersonMonthly(series, users))} per person / month`;
   const results: ResultCard[] = [
     {
       key: "same",
       title: `Same model on both (${model.label})`,
       headline: verdict(delta),
+      perPerson: perPersonText(result.openwork),
       detail: `${claudeVendor} ${dollars.format(claudeLine.total)} vs OpenWork ${dollars.format(result.openwork.total)}`,
       line: lines.find((line) => line.key === "openwork")
     },
-    ...(result.openModel
+    ...(result.mix
       ? [
           {
-            key: "open",
-            title: `OpenWork with ${result.openModel.modelLabel}`,
-            headline: verdict(claudeLine.total - result.openModel.total),
-            detail: `${claudeVendor} ${dollars.format(claudeLine.total)} vs OpenWork ${dollars.format(result.openModel.total)}`,
-            line: lines.find((line) => line.key === "open")
+            key: "mix",
+            title: `OpenWork with a ${openPercent}/${claudePercent} mix (${openPercent}% ${openModel.label}, ${claudePercent}% ${claudeModelShort})`,
+            headline: verdict(claudeLine.total - result.mix.total),
+            perPerson: perPersonText(result.mix),
+            detail: `${claudeVendor} ${dollars.format(claudeLine.total)} vs OpenWork ${dollars.format(result.mix.total)}`,
+            line: lines.find((line) => line.key === "mix")
           }
         ]
       : [])
@@ -620,9 +628,7 @@ export function CoworkCostCalculator({
           : null
         : claudeLine.tokensIncluded
           ? "Claude Team includes usage up to plan limits. OpenWork pays for tokens at API rates."
-          : claudeLine.seatsMonthly === 0
-            ? "Claude on 3P has no seat fee. Tokens cost the same on both."
-            : null;
+          : null;
 
   const rows: { key: string; series: CostSeries; detail: string; strong: boolean }[] = [
     {
@@ -630,18 +636,11 @@ export function CoworkCostCalculator({
       series: claudeLine,
       detail: claudeLine.tokensIncluded
         ? "Usage included up to plan limits"
-        : claudeSide === "3p"
-          ? `${model.label}, tokens billed by your cloud provider`
-          : model.label,
+        : model.label,
       strong: true
     },
     { key: "openwork", series: result.openwork, detail: model.label, strong: true },
-    ...(result.openModel
-      ? [{ key: "open", series: result.openModel, detail: `${result.openModel.modelLabel}, open model`, strong: true }]
-      : []),
-    ...(claudeSide === "plan"
-      ? [{ key: "3p", series: result.claude3p, detail: `${model.label}, no sharing between teammates`, strong: false }]
-      : [])
+    ...(result.mix ? [{ key: "mix", series: result.mix, detail: result.mix.modelLabel, strong: true }] : [])
   ];
 
   return (
@@ -651,92 +650,104 @@ export function CoworkCostCalculator({
       </div>
 
       <div className="mt-9 rounded-[24px] bg-[var(--lp-tonal)] p-5 md:p-8">
-        <form
-          onSubmit={(event) => event.preventDefault()}
-          aria-label="Cost calculator inputs"
-          className="grid gap-6 md:grid-cols-2 lg:grid-cols-[1.2fr_1fr_0.8fr_1fr]"
-        >
-          <div>
-            <div className="flex items-center justify-between">
-              <label htmlFor={`${id}-users`} className="text-[13px] text-[var(--lp-muted)]">
-                Team size
-              </label>
+        <form onSubmit={(event) => event.preventDefault()} aria-label="Cost calculator inputs">
+          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-[1.2fr_1fr_1fr_1fr]">
+            <div>
+              <div className="flex items-center justify-between">
+                <label htmlFor={`${id}-users`} className="text-[13px] text-[var(--lp-muted)]">
+                  Team size
+                </label>
+                <input
+                  id={`${id}-users`}
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={100000}
+                  step={1}
+                  value={usersText}
+                  onChange={(event) => setUsersText(event.target.value)}
+                  className={`h-8 w-[84px] rounded-[8px] bg-[var(--lp-page)] px-2 text-right text-[14px] font-medium tabular-nums text-[var(--lp-ink)] shadow-[0_0_0_1px_var(--lp-border)] ${focusRing}`}
+                />
+              </div>
               <input
-                id={`${id}-users`}
-                type="number"
-                inputMode="numeric"
+                type="range"
                 min={1}
-                max={100000}
+                max={sliderMax}
                 step={1}
-                value={usersText}
+                value={Math.min(users, sliderMax)}
                 onChange={(event) => setUsersText(event.target.value)}
-                className={`h-8 w-[84px] rounded-[8px] bg-[var(--lp-page)] px-2 text-right text-[14px] font-medium tabular-nums text-[var(--lp-ink)] shadow-[0_0_0_1px_var(--lp-border)] ${focusRing}`}
+                aria-label="Team size, slider"
+                className="mt-2 h-11 w-full cursor-pointer accent-[var(--lp-ink)]"
               />
             </div>
-            <input
-              type="range"
-              min={1}
-              max={sliderMax}
-              step={1}
-              value={Math.min(users, sliderMax)}
-              onChange={(event) => setUsersText(event.target.value)}
-              aria-label="Team size, slider"
-              className="mt-2 h-11 w-full cursor-pointer accent-[var(--lp-ink)]"
+
+            <Segmented
+              name={`${id}-profile`}
+              legend="Usage per person"
+              options={usageProfileIds.map((key) => ({ value: key, label: profileLabels[key] }))}
+              value={profile}
+              onChange={setProfile}
+            />
+
+            <Segmented
+              name={`${id}-tier`}
+              legend="SCIM, audit log, desktop policies"
+              options={[
+                { value: "team", label: "Not needed" },
+                { value: "enterprise", label: "Needed" }
+              ]}
+              value={tier}
+              onChange={setTier}
             />
           </div>
 
-          <Segmented
-            name={`${id}-profile`}
-            legend="Usage per person"
-            options={usageProfileIds.map((key) => ({ value: key, label: profileLabels[key] }))}
-            value={profile}
-            onChange={setProfile}
-          />
+          <fieldset className="mt-6">
+            <legend className="text-[14px] font-medium text-[var(--lp-ink)]">Model mix on OpenWork</legend>
+            <div className="mt-3 grid gap-6 md:grid-cols-2 lg:grid-cols-[2.2fr_1fr_1fr]">
+              <div className="md:col-span-2 lg:col-span-1">
+                <Segmented
+                  name={`${id}-mix`}
+                  legend="Share of work on an open model"
+                  options={mixShares.map((share) => ({ value: share, label: percent(share) }))}
+                  value={mixShare}
+                  onChange={setMixShare}
+                />
+                {mixShare > 0 ? (
+                  <div className="mt-3" aria-hidden="true">
+                    <div className="flex h-1.5 gap-0.5">
+                      <div className="h-full rounded-full bg-[var(--lp-ink)]" style={{ width: `${openPercent}%` }} />
+                      <div className="h-full flex-1 rounded-full bg-[var(--lp-border)]" />
+                    </div>
+                    <div className="mt-1.5 flex justify-between gap-3 text-[12px] text-[var(--lp-body)]">
+                      <span>
+                        {openPercent}% {openModel.label}
+                      </span>
+                      <span className="text-right">
+                        {claudePercent}% {model.label}
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
 
-          <Segmented
-            name={`${id}-tier`}
-            legend="SSO and admin controls"
-            options={[
-              { value: "team", label: "No" },
-              { value: "enterprise", label: "Yes" }
-            ]}
-            value={tier}
-            onChange={setTier}
-          />
-
-          <ModelSelect
-            id={`${id}-model`}
-            label="Claude model (both sides)"
-            models={claudeModels}
-            value={model.id}
-            onChange={setModelId}
-          />
-
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 md:col-span-2 lg:col-span-4">
-            <label className="flex cursor-pointer items-center gap-2.5 text-[13px] font-medium text-[var(--lp-ink)]">
-              <input
-                type="checkbox"
-                checked={openOn}
-                onChange={(event) => setOpenOn(event.target.checked)}
-                className={`h-4 w-4 cursor-pointer rounded accent-[var(--lp-ink)] ${focusRing}`}
-              />
-              Compare an open model on OpenWork
-            </label>
-            <div className="w-[190px]">
               <ModelSelect
                 id={`${id}-open-model`}
-                label="Open model on OpenWork"
+                label="Open model"
                 models={openModels}
                 value={openModel.id}
-                onChange={(value) => {
-                  setOpenModelId(value);
-                  setOpenOn(true);
-                }}
-                compact
-                muted={!openOn}
+                onChange={setOpenModelId}
+                muted={mixShare === 0}
+              />
+
+              <ModelSelect
+                id={`${id}-model`}
+                label="Claude model (both sides)"
+                models={claudeModels}
+                value={model.id}
+                onChange={setModelId}
               />
             </div>
-          </div>
+          </fieldset>
         </form>
 
         <div className="mt-8 border-t border-[var(--lp-border)] pt-6">
@@ -772,9 +783,10 @@ export function CoworkCostCalculator({
                   {card.line ? <LineSwatch line={card.line} /> : null}
                   {card.title}
                 </h3>
-                <p className="mt-1.5 text-[30px] font-light leading-[1.1] tracking-[-0.03em] tabular-nums text-[var(--lp-ink)] sm:text-[36px]">
+                <p className="mt-1.5 text-[30px] font-light leading-[1.1] tracking-[-0.03em] tabular-nums text-[var(--lp-ink)] sm:text-[34px]">
                   {card.headline}
                 </p>
+                <p className="mt-2 text-[14px] font-medium tabular-nums text-[var(--lp-ink)]">{card.perPerson}</p>
                 <p className="mt-1.5 text-[13px] tabular-nums text-[var(--lp-body)]">{card.detail}</p>
                 {card.key === "same" && reasonLine ? (
                   <p className="mt-2 text-[13px] text-[var(--lp-body)]">{reasonLine}</p>
@@ -852,12 +864,16 @@ export function CoworkCostCalculator({
           </summary>
           <ul className="mt-3 space-y-1.5 text-[12.5px] leading-[19px] text-[var(--lp-body)]">
             <li>
-              Both sides use the same Claude model; the first result compares them. The second result compares the same Claude plan with OpenWork on the open model you pick. Tokens per person = input × (uncached × input price + cached × cache
+              Both sides use the same Claude model; the first result compares them. The model mix result assumes that share of
+              each person&apos;s tokens runs on the open model you pick and the rest on the Claude model. Per person figures are the monthly cost divided by team size, rounded to whole dollars.
+              Tokens per person = input × (uncached × input price + cached × cache
               price) + output × output price. Light, Typical, and Heavy assume 5M, 25M, or 100M input tokens a month, 70%
               cached.
             </li>
             <li>
-              Claude Team: ${planPrices.claudeTeamStandard.annual}/seat billed annually (${planPrices.claudeTeamStandard.monthly} monthly),{" "}
+              SSO is included on both Team plans (Claude Team lists single sign-on on claude.com/pricing and in its Team
+              plan article). Needing SCIM, an audit log, or desktop policies compares Claude Enterprise with OpenWork
+              Enterprise. Claude Team: ${planPrices.claudeTeamStandard.annual}/seat billed annually (${planPrices.claudeTeamStandard.monthly} monthly),{" "}
               {planPrices.claudeTeamMinSeats} to {planPrices.claudeTeamMaxSeats} seats, usage included up to plan limits.
               Typical and Heavy use reach Standard seat limits, so they are priced on Premium seats ($
               {planPrices.claudeTeamPremium.annual} annual, ${planPrices.claudeTeamPremium.monthly} monthly), which Anthropic
@@ -866,13 +882,12 @@ export function CoworkCostCalculator({
             </li>
             <li>
               Claude Enterprise: ${planPrices.claudeEnterpriseSeat}/seat billed annually, {planPrices.claudeEnterpriseMinSeats}{" "}
-              seats minimum, all usage at API rates. Claude Desktop on 3P: no seat fee, tokens through Bedrock, Vertex, Foundry, or
-              your own gateway.
+              seats minimum, all usage at API rates.
             </li>
             <li>
               OpenWork Team on OpenWork Cloud: first {planPrices.openworkFreeSeats} seats free, then $
-              {planPrices.openworkTeamSeat}/seat. OpenWork Enterprise: ${planPrices.openworkEnterpriseSeat}/person a month
-              for the first 250, $16 for seats 251–1,000, $13 above, billed annually. Tokens billed by your own provider or gateway.
+              {planPrices.openworkTeamSeat}/seat. OpenWork Enterprise: {describeEnterpriseVolumeTiers()}, billed annually.
+              Tokens billed by your own provider or gateway.
             </li>
             <li>
               Costs accrue monthly. List prices from models.dev ({modelPricesFetchedAt}); Anthropic plans checked{" "}

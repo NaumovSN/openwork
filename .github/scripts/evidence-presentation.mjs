@@ -49,6 +49,9 @@ export async function presentEvidence({ repo, runId, runAttempt, phase, receipt,
     if (deployment.creator?.login !== "github-actions[bot]" || previous?.kind !== "openwork-evidence-v1"
       || previous.pr !== stub.number || !validId(previous.runId) || !validId(previous.runAttempt)
       || !(previous.runId < source.id || (previous.runId === source.id && previous.runAttempt < source.run_attempt))) continue;
+    // GitHub caps a deployment at 100 statuses, so one that is already retired gets no new one.
+    const [latest] = await api(`${root}/deployments/${deployment.id}/statuses?per_page=1`);
+    if (latest?.state === "inactive") continue;
     if (!await current()) return { skipped: true };
     await api(`${root}/deployments/${deployment.id}/statuses`, "POST", { state: "inactive", auto_inactive: false,
       description: "Superseded; evidence is being prepared for a newer run" });

@@ -83,6 +83,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         }, (error) => {
           if (tab && getBrowserTab(tab.tabId) === tab && !tab.view.webContents.isDestroyed()
             && registry.ownerOf(tab.tabId) === owner && tab.documentGeneration === documentGeneration
+            && tab.loadError?.code !== "page_load_failed"
             && (error?.code === "policy_unavailable" || error?.code === "organization_policy_denied")) {
             tab.loadError = {
               code: error.code,
@@ -280,8 +281,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
 
   function browserTabToPanelTab(tabId, tab) {
     const webContents = tab.view.webContents;
-    const url = webContents.getURL();
-    const title = webContents.getTitle();
+    const failed = tab.loadError?.code === "page_load_failed" ? tab.loadError : null;
+    const url = failed?.url ?? webContents.getURL();
+    const title = failed ? "" : webContents.getTitle();
     const isLoading = webContents.isLoading();
 
     return {
@@ -619,7 +621,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         signal?.removeEventListener("abort", canceled);
         if (approvals.get(tabId)?.id !== id) return;
         approvals.delete(tabId); tab.browserApproval = null;
-        if (!tab.view.webContents.isDestroyed()) tab.view.setVisible(true);
+        if (!tab.view.webContents.isDestroyed()) tab.view.setVisible(tab.loadError?.code !== "page_load_failed");
         sendBrowserState(); resolve(allowed && !signal?.aborted && getBrowserTab(tabId) === tab && registry.ownerOf(tabId) === owner && browserTabVisible(tabId));
       };
       const canceled = () => finish(false);
@@ -855,6 +857,30 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       // retain its warning; old resource failures cannot affect the new document.
       tab.documentGeneration += 1;
       tab.loadError = null;
+      if (registry.onScreenTabId() === tabId) attachActiveBrowserView();
+      sendBrowserState();
+    });
+    view.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      // Aborts (including downloads and superseded navigations) and iframe
+      // failures do not replace the page with a connection error.
+      if (!isMainFrame || errorCode === -3) return;
+      // The request policy already supplies the actionable reason for a
+      // blocked load. Keep that reason instead of calling it a network error.
+      if (errorDescription === "ERR_BLOCKED_BY_CLIENT" && tab.loadError && tab.loadError.code !== "page_load_failed") return;
+      tab.loadError = {
+        code: "page_load_failed",
+        message: errorCode === -102
+          ? "This site refused the connection. Check that it is running, then reload."
+          : errorCode === -106
+            ? "You are offline. Check your connection, then reload."
+            : "This page could not be loaded. Check the address and your connection, then reload.",
+        url: validatedURL,
+        errorCode,
+        errorDescription,
+      };
+      // Native views sit above the app renderer. Hide the failed document so
+      // the renderer's recovery controls can receive clicks and keyboard input.
+      tab.view.setVisible(false);
       sendBrowserState();
     });
     view.webContents.on("did-navigate-in-page", () => sendBrowserState());
@@ -1092,7 +1118,7 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     const tab = getBrowserTab();
     if (!tab) { detachIdleBrowserViews(); return; }
     exitBackgroundMode(tab);
-    tab.view.setVisible(!approvals.has(tab.tabId));
+    tab.view.setVisible(!approvals.has(tab.tabId) && tab.loadError?.code !== "page_load_failed");
     detachIdleBrowserViews(tab.view);
     // Size before attaching so a restored view never flashes at stale bounds.
     tab.view.setBounds(lastBrowserBounds);
@@ -1505,7 +1531,13 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
     });
     ipcMain.handle("openwork:browser:reload", (event) => {
       authorizeManualNavigation(event);
-      getActiveWebContents()?.reload();
+      const webContents = getActiveWebContents();
+      const failure = getBrowserTab()?.loadError;
+      if (failure?.code === "page_load_failed") {
+        runDetachedTask("retry browser page", () => webContents?.loadURL(failure.url));
+      } else {
+        webContents?.reload();
+      }
     });
     ipcMain.handle("openwork:browser:bounds", (_event, bounds) => {
       if (!acceptBrowserBounds(bounds)) return false;

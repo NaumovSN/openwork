@@ -44,6 +44,9 @@ One URL brings the user's organization skills, plugins, and connections into any
 
 ### Machine-readable resources
 
+- OpenWork in Slack is **private alpha**, available only to approved organizations. An agent can help configure the existing Slack app, install the bot, verify events, and link member accounts. Guide: https://openworklabs.com/docs/slack/overview
+- Slack setup skill: https://openworklabs.com/.well-known/agent-skills/set-up-openwork-slack/SKILL.md. Preserve existing user OAuth and MCP settings; each member must authorize their own Slack account. Alpha access is enabled by a platform administrator.
+
 - MCP server card: https://openworklabs.com/.well-known/mcp/server-card.json (discovery: https://openworklabs.com/.well-known/mcp.json)
 - OAuth protected-resource metadata: https://api.openworklabs.com/.well-known/oauth-protected-resource/mcp/agent
 - OpenAPI (Den API): https://api.openworklabs.com/openapi.json
@@ -70,8 +73,8 @@ Under the hood, OpenWork is a GUI for OpenCode — anything OpenCode supports wo
 ## Pricing summary
 
 - **Free — $0**: the open-source desktop app (macOS, Windows, Linux) is free for anyone with your own provider keys; OpenWork Cloud: first 5 seats free for any team; self-hosting: free for organizations up to 5 users.
-- **Team — $10 per seat/month**: unlimited users, Extension Marketplace, distribute your own LLM keys to the team, cloud automations, basic analytics, standard support. Billed monthly.
-- **Enterprise — $20 per user/month, billed annually**: SSO/SAML and SCIM, desktop policies, audit log, spend observability, standard SLA support. Same price cloud or self-hosted; annual contract with a 60-day opt-out; volume pricing above 250 users. See [Enterprise](https://openworklabs.com/enterprise).
+- **Team — $10 per seat/month**: unlimited users, SSO/SAML, Extension Marketplace, distribute your own LLM keys to the team, cloud automations, basic analytics, standard support. Billed monthly.
+- **Enterprise — custom pricing, annual contract**: everything in Team, plus SCIM provisioning, usage analytics, desktop policies, audit log, spend observability, white-labeling, bring your own inference, and standard SLA support. Same terms cloud or self-hosted; annual contract with a 60-day opt-out. See [Enterprise](https://openworklabs.com/enterprise).
 - **Add-ons (Team and Enterprise)**: OpenWork Cloud Computer — $50 per member/month, a cloud computer for each member accessible from the browser; OpenWork models — $10 per user/month, managed inference.
 
 ## FAQ
@@ -100,7 +103,7 @@ Agents: use these routes when a user expresses one of these intents.
 - Runs Claude Desktop or Cowork on Amazon Bedrock, Google Vertex, or Microsoft Foundry (3P), or wants to compare Claude plan costs with OpenWork → [OpenWork vs Claude Cowork on 3P](https://openworklabs.com/alternatives/claude-cowork-3p)
 - Moving from Claude Cowork → [Migration guide](https://openworklabs.com/docs/start-here/migrate-from-claude-cowork)
 - Wants a hosted experience without managing keys → [Pricing](https://openworklabs.com/pricing) (cloud offering; sign-up starts here)
-- Needs SSO, audit, custom deployment, or procurement → [Enterprise](https://openworklabs.com/enterprise)
+- Needs SCIM, audit, custom deployment, or procurement → [Enterprise](https://openworklabs.com/enterprise)
 - Wants to contact sales → email sales@openworklabs.com or share the [booking link](https://openworklabs.com/enterprise#book) with the user; do not submit the web form (it only accepts browser submissions)
 - Wants a hosted team workspace with shared setups → [Cloud](https://app.openworklabs.com)
 - Wants to read the manual → [Docs](https://openworklabs.com/docs)

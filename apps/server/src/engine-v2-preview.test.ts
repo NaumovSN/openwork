@@ -239,7 +239,7 @@ type FakeSidecarReply = { status: number; json: unknown };
 /** A running engine v2 preview over a scripted sidecar; nothing is spawned. */
 async function withFakeSidecar(
   input: {
-    reply: (path: string, method: string) => FakeSidecarReply | Promise<FakeSidecarReply>;
+    reply: (path: string, method: string, body?: unknown) => FakeSidecarReply | Promise<FakeSidecarReply>;
     providers?: Record<string, unknown>;
     disabledProviders?: string[];
     onSetProviders?: (specs: managedV2.OpencodeV2ProviderSpec[], disabled: string[] | undefined) => void;
@@ -256,10 +256,10 @@ async function withFakeSidecar(
     injectProvider: async () => {},
     setProviders: async (specs: managedV2.OpencodeV2ProviderSpec[], disabled?: string[]) => { input.onSetProviders?.(specs, disabled); },
     setSkills: async () => {}, close: async () => {},
-    async fetchJson(path: string, init: { method?: string } = {}) {
+    async fetchJson(path: string, init: { method?: string; body?: unknown } = {}) {
       const method = init.method ?? "GET";
       calls.push(`${method} ${path}`);
-      return await input.reply(path, method);
+      return await input.reply(path, method, init.body);
     },
   } satisfies managedV2.ManagedOpencodeV2Server;
   const spies = [
@@ -269,7 +269,7 @@ async function withFakeSidecar(
       provider: input.providers ?? {},
       ...(input.disabledProviders ? { disabled_providers: input.disabledProviders } : {}),
     }),
-    spyOn(runtimeConfig, "readEffectiveRuntimeOpencodeConfig").mockResolvedValue({ mcp: input.mcp ?? {} }),
+    spyOn(runtimeConfig, "readEffectiveRuntimeOpencodeConfig").mockImplementation(async () => ({ mcp: structuredClone(input.mcp ?? {}) })),
   ];
   const previousBin = process.env.OPENWORK_OPENCODE2_BIN;
   process.env.OPENWORK_OPENCODE2_BIN = "opencode2-fixture";
@@ -342,87 +342,206 @@ test("a folder whose catalog never lists the mirrored providers is served after 
   });
 });
 
-test("a connection the engine rejects is skipped and backed off; a slow one only delays", async () => {
-  await withFakeSidecar({
-    waits: { mcpSettleMs: 150 },
-    mcp: { good: { type: "remote", url: "https://good.example/mcp" }, broken: { type: "remote", url: "https://broken.example/mcp" } },
-    reply: (path) => {
-      if (path === "/api/mcp/broken") return { status: 400, json: { message: "unsupported" } };
-      if (path.startsWith("/api/mcp/")) return { status: 204, json: null };
-      // "good" never leaves pending: the settle wait ends at its bound.
-      if (path === "/api/mcp") return { status: 200, json: { data: [{ name: "good", status: { status: "pending" } }] } };
+/**
+ * A scripted engine MCP registry with the pinned engine's semantics: a PUT
+ * connects before it answers and is ignored when identical to the current
+ * config; /connect closes and reopens the client; DELETE forgets it.
+ */
+function fakeMcpEngine(input: { connectMs?: number; up?: (name: string) => boolean } = {}) {
+  const servers = new Map<string, { config: string; status: string }>();
+  const log: string[] = [];
+  const connect = async (name: string) => {
+    const server = servers.get(name);
+    if (!server) return;
+    server.status = "pending";
+    await new Promise((resolve) => setTimeout(resolve, input.connectMs ?? 0));
+    server.status = (input.up?.(name) ?? true) ? "connected" : "failed";
+  };
+  return {
+    servers, log,
+    async reply(path: string, method: string, body?: unknown): Promise<FakeSidecarReply> {
+      const name = decodeURIComponent(path.split("/")[3] ?? "");
+      if (path === "/api/mcp" && method === "GET") {
+        return { status: 200, json: { data: [...servers].map(([name, server]) => ({ name, status: { status: server.status } })) } };
+      }
+      if (path.endsWith("/connect") && method === "POST") { log.push(`connect ${name}`); await connect(name); return { status: 204, json: null }; }
+      if (method === "PUT") {
+        const config = JSON.stringify(body);
+        if (servers.get(name)?.config === config) return { status: 204, json: null };
+        log.push(`put ${name}`);
+        servers.set(name, { config, status: "pending" });
+        await connect(name);
+        return { status: 204, json: null };
+      }
+      if (method === "DELETE") { log.push(`delete ${name}`); servers.delete(name); return { status: 204, json: null }; }
       return { status: 200, json: { data: [] } };
     },
+  };
+}
+
+test("a connection the engine rejects is skipped and backed off without blocking the others", async () => {
+  const engine = fakeMcpEngine();
+  await withFakeSidecar({
+    mcp: { good: { type: "remote", url: "https://good.example/mcp" }, broken: { type: "remote", url: "https://broken.example/mcp" } },
+    reply: (path, method, body) => path === "/api/mcp/broken" ? { status: 400, json: { message: "unsupported" } } : engine.reply(path, method, body),
   }, async (preview, root, calls) => {
     await preview.syncWorkspaceMcp("ws_1", root);
     await preview.syncWorkspaceMcp("ws_1", root);
     expect(calls.filter((call) => call === "PUT /api/mcp/broken")).toHaveLength(1);
-    expect(calls.filter((call) => call === "PUT /api/mcp/good")).toHaveLength(1);
-    expect(preview.status().lastWarning).toMatch(/still starting|registration failed/);
+    expect(engine.log).toEqual(["put good"]);
+    expect(preview.status().lastWarning).toContain("broken: registration failed (400)");
     expect(preview.status().lastError).toBeUndefined();
   });
 });
 
-test("a connection that failed to start is registered again once its app is up", async () => {
-  // Accepted with 204, then the local app was closed: the engine reports failed
-  // and never retries on its own. Once the app is up, the next sync after the
-  // back-off registers it again, and a healthy connection is then left alone.
-  let appUp = false;
-  let liveStatus = "pending";
+test("a refresh never re-registers or restarts a healthy connection", async () => {
+  const engine = fakeMcpEngine();
   await withFakeSidecar({
-    waits: { mcpSettleMs: 150, mcpRetryMs: 1_000 },
+    mcp: { "openwork-direct-a": { type: "remote", url: "https://a.example/mcp" }, "openwork-direct-b": { type: "remote", url: "https://b.example/mcp" } },
+    reply: engine.reply,
+  }, async (preview, root) => {
+    await preview.syncWorkspaceMcp("ws_1", root);
+    expect(engine.log.sort()).toEqual(["put openwork-direct-a", "put openwork-direct-b"]);
+    // The desktop refresh names the connections explicitly; healthy ones stay up.
+    for (let refresh = 0; refresh < 3; refresh++) {
+      await preview.syncWorkspaceMcp("ws_1", root, { reconnect: ["openwork-direct-a", "openwork-direct-b"] });
+    }
+    expect(engine.log).toHaveLength(2);
+  });
+});
+
+test("connections are restarted side by side, not one after another", async () => {
+  // The pinned engine serializes PUTs itself, but restarts only lock their own name.
+  const timing = { connectMs: 0, up: false };
+  const engine = fakeMcpEngine({ get connectMs() { return timing.connectMs; }, up: () => timing.up });
+  const mcp = Object.fromEntries(["a", "b", "c", "d"].map((name) => [name, { type: "remote", url: `https://${name}.example/mcp` }]));
+  await withFakeSidecar({ mcp, reply: engine.reply, waits: { mcpRetryMs: 0 } }, async (preview, root) => {
+    await preview.syncWorkspaceMcp("ws_1", root);
+    Object.assign(timing, { connectMs: 300, up: true });
+    const started = Date.now();
+    await preview.syncWorkspaceMcp("ws_1", root);
+    expect(Date.now() - started).toBeLessThan(900);
+    expect([...engine.servers.values()].map((server) => server.status)).toEqual(["connected", "connected", "connected", "connected"]);
+    expect(engine.log.filter((entry) => entry.startsWith("connect"))).toHaveLength(4);
+  });
+});
+
+test("a connection that failed to start is restarted with /connect after the back-off, then left alone", async () => {
+  // Accepted with 204, then the local app was closed: the engine reports failed
+  // and never retries on its own, and it ignores an identical PUT.
+  let appUp = false;
+  const engine = fakeMcpEngine({ up: () => appUp });
+  await withFakeSidecar({
+    waits: { mcpRetryMs: 300 },
     mcp: { "paper-local": { type: "remote", url: "http://127.0.0.1:29979/mcp" } },
-    reply: (path, method) => {
-      if (method === "PUT") { liveStatus = appUp ? "connected" : "failed"; return { status: 204, json: null }; }
-      if (path === "/api/mcp") return { status: 200, json: { data: [{ name: "paper-local", status: { status: liveStatus } }] } };
-      return { status: 200, json: { data: [] } };
-    },
-  }, async (preview, root, calls) => {
-    const puts = () => calls.filter((call) => call === "PUT /api/mcp/paper-local").length;
+    reply: engine.reply,
+  }, async (preview, root) => {
     await preview.syncWorkspaceMcp("ws_1", root);
-    expect(puts()).toBe(1);
-    expect(preview.status().lastWarning).toContain("paper-local: connection failed");
-    // Within the back-off a failed connection is not hammered on every prompt.
+    expect(engine.servers.get("paper-local")?.status).toBe("failed");
+    // The first sync that sees the failure restarts it once; within the back-off it is not hammered.
     await preview.syncWorkspaceMcp("ws_1", root);
-    expect(puts()).toBe(1);
+    await preview.syncWorkspaceMcp("ws_1", root);
+    expect(engine.log).toEqual(["put paper-local", "connect paper-local"]);
+    expect(preview.status().lastWarning).toContain("paper-local: connection failed; reconnecting");
     appUp = true;
-    await new Promise((resolve) => setTimeout(resolve, 1_050));
+    await new Promise((resolve) => setTimeout(resolve, 350));
     await preview.syncWorkspaceMcp("ws_1", root);
-    expect(puts()).toBe(2);
-    await new Promise((resolve) => setTimeout(resolve, 1_050));
+    expect(engine.servers.get("paper-local")?.status).toBe("connected");
+    await new Promise((resolve) => setTimeout(resolve, 350));
     await preview.syncWorkspaceMcp("ws_1", root);
-    expect(puts()).toBe(2);
-    expect(calls).not.toContain("DELETE /api/mcp/paper-local");
+    expect(engine.log).toEqual(["put paper-local", "connect paper-local", "connect paper-local"]);
+  });
+});
+
+test("an explicit reconnect skips the back-off for that connection only", async () => {
+  const engine = fakeMcpEngine({ up: () => false });
+  await withFakeSidecar({
+    mcp: { a: { type: "remote", url: "https://a.example/mcp" }, b: { type: "remote", url: "https://b.example/mcp" } },
+    reply: engine.reply,
+  }, async (preview, root) => {
+    await preview.syncWorkspaceMcp("ws_1", root);
+    await preview.syncWorkspaceMcp("ws_1", root);
+    engine.log.length = 0;
+    await preview.syncWorkspaceMcp("ws_1", root, { reconnect: ["a"] });
+    expect(engine.log).toEqual(["connect a"]);
+  });
+});
+
+test("the periodic health pass restarts a failed connection without any request", async () => {
+  let appUp = false;
+  const engine = fakeMcpEngine({ up: () => appUp });
+  await withFakeSidecar({
+    waits: { mcpRetryMs: 0, mcpHealthMs: 100 },
+    mcp: { "paper-local": { type: "remote", url: "http://127.0.0.1:29979/mcp" } },
+    reply: engine.reply,
+  }, async (preview, root) => {
+    preview.warmWorkspace("ws_1", root);
+    for (let attempt = 0; attempt < 50 && engine.servers.get("paper-local")?.status !== "failed"; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    appUp = true;
+    for (let attempt = 0; attempt < 50 && engine.servers.get("paper-local")?.status !== "connected"; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(engine.servers.get("paper-local")?.status).toBe("connected");
+    expect(engine.log).toContain("connect paper-local");
+  });
+});
+
+test("a removed connection is deleted and a changed one is registered again", async () => {
+  const engine = fakeMcpEngine();
+  const mcp: Record<string, Record<string, unknown>> = {
+    kept: { type: "remote", url: "https://kept.example/mcp" },
+    removed: { type: "remote", url: "https://removed.example/mcp" },
+    rotated: { type: "remote", url: "https://rotated.example/mcp", headers: { Authorization: "Bearer one" } },
+  };
+  await withFakeSidecar({ mcp, reply: engine.reply }, async (preview, root) => {
+    await preview.syncWorkspaceMcp("ws_1", root);
+    engine.log.length = 0;
+    delete mcp.removed;
+    mcp.rotated = { type: "remote", url: "https://rotated.example/mcp", headers: { Authorization: "Bearer two" } };
+    await preview.syncWorkspaceMcp("ws_1", root);
+    expect(engine.log.sort()).toEqual(["delete removed", "delete rotated", "put rotated"]);
+    expect(engine.servers.get("rotated")?.config).toContain("Bearer two");
+    expect([...engine.servers.keys()].sort()).toEqual(["kept", "rotated"]);
   });
 });
 
 test("a connection the engine no longer lists is registered again", async () => {
-  let listed = true;
+  const engine = fakeMcpEngine();
+  await withFakeSidecar({ mcp: { good: { type: "remote", url: "https://good.example/mcp" } }, reply: engine.reply }, async (preview, root) => {
+    await preview.syncWorkspaceMcp("ws_1", root);
+    engine.servers.clear();
+    await preview.syncWorkspaceMcp("ws_1", root);
+    expect(engine.log).toEqual(["put good", "put good"]);
+  });
+});
+
+test("triggers that arrive while a run is in flight share one follow-up run", async () => {
+  let releaseRegistration = () => {};
+  const registration = new Promise<void>((resolve) => { releaseRegistration = resolve; });
+  const engine = fakeMcpEngine();
   await withFakeSidecar({
     mcp: { good: { type: "remote", url: "https://good.example/mcp" } },
-    reply: (path, method) => {
-      if (method === "PUT") { listed = true; return { status: 204, json: null }; }
-      if (path === "/api/mcp") return { status: 200, json: { data: listed ? [{ name: "good", status: { status: "connected" } }] : [] } };
-      return { status: 200, json: { data: [] } };
-    },
+    reply: async (path, method, body) => { if (method === "PUT") await registration; return engine.reply(path, method, body); },
   }, async (preview, root, calls) => {
-    await preview.syncWorkspaceMcp("ws_1", root);
-    listed = false;
-    await preview.syncWorkspaceMcp("ws_1", root);
-    expect(calls.filter((call) => call === "PUT /api/mcp/good")).toHaveLength(2);
+    const first = preview.syncWorkspaceMcp("ws_1", root);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const burst = [1, 2, 3, 4].map(() => preview.syncWorkspaceMcp("ws_1", root));
+    releaseRegistration();
+    await Promise.all([first, ...burst]);
+    expect(calls.filter((call) => call === "GET /api/mcp")).toHaveLength(2);
+    expect(engine.log).toEqual(["put good"]);
   });
 });
 
 test("warming a folder starts its upkeep in the background without waiting", async () => {
   let releaseRegistration = () => {};
   const registration = new Promise<void>((resolve) => { releaseRegistration = resolve; });
+  const engine = fakeMcpEngine();
   await withFakeSidecar({
     mcp: { good: { type: "remote", url: "https://good.example/mcp" } },
-    reply: async (path, method) => {
-      if (method === "PUT") { await registration; return { status: 204, json: null }; }
-      if (path === "/api/mcp") return { status: 200, json: { data: [{ name: "good", status: { status: "connected" } }] } };
-      return { status: 200, json: { data: [] } };
-    },
+    reply: async (path, method, body) => { if (method === "PUT") await registration; return engine.reply(path, method, body); },
   }, async (preview, root, calls) => {
     preview.warmWorkspace("ws_1", root);
     await new Promise((resolve) => setTimeout(resolve, 20));

@@ -59,3 +59,8 @@ test("the v2 upkeep read proof runs the pinned v2 engine", () => {
     engine: "v2", args: ["evals/bin/evals.mjs", "specs/opencode-v2-reads-during-mcp-startup.e2e.test.ts", "--local", "--engine", "v2"],
   }]);
 });
+
+test("the send-during-refresh proof runs on v2, the engine whose MCP upkeep it covers", () => {
+  const plan = parityProofPlan("evals/specs/opencode-v2-send-during-connection-refresh.e2e.test.ts");
+  assert.deepEqual(plan.map(item => item.engine), ["v2"]);
+});

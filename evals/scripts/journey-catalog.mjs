@@ -28,6 +28,21 @@ const definitions = {
   },
   // Its registered OAuth callback and synthetic client exchange run on owned loopback services.
   'mcp-connection-consent.e2e.test.ts': { name: 'Authorize a connected client once', placement: 'local' },
+  'agent-background-journey.e2e.test.ts': {
+    cases: [{ id: 'AGENT-VIS-03', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
+  'agent-connection-journey.e2e.test.ts': {
+    cases: [{ id: 'AGENT-VIS-04', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
+  },
+  'agent-connection-sign-in-journey.e2e.test.ts': {
+    cases: [{ id: 'AGENT-VIS-06', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
+  'agent-visibility-journey.e2e.test.ts': {
+    cases: [
+      { id: 'AGENT-VIS-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },
+      { id: 'AGENT-VIS-02', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },
+    ],
+  },
   'task-activity-shimmer.e2e.test.ts': {
     cases: [{ id: 'ACT-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
   },

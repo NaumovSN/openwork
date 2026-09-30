@@ -73,12 +73,22 @@ export type AdminOrganizationsPageResponse = {
       installLinks: boolean;
       mcpConnections: boolean;
       modelsAnalytics: boolean;
+      auditLogs: boolean;
+      orgManagedDashboards: boolean;
+      appMcpServers: boolean;
+      slackAssistant: boolean;
+      slackAssistantHeadless: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
        * @deprecated
        */
       gatewayDashboard: true;
+    };
+    freeAuto: {
+      enabled: boolean;
+      globallyEnabled: boolean;
+      rolloutAllOrganizations: boolean;
     };
     [key: string]: unknown;
   }>;
@@ -145,12 +155,22 @@ export type AdminOverviewResponse = {
       installLinks: boolean;
       mcpConnections: boolean;
       modelsAnalytics: boolean;
+      auditLogs: boolean;
+      orgManagedDashboards: boolean;
+      appMcpServers: boolean;
+      slackAssistant: boolean;
+      slackAssistantHeadless: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
        * @deprecated
        */
       gatewayDashboard: true;
+    };
+    freeAuto: {
+      enabled: boolean;
+      globallyEnabled: boolean;
+      rolloutAllOrganizations: boolean;
     };
     [key: string]: unknown;
   }>;
@@ -684,6 +704,7 @@ export type OrganizationContextResponse = {
     [key: string]: unknown;
   }>;
   capabilities: {
+    auditLogs: boolean;
     /**
      * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
      *
@@ -695,6 +716,13 @@ export type OrganizationContextResponse = {
   deploymentCapabilities: {
     version: 1;
     aiGateway: boolean;
+  };
+  entitlements: {
+    sso: boolean;
+    desktopPolicies: boolean;
+    orgControls: boolean;
+    analytics: boolean;
+    auditLogs: boolean;
   };
   [key: string]: unknown;
 };
@@ -954,6 +982,25 @@ export type MeDashboardListResponse = {
   items: Array<MeDashboard>;
 };
 
+export type BuiltMcpApp = {
+  serverName: string;
+  connectionId: string;
+  toolName: string;
+  projectedToolName: string;
+  resourceUri: string;
+  title: string;
+  description: string | null;
+  pluginId: string;
+  pluginName: string;
+  requiresInput: boolean;
+  requiredInputKeys: Array<string>;
+  requiresApproval: boolean;
+};
+
+export type BuiltMcpAppListResponse = {
+  apps: Array<BuiltMcpApp>;
+};
+
 export type DesktopPolicyResponse = {
   desktopPolicy: {
     [key: string]: unknown;
@@ -1001,6 +1048,39 @@ export type DesktopPolicyListResponse = {
   desktopPolicies: Array<{
     [key: string]: unknown;
   }>;
+};
+
+export type InferenceAccessResponse = {
+  access: {
+    kind: "free" | "paid" | "exhausted" | "unavailable";
+    modelID: string | null;
+    weeklyLimitUsd: number | null;
+    usedUsd: number | null;
+    remainingUsd: number | null;
+    resetsAt: string | null;
+    reason:
+      | "admin_disabled"
+      | "not_eligible"
+      | "free_disabled"
+      | "accounting_unavailable"
+      | "free_allowance_exhausted"
+      | "upstream_unavailable"
+      | null;
+    /**
+     * Organization-managed Auto pin for this membership. False removes only the organization pin; model access and personal pins are unchanged. Pins never grant access.
+     */
+    defaultPinned?: boolean;
+    canUpgrade: false;
+    catalog?: Array<{
+      modelID: string;
+      displayName: string;
+      providerName: string;
+      summary: string;
+      recommended: boolean;
+      rank: number;
+      capabilities: Array<string>;
+    }>;
+  };
 };
 
 export type InferenceStatus = {
@@ -1250,7 +1330,15 @@ export type CreateInstallLinkResponse = {
 
 export type CapabilityDisabledError = {
   error: "capability_disabled";
-  capability: "installLinks" | "mcpConnections" | "modelsAnalytics";
+  capability:
+    | "installLinks"
+    | "mcpConnections"
+    | "modelsAnalytics"
+    | "auditLogs"
+    | "orgManagedDashboards"
+    | "appMcpServers"
+    | "slackAssistant"
+    | "slackAssistantHeadless";
 };
 
 export type CreateInstallLinkRequest = {
@@ -1423,6 +1511,10 @@ export type GatewayProviderDetails = {
    * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
    */
   modelIds: Array<string>;
+  /**
+   * Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access.
+   */
+  pinnedModelIds: Array<string>;
   catalogWarning?: string;
   /**
    * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
@@ -1584,6 +1676,10 @@ export type GatewayProviderSummary = {
    * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
    */
   modelIds: Array<string>;
+  /**
+   * Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access.
+   */
+  pinnedModelIds: Array<string>;
   catalogWarning?: string;
   /**
    * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
@@ -4948,6 +5044,72 @@ export type PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses = {
 export type PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponse =
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses[keyof PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses];
 
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoData = {
+  body: {
+    enabled: boolean | null;
+  };
+  path: {
+    organizationId: string;
+  };
+  query?: never;
+  url: "/v1/admin/organizations/{organizationId}/free-auto";
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors = {
+  /**
+   * Invalid rollout or organization identifier.
+   */
+  400: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * The caller must be authenticated.
+   */
+  401: UnauthorizedError;
+  /**
+   * The authenticated user is not an admin.
+   */
+  403: ForbiddenError;
+  /**
+   * Organization not found.
+   */
+  404: NotFoundError;
+  /**
+   * Organization metadata could not be read.
+   */
+  503: {
+    error: "managed_models_policy_unavailable";
+    message: string;
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoError =
+  PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors[keyof PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors];
+
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses = {
+  /**
+   * Free Auto rollout updated.
+   */
+  200: {
+    ok: true;
+    organization: {
+      /**
+       * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      freeAuto: {
+        enabled: boolean;
+        globallyEnabled: boolean;
+        rolloutAllOrganizations: boolean;
+      };
+    };
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponse =
+  PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses[keyof PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses];
+
 export type PatchV1AdminOrganizationsByOrganizationIdDpaData = {
   body: {
     dpaSigned: boolean;
@@ -5115,6 +5277,11 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       installLinks: boolean;
       mcpConnections: boolean;
       modelsAnalytics: boolean;
+      auditLogs: boolean;
+      orgManagedDashboards: boolean;
+      appMcpServers: boolean;
+      slackAssistant: boolean;
+      slackAssistantHeadless: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -5175,6 +5342,11 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       installLinks: boolean;
       mcpConnections: boolean;
       modelsAnalytics: boolean;
+      auditLogs: boolean;
+      orgManagedDashboards: boolean;
+      appMcpServers: boolean;
+      slackAssistant: boolean;
+      slackAssistantHeadless: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -7583,6 +7755,595 @@ export type PostV1ApiKeysResponses = {
 
 export type PostV1ApiKeysResponse = PostV1ApiKeysResponses[keyof PostV1ApiKeysResponses];
 
+export type UpdateAuditCaptureData = {
+  body: {
+    captureOn: boolean;
+    expectedRevision: number;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/audit/settings";
+};
+
+export type UpdateAuditCaptureErrors = {
+  /**
+   * Only captureOn and a nonnegative safe expectedRevision are accepted.
+   */
+  400: InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Enabling capture requires audit availability.
+   */
+  402: EnterprisePlanRequiredError;
+  /**
+   * Administrator permission, fresh authentication, audit feature and visibility required.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error: "audit_feature_disabled" | "audit_visibility_disabled";
+      };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Refresh a changed policy or wait for capture rollout.
+   */
+  409: {
+    error: "audit_policy_changed" | "audit_policy_not_configured" | "audit_capture_unavailable";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type UpdateAuditCaptureError = UpdateAuditCaptureErrors[keyof UpdateAuditCaptureErrors];
+
+export type UpdateAuditCaptureResponses = {
+  /**
+   * Latest audit policy, entitlement and retained usage.
+   */
+  200: {
+    entitlement: {
+      enabled: boolean;
+      source: "enterprise_plan" | "self_hosted" | "none";
+    };
+    captureOn: boolean;
+    captureAvailable: boolean;
+    policy: {
+      organizationId: string;
+      revision: number;
+      source: "cloud" | "operator";
+      enabled: boolean;
+      categories: Array<"change" | "security" | "execution" | "access" | "read" | "request" | "lifecycle">;
+      allowance: number;
+      excessMode: "delete_oldest" | "paid_overage" | "keep_all";
+      effectiveAt: string;
+      captureStartedAt: string | null;
+      attachmentWindowSeconds: number;
+    } | null;
+    captureEnabled: boolean;
+    retainedOperations: number;
+    eventCount: number;
+    logicalBytes: number;
+    oldestAvailableAt: string | null;
+    measuredAt: string | null;
+    billing: "disabled";
+    cleanup: "dry_run";
+    drains: "not_configured";
+  };
+};
+
+export type UpdateAuditCaptureResponse = UpdateAuditCaptureResponses[keyof UpdateAuditCaptureResponses];
+
+export type GetAuditEventTypesData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/audit/event-types";
+};
+
+export type GetAuditEventTypesErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission, audit feature and visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_feature_disabled" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditEventTypesError = GetAuditEventTypesErrors[keyof GetAuditEventTypesErrors];
+
+export type GetAuditEventTypesResponses = {
+  /**
+   * The full static supported action catalog, not observed tenant event counts.
+   */
+  200: {
+    eventTypes: Array<string>;
+  };
+};
+
+export type GetAuditEventTypesResponse = GetAuditEventTypesResponses[keyof GetAuditEventTypesResponses];
+
+export type GetAuditOperationsData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * Maximum rows in this page.
+     */
+    limit?: number;
+    /**
+     * Opaque nextCursor from the prior page of the same query and mode.
+     */
+    cursor?: string;
+    /**
+     * Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to.
+     */
+    from?: string | string;
+    /**
+     * Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to.
+     */
+    to?: string | string;
+    /**
+     * Initiating user ID, not a delegated event actor or membership ID.
+     */
+    actorId?: string;
+    /**
+     * Exact stable action of any child event within the snapshot watermark.
+     */
+    action?: string;
+    /**
+     * Current operation outcome; not an individual event outcome.
+     */
+    outcome?: "running" | "succeeded" | "failed" | "partial" | "unknown";
+    /**
+     * Stored operation origin.
+     */
+    origin?: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+    /**
+     * Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot watermark; OR across ID kinds, AND with other filters. Not free-text or legacy payload search.
+     */
+    searchId?: string;
+    /**
+     * Exact case-sensitive stored reference ID from any child within the watermark.
+     */
+    resourceId?: string;
+    /**
+     * Optional stored reference type; requires resourceId.
+     */
+    resourceType?: string;
+  };
+  url: "/v1/audit/operations";
+};
+
+export type GetAuditOperationsErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission, audit feature and visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_feature_disabled" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditOperationsError = GetAuditOperationsErrors[keyof GetAuditOperationsErrors];
+
+export type GetAuditOperationsResponses = {
+  /**
+   * One bounded summary per operation.
+   */
+  200: {
+    operations: Array<{
+      id: string;
+      kind: string;
+      scope: string;
+      action: string;
+      initiatingActor: {
+        type: "user" | "service" | "system" | "unknown";
+        id: string | null;
+        memberId?: string;
+        credentialId?: string;
+      };
+      origin: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+      originTrust: "authenticated" | "reported";
+      startedAt: string;
+      outcome: "running" | "succeeded" | "failed" | "partial" | "unknown";
+      eventCount: number;
+      logicalBytes: number;
+      resources: Array<{
+        type: string;
+        id: string;
+        relationship: "target" | "parent" | "related";
+        label?: string;
+      }>;
+    }>;
+    nextCursor: string | null;
+    snapshotSequence: number;
+  };
+};
+
+export type GetAuditOperationsResponse = GetAuditOperationsResponses[keyof GetAuditOperationsResponses];
+
+export type GetAuditOperationEventsData = {
+  body?: never;
+  path: {
+    operationId: string;
+  };
+  query?: {
+    /**
+     * Maximum rows in this page.
+     */
+    limit?: number;
+    /**
+     * Opaque nextCursor from the prior page of the same query and mode.
+     */
+    cursor?: string;
+  };
+  url: "/v1/audit/operations/{operationId}/events";
+};
+
+export type GetAuditOperationEventsErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission, audit feature and visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_feature_disabled" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditOperationEventsError = GetAuditOperationEventsErrors[keyof GetAuditOperationEventsErrors];
+
+export type GetAuditOperationEventsResponses = {
+  /**
+   * A bounded ascending page of event envelopes.
+   */
+  200: {
+    events: Array<{
+      schemaVersion: 1;
+      id: string;
+      organizationId: string;
+      operationId: string;
+      sequence: number;
+      operation: {
+        kind: string;
+        scope: string;
+        origin: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+        originTrust: "authenticated" | "reported";
+        initiatingActor: {
+          type: "user" | "service" | "system" | "unknown";
+          id: string | null;
+          memberId?: string;
+          credentialId?: string;
+        };
+        startedAt: string;
+      };
+      actor: {
+        type: "user" | "service" | "system" | "unknown";
+        id: string | null;
+        memberId?: string;
+        credentialId?: string;
+      };
+      action: string;
+      category: "change" | "security" | "execution" | "access" | "read" | "request" | "lifecycle";
+      outcome: "succeeded" | "failed" | "denied" | "unknown";
+      occurredAt: string;
+      recordedAt: string;
+      requestId: string | null;
+      jobRunId?: string;
+      causedByEventId?: string;
+      resources: Array<{
+        type: string;
+        id: string;
+        relationship: "target" | "parent" | "related";
+        label?: string;
+      }>;
+      changes?: {
+        before: {
+          [key: string]: unknown;
+        } | null;
+        after: {
+          [key: string]: unknown;
+        } | null;
+        changedFields: Array<string>;
+      };
+      reasonCode?: string;
+      logicalBytes: number;
+    }>;
+    nextCursor: string | null;
+    snapshotSequence: number;
+  };
+};
+
+export type GetAuditOperationEventsResponse = GetAuditOperationEventsResponses[keyof GetAuditOperationEventsResponses];
+
+export type GetAuditUsageData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/audit/usage";
+};
+
+export type GetAuditUsageErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission, audit feature and visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_feature_disabled" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditUsageError = GetAuditUsageErrors[keyof GetAuditUsageErrors];
+
+export type GetAuditUsageResponses = {
+  /**
+   * Current stored audit policy and usage, without a history scan.
+   */
+  200: {
+    entitlement: {
+      enabled: boolean;
+      source: "enterprise_plan" | "self_hosted" | "none";
+    };
+    captureOn: boolean;
+    captureAvailable: boolean;
+    policy: {
+      organizationId: string;
+      revision: number;
+      source: "cloud" | "operator";
+      enabled: boolean;
+      categories: Array<"change" | "security" | "execution" | "access" | "read" | "request" | "lifecycle">;
+      allowance: number;
+      excessMode: "delete_oldest" | "paid_overage" | "keep_all";
+      effectiveAt: string;
+      captureStartedAt: string | null;
+      attachmentWindowSeconds: number;
+    } | null;
+    captureEnabled: boolean;
+    retainedOperations: number;
+    eventCount: number;
+    logicalBytes: number;
+    oldestAvailableAt: string | null;
+    measuredAt: string | null;
+    billing: "disabled";
+    cleanup: "dry_run";
+    drains: "not_configured";
+  };
+};
+
+export type GetAuditUsageResponse = GetAuditUsageResponses[keyof GetAuditUsageResponses];
+
+export type GetAuditExportData = {
+  body?: never;
+  path?: never;
+  query?: {
+    /**
+     * Maximum rows in this page.
+     */
+    limit?: number;
+    /**
+     * Opaque nextCursor from the prior page of the same query and mode.
+     */
+    cursor?: string;
+    /**
+     * Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to.
+     */
+    from?: string | string;
+    /**
+     * Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to.
+     */
+    to?: string | string;
+    /**
+     * Initiating user ID, not a delegated event actor or membership ID.
+     */
+    actorId?: string;
+    /**
+     * Exact stable action of any child event within the snapshot watermark.
+     */
+    action?: string;
+    /**
+     * Current operation outcome; not an individual event outcome.
+     */
+    outcome?: "running" | "succeeded" | "failed" | "partial" | "unknown";
+    /**
+     * Stored operation origin.
+     */
+    origin?: "api" | "cloud_ui" | "mcp" | "scheduler" | "webhook" | "platform_admin";
+    /**
+     * Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot watermark; OR across ID kinds, AND with other filters. Not free-text or legacy payload search.
+     */
+    searchId?: string;
+    /**
+     * Exact case-sensitive stored reference ID from any child within the watermark.
+     */
+    resourceId?: string;
+    /**
+     * Optional stored reference type; requires resourceId.
+     */
+    resourceType?: string;
+    format?: "ndjson" | "csv";
+  };
+  url: "/v1/audit/export";
+};
+
+export type GetAuditExportErrors = {
+  /**
+   * Malformed query, cursor, mismatched filters, operation scope or export format.
+   */
+  400: {
+    error: "audit_invalid_query" | "audit_invalid_cursor";
+  };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization administrator permission, audit feature and visibility required.
+   */
+  403: {
+    error: "forbidden" | "audit_feature_disabled" | "audit_visibility_disabled";
+    message?: string;
+  };
+  /**
+   * Organization or retained operation not found, including foreign-tenant targets.
+   */
+  404: {
+    error: "organization_not_found" | "audit_operation_not_found";
+  };
+  /**
+   * Cursor expired or retained snapshot anchors/history are no longer available.
+   */
+  410: {
+    error: "audit_cursor_expired" | "audit_history_unavailable";
+  };
+  /**
+   * Audit storage or required access capture unavailable; no audit content is released.
+   */
+  503: {
+    error: "audit_unavailable" | "audit_storage_inconsistent";
+  };
+};
+
+export type GetAuditExportError = GetAuditExportErrors[keyof GetAuditExportErrors];
+
+export type GetAuditExportResponses = {
+  /**
+   * A bounded attachment page. No next-cursor header means this snapshot is exhausted.
+   */
+  200: string;
+};
+
+export type GetAuditExportResponse = GetAuditExportResponses[keyof GetAuditExportResponses];
+
 export type GetV1BrandAssetsByOrganizationIdByKindByVersionData = {
   body?: never;
   path: {
@@ -9698,6 +10459,35 @@ export type GetV1MeDashboardsResponses = {
 
 export type GetV1MeDashboardsResponse = GetV1MeDashboardsResponses[keyof GetV1MeDashboardsResponses];
 
+export type GetV1McpAppsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/mcp-apps";
+};
+
+export type GetV1McpAppsErrors = {
+  /**
+   * The caller must be signed in.
+   */
+  401: UnauthorizedError;
+  /**
+   * Only workspace owners and admins can list Apps for dashboards.
+   */
+  403: ForbiddenError;
+};
+
+export type GetV1McpAppsError = GetV1McpAppsErrors[keyof GetV1McpAppsErrors];
+
+export type GetV1McpAppsResponses = {
+  /**
+   * Apps built in OpenWork that can be added to a dashboard.
+   */
+  200: BuiltMcpAppListResponse;
+};
+
+export type GetV1McpAppsResponse = GetV1McpAppsResponses[keyof GetV1McpAppsResponses];
+
 export type DeleteV1DesktopPoliciesByKeyByExternalKeyData = {
   body?: never;
   path: {
@@ -10229,6 +11019,201 @@ export type PutV1DiagnosticsEgressTokenResponses = {
 
 export type PutV1DiagnosticsEgressTokenResponse =
   PutV1DiagnosticsEgressTokenResponses[keyof PutV1DiagnosticsEgressTokenResponses];
+
+export type GetV1InferenceFreeProviderData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/provider";
+};
+
+export type GetV1InferenceFreeProviderErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Workspace admin permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * Free provider summary unavailable.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type GetV1InferenceFreeProviderError = GetV1InferenceFreeProviderErrors[keyof GetV1InferenceFreeProviderErrors];
+
+export type GetV1InferenceFreeProviderResponses = {
+  /**
+   * Free provider summary returned.
+   */
+  200: {
+    provider: {
+      state: "available" | "disabled" | "unavailable";
+      reason:
+        | "admin_disabled"
+        | "not_eligible"
+        | "free_disabled"
+        | "accounting_unavailable"
+        | "free_allowance_exhausted"
+        | "upstream_unavailable"
+        | null;
+      defaultPinned: boolean;
+      modelGroup: {
+        id: "free";
+        name: "Free";
+      };
+      catalog: Array<{
+        modelID: string;
+        displayName: string;
+        providerName: string;
+        summary: string;
+        recommended: boolean;
+        rank: number;
+        capabilities: Array<string>;
+      }>;
+      allowance: {
+        usageScope: "organization";
+        allowanceScope: "person";
+        windowStartAt: string;
+        resetsAt: string;
+        weeklyLimitUsd: number;
+        joinedMembers: number;
+        eligibleMembers: number;
+        /**
+         * Current eligible members whose recorded weekly usage has reached their person-wide limit; not a probe of Gateway request headroom. Null when accounting cannot be verified.
+         */
+        exhaustedMembers: number | null;
+        usedUsd: number | null;
+        requestCount: number | null;
+      };
+    };
+  };
+};
+
+export type GetV1InferenceFreeProviderResponse =
+  GetV1InferenceFreeProviderResponses[keyof GetV1InferenceFreeProviderResponses];
+
+export type PatchV1InferenceFreePinsData = {
+  body: {
+    defaultPinned: boolean;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/pins";
+};
+
+export type PatchV1InferenceFreePinsErrors = {
+  /**
+   * Provide only defaultPinned.
+   */
+  400: InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Fresh workspace admin permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * Organization policy unavailable.
+   */
+  503: {
+    error: "managed_models_disabled_for_dpa" | "managed_models_policy_unavailable";
+    message: string;
+  };
+};
+
+export type PatchV1InferenceFreePinsError = PatchV1InferenceFreePinsErrors[keyof PatchV1InferenceFreePinsErrors];
+
+export type PatchV1InferenceFreePinsResponses = {
+  /**
+   * Auto pin saved.
+   */
+  200: {
+    defaultPinned: boolean;
+  };
+};
+
+export type PatchV1InferenceFreePinsResponse =
+  PatchV1InferenceFreePinsResponses[keyof PatchV1InferenceFreePinsResponses];
+
+export type GetV1InferenceAccessData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/access";
+};
+
+export type GetV1InferenceAccessErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Active membership required.
+   */
+  403: ForbiddenError;
+};
+
+export type GetV1InferenceAccessError = GetV1InferenceAccessErrors[keyof GetV1InferenceAccessErrors];
+
+export type GetV1InferenceAccessResponses = {
+  /**
+   * Auto allowance returned.
+   */
+  200: InferenceAccessResponse;
+};
+
+export type GetV1InferenceAccessResponse = GetV1InferenceAccessResponses[keyof GetV1InferenceAccessResponses];
+
+export type PostV1InferenceFreeCredentialData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/credential";
+};
+
+export type PostV1InferenceFreeCredentialErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Auto access denied.
+   */
+  403: ForbiddenError;
+  /**
+   * Auto unavailable.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type PostV1InferenceFreeCredentialError =
+  PostV1InferenceFreeCredentialErrors[keyof PostV1InferenceFreeCredentialErrors];
+
+export type PostV1InferenceFreeCredentialResponses = {
+  /**
+   * Member Auto credential returned.
+   */
+  200: {
+    credential: {
+      apiKey: string;
+      baseURL: string;
+      statusURL: string;
+      modelID: string;
+    };
+  };
+};
+
+export type PostV1InferenceFreeCredentialResponse =
+  PostV1InferenceFreeCredentialResponses[keyof PostV1InferenceFreeCredentialResponses];
 
 export type GetV1InferenceData = {
   body?: never;
@@ -10928,7 +11913,7 @@ export type PostV1SsoSamlErrors = {
    */
   401: SsoUnauthorizedError;
   /**
-   * SSO management requires an Enterprise plan.
+   * SSO management requires a Team or Enterprise plan.
    */
   402: EnterprisePlanRequiredError;
   /**
@@ -10969,7 +11954,7 @@ export type PostV1SsoOidcErrors = {
    */
   401: SsoUnauthorizedError;
   /**
-   * SSO management requires an Enterprise plan.
+   * SSO management requires a Team or Enterprise plan.
    */
   402: EnterprisePlanRequiredError;
   /**
@@ -11196,7 +12181,7 @@ export type PostV1SsoRequestDomainVerificationErrors = {
    */
   401: SsoUnauthorizedError;
   /**
-   * SSO management requires an Enterprise plan.
+   * SSO management requires a Team or Enterprise plan.
    */
   402: EnterprisePlanRequiredError;
   /**
@@ -11239,7 +12224,7 @@ export type PostV1SsoVerifyDomainErrors = {
    */
   401: SsoUnauthorizedError;
   /**
-   * SSO management requires an Enterprise plan.
+   * SSO management requires a Team or Enterprise plan.
    */
   402: EnterprisePlanRequiredError;
   /**
@@ -14601,6 +15586,7 @@ export type PatchV1InferenceProvidersByInferenceProviderIdData = {
      * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
      */
     modelIds?: Array<string>;
+    pinnedModelIds?: Array<string>;
     settings?: {
       project?: string;
       location?: string;
@@ -14746,6 +15732,10 @@ export type GetV1InferenceProvidersByInferenceProviderIdConnectResponses = {
        * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
        */
       modelIds: Array<string>;
+      /**
+       * Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access.
+       */
+      pinnedModelIds: Array<string>;
       catalogWarning?: string;
       /**
        * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
@@ -25497,6 +26487,456 @@ export type DeleteV1OrgWebOriginsByWebOriginIdResponses = {
 
 export type DeleteV1OrgWebOriginsByWebOriginIdResponse =
   DeleteV1OrgWebOriginsByWebOriginIdResponses[keyof DeleteV1OrgWebOriginsByWebOriginIdResponses];
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/mcp-connections/{connectionId}/slack-assistant";
+};
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantErrors = {
+  /**
+   * Invalid parameters or incomplete Slack setup.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Admin access, recent verification, or Slack eligibility required.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Organization or connection not found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantError =
+  GetV1McpConnectionsByConnectionIdSlackAssistantErrors[keyof GetV1McpConnectionsByConnectionIdSlackAssistantErrors];
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantResponses = {
+  /**
+   * Slack assistant setup.
+   */
+  200: {
+    enabled: boolean;
+    installed: boolean;
+    teamId: string | null;
+    /**
+     * Whether the platform admin enabled Slack Assistant for this organization.
+     */
+    rolloutEnabled: boolean;
+    hasSigningSecret: boolean;
+    eligible: boolean;
+    webAccess: boolean;
+    channelIds: Array<string>;
+    shadowMode: boolean;
+    dailyLimit: number;
+    /**
+     * Model chosen for headless runs, or null for the runner default.
+     */
+    model: string | null;
+    /**
+     * The headless runner's default model, when this workspace uses it.
+     */
+    defaultModel: string | null;
+    /**
+     * Models the headless runner can use; empty when the workspace doesn't use the headless runner.
+     */
+    models: Array<{
+      id: string;
+      name: string;
+    }>;
+    metrics: {
+      completed: number;
+      failed: number;
+      active: number;
+      awaitingConnection: number;
+      helpful: number;
+      needsWork: number;
+      firstTextMedianMs: number | null;
+      finalMedianMs: number | null;
+      sampledEvents: number;
+    };
+    /**
+     * Slack app manifest to import when configuring the bot.
+     */
+    manifest: {
+      [key: string]: unknown;
+    };
+  };
+};
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantResponse =
+  GetV1McpConnectionsByConnectionIdSlackAssistantResponses[keyof GetV1McpConnectionsByConnectionIdSlackAssistantResponses];
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantData = {
+  body: {
+    enabled: boolean;
+    signingSecret?: string;
+    channelIds?: Array<string>;
+    shadowMode?: boolean;
+    dailyLimit?: number;
+    /**
+     * Gateway model alias for headless runs; null restores the runner default. Omit to keep the current model.
+     */
+    model?: string | null;
+  };
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/mcp-connections/{connectionId}/slack-assistant";
+};
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantErrors = {
+  /**
+   * Invalid parameters or incomplete Slack setup.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Admin access, recent verification, or Slack eligibility required.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Organization or connection not found.
+   */
+  404: NotFoundError;
+  /**
+   * Connection changed while saving.
+   */
+  409: {
+    error: "connection_changed";
+  };
+};
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantError =
+  PutV1McpConnectionsByConnectionIdSlackAssistantErrors[keyof PutV1McpConnectionsByConnectionIdSlackAssistantErrors];
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantResponses = {
+  /**
+   * Slack assistant settings saved.
+   */
+  200: OkResponse;
+};
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantResponse =
+  PutV1McpConnectionsByConnectionIdSlackAssistantResponses[keyof PutV1McpConnectionsByConnectionIdSlackAssistantResponses];
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/mcp-connections/{connectionId}/slack-assistant/install";
+};
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors = {
+  /**
+   * Invalid parameters or incomplete Slack setup.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Admin access, recent verification, or Slack eligibility required.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Organization or connection not found.
+   */
+  404: NotFoundError;
+};
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallError =
+  PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors[keyof PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors];
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponses = {
+  /**
+   * Slack bot authorization URL.
+   */
+  200: {
+    url: string;
+  };
+};
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponse =
+  PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponses[keyof PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponses];
+
+export type GetV1IntegrationsSlackOauthCallbackData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/integrations/slack/oauth/callback";
+};
+
+export type GetV1IntegrationsSlackOauthCallbackErrors = {
+  /**
+   * Installation cancelled, expired, incomplete, or missing required permissions.
+   */
+  400: string;
+  /**
+   * The installing member no longer has admin access.
+   */
+  403: string;
+  /**
+   * Slack workspace conflicts with an existing installation.
+   */
+  409: string;
+};
+
+export type GetV1IntegrationsSlackOauthCallbackError =
+  GetV1IntegrationsSlackOauthCallbackErrors[keyof GetV1IntegrationsSlackOauthCallbackErrors];
+
+export type PostV1IntegrationsSlackByConnectionIdEventsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/integrations/slack/{connectionId}/events";
+};
+
+export type PostV1IntegrationsSlackByConnectionIdEventsErrors = {
+  /**
+   * Invalid parameters or Slack payload.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        ok: false;
+      };
+  /**
+   * Missing installation or invalid Slack signature.
+   */
+  401: {
+    ok: false;
+  };
+  /**
+   * Slack workspace or app does not match this installation.
+   */
+  403: {
+    ok: false;
+  };
+  /**
+   * Slack payload exceeds the request size limit.
+   */
+  413: string;
+};
+
+export type PostV1IntegrationsSlackByConnectionIdEventsError =
+  PostV1IntegrationsSlackByConnectionIdEventsErrors[keyof PostV1IntegrationsSlackByConnectionIdEventsErrors];
+
+export type PostV1IntegrationsSlackByConnectionIdEventsResponses = {
+  /**
+   * Event acknowledged or URL verification challenge.
+   */
+  200:
+    | OkResponse
+    | {
+        challenge: string;
+      };
+};
+
+export type PostV1IntegrationsSlackByConnectionIdEventsResponse =
+  PostV1IntegrationsSlackByConnectionIdEventsResponses[keyof PostV1IntegrationsSlackByConnectionIdEventsResponses];
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/integrations/slack/{connectionId}/commands";
+};
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsErrors = {
+  /**
+   * Invalid parameters or Slack payload.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        ok: false;
+      };
+  /**
+   * Missing installation or invalid Slack signature.
+   */
+  401: {
+    ok: false;
+  };
+  /**
+   * Slack workspace or app does not match this installation.
+   */
+  403: {
+    ok: false;
+  };
+  /**
+   * Slack payload exceeds the request size limit.
+   */
+  413: string;
+};
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsError =
+  PostV1IntegrationsSlackByConnectionIdCommandsErrors[keyof PostV1IntegrationsSlackByConnectionIdCommandsErrors];
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsResponses = {
+  /**
+   * Private connection instructions.
+   */
+  200: {
+    response_type: "ephemeral";
+    text: string;
+  };
+};
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsResponse =
+  PostV1IntegrationsSlackByConnectionIdCommandsResponses[keyof PostV1IntegrationsSlackByConnectionIdCommandsResponses];
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/integrations/slack/{connectionId}/interactions";
+};
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsErrors = {
+  /**
+   * Invalid parameters or Slack payload.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        ok: false;
+      };
+  /**
+   * Missing installation or invalid Slack signature.
+   */
+  401: {
+    ok: false;
+  };
+  /**
+   * Slack workspace or app does not match this installation.
+   */
+  403: {
+    ok: false;
+  };
+  /**
+   * Slack payload exceeds the request size limit.
+   */
+  413: string;
+};
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsError =
+  PostV1IntegrationsSlackByConnectionIdInteractionsErrors[keyof PostV1IntegrationsSlackByConnectionIdInteractionsErrors];
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsResponses = {
+  /**
+   * Interaction acknowledged.
+   */
+  200: OkResponse;
+};
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsResponse =
+  PostV1IntegrationsSlackByConnectionIdInteractionsResponses[keyof PostV1IntegrationsSlackByConnectionIdInteractionsResponses];
 
 export type GetV1AppVersionData = {
   body?: never;

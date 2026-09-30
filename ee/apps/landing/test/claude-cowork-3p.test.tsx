@@ -23,11 +23,10 @@ describe("Claude Cowork on 3P page", () => {
     expect(text).toContain("Claude on 3P");
   });
 
-  test("embeds the calculator focused on 3P with 500 people", () => {
-    expect(html).toContain('value="500"');
-    expect(text).toContain("Claude Desktop on 3P");
-    expect(text).toContain("How we calculate");
-    expect(text).toContain("OpenWork Enterprise");
+  test("compares features, not cost", () => {
+    expect(text).not.toContain("Cost calculator");
+    expect(text).not.toContain("How we calculate");
+    expect(agentMarkdown[CLAUDE_COWORK_3P_PATH]).not.toContain("calculator");
   });
 
   test("renders every FAQ entry and is discoverable", () => {
