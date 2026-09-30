@@ -51,6 +51,7 @@ locals {
     DEN_AUTH_ORIGIN                    = local.web_url
     DEN_WEB_PUBLIC_ORIGIN              = local.web_url
     DEN_WEB_OPENWORK_AUTH_CALLBACK_URL = local.web_url
+    DEN_WEB_OPENWORK_WEB_URL           = var.openwork_web_url
     # ElastiCache in this module always uses TLS (rediss://).
     DATABASE_REDIS_ALLOW_INSECURE_INTERNAL = "0"
     EMAIL_FROM                             = var.email_from

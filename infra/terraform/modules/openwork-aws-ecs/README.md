@@ -77,7 +77,9 @@ After `terraform apply`:
 2. Open the `setup_url` output, enter an owner email and that code, and
    create the first administrator. `/setup` works once, while the database
    has no users.
-3. Point OpenWork Desktop at `web_url` (Settings → Cloud → control plane URL).
+3. In OpenWork Desktop, set **Cloud control plane URL** (on the sign-in
+   screen) to `web_url`. The desktop reads `web_url/api/runtime-config` and
+   finds the API from there.
 
 `examples/complete` is a disposable end-to-end stack that creates its own VPC
 (no NAT gateway) and uses a certificate you provide.
@@ -95,7 +97,14 @@ After `terraform apply`:
 - **MySQL TLS** defaults to `sslaccept=accept` (encrypted, certificate not
   verified), because the RDS CA is not in Node's trust store. For verified TLS,
   add the RDS CA bundle to the images and set `database.tls_query`.
-- **OpenWork Web** (cloud chat sessions) is off by default. It needs a sandbox
+- **Email is optional to start.** Setup, sign-in and admin work without it.
+  Without `smtp` or `resend_api_key`, member invites fail (the API returns
+  `email_not_configured` and no invite link) and password reset is
+  unavailable. To add a second user during a test, either configure email
+  or set `allow_public_signup = true` for a while.
+- **OpenWork Web** (cloud chat sessions) is off by default. The dashboard's
+  OpenWork Web button points at the hosted service unless you set
+  `openwork_web_url`. It needs a sandbox
   provider; none runs inside this stack. Set `openwork_web_enabled = true`,
   `provisioner_mode = "daytona"`, and pass `DAYTONA_API_KEY` via `extra_secrets`.
 - **Anything else** (SSO, proxies, Gateway, observability): add env vars with

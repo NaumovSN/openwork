@@ -185,6 +185,12 @@ variable "openwork_web_enabled" {
   default     = false
 }
 
+variable "openwork_web_url" {
+  description = "URL the dashboard's OpenWork Web button opens (DEN_WEB_OPENWORK_WEB_URL). Empty keeps den-web's default, which is the hosted https://web.openworklabs.com, not your deployment."
+  type        = string
+  default     = ""
+}
+
 variable "provisioner_mode" {
   description = "Sandbox provider for OpenWork Web: stub (none), daytona or render."
   type        = string
