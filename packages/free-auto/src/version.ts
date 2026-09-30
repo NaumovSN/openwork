@@ -45,7 +45,10 @@ export function desktopFreeVersionError(currentVersion: string, supported: reado
   if (!minimumVersion) return { code: "desktop_version_unavailable", currentVersion, minimumVersion: null,
     message: "The supported desktop version cannot be verified. Auto is temporarily unavailable." };
   const newest = supported!.reduce((highest, version) => (compareDesktopVersions(version, highest) ?? 0) > 0 ? version : highest);
-  const ahead = (compareDesktopVersions(currentVersion, newest) ?? -1) > 0 && !blocked.includes(currentVersion.replace(/\+.*$/, ""));
+  // Blocked versions are listed without build metadata ("1.2.4-alpha.3244", not "…+4d3cfbd").
+  const plus = currentVersion.indexOf("+");
+  const withoutBuild = plus >= 0 ? currentVersion.slice(0, plus) : currentVersion;
+  const ahead = (compareDesktopVersions(currentVersion, newest) ?? -1) > 0 && !blocked.includes(withoutBuild);
   if (!supported?.includes(currentVersion) && !ahead) return { code: "desktop_update_required", currentVersion, minimumVersion,
     message: `Update OpenWork Desktop to ${minimumVersion} or newer to use Auto.` };
   return null;
