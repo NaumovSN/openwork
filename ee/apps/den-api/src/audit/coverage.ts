@@ -155,6 +155,7 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "roles.ts": legacy(["organization.role.created", "organization.role.updated", "organization.role.deleted"], ["role"]),
   "scim.ts": legacy(["organization.scim.token_rotated", "organization.scim.connection_deleted", "organization.scim.reconciliation_run", "organization.scim.group_mapping_updated"], ["scim_connection"]),
   "shared.ts": support("Organization authorization and context utilities, not an audit emitter."),
+  "slack.ts": uncovered("Member-scoped read-only Slack search and thread lookups."),
   "sso.ts": legacy(["organization.sso.connection_registered", "organization.sso.connection_enabled", "organization.sso.connection_disabled", "organization.sso.connection_deleted"], ["sso_connection"]),
   "teams.ts": uncovered("Team and membership management."),
   "web-origins.ts": legacy(["organization.web_origin.approved", "organization.web_origin.removed"], ["web_origin"]),

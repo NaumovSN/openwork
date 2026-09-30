@@ -1,5 +1,88 @@
 # ENG-76 implementation verification
 
+## Cloud multi-workspace revision — 2026-09-30
+
+Code commits `cc721346f` and `ce9ebb215` replace the earlier fixed
+organization/workspace allowlist with the default-off hosted Cloud gate.
+The revised browser journey covers two Slack workspaces and two OpenWork
+organizations using the same platform app configuration. Workspace-specific
+Home grants are stored separately from member read credentials.
+
+### Verification results
+
+- **Functional checks: Passed.** Cold-booted local V2 journey at `f2e559459`:
+  `pnpm evals:e2e native-slack-connect --local --engine v2`, exit 0,
+  1 passed / 0 failed / 0 skipped, 107 seconds. Placement: `local (--local)`.
+  Both pinned engine paths, temporary Chrome, and
+  `pnpm_config_verify_deps_before_run=false` were supplied. Receipt:
+  `evals/results/.testkit/cli-run-1790785910281-44769.json`.
+- `pnpm --filter @openwork-ee/den-api test`: exit 0, **554 passed**, including
+  **128 Slack protocol/route/Home tests**, 0 failed / 0 skipped. The full suite
+  exposed a missing Slack declaration in the newly rebased audit inventory;
+  `slack.ts` is now accurately declared uncovered, matching other native
+  connection routes. No audit capture is claimed. The rerun passed.
+- `DEN_SLACK_TEST_DATABASE_URL=<disposable loopback database> pnpm --filter
+  @openwork-ee/den-api exec tsx --conditions=development --test
+  test/slack-installations-db.test.ts`: exit 0, **5 passed**, 0 failed / 0 skipped.
+  The new migration was applied to `eng76_slack_installations_test` in Docker.
+- Den API and Den DB: `exec tsc --noEmit --pretty false`, exit 0.
+- `pnpm api:lint`: exit 0, 0 errors / 39 warnings.
+- `pnpm evals:typecheck`: exit 1, the same single
+  `mcp-app-servers.e2e.test.ts:10` world-signature error reproduced on clean dev
+  in the earlier control run below. No additional eval type error was reported.
+
+Commands use `--config.verify-deps-before-run=false`; the full API suite also
+uses the corresponding `pnpm_config_verify_deps_before_run=false` environment
+setting for nested commands.
+
+**Automated visual evidence: Incomplete.** The journey records 12 passing
+observable expectations, 0 failures, and 11 screenshots awaiting automated
+visual validation. The three presentation frames below were inspected manually;
+they do not turn unvalidated screenshot artifacts into automated passes.
+Full record:
+`evals/results/test-runs/2026-09-30T16-31-52-570Z-44800-cloud-members-connect-different-slack-workspaces-without-configuration-and-keep-/`.
+
+![Cloud Slack answer with four conversation categories, links, and a bounded-thread notice](cloud-linked-answer.png)
+
+![Cloud Slack connection with limited access](cloud-limited-access.png)
+
+![Successful authorization in the second synthetic Cloud organization](cloud-second-organization-connected.png)
+
+### Review and resolved failures
+
+Standards review identified an outstanding-database-work admission issue in
+Home. The fix retains each admission slot until its underlying operation
+settles, even after an HTTP timeout; re-review confirmed the resource bound.
+Both review axes requested new verification receipts. A bounded-body-reader
+duplication suggestion remains a nonblocking follow-up.
+
+- **Standards:** 3 findings — resource bound and current evidence resolved;
+  bounded-reader duplication remains a judgment-call follow-up.
+- **Spec:** 1 finding — current multi-workspace acceptance evidence, resolved
+  by the receipt above. No implementation blocker or scope creep reported.
+
+The first three browser attempts failed before the app became healthy because
+nested pnpm 11 commands tried to reinstall prepared dependencies without a TTY
+(`ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`). The rerun uses
+`pnpm_config_verify_deps_before_run=false`, explicitly forwarded through the
+isolated app runtime by the fixture. The runtime strips ambient settings;
+pnpm 11 also does not use `npm_config_verify_deps_before_run` for this check.
+
+The new database suite initially exposed two test-harness mistakes: an undeclared
+direct `mysql2` import and an epoch-zero timestamp outside MySQL's valid range.
+Both were corrected at the test boundary. The next run passed all five tests
+against isolated Docker MySQL, including concurrent refresh and encrypted storage.
+
+The first browser run reaching OAuth replacement stopped on an early test
+assertion: the prior workspace was still connected while the replacement callback
+was finishing. The journey now waits for callback completion and the exact new
+identity, rather than accepting any connected account; the subsequent run passed.
+
+Current setup: [Slack Cloud setup](../../slack-cloud-setup.md).
+The disposable installation-test database was dropped, the isolated Compose
+containers/network removed, and Colima stopped after verification.
+The sections below are historical receipts for the superseded internal gate.
+
 ## Rebase verification — 2026-09-30
 
 Rebased all ten commits onto `origin/dev` at `628ffa455`. Conflict resolution
