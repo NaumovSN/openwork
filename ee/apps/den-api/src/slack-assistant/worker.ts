@@ -143,15 +143,6 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
   }
   if (payload.type === "app_context_changed") return checkpointEvent(event, { status: "context" })
   const cp = checkpointSchema.parse(event.checkpoint ? JSON.parse(event.checkpoint) : {})
-  // A visible "seen it" on a new mention or DM, before linking or starting the run. Without the
-  // reactions:write scope (an app installed from an older manifest) this silently does nothing.
-  if (!event.checkpoint && event.attempts === 0 && payload.ts && payload.type !== "agent_session_title_changed") {
-    try {
-      await slack("reactions.add", { channel: event.channelId, timestamp: payload.ts, name: "eyes" })
-    } catch {
-      /* missing_scope or already_reacted */
-    }
-  }
   let actor = await resolveSlackActor(installation, event.slackUserId)
   // Members who connected Slack before the assistant existed are linked from their token, not asked to reconnect.
   if (!actor && event.status !== "running" && installation.enabled && (await linkConnectedSlackMembers(installation, deps.slack)) > 0)

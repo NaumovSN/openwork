@@ -159,8 +159,6 @@ export const BOT_SCOPES = [
   "assistant:write",
   "commands",
 ]
-/** Requested and in the manifest, but not required: without it the 👀 acknowledgement is skipped. */
-export const OPTIONAL_BOT_SCOPES = ["reactions:write"]
 export function slackManifest(publicApiUrl: string, connectionId: string) {
   const base = `${publicApiUrl.replace(/\/$/, "")}/v1/integrations/slack`
   return {
@@ -182,7 +180,7 @@ export function slackManifest(publicApiUrl: string, connectionId: string) {
         },
       ],
     },
-    oauth_config: { redirect_urls: [`${base}/oauth/callback`], scopes: { bot: [...BOT_SCOPES, ...OPTIONAL_BOT_SCOPES] } },
+    oauth_config: { redirect_urls: [`${base}/oauth/callback`], scopes: { bot: BOT_SCOPES } },
     settings: {
       event_subscriptions: {
         request_url: `${base}/${connectionId}/events`,

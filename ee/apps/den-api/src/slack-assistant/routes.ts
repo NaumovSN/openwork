@@ -41,7 +41,6 @@ import { getOrganizationContextForUser } from "../orgs.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
   BOT_SCOPES,
-  OPTIONAL_BOT_SCOPES,
   isInvocation,
   scopeKey,
   slackEnvelopeSchema,
@@ -286,7 +285,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       })
       const url = new URL("https://slack.com/oauth/v2/authorize")
       url.searchParams.set("client_id", client.clientId)
-      url.searchParams.set("scope", [...BOT_SCOPES, ...OPTIONAL_BOT_SCOPES].join(","))
+      url.searchParams.set("scope", BOT_SCOPES.join(","))
       url.searchParams.set("state", nonce)
       url.searchParams.set("redirect_uri", `${publicBase(c.req.raw)}/v1/integrations/slack/oauth/callback`)
       return c.json({ url: url.toString() })
