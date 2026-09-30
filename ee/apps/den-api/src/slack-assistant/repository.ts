@@ -6,6 +6,7 @@ import {
   SlackAssistantEventTable as Event,
   SlackAssistantThreadTable as Thread,
   SlackAssistantOAuthStateTable as State,
+  ConnectedAccountTable,
   ExternalMcpConnectionTable,
   MemberTable,
   OrganizationTable,
@@ -123,6 +124,52 @@ export async function bindSlackOAuthMember(
         ),
       )
   })
+}
+
+const LINK_BACKFILL_INTERVAL_MS = 10 * 60_000
+const LINK_BACKFILL_MAX_MEMBERS = 200
+const lastLinkBackfill = new Map<string, number>()
+
+/**
+ * Members who connected Slack before the assistant was installed have a token but no Slack identity link,
+ * which used to force them to disconnect and reconnect. Link them from their existing token instead
+ * (auth.test through bindSlackOAuthMember, which also replays their pending requests). Runs at most once
+ * per installation every ten minutes per process. Returns how many members were newly linked.
+ */
+export async function linkConnectedSlackMembers(installation: InstallationRow, client = slackClient, now = Date.now) {
+  const last = lastLinkBackfill.get(installation.connectionId)
+  if (last !== undefined && now() - last < LINK_BACKFILL_INTERVAL_MS) return 0
+  lastLinkBackfill.set(installation.connectionId, now())
+  const connection = await getExternalMcpConnection({
+    organizationId: installation.organizationId,
+    connectionId: installation.connectionId,
+  })
+  if (!connection || !isSlackConnection(connection) || !installation.teamId) return 0
+  const [accounts, linked] = await Promise.all([
+    db
+      .select({ memberId: ConnectedAccountTable.orgMembershipId })
+      .from(ConnectedAccountTable)
+      .where(
+        and(
+          eq(ConnectedAccountTable.organizationId, installation.organizationId),
+          eq(ConnectedAccountTable.providerId, installation.connectionId),
+        ),
+      )
+      .limit(LINK_BACKFILL_MAX_MEMBERS),
+    db.select({ memberId: Identity.memberId }).from(Identity).where(eq(Identity.connectionId, installation.connectionId)),
+  ])
+  const alreadyLinked = new Set(linked.map((row) => row.memberId))
+  let count = 0
+  for (const { memberId } of accounts) {
+    if (alreadyLinked.has(memberId)) continue
+    try {
+      await bindSlackOAuthMember(connection, memberId, client)
+      count += 1
+    } catch {
+      // Wrong workspace, revoked token or an identity bound elsewhere: that member reconnects as before.
+    }
+  }
+  return count
 }
 
 export async function resolveSlackActor(installation: InstallationRow, slackUserId: string) {

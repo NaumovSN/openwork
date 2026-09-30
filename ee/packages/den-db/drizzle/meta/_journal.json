@@ -813,6 +813,13 @@
       "when": 1790791135950,
       "tag": "0116_free_auto_and_provider_pins",
       "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "5",
+      "when": 1790803693966,
+      "tag": "0117_slack_assistant_model",
+      "breakpoints": true
     }
   ]
 }

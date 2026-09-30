@@ -187,11 +187,26 @@ suite("Slack assistant: real database and signed HTTP journey", () => {
     expect(response.status).toBe(401)
     expect(await db.select().from(Event).where(eq(Event.connectionId, connectionId))).toHaveLength(0)
   })
-  test("unlinked mention gets an ephemeral connect card and OAuth replays it automatically", async () => {
+  test("a member who never connected gets a connect card; members who connected before are linked without reconnecting", async () => {
+    // Member 0 has never connected Slack; member 1 connected before the assistant was installed.
+    await db
+      .delete(ConnectedAccountTable)
+      .where(and(eq(ConnectedAccountTable.organizationId, orgId), eq(ConnectedAccountTable.orgMembershipId, members[0])))
     expect((await ingress("E1", slackUsers[0])).status).toBe(200)
     await drain()
-    expect(slackCalls.at(-1)?.method).toBe("chat.postEphemeral")
+    const card = slackCalls.at(-1)
+    expect(card?.method).toBe("chat.postEphemeral")
     expect(remoteCalls).toHaveLength(0)
+    const linked = await db.select().from(Identity).where(eq(Identity.connectionId, connectionId))
+    expect(linked.map((row) => [row.memberId, row.slackUserId])).toEqual([[members[1], slackUsers[1]]])
+
+    await db.insert(ConnectedAccountTable).values({
+      id: createDenTypeId("connectedAccount"),
+      organizationId: orgId,
+      orgMembershipId: members[0],
+      providerId: connectionId,
+      accessToken: "user-token-0",
+    })
     const connection = (
       await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, connectionId))
     )[0]

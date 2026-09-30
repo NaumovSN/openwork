@@ -21,6 +21,7 @@ export const checkpointSchema = z.object({
   finalStatus: z.enum(["active", "suspended"]).default("active"),
   titleSynced: z.boolean().default(false),
   startedAt: z.number().optional(),
+  stillWorkingShown: z.boolean().default(false),
 })
 type Checkpoint = z.infer<typeof checkpointSchema>
 const readSchema = z.object({
@@ -50,6 +51,9 @@ export function webLink(sessionId: string) {
 
 /** Runs longer than this get a separate "done" reply, because updating a streamed message does not notify anyone. */
 export const DONE_PING_AFTER_MS = 60_000
+/** With no answer text by then, say the work continues and the reply will land in this thread. */
+export const STILL_WORKING_AFTER_MS = 20_000
+export const STILL_WORKING_LINE = "Still working on it. I'll reply here when it's done.\n\n"
 
 /** First meaningful line of the answer, for the "done" reply. */
 export function doneSummary(text: string) {
@@ -65,7 +69,47 @@ export function currentReplyDelta(previous: string, current: string) {
   // A revised answer must not append an unrelated full transcript.
   return current.startsWith(previous) ? current.slice(previous.length) : ""
 }
+/**
+ * The reply stream opens with its first real content (a task step or answer text), so a quick answer never
+ * starts with a placeholder. Slack's thinking status covers the gap until then.
+ */
+async function ensureStream(slack: SlackCall, checkpoint: Checkpoint, chunks: Record<string, unknown>[]) {
+  if (checkpoint.streamTs) return false
+  const stream = z.object({ ts: z.string() }).parse(
+    await slack("chat.startStream", {
+      channel: checkpoint.channel,
+      thread_ts: checkpoint.threadTs,
+      recipient_user_id: checkpoint.recipientUserId,
+      recipient_team_id: checkpoint.recipientTeamId,
+      chunks,
+      task_display_mode: "timeline",
+    }),
+  )
+  checkpoint.streamTs = stream.ts
+  checkpoint.streamCharacters = chunks.reduce(
+    (sum, chunk) => sum + (typeof chunk.text === "string" ? chunk.text.length : 0),
+    0,
+  )
+  return true
+}
 export async function stopSlackStream(slack: SlackCall, checkpoint: Checkpoint, extra: Record<string, unknown> = {}) {
+  if (!checkpoint.streamTs) {
+    // Nothing was streamed yet: deliver any closing text as a plain reply and clear the thinking status.
+    const text = z
+      .array(z.object({ text: z.string().optional() }).loose())
+      .catch([])
+      .parse(extra.chunks)
+      .map((chunk) => chunk.text ?? "")
+      .join("")
+      .trim()
+    if (text && checkpoint.channel) await slack("chat.postMessage", { channel: checkpoint.channel, thread_ts: checkpoint.threadTs, text })
+    await slack("agents.sessions.setStatus", {
+      channel_id: checkpoint.channel,
+      thread_ts: checkpoint.threadTs,
+      status: checkpoint.finalStatus,
+    })
+    return
+  }
   try {
     await slack("chat.stopStream", {
       channel: checkpoint.channel,
@@ -96,6 +140,10 @@ async function appendText(
 ) {
   for (let offset = 0; offset < text.length; offset += 10_000) {
     const part = text.slice(offset, offset + 10_000)
+    if (await ensureStream(slack, checkpoint, [{ type: "markdown_text", text: part }])) {
+      await onPart?.(part)
+      continue
+    }
     if (checkpoint.streamCharacters + part.length > 30_000) {
       await stopSlackStream(slack, checkpoint, { session_status: "processing" })
       const stream = z.object({ ts: z.string() }).parse(
@@ -131,6 +179,8 @@ export async function advanceSlackRun(input: {
   persist?: (checkpoint: Checkpoint) => Promise<void>
   /** False for the headless runner: there is no OpenWork Web session to hand off to. */
   webHandoff?: boolean
+  /** Gateway model alias for the headless runner, chosen by the workspace admin. */
+  model?: string
   now?: () => number
 }): Promise<{ checkpoint: Checkpoint; delayMs: number; done?: boolean }> {
   const cp = input.checkpoint
@@ -154,6 +204,7 @@ export async function advanceSlackRun(input: {
       sessionId: cp.sessionId,
       prompt: cp.prompt,
       messageId: input.messageId,
+      ...(input.model ? { model: input.model } : {}),
     })
     if (result.error) return retryProvisioning(result, cp, input.slack)
     cp.phase = "read"
@@ -216,12 +267,16 @@ export async function advanceSlackRun(input: {
     const entries = [...updates.entries()]
     for (let offset = 0; offset < entries.length; offset += 20) {
       const batch = entries.slice(offset, offset + 20)
-      await input.slack("chat.appendStream", {
-        channel: cp.channel,
-        ts: cp.streamTs,
-        chunks: batch.map(([, { rawStatus, ...chunk }]) => chunk),
-      })
+      const chunks = batch.map(([, { rawStatus, ...chunk }]) => chunk)
+      if (!(await ensureStream(input.slack, cp, chunks)))
+        await input.slack("chat.appendStream", { channel: cp.channel, ts: cp.streamTs, chunks })
       for (const [id, update] of batch) cp.steps[id] = update.rawStatus
+      await input.persist?.(cp)
+    }
+    const noAnswerYet = !cp.sentText && !snapshot.finalAssistantText
+    if (noAnswerYet && !cp.stillWorkingShown && cp.startedAt !== undefined && now() - cp.startedAt > STILL_WORKING_AFTER_MS) {
+      await appendText(input.slack, cp, STILL_WORKING_LINE)
+      cp.stillWorkingShown = true
       await input.persist?.(cp)
     }
     if (snapshot.terminalError) {
