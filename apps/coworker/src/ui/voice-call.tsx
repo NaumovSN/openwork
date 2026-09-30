@@ -62,7 +62,7 @@ export function CallScreen() {
       level += (nextLevel - level) * .24;
       if (!nextLevel && level < .005) level = 0;
       const value = level.toFixed(3);
-      if (value !== drawnLevel) { avatar.current?.style.setProperty("--avatar-audio-level", value); screen.current?.style.setProperty("--call-audio-level", value); drawnLevel = value; }
+      if (value !== drawnLevel) { avatar.current?.style.setProperty("--call-mouth-level", value); screen.current?.style.setProperty("--call-audio-level", value); drawnLevel = value; }
       const current = coworkerCall.snapshot();
       const engagement = current.phase === "calling" ? "ringing" : coworkerCall.isHearingYou() ? "hearing" : current.phase === "speaking" ? "speaking" : current.phase === "thinking" || (current.observation.working && !current.observation.attention) ? "thinking" : "ready";
       if (screen.current && screen.current.dataset.engagement !== engagement) screen.current.dataset.engagement = engagement;

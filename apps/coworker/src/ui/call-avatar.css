@@ -22,13 +22,6 @@
   animation: none;
   transform: scale(1.13, 1.05);
 }
-.call-screen[data-engagement="hearing"] .call-avatar .coworker-avatar[data-cue="none"] .coworker-avatar__mouth-hmm,
-.call-screen[data-engagement="hearing"] .call-avatar .coworker-avatar[data-cue="none"] .coworker-avatar__mouth-o {
-  opacity: 0;
-}
-.call-screen[data-engagement="hearing"] .call-avatar .coworker-avatar[data-cue="none"] .coworker-avatar__mouth-smile {
-  opacity: .65;
-}
 .call-screen[data-engagement="hearing"] .call-avatar .coworker-avatar[data-cue="none"] .coworker-avatar__pointer-body {
   animation: none;
 }
@@ -50,9 +43,7 @@
   animation: call-think-eyes 5.8s ease-in-out infinite;
 }
 
-/* Asymmetric talking beats and soft squash/stretch. One small, horizontal
-   mouth opens with the remote audio and closes to a line between syllables;
-   keep its shape through pauses and face cues instead of swapping to a smile. */
+/* Small talking gestures stay separate from the single audio-driven mouth. */
 .call-screen[data-engagement="speaking"] .call-avatar .coworker-avatar[data-motion-paused="false"] .coworker-avatar__body {
   animation: call-talk-gesture 2.8s ease-in-out infinite;
 }
@@ -62,20 +53,21 @@
 .call-screen[data-engagement="speaking"] .call-avatar .coworker-avatar[data-cue="none"][data-motion-paused="false"] .coworker-avatar__pupils .coworker-avatar__mood {
   animation: call-talk-eyes 3.7s ease-in-out infinite;
 }
-.call-screen[data-engagement="speaking"] .call-avatar .coworker-avatar :is(.coworker-avatar__mouth-hmm, .coworker-avatar__mouth-smile, .coworker-avatar__mouth-frown, .coworker-avatar__mouth-flat) {
-  opacity: 0;
-  animation: none;
+/* The call always uses one small horizontal mouth. Hide the older expression
+   paths outright so their opacity transitions and reactions cannot overlap it. */
+.call-screen[data-engagement] .call-avatar .coworker-avatar :is(.coworker-avatar__mouth-hmm, .coworker-avatar__mouth-smile, .coworker-avatar__mouth-frown, .coworker-avatar__mouth-flat) {
+  display: none;
 }
-.call-screen[data-engagement="speaking"] .call-avatar .coworker-avatar .coworker-avatar__mouth-o {
+.call-screen[data-engagement] .call-avatar .coworker-avatar .coworker-avatar__mouth-o {
   fill: #11151d;
   stroke: none;
   opacity: 1;
   animation: none;
-  transform: scaleX(1.65) scaleY(clamp(.12, calc(.12 + var(--avatar-audio-level, 0) * .7), .65));
-  transition: opacity 180ms ease-out, transform 90ms ease-out;
+  transform: scale(1.65, .12);
+  transition: transform 90ms ease-out;
 }
-.call-screen[data-engagement="ready"] .call-avatar .coworker-avatar[data-expression="none"][data-cue="none"] .coworker-avatar__mouth-smile {
-  opacity: .45;
+.call-screen[data-engagement="speaking"] .call-avatar .coworker-avatar .coworker-avatar__mouth-o {
+  transform: scaleX(1.65) scaleY(clamp(.12, calc(.12 + var(--call-mouth-level, 0) * .7), .65));
 }
 
 @keyframes call-listen-nod {

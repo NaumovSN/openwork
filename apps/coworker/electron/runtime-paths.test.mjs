@@ -173,7 +173,7 @@ test("synthetic release validation keeps the Coworker pin separate from packaged
   const write = async (file, value) => { await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, value); };
   const constants = JSON.parse(await readFile(new URL("../../../constants.json", import.meta.url), "utf8"));
   await write(path.join(source, "package.json"), '{"private":true}');
-  for (const file of ["dist/index.html", "electron-dist/main.mjs", "electron-dist/preload.mjs", "electron-dist/browser-content-preload.cjs",
+  for (const file of ["dist/index.html", "electron-dist/main.mjs", "electron-dist/preload.mjs", "electron-dist/bubble-preload.mjs", "electron-dist/browser-content-preload.cjs",
     "electron-dist/maintenance-helper.mjs", "electron-dist/THIRD-PARTY-NOTICES", "electron-dist/OPENCODE-LICENSE"]) await write(path.join(source, file), "fixture");
   const serverDist = path.join(root, "shared-server-dist");
   const sharedModule = 'import constants from "../../../constants.json" with { type: "json" };\nexport { constants };\n';
@@ -230,6 +230,12 @@ test("synthetic release validation keeps the Coworker pin separate from packaged
   };
   const accepted = await validate();
   assert.equal(accepted.status, 0, accepted.stderr);
+  const bubblePreload = path.join(source, "electron-dist/bubble-preload.mjs");
+  await rm(bubblePreload);
+  const missingBubble = await validate();
+  assert.equal(missingBubble.status, 1);
+  assert.match(missingBubble.stderr, /Missing nonempty ASAR runtime entry: electron-dist\/bubble-preload\.mjs/);
+  await write(bubblePreload, "fixture");
   await write(path.join(source, "electron-dist/main.mjs"), fileURLToPath(new URL("../../../", import.meta.url)));
   const leakedSource = await validate();
   assert.equal(leakedSource.status, 1);

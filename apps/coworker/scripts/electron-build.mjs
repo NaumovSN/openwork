@@ -90,6 +90,7 @@ async function buildElectron() {
     resolve(coworkerRoot, "electron", "preload.mjs"),
     resolve(packagedElectronRoot, "preload.mjs"),
   );
+  copyFileSync(resolve(coworkerRoot, "electron", "bubble-preload.mjs"), resolve(packagedElectronRoot, "bubble-preload.mjs"));
   copyFileSync(fileURLToPath(import.meta.resolve("@openwork/browser-tabs/preload")), resolve(packagedElectronRoot, "browser-content-preload.cjs"));
 
   copyFileSync(resolve(repoRoot, "packages/browser-tabs/THIRD-PARTY-NOTICES"), resolve(packagedElectronRoot, "THIRD-PARTY-NOTICES"));

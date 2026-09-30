@@ -255,7 +255,7 @@ function main() {
       failures.push("Coworker must package the native-only embedded server entry, not the generic server CLI");
     }
     for (const path of [
-      "package.json", "dist/index.html", "electron-dist/main.mjs", "electron-dist/preload.mjs", "electron-dist/native-runtime.json",
+      "package.json", "dist/index.html", "electron-dist/main.mjs", "electron-dist/preload.mjs", "electron-dist/bubble-preload.mjs", "electron-dist/native-runtime.json",
       "electron-dist/browser-content-preload.cjs", "electron-dist/maintenance-helper.mjs", "electron-dist/THIRD-PARTY-NOTICES", "electron-dist/OPENCODE-LICENSE", "electron-dist/native-source.json",
       "server/package.json", "server/dist/embedded.js", "server/dist/embedded-native.js", "server/dist/constants.json",
     ]) {
