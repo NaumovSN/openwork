@@ -878,7 +878,7 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
       type: "text",
       text: part.name ? `@${part.name}` : "@agent",
       state: "done",
-      providerMetadata: { opencode: { partId: part.id } },
+      providerMetadata: { opencode: { partId: part.id, ...(part.name ? { agentMention: part.name } : {}) } },
     };
   }
   if (part.type === "step-start") return { type: "step-start" };

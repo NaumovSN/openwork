@@ -1,3 +1,5 @@
+import { PerformanceObserver } from "node:perf_hooks";
+import { timeMcpApp } from "@openwork/types/mcp-app-timing";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { createHash, randomUUID } from "node:crypto";
 import { SSEClientTransport, SseError } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -20,6 +22,9 @@ import {
   type ConnectMcpCatalogDiagnostic,
 } from "./connect-mcp-server-catalog.js";
 import type { ServerConfig } from "./types.js";
+import { join } from "node:path";
+import { runtimeStorageDir } from "./runtime-db.js";
+import { createMcpAppResourceCache } from "./mcp-app-resource-cache.js";
 import {
   assertLocalManagedMcpUrl,
   createLocalManagedMcpGuardedFetch,
@@ -134,6 +139,24 @@ async function launchFingerprint(input: { serverConfig: ServerConfig; workspaceI
 // @openwork/types/mcp-app writes it. That subpath ships as TypeScript, which the
 // packaged server cannot load, so the format is matched here.
 const BUILT_APP_REVISION_URI = /^ui:\/\/openwork\/apps\/(cob_[0-7][0-9a-hjkmnp-tv-z]{25})\/revisions\/cov_[0-7][0-9a-hjkmnp-tv-z]{25}\/index\.html$/u;
+
+const resourceCaches = new WeakMap<ServerConfig, ReturnType<typeof createMcpAppResourceCache>>();
+async function readAppResource(input: { serverConfig: ServerConfig; workspaceId: string },
+  serverName: string, fingerprint: string, uri: string, client: Client) {
+  const load = async () => {
+    const resource = findHtmlResource(uri, await timeMcpApp("desktop.resources-read", () => client.readResource({ uri })));
+    return { html: resource.html, ...resourcePresentationMeta(resource.meta) };
+  };
+  const id = BUILT_APP_REVISION_URI.exec(uri)?.[1];
+  // A provider can imitate a revision URI. Only the trusted private built-App endpoint is immutable.
+  if (!id || serverName !== connectMcpAppHostName(id)) return load();
+  let cache = resourceCaches.get(input.serverConfig);
+  if (!cache) {
+    cache = createMcpAppResourceCache(join(runtimeStorageDir(input.serverConfig), "mcp-app-resources"));
+    resourceCaches.set(input.serverConfig, cache);
+  }
+  return cache.read(JSON.stringify([input.workspaceId, serverName, fingerprint]), uri, load);
+}
 
 /**
  * An App built in OpenWork publishes each update as a new revision of the same
@@ -382,7 +405,7 @@ async function withRemoteClient<T>(
     const client = new Client({ name: "openwork-mcp-app-host", version: "1.0.0" }, clientOptions());
     let connected = false;
     try {
-      await client.connect(createTransport());
+      await timeMcpApp("desktop.client-connect", () => client.connect(createTransport()));
       connected = true;
       return await run(client);
     } catch (error) {
@@ -417,7 +440,7 @@ async function listTools(client: Client): Promise<Tool[]> {
   const tools: Tool[] = [];
   let cursor: string | undefined;
   for (let page = 0; page < MAX_TOOL_PAGES; page += 1) {
-    const listed = await client.listTools(cursor ? { cursor } : undefined);
+    const listed = await timeMcpApp("desktop.tools-list", () => client.listTools(cursor ? { cursor } : undefined));
     tools.push(...listed.tools);
     if (tools.length > MAX_TOOLS) {
       throw new McpAppHostError("tool_catalog_too_large", "The MCP tool catalog exceeds the host limit.");
@@ -474,7 +497,7 @@ function connectCatalogError(diagnostic: Exclude<ConnectMcpCatalogDiagnostic, "r
   return new McpAppHostError(`connect_catalog_${diagnostic}`, messages[diagnostic]);
 }
 
-async function privateConnectMcpConfig(input: {
+async function privateConnectMcpConfigUntimed(input: {
   serverConfig: ServerConfig;
   workspaceId: string;
   connectionId?: string;
@@ -519,6 +542,10 @@ async function privateConnectMcpConfig(input: {
       },
     },
   };
+}
+
+function privateConnectMcpConfig(input: Parameters<typeof privateConnectMcpConfigUntimed>[0]) {
+  return timeMcpApp("desktop.private-connect-config", () => privateConnectMcpConfigUntimed(input));
 }
 
 function findHtmlResource(
@@ -778,7 +805,7 @@ export async function resolveMcpAppResource(input: {
       if ((await diagnoseMcpToolDenies(input.workspaceRoot, item.name, [input.projectedToolName])).length > 0) {
         throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
       }
-      const read = await client.readResource({ uri: resourceUri }).catch(() => {
+      const read = await timeMcpApp("desktop.resources-read", () => client.readResource({ uri: resourceUri })).catch(() => {
         throw new McpAppHostError(
           "resource_read_failed",
           "The current MCP App tool definition advertises a resource that resources/read could not load.",
@@ -863,21 +890,20 @@ export async function resolveConnectMcpAppResource(input: {
     if ((await diagnoseMcpToolDenies(input.workspaceRoot, serverName, [projectedName])).length > 0) {
       throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
     }
-    const read = await client.readResource({ uri: resourceUri }).catch(() => {
+    const resource = await readAppResource(input, serverName, fingerprint, resourceUri, client).catch((cause: unknown) => {
+      if (cause instanceof McpAppHostError) throw cause;
       throw new McpAppHostError(
         "resource_read_failed",
         "The current MCP App tool definition advertises a resource that resources/read could not load.",
       );
     });
-    const resource = findHtmlResource(resourceUri, read);
-    const presentation = resourcePresentationMeta(resource.meta);
+
     return {
       app: {
         serverName,
         toolName: tool.name,
         resourceUri,
-        html: resource.html,
-        ...presentation,
+        ...resource,
       },
       tool,
     };
@@ -933,7 +959,7 @@ export async function resolveSameServerMcpAppResource(input: {
       if ((await diagnoseMcpToolDenies(input.workspaceRoot, item.name, [projectedLaunchName])).length > 0) {
         throw new McpAppHostError("tool_denied", "This MCP App tool is denied by the workspace tool policy.");
       }
-      const read = await client.readResource({ uri: resourceUri }).catch(() => {
+      const read = await timeMcpApp("desktop.resources-read", () => client.readResource({ uri: resourceUri })).catch(() => {
         throw new McpAppHostError("resource_read_failed", "The MCP App resource could not be loaded from its same-server provider.");
       });
       const resource = findHtmlResource(resourceUri, read);
@@ -1022,11 +1048,12 @@ export async function callMcpAppTool(input: {
       throw new McpAppHostError("mcp_app_refresh_denied", "Guarded refresh requires the original read-only dashboard tool without approval.");
     }
     try {
-      const resource = findHtmlResource(launch.resourceUri, await client.readResource({ uri: launch.resourceUri }).catch(() => {
+      const resource = await readAppResource(input, input.serverName, launch.fingerprint, launch.resourceUri, client).catch((cause: unknown) => {
+        if (cause instanceof McpAppHostError) throw cause;
         throw new McpAppHostError("resource_read_failed", "The original App resource is no longer available. Reopen the App before using its actions.");
-      }));
+      });
       if (expectedResourceDigest !== undefined) {
-        const resourceDigest = mcpAppResourceDigest({ html: resource.html, ...resourcePresentationMeta(resource.meta) });
+        const resourceDigest = mcpAppResourceDigest(resource);
         if (expectedResourceDigest.toLowerCase() !== launch.resourceDigest || resourceDigest !== launch.resourceDigest) {
           throw new McpAppHostError("mcp_app_resource_changed", "The App resource changed. OpenWork stopped the refresh before calling the tool. Reload the App before refreshing again.");
         }
@@ -1072,7 +1099,7 @@ export async function callMcpAppTool(input: {
     // missing required argument) must reach the member as that rejection,
     // not as an unhandled 500 "Unexpected server error". The text is
     // provider-controlled: bound it the same way Den bounds provider excerpts.
-    const result = await client.callTool({ name: input.name, arguments: input.arguments ?? {} }).catch((error: unknown) => {
+    const result = await timeMcpApp("desktop.tools-call", () => client.callTool({ name: input.name, arguments: input.arguments ?? {} })).catch((error: unknown) => {
       throw new McpAppHostError("tool_call_failed", providerErrorExcerpt(error) ?? "The MCP App tool call failed.");
     });
     if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_RESULT_BYTES) {
@@ -1100,3 +1127,12 @@ export const mcpAppHostProtocol = {
   mimeType: MCP_APP_MIME_TYPE,
   protocolVersion: MCP_PROTOCOL_VERSION,
 };
+
+// Opt-in numeric profiling only; never emit request payloads or identities.
+if (process.env.OPENWORK_MCP_APP_TIMINGS === "1") {
+  new PerformanceObserver(list => {
+    for (const entry of list.getEntries()) if (entry.name.startsWith("openwork.mcp-app.")) {
+      console.log("MCP_APP_TIMING", JSON.stringify({ stage: entry.name, durationMs: entry.duration }))
+    }
+  }).observe({ entryTypes: ["measure"] })
+}

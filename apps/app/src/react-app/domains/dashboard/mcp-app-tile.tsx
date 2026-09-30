@@ -261,6 +261,19 @@ function McpAppTileContent({
   const onAutoLaunchDisabledRef = useRef(onAutoLaunchDisabled);
   onAutoLaunchDisabledRef.current = onAutoLaunchDisabled;
   const launchRef = useRef<TileAttempt | null>(null);
+  const resolveLiveActions = useCallback(async () => {
+    const document = stateRef.current.phase === "ready" ? stateRef.current.lifetime : null;
+    const attempt = launchRef.current;
+    const next = await attempt?.promise;
+    // A successful refresh retires the cached iframe. Its queued startup reads
+    // belong to that old document; only the replacement may use the new lease.
+    if (!document?.active) throw new Error("This App view has closed or changed.");
+    if (!attempt || attempt.controller.signal.aborted || launchRef.current !== attempt
+      || next?.phase !== "ready" || !next.lifetime.active || next.origin.readOnly || !next.app.launchId) {
+      throw new Error("This App's workspace is still unavailable. Refresh the tile to reconnect.");
+    }
+    return { origin: next.origin, app: next.app };
+  }, []);
   const lifetime = useRef({ active: true });
   const endpointsRef = useRef(launchEndpoints);
   endpointsRef.current = launchEndpoints;
@@ -662,6 +675,7 @@ function McpAppTileContent({
             <div inert={awaitingReady || undefined} aria-hidden={awaitingReady || undefined}>
               <McpAppSandboxView
                 origin={origin}
+                resolveLiveActions={origin.readOnly ? resolveLiveActions : undefined}
                 key={state.lifetime.id}
                 app={state.app}
                 toolName={entry.projectedToolName}

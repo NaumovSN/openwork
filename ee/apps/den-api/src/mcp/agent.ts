@@ -1,3 +1,4 @@
+import { startMcpAppTiming } from "@openwork/types/mcp-app-timing"
 import {
   McpServer,
   ProtocolError,
@@ -455,6 +456,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       return preflightResponse
     }
 
+    const finishIndexTiming = startMcpAppTiming("den.agent-index-read")
     const catalog = await getCatalog(app as unknown as Hono, c.env)
     // External MCP connections are scoped to the calling MEMBER (grants +
     // per-member credentials), not just the org — resolve who this token's
@@ -645,6 +647,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       }
     }
 
+    finishIndexTiming()
     server.registerTool(
       SEARCH_CAPABILITIES_TOOL_NAME,
       {

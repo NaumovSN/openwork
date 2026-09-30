@@ -22,6 +22,7 @@ import { isDesktopRuntime } from "./runtime-env";
 import type { McpStatusMap, OpencodeEvent } from "../types";
 import { normalizeDirectoryPath } from "../utils";
 import { dispatchProviderCatalogChanged } from "./provider-events";
+import { composeV2Prompt, splitV2Prompt, wrapPastedText } from "./v2-prompt-context";
 
 type RequestOptions = {
   signal?: AbortSignal;
@@ -48,6 +49,7 @@ type PromptPart = {
   text?: unknown;
   synthetic?: unknown;
   metadata?: unknown;
+  filename?: unknown;
 };
 
 function selectedSkill(part: PromptPart): Record<string, unknown> | null {
@@ -58,12 +60,56 @@ function selectedSkill(part: PromptPart): Record<string, unknown> | null {
   return id && /^(?:skill|plugin):/.test(id) ? null : selection;
 }
 
-/** The exact native prompt body, also used to correlate text-only user acknowledgements. */
+function isPastedText(part: PromptPart): boolean {
+  return isRecord(part.metadata) && part.metadata.openworkPastedText === true;
+}
+
+function partText(part: PromptPart): string | null {
+  return part.type === "text" && typeof part.text === "string" ? part.text : null;
+}
+
+/**
+ * The exact native prompt body. The person's words keep their order, pasted
+ * text stays marked, and hidden parts follow in one context block so the
+ * transcript can show the words without them (see v2-prompt-context).
+ */
 export function v2PromptText(parts: readonly PromptPart[]): string {
-  return parts
-    .filter((part) => part.type === "text" && typeof part.text === "string" && !selectedSkill(part))
-    .map((part) => typeof part.text === "string" ? part.text : "")
-    .join("");
+  const words = parts.flatMap((part) => {
+    const text = partText(part);
+    if (text === null || part.synthetic === true) return [];
+    return [isPastedText(part) ? wrapPastedText(text) : text];
+  }).join("");
+  const context = parts.flatMap((part) => {
+    const text = partText(part);
+    return text !== null && part.synthetic === true && !selectedSkill(part) ? [text] : [];
+  });
+  return composeV2Prompt(words, context);
+}
+
+function attachmentNames(metadata: unknown): string[] {
+  const attachments = isRecord(metadata) ? metadata.openworkAttachments : undefined;
+  if (!Array.isArray(attachments)) return [];
+  return attachments.flatMap((item) => {
+    const filename = readString(item, "filename");
+    return filename ? [filename] : [];
+  });
+}
+
+/**
+ * What a user turn shows: its words and attachment names. Correlates an
+ * optimistic send with the native turn, whose ID v2 assigns itself, using the
+ * sent parts on one side and the transcript's parts on the other.
+ */
+export function v2AcknowledgementText(parts: readonly PromptPart[]): string {
+  const words = parts.flatMap((part) => {
+    const text = partText(part);
+    return text !== null && part.synthetic !== true ? [text] : [];
+  }).join("");
+  const files = new Set(parts.flatMap((part) => {
+    if (part.type === "file") return typeof part.filename === "string" && part.filename ? [part.filename] : [];
+    return part.type === "text" && part.synthetic === true ? attachmentNames(part.metadata) : [];
+  }));
+  return [words, ...[...files].sort()].join("\n");
 }
 
 type PromptParameters = SessionParameters & {
@@ -636,6 +682,30 @@ function mapV2MessageParts(
   }];
 }
 
+/**
+ * A native user turn stores the whole prompt string. Return the parts v1 keeps
+ * for the same send: the words, pasted text marked as pasted, and hidden
+ * context as a synthetic part whose attachments the transcript shows as files.
+ */
+function mapV2UserPart(part: Part): Part[] {
+  if (part.type !== "text") return [part];
+  const { segments, context, attachments } = splitV2Prompt(part.text);
+  if (!context && !segments.some((segment) => segment.kind === "pasted")) return [part];
+  const words = segments.map((segment, index): Part => ({
+    ...part,
+    id: index === 0 ? part.id : `${part.id}:${index}`,
+    text: segment.text,
+    ...(segment.kind === "pasted" ? { metadata: { openworkPastedText: true } } : {}),
+  }));
+  return context === null ? words : [...words, {
+    ...part,
+    id: `${part.id}:context`,
+    text: context,
+    synthetic: true,
+    ...(attachments.length ? { metadata: { openworkAttachments: attachments } } : {}),
+  }];
+}
+
 function mapV2Message(
   value: unknown,
   sessionID: string,
@@ -651,8 +721,9 @@ function mapV2Message(
   const created = readNumber(time, "created") ?? readNumber(value, "timestamp") ?? 0;
   const completed = readNumber(time, "completed");
   const resolvedSessionID = readString(value, "sessionID") ?? sessionID;
-  const parts = mapV2MessageParts(value, id, resolvedSessionID, created, taskSessions);
   const role = messageRole(value);
+  const nativeParts = mapV2MessageParts(value, id, resolvedSessionID, created, taskSessions);
+  const parts = role === "user" ? nativeParts.flatMap(mapV2UserPart) : nativeParts;
   const error = readRecord(value, "error");
   return {
     info: {
