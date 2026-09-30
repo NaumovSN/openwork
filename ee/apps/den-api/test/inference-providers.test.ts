@@ -1619,7 +1619,7 @@ test("Free provider summaries isolate organization usage and Auto pin writes pre
   const unit = INFERENCE_USAGE_CONVERSION_FACTOR
   const hash = freeInferenceDigest("member", ownerUserId)
   const headers = { "x-openwork-org-id": orgA }
-  const metadata = { inferenceFree: { offerAllowed: true, defaultPinned: true }, unrelated: "preserved" }
+  const metadata = { inferenceFree: { offerAllowed: true, defaultPinned: true, rolloutEnabled: true }, unrelated: "preserved" }
   env.inferenceFree = { ...previousFree, enabled: true, weeklyBudgetUsd: 5, weeklyLimitAmount: 5 * unit }
   try {
     await db.insert(schema.OrganizationTable).values([{ id: orgA, name: "Free summary A", slug: orgA, metadata }, { id: orgB, name: "Free summary B", slug: orgB }])
@@ -1653,7 +1653,7 @@ test("Free provider summaries isolate organization usage and Auto pin writes pre
     const memberAccess = readResource(await (await request(memberCookie, "/v1/inference/access", { headers })).json(), "access")
     expect(memberAccess).toMatchObject({ defaultPinned: false, kind: "free", modelID: INFERENCE_FREE_MODEL_ID })
     const [saved] = await db.select({ metadata: schema.OrganizationTable.metadata }).from(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, orgA))
-    expect(saved.metadata).toEqual({ ...metadata, inferenceFree: { offerAllowed: true, defaultPinned: false } })
+    expect(saved.metadata).toEqual({ ...metadata, inferenceFree: { offerAllowed: true, defaultPinned: false, rolloutEnabled: true } })
     await db.update(schema.OrganizationTable).set({ metadata: { ...saved.metadata, dpaSigned: true } }).where(drizzle.eq(schema.OrganizationTable.id, orgA))
     expect((await request(ownerCookie, "/v1/inference/free/pins", { method: "PATCH", headers, body: JSON.stringify({ defaultPinned: true }) })).status).toBe(200)
     expect(readResource(await (await request(memberCookie, "/v1/inference/access", { headers })).json(), "access")).toMatchObject({ defaultPinned: true, kind: "unavailable", reason: "admin_disabled" })

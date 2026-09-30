@@ -2,7 +2,8 @@ import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { InferenceKeyTable, MemberTable, OrganizationTable, OrgSubscriptionTable, readDesktopPolicyForOrgMember } from "@openwork-ee/den-db"
 import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-policy"
-import { freeInferenceDefaultPinned, freeInferenceOrganizationAllowed, inferenceSubscribed, inferenceSubscriptionLive } from "@openwork/types/den/inference"
+import { freeInferenceDefaultPinned, freeInferenceOrganizationAllowed, freeInferenceRolloutEnabled, inferenceSubscribed, inferenceSubscriptionLive } from "@openwork/types/den/inference"
+import { env } from "../../env.js"
 import { db, freeAutoDatabase } from "../../db.js"
 
 type InferenceKeyRow = typeof InferenceKeyTable.$inferSelect
@@ -28,14 +29,14 @@ async function memberFreePrincipalRow(principal: Pick<MemberPrincipal, "inferenc
 }
 
 /**
- * Free Auto is only for joined members of unsubscribed organizations that have not opted out. An organization
+ * Free Auto is only for joined members of enrolled, unsubscribed organizations that have not opted out. An organization
  * Stripe still collects for is never downgraded to free, even if its metadata says Models are off: members keep
  * getting `inference_disabled`, which support can see, instead of a silent $5 allowance.
  */
 function freeOrganization(metadata: Record<string, unknown> | null, subscription: string | null) {
   if (inferenceSubscribed(metadata) || inferenceSubscriptionLive(subscription) || !freeInferenceOrganizationAllowed(metadata)) return false
   assertManagedModelsAllowed(metadata)
-  return true
+  return freeInferenceRolloutEnabled(metadata, env.freeAuto.member)
 }
 
 async function freePolicyAllowed(identity: Pick<MemberPrincipal, "memberId" | "organizationId">, database: Database) {

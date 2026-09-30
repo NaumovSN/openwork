@@ -27,7 +27,7 @@ import {
   INFERENCE_RESET_STRATEGY_BY_WINDOW_TYPE,
   INFERENCE_TIER_LIMITS,
   INFERENCE_WINDOW_DURATIONS_MS,
-  freeInferenceAccess, freeInferenceWindow, freeInferenceOrganizationAllowed, freeInferenceDefaultPinned, inferenceSubscribed, inferenceSubscriptionLive, managedModelCatalog,
+  freeInferenceAccess, freeInferenceWindow, freeInferenceOrganizationAllowed, freeInferenceDefaultPinned, freeInferenceRolloutEnabled, inferenceSubscribed, inferenceSubscriptionLive, managedModelCatalog,
   INFERENCE_USAGE_CONVERSION_FACTOR,
   type InferenceAccess, type FreeInferenceProviderSummary,
   INFERENCE_WINDOW_TYPES,
@@ -95,7 +95,7 @@ export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<
       remainingUsd: null, resetsAt: null, reason: null, canUpgrade: false, defaultPinned }
     if (!freeInferenceOrganizationAllowed(row.metadata)) return unavailable("admin_disabled")
     const now = new Date(Number(row.nowMs))
-    if (!env.inferenceFree.enabled) return { ...freeInferenceAccess({ config: env.inferenceFree, now }), defaultPinned }
+    if (!env.inferenceFree.enabled || !freeInferenceRolloutEnabled(row.metadata, env.inferenceFree)) return { ...freeInferenceAccess({ config: env.inferenceFree, now, reason: "free_disabled" }), defaultPinned }
     if (await paidEntitlementMismatch(input.organizationId)) return unavailable("not_eligible")
     if (await freeAutoBlockedByDesktopPolicy(input)) return unavailable("admin_disabled")
     const identity = freeHash("member", input.userId)
@@ -118,7 +118,7 @@ export async function getFreeInferenceProviderSummary(organizationId: OrgId): Pr
     .innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
     .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt), isNotNull(MemberTable.userId)))
   const identities = [...new Set(members.flatMap((member) => member.userId ? [freeHash("member", member.userId)] : []))]
-  let reason: InferenceAccess["reason"] = !env.inferenceFree.enabled ? "free_disabled" : null
+  let reason: InferenceAccess["reason"] = !env.inferenceFree.enabled || !freeInferenceRolloutEnabled(organization.metadata, env.inferenceFree) ? "free_disabled" : null
   try { assertManagedModelsAllowed(organization.metadata) } catch (error) {
     if (!(error instanceof ManagedModelsPolicyError) || error.code !== "managed_models_disabled_for_dpa") throw error
     reason = "admin_disabled"
@@ -170,7 +170,7 @@ export async function ensureMemberFreeInferenceCredential(input: FreeMemberInput
       .where(eq(OrganizationTable.id, input.organizationId)).limit(1).for("update")
     if (!organization) return null
     assertManagedModelsAllowed(organization.metadata)
-    if (inferenceSubscribed(organization.metadata) || !freeInferenceOrganizationAllowed(organization.metadata)) return null
+    if (inferenceSubscribed(organization.metadata) || !freeInferenceOrganizationAllowed(organization.metadata) || !freeInferenceRolloutEnabled(organization.metadata, env.inferenceFree)) return null
     if (await paidEntitlementMismatch(input.organizationId, tx)) return null
     const [member] = await tx.select({ id: MemberTable.id }).from(MemberTable).where(and(eq(MemberTable.id, input.memberId),
       eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt))).limit(1).for("update")

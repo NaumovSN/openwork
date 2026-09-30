@@ -153,7 +153,7 @@ test("free Auto SQL and 0115 upgrade in an owned random database", { skip: !admi
     assert.ok(match)
     return match
   }
-  async function person(userId?: typeof AuthUserTable.$inferSelect.id, metadata: Record<string, unknown> = {}) {
+  async function person(userId?: typeof AuthUserTable.$inferSelect.id, metadata: Record<string, unknown> = { inferenceFree: { rolloutEnabled: true } }) {
     const organizationId = createDenTypeId("organization"), memberId = createDenTypeId("member")
     const user = userId ?? createDenTypeId("user")
     await db.insert(OrganizationTable).values({ id: organizationId, name: "Free SQL fixture", slug: randomUUID(), metadata })
@@ -416,6 +416,29 @@ test("free Auto SQL and 0115 upgrade in an owned random database", { skip: !admi
     assert.ok(await findMemberFreePrincipal(member.key, db), "once Stripe gives up, the organization is unsubscribed")
   })
 
+  await t.test("an organization rollout change blocks existing keys, status and admission without affecting another organization or guests", async () => {
+    const pilot = await person(), other = await person()
+    const guest: GuestPrincipal = { kind: "installation", id: "org-rollout-independent-guest" }
+    const windows = await admit(pilot.principal)
+    for (const metadata of [{}, { inferenceFree: { rolloutEnabled: false } }, { inferenceFree: { rolloutEnabled: "true" } }]) {
+      await db.update(OrganizationTable).set({ metadata }).where(eq(OrganizationTable.id, pilot.input.organizationId))
+      assert.equal(await ensureMemberFreeInferenceCredential(pilot.input), null)
+      assert.equal((await getMemberInferenceAccess(pilot.input)).reason, "free_disabled")
+      assert.equal(await findMemberFreePrincipal(pilot.key, replica.db), null)
+      assert.equal(await memberFreePrincipalAllowed(pilot.principal, replica.db), false)
+      assert.deepEqual(await otherStore.read(pilot.principal), { state: "unavailable", code: "free_principal_rejected", allowance: null })
+      assert.equal((await otherStore.admit(pilot.principal)).ok, false)
+      assert.equal((await otherStore.read(other.principal)).state, "ready")
+      assert.equal((await guests.read(guest)).state, "ready")
+    }
+    assert.equal(await charge(pilot.principal, windows, receipt()), true, "already admitted usage still settles")
+    await db.update(OrganizationTable).set({ metadata: { inferenceFree: { rolloutEnabled: true } } }).where(eq(OrganizationTable.id, pilot.input.organizationId))
+    assert.equal((await ensureMemberFreeInferenceCredential(pilot.input))?.apiKey, pilot.credential.apiKey)
+    assert.ok(await findMemberFreePrincipal(pilot.key, db))
+    assert.equal((await otherStore.read(pilot.principal)).state, "ready")
+    assert.equal((await bucket(pilot.principal)).used_amount, 100000, "reenabling does not reset spend")
+  })
+
   await t.test("subscription, DPA and admin policy deny free Auto; a revoked key cannot start a request but a finished one is still charged", async () => {
     const member = await person(), windows = await admit(member.principal)
     await db.update(OrganizationTable).set({ metadata: { dpaSigned: true } }).where(eq(OrganizationTable.id, member.input.organizationId))
@@ -429,7 +452,7 @@ test("free Auto SQL and 0115 upgrade in an owned random database", { skip: !admi
     }
     await db.update(OrganizationTable).set({ metadata: { inference: { enabled: true, tier: "tier1" } } }).where(eq(OrganizationTable.id, member.input.organizationId))
     assert.equal((await getMemberInferenceAccess(member.input)).kind, "paid")
-    await db.update(OrganizationTable).set({ metadata: {} }).where(eq(OrganizationTable.id, member.input.organizationId))
+    await db.update(OrganizationTable).set({ metadata: { inferenceFree: { rolloutEnabled: true } } }).where(eq(OrganizationTable.id, member.input.organizationId))
     await db.update(InferenceKeyTable).set({ status: "revoked", revoked_at: new Date() }).where(eq(InferenceKeyTable.id, member.key.id))
     assert.equal(await findMemberFreePrincipal(member.key, replica.db), null)
     assert.equal((await otherStore.admit(member.principal)).ok, false)

@@ -2,7 +2,7 @@ import { afterAll, beforeEach, expect, mock, test } from "bun:test"
 import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { InferenceKeyTable } from "@openwork-ee/den-db/schema"
-import { readFreeInferenceConfig, freeInferenceDefaultPinned, withFreeInferenceDefaultPinned, freeInferenceOrganizationAllowed, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
+import { readFreeInferenceConfig, freeInferenceDefaultPinned, withFreeInferenceDefaultPinned, freeInferenceOrganizationAllowed, freeInferenceRolloutEnabled, withFreeInferenceRollout, INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
 import { inferenceBearerKey, inferenceBearerKeyStorageDigest } from "@openwork-ee/utils/inference-bearer-key"
 
 type Query = { from: () => Query; innerJoin: () => Query; leftJoin: () => Query; where: () => Query; limit: () => Query;
@@ -25,12 +25,12 @@ const transaction = {
   update: (table: unknown) => ({ set: (value: unknown) => ({ where: async () => { writes.push({ table, value }) } }) }),
 }
 const database = { ...transaction, transaction: async <T>(callback: (tx: typeof transaction) => Promise<T>) => callback(transaction) }
-const configuration = { inferenceFree: readFreeInferenceConfig({ INFERENCE_FREE_ENABLED: "true" }), modelsPublicBaseUrl: "https://inference.example.test" }
+const configuration = { inferenceFree: readFreeInferenceConfig({ INFERENCE_FREE_ENABLED: "true", INFERENCE_FREE_ROLLOUT_ALL_ORGS: "true" }), modelsPublicBaseUrl: "https://inference.example.test" }
 mock.module("../src/db.js", () => ({ db: database }))
 mock.module("../src/env.js", () => ({ env: configuration }))
 let desktopPolicy: Record<string, unknown> = { allowCustomProviders: true, allowZenModel: true }
 mock.module("../src/desktop-policies.js", () => ({ calculateDesktopPolicyForOrgMember: async () => desktopPolicy }))
-const { getMemberInferenceAccess, ensureMemberFreeInferenceCredential, getFreeInferenceProviderSummary } = await import("../src/inference.js")
+const { getMemberInferenceAccess, ensureMemberFreeInferenceCredential, getFreeInferenceProviderSummary, allowFreeInferenceOffer } = await import("../src/inference.js")
 const input = { organizationId: createDenTypeId("organization"), memberId: createDenTypeId("member"), userId: createDenTypeId("user") }
 const joinedAt = new Date("2026-09-01T00:00:00.000Z")
 const person = { id: input.memberId, organizationId: input.organizationId, userId: input.userId, joinedAt, removedAt: null }
@@ -40,7 +40,7 @@ beforeEach(() => {
   results = []
   writes.length = 0
   failRead = false
-  configuration.inferenceFree = readFreeInferenceConfig({ INFERENCE_FREE_ENABLED: "true" })
+  configuration.inferenceFree = readFreeInferenceConfig({ INFERENCE_FREE_ENABLED: "true", INFERENCE_FREE_ROLLOUT_ALL_ORGS: "true" })
 })
 afterAll(() => mock.restore())
 
@@ -198,4 +198,57 @@ test("accounting failures fail closed instead of inventing a balance", async () 
   failRead = true
   expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "unavailable", reason: "accounting_unavailable", usedUsd: null, remainingUsd: null })
   expect(writes).toEqual([])
+})
+
+
+test("pilot rollout defaults off and only enrolled organizations issue keys or report an allowance", async () => {
+  configuration.inferenceFree = readFreeInferenceConfig({ INFERENCE_FREE_ENABLED: "true" })
+  for (const metadata of [{}, { inferenceFree: { rolloutEnabled: false } }, { inferenceFree: { rolloutEnabled: "true" } }]) {
+    results = [[{ metadata }]]
+    expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
+    results = [[{ metadata, nowMs: now.getTime() }]]
+    expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "unavailable", reason: "free_disabled" })
+    results = [[{ metadata, nowMs: now.getTime() }], [{ userId: input.userId }]]
+    expect(await getFreeInferenceProviderSummary(input.organizationId)).toMatchObject({ state: "disabled", reason: "free_disabled", allowance: { eligibleMembers: 0, usedUsd: null } })
+    expect(writes).toEqual([])
+    expect(results).toEqual([])
+  }
+  const metadata = { inferenceFree: { rolloutEnabled: true } }
+  results = [[{ metadata }], [], [person], []]
+  expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toMatch(/^ow_inf_/)
+  results = [[{ metadata, nowMs: now.getTime() }], [], []]
+  expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "free", reason: null })
+  configuration.inferenceFree.enabled = false
+  expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
+  results = [[{ metadata, nowMs: now.getTime() }]]
+  expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "unavailable", reason: "free_disabled" })
+})
+
+test("broad rollout changes the default while organization overrides and unrelated settings survive", () => {
+  const pilot = readFreeInferenceConfig({})
+  const broad = readFreeInferenceConfig({ INFERENCE_FREE_ROLLOUT_ALL_ORGS: "true" })
+  expect(pilot.rolloutAllOrganizations).toBe(false)
+  expect(() => readFreeInferenceConfig({ INFERENCE_FREE_ROLLOUT_ALL_ORGS: "yes" })).toThrow()
+  expect(freeInferenceRolloutEnabled({}, pilot)).toBe(false)
+  expect(freeInferenceRolloutEnabled({}, broad)).toBe(true)
+  for (const metadata of [{}, { inferenceFree: { rolloutEnabled: true } }, { inferenceFree: { rolloutEnabled: false } }]) {
+    expect(freeInferenceRolloutEnabled(JSON.stringify(metadata), broad)).toBe(freeInferenceRolloutEnabled(metadata, broad))
+  }
+  const original = { dpaSigned: true, inferenceFree: { offerAllowed: false, defaultPinned: false, other: 3 }, other: 7 }
+  const on = withFreeInferenceRollout(original, true)
+  expect(on).toEqual({ ...original, inferenceFree: { ...original.inferenceFree, rolloutEnabled: true } })
+  expect(freeInferenceRolloutEnabled(on, pilot)).toBe(true)
+  const off = withFreeInferenceRollout(on, false)
+  expect(freeInferenceRolloutEnabled(off, broad)).toBe(false)
+  expect(withFreeInferenceRollout(off, null)).toEqual(original)
+  expect(original.inferenceFree).not.toHaveProperty("rolloutEnabled")
+})
+
+
+test("lifting a billing opt-out cannot enroll an organization in the Auto pilot", async () => {
+  const metadata = { inferenceFree: { offerAllowed: false, rolloutEnabled: false, defaultPinned: false }, unrelated: 7 }
+  results = [[{ metadata }]]
+  await allowFreeInferenceOffer(input.organizationId)
+  expect(writes).toHaveLength(1)
+  expect(writes[0].value).toEqual({ metadata: { ...metadata, inferenceFree: { ...metadata.inferenceFree, offerAllowed: true } } })
 })

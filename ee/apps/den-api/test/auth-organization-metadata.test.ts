@@ -84,7 +84,7 @@ test("public organization creation cannot grant itself a commercial plan or audi
 test("public organization updates cannot replace capability metadata", async () => {
   for (const plugin of auth.options.plugins ?? []) {
     if (plugin.id !== "organization") continue
-    for (const metadata of [{}, { capabilities: { auditLogs: true } }, { capabilities: { auditLogs: false } }, { capabilities: { gatewayDashboard: true } }, { capabilities: { gatewayDashboard: false } }, { plan: { tier: "enterprise" } }, { entitlements: { auditLogs: true } }]) {
+    for (const metadata of [{}, { inferenceFree: { rolloutEnabled: true } }, { capabilities: { auditLogs: true } }, { capabilities: { auditLogs: false } }, { capabilities: { gatewayDashboard: true } }, { capabilities: { gatewayDashboard: false } }, { plan: { tier: "enterprise" } }, { entitlements: { auditLogs: true } }]) {
       await expect(plugin.options.organizationHooks.beforeUpdateOrganization({
         organization: { metadata },
         user: { id: "test-user", name: "Member", email: "member@example.test", emailVerified: true, createdAt: new Date(0), updatedAt: new Date(0) },
@@ -101,6 +101,16 @@ test("public creation rejects auditLogs presence, including string metadata and 
     const metadata = { capabilities: { auditLogs, gatewayDashboard: true } }
     for (const input of [metadata, JSON.stringify(metadata)]) await expect(beforeCreate(input)).rejects.toMatchObject({
       status: "FORBIDDEN", body: { message: "capabilities.auditLogs is reserved for internal platform administration." },
+    })
+  }
+})
+
+
+test("public organization creation cannot enroll itself in free Auto rollout", async () => {
+  for (const rolloutEnabled of [true, false, null, "true", 1]) {
+    const metadata = { inferenceFree: { rolloutEnabled }, capabilities: { gatewayDashboard: true } }
+    for (const input of [metadata, JSON.stringify(metadata)]) await expect(beforeCreate(input)).rejects.toMatchObject({
+      status: "FORBIDDEN", body: { message: "inferenceFree.rolloutEnabled is reserved for internal platform administration." },
     })
   }
 })

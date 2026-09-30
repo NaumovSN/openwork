@@ -520,6 +520,8 @@ import type {
   PatchApiAuthScimV2UsersByUserIdResponses,
   PatchV1AdminOrganizationsByOrganizationIdDpaErrors,
   PatchV1AdminOrganizationsByOrganizationIdDpaResponses,
+  PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors,
+  PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses,
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsErrors,
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses,
   PatchV1AdminOrganizationsByOrganizationIdPlanErrors,
@@ -1133,6 +1135,45 @@ export class DenClient extends HeyApiClient {
       url: "/v1/admin/organizations/{organizationId}/free-seats",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * Set an organization's free Auto rollout
+   *
+   * Allowlisted platform administrators only. Sets the organization rollout override; null restores the deployment default. Default rollout is off. Does not override the global kill switch, DPA, billing eligibility, desktop policy or allowance. Atomically preserves unrelated metadata and records the actor and previous state.
+   */
+  public patchV1AdminOrganizationsByOrganizationIdFreeAuto<ThrowOnError extends boolean = false>(
+    parameters: {
+      organizationId: string;
+      enabled: boolean | null;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "organizationId" },
+            { in: "body", key: "enabled" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses,
+      PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors,
+      ThrowOnError
+    >({
+      url: "/v1/admin/organizations/{organizationId}/free-auto",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 

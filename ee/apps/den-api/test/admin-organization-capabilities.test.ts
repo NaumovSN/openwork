@@ -478,3 +478,35 @@ test("real BetterAuth organization creation cannot spoof audit feature via objec
     }
   }
 })
+
+
+test("free Auto rollout administration preserves metadata, audits changes and rejects non-platform callers", async () => {
+  if (routeTestUnavailable) throw new Error(`Free Auto rollout route coverage unavailable: ${routeTestUnavailable}`)
+  const { db, schema, drizzle } = testDatabase()
+  const url = `http://den.local/v1/admin/organizations/${organizationId}/free-auto`
+  const base = { dpaSigned: true, inferenceFree: { offerAllowed: false, defaultPinned: false, other: 4 }, brandAppName: "Preserved" }
+  await replaceOrganizationMetadata(base)
+  for (const enabled of [true, false, null]) {
+    const response = await routeApp().request(url, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }) })
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toMatchObject({ organization: { id: organizationId, freeAuto: { enabled: enabled === true, globallyEnabled: false, rolloutAllOrganizations: false } } })
+    expect(await readOrganizationMetadata()).toEqual({ ...base, inferenceFree: { ...base.inferenceFree, ...(enabled === null ? {} : { rolloutEnabled: enabled }) } })
+    const listed = await routeApp().request(`http://den.local/v1/admin/organizations?search=${organizationId}`)
+    await expect(listed.json()).resolves.toMatchObject({ organizations: [{ id: organizationId, freeAuto: { enabled: enabled === true } }] })
+  }
+  const events = await db.select().from(schema.AuditEventTable).where(drizzle.and(drizzle.eq(schema.AuditEventTable.org_id, organizationId), drizzle.eq(schema.AuditEventTable.action, "organization.free_auto.rollout_updated")))
+  expect(events).toHaveLength(3)
+  expect(events.every((event) => event.actor_user_id === adminUserId)).toBe(true)
+  expect(events.map((event) => event.payload?.enabled).sort()).toEqual([false, null, true].sort())
+  for (const caller of ["anonymous", "owner"]) {
+    const response = await routeApp().request(url, { method: "PATCH", headers: { "content-type": "application/json", "x-test-caller": caller }, body: JSON.stringify({ enabled: true }) })
+    expect(response.status).toBe(caller === "anonymous" ? 401 : 403)
+  }
+  for (const body of [{ enabled: "true" }, {}, { enabled: true, offerAllowed: true }]) {
+    const response = await routeApp().request(url, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
+    expect(response.status).toBe(400)
+  }
+  expect(await readOrganizationMetadata()).toEqual(base)
+  const missing = await routeApp().request(`http://den.local/v1/admin/organizations/${createDenTypeId("organization")}/free-auto`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled: true }) })
+  expect(missing.status).toBe(404)
+})
