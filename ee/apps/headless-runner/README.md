@@ -35,6 +35,7 @@ All `/v1` routes require `Authorization: Bearer $HEADLESS_API_TOKEN`.
 | Method | Path | Body / query | Result |
 |---|---|---|---|
 | `GET` | `/health` | | `{ ok: true }` |
+| `GET` | `/v1/models` | | `{ defaultModel, models: [{ id, name }] }`: the models the Gateway route serves with the runner's key (cached 5 min), for pickers. Pass one as a turn's `model` |
 | `POST` | `/v1/sessions` | `{ title?, instructions? }` | session (`hs_…`) |
 | `POST` | `/v1/sessions/:id/turns` | `{ messageId, prompt, model?, credentials: { modelApiKey?, mcpToken? } }` | `202 { state: accepted \| resumed \| already_present, turn }`. A message sent while another turn runs is accepted and answered next (`turn.status: queued`); only a runaway queue of 20+ returns `429 too_many_queued` |
 | `GET` | `/v1/sessions/:id` | `?messageId=&limit=` | `{ session, status: idle \| busy, turns, messages, finalAssistantText }` |
@@ -67,7 +68,6 @@ The model sees these tools:
 | `HEADLESS_MODEL_PROTOCOL` | required | `anthropic` or `openai` |
 | `HEADLESS_MODEL_BASE_URL` | required | e.g. `https://gateway.openworklabs.com/api/v1/providers/ipr_…` |
 | `HEADLESS_MODEL` | required | Default model alias (`gwm_…`) |
-| `HEADLESS_MODEL_LABEL` | unset | Readable model name, e.g. `Claude Fable 5.1`. The agent is told what it runs on, and callers get it as `modelLabel` (Slack shows "Answered by …") |
 | `HEADLESS_MODEL_API_KEY` | unset | Fallback key for single-tenant use; callers normally send their own |
 | `HEADLESS_MCP_URL` | unset | e.g. `https://api.openworklabs.com/mcp/agent` |
 | `HEADLESS_MCP_TOOL_ALLOWLIST` | all | Comma-separated MCP tool names |

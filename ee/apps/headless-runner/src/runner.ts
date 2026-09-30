@@ -19,8 +19,6 @@ export type RunnerOptions = {
   mcp?: McpConnector
   limits: { maxConcurrentTurns: number; maxSteps: number; turnTimeoutMs: number; contextCharBudget: number }
   systemPrompt?: string
-  /** Human-readable model name, so the agent can say what it runs on. */
-  modelLabel?: string
   now?: () => number
 }
 
@@ -216,7 +214,6 @@ export class Runner {
       const system = [
         this.options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
         tools ? "" : "No OpenWork connection is available in this conversation, so connected apps cannot be reached.",
-        this.options.modelLabel ? `You are running on ${this.options.modelLabel}, through OpenWork.` : "",
         session?.instructions ?? "",
         `Current time: ${new Date(this.options.now?.() ?? Date.now()).toISOString()}`,
       ]

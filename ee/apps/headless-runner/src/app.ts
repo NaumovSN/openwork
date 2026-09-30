@@ -24,7 +24,15 @@ const readQuery = z.object({
   limit: z.coerce.number().int().min(1).max(500).default(100),
 })
 
-export function createApp(input: { store: Store; runner: Runner; apiToken: string; modelLabel?: string }) {
+export type ModelCatalog = { defaultModel: string; models: Array<{ id: string; name: string }> }
+
+export function createApp(input: {
+  store: Store
+  runner: Runner
+  apiToken: string
+  /** Models a caller may pick per turn; without it only the default is listed. */
+  models?: () => Promise<ModelCatalog>
+}) {
   const { store, runner } = input
   const expected = Buffer.from(input.apiToken)
   /** Constant-time compare; only the length of the (random, 32+ char) token can leak. */
@@ -46,6 +54,8 @@ export function createApp(input: { store: Store; runner: Runner; apiToken: strin
     console.error("[headless-runner] request failed", { path: c.req.path, error: error.message })
     return c.json({ error: "internal_error" }, 500)
   })
+
+  app.get("/v1/models", async (c) => c.json(input.models ? await input.models() : { defaultModel: "", models: [] }))
 
   app.post("/v1/sessions", async (c) => {
     const body = createSessionBody.safeParse(await c.req.json().catch(() => ({})))
@@ -77,7 +87,6 @@ export function createApp(input: { store: Store; runner: Runner; apiToken: strin
         const { images, ...rest } = message
         return { seq, messageId, ...rest, imageCount: images.length }
       }),
-      modelLabel: input.modelLabel ?? null,
       finalAssistantText,
     })
   })

@@ -112,7 +112,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
               type: "section",
               text: {
                 type: "mrkdwn",
-                text: "Your own OpenWork assistant. Connect your Slack account, then message me here, or mention @openwork in a channel. Invite me to a channel first with `/invite @openwork`.",
+                text: "Your own OpenWork assistant. Connect your Slack account, then mention @openwork or send a message here.",
               },
             },
             {
@@ -143,6 +143,15 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
   }
   if (payload.type === "app_context_changed") return checkpointEvent(event, { status: "context" })
   const cp = checkpointSchema.parse(event.checkpoint ? JSON.parse(event.checkpoint) : {})
+  // A visible "seen it" on a new mention or DM, before linking or starting the run. Without the
+  // reactions:write scope (an app installed from an older manifest) this silently does nothing.
+  if (!event.checkpoint && event.attempts === 0 && payload.ts && payload.type !== "agent_session_title_changed") {
+    try {
+      await slack("reactions.add", { channel: event.channelId, timestamp: payload.ts, name: "eyes" })
+    } catch {
+      /* missing_scope or already_reacted */
+    }
+  }
   let actor = await resolveSlackActor(installation, event.slackUserId)
   // Members who connected Slack before the assistant existed are linked from their token, not asked to reconnect.
   if (!actor && event.status !== "running" && installation.enabled && (await linkConnectedSlackMembers(installation, deps.slack)) > 0)
@@ -169,18 +178,16 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
       user: event.slackUserId,
       thread_ts: event.threadTs,
       text: headless
-        ? "I work as you in OpenWork. Connect once to get started. I'll answer this message as soon as you're connected."
-        : "I run on your own OpenWork workspace. Connect once to get started. I'll answer this message as soon as you're connected.",
+        ? "I work as you in OpenWork. Connect once to get started."
+        : "I run on your own OpenWork workspace. Connect once to get started.",
       blocks: [
         {
           type: "section",
           text: {
             type: "mrkdwn",
-            text: `${
-              headless
-                ? "I work as you, with the apps and skills you have in OpenWork. Connect your Slack account once to continue. Your workspace must give you access to this connection."
-                : "I run on your own OpenWork workspace. Connect your Slack account to continue. Your workspace must grant access to this connection and OpenWork Web."
-            }\nI'll answer this message as soon as you're connected. No need to send it again.`,
+            text: headless
+              ? "I work as you, with the apps and skills you have in OpenWork. Connect your Slack account once to continue. Your workspace must give you access to this connection."
+              : "I run on your own OpenWork workspace. Connect your Slack account to continue. Your workspace must grant access to this connection and OpenWork Web.",
           },
         },
         {
@@ -246,21 +253,9 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
       const dm = z
         .object({ channel: z.object({ id: z.string() }) })
         .parse(await slack("conversations.open", { users: event.slackUserId }))
-      let link = ""
-      try {
-        const permalink = z
-          .object({ permalink: z.string() })
-          .parse(await slack("chat.getPermalink", { channel: event.channelId, message_ts: payload.ts ?? event.threadTs }))
-        link = ` <${permalink.permalink}|View your message>`
-      } catch {
-        /* The reply still arrives; only the link back is missing. */
-      }
-      const root = z.object({ ts: z.string() }).parse(
-        await slack("chat.postMessage", {
-          channel: dm.channel.id,
-          text: `Private reply to your message in <#${event.channelId}>.${link}`,
-        }),
-      )
+      const root = z
+        .object({ ts: z.string() })
+        .parse(await slack("chat.postMessage", { channel: dm.channel.id, text: "Your private OpenWork reply" }))
       cp.channel = dm.channel.id
       cp.threadTs = root.ts
     }
@@ -317,6 +312,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     persist: (checkpoint) => persistSlackCheckpoint(event, checkpoint),
     title: `${event.channelId} · ${(payload.text ?? "Task").slice(0, 85)}`,
     webHandoff: !headless,
+    model: headless ? (installation.model ?? undefined) : undefined,
   })
   if (result.done) await releaseSlackThread(event)
   await checkpointEvent(

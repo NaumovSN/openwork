@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { z } from "zod"
-import { anthropicModel, ModelError, openAIModel, toAnthropicMessages, toOpenAIMessages } from "../src/model.js"
+import { anthropicModel, fetchGatewayModels, ModelError, openAIModel, toAnthropicMessages, toOpenAIMessages } from "../src/model.js"
 import type { Message } from "../src/types.js"
 
 type Captured = { url: string; headers: Headers; body: unknown }
@@ -12,7 +12,7 @@ function fakeFetch(responses: Array<() => Response>) {
     captured.push({
       url: String(input),
       headers: new Headers(init?.headers),
-      body: JSON.parse(String(init?.body)),
+      body: init?.body ? JSON.parse(String(init.body)) : undefined,
     })
     const next = responses.shift()
     if (!next) throw new Error("no response scripted")
@@ -134,4 +134,25 @@ test("tool images reach the model: Anthropic image blocks, OpenAI image parts", 
       { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
     ],
   })
+})
+
+test("the Gateway model list is read with the route's key and shown with readable names", async () => {
+  const { fetchImpl, captured } = fakeFetch([
+    json({
+      object: "list",
+      data: [
+        { id: "gwm_a", name: "Claude Fable 5.1 (All Allowed Models / Default credentials)" },
+        { id: "gwm_b", name: "Claude Opus 5.5 (All Allowed Models / Default credentials)" },
+        { id: "gwm_c" },
+      ],
+    }),
+  ])
+  const models = await fetchGatewayModels({ baseUrl: "https://gateway.example/api/v1/providers/ipr_x", protocol: "anthropic", apiKey: "ow_gw_key", fetch: fetchImpl })
+  assert.equal(captured[0].url, "https://gateway.example/api/v1/providers/ipr_x/models")
+  assert.equal(captured[0].headers.get("x-api-key"), "ow_gw_key")
+  assert.deepEqual(models, [
+    { id: "gwm_a", name: "Claude Fable 5.1" },
+    { id: "gwm_b", name: "Claude Opus 5.5" },
+    { id: "gwm_c", name: "gwm_c" },
+  ])
 })

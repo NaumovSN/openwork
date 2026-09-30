@@ -4,6 +4,7 @@ import { isHeadlessRunMcpToken } from "../src/mcp/headless-run-token.js"
 import {
   headlessRemoteCall,
   headlessRunnerConfig,
+  listHeadlessModels,
   slackRuntimeForOrganization,
   stepLabel,
   type HeadlessDeps,
@@ -83,6 +84,20 @@ describe("headless remote calls", () => {
     expect(calls.every((call) => call.authorization === `Bearer ${TOKEN}`)).toBe(true)
     expect(calls[1].body).toEqual({ messageId: "msg_1", prompt: "summarize", credentials: { mcpToken: "ow_mcp_at_run_1" } })
     expect(calls[2].body).toEqual({ messageId: "msg_1" })
+  })
+
+  test("the admin's model goes to the runner with the turn, and the model list comes from the runner", async () => {
+    const { deps, calls } = runner([
+      { status: 202, body: {} },
+      { status: 200, body: { defaultModel: "gwm_fable", models: [{ id: "gwm_fable", name: "Claude Fable 5.1" }, { id: "gwm_opus", name: "Claude Opus 5.5" }] } },
+    ])
+    await headlessRemoteCall(actor, "send", { sessionId: "hs_1", prompt: "x", messageId: "msg_1", model: "gwm_opus" }, deps)
+    expect(calls[0].body).toMatchObject({ model: "gwm_opus" })
+    expect(await listHeadlessModels(deps)).toEqual({
+      defaultModel: "gwm_fable",
+      models: [{ id: "gwm_fable", name: "Claude Fable 5.1" }, { id: "gwm_opus", name: "Claude Opus 5.5" }],
+    })
+    expect(await listHeadlessModels(null)).toBeNull()
   })
 
   test("read maps a running turn to busy with labelled steps", async () => {
@@ -170,7 +185,7 @@ describe("Slack run loop on the headless runtime", () => {
     return { calls, slack }
   }
 
-  test("finishes without Web links, names the model, and pings when a run took over three minutes", async () => {
+  test("finishes without Web links and pings when a run took over a minute", async () => {
     const { calls, slack } = slackRecorder()
     const remote: RemoteCall = async () => ({})
     const checkpoint = checkpointSchema.parse({
@@ -182,11 +197,9 @@ describe("Slack run loop on the headless runtime", () => {
       recipientUserId: "U1",
       startedAt: 0,
       sentText: "## Digest\n- Launch moved to Tuesday",
-      modelLabel: "Claude Fable 5.1",
     })
     await advanceSlackRun({ checkpoint, remote, slack, messageId: "msg_1", saveSession: async () => {}, title: "t", webHandoff: false, now: () => 200_000 })
     expect(JSON.stringify(calls)).not.toContain("OpenWork Web")
-    expect(JSON.stringify(calls[0])).toContain("Answered by Claude Fable 5.1 · OpenWork")
     expect(calls.at(-1)).toEqual({ method: "chat.postMessage", body: { channel: "C1", thread_ts: "1.0", text: "<@U1> Done: Digest" } })
   })
 
@@ -234,10 +247,24 @@ describe("Slack run loop on the headless runtime", () => {
     ])
   })
 
+  test("the admin's model is sent with the turn; no model means the runner default", async () => {
+    const bodies: Record<string, unknown>[] = []
+    const remote: RemoteCall = async (_action, body) => {
+      bodies.push(body)
+      return {}
+    }
+    const { slack } = slackRecorder()
+    const base = { remote, slack, messageId: "msg_1", saveSession: async () => {}, title: "t", webHandoff: false }
+    await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse({ phase: "send", sessionId: "hs_1", prompt: "x" }), model: "gwm_opus" })
+    await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse({ phase: "send", sessionId: "hs_1", prompt: "x" }) })
+    expect(bodies[0]).toMatchObject({ model: "gwm_opus" })
+    expect(bodies[1]).not.toHaveProperty("model")
+  })
+
   test("quick runs get no extra ping", async () => {
     const { calls, slack } = slackRecorder()
     const checkpoint = checkpointSchema.parse({ phase: "finish", channel: "C1", threadTs: "1.0", streamTs: "1.5", recipientUserId: "U1", startedAt: 0 })
-    await advanceSlackRun({ checkpoint, remote: async () => ({}), slack, messageId: "msg_1", saveSession: async () => {}, title: "t", webHandoff: false, now: () => 120_000 })
+    await advanceSlackRun({ checkpoint, remote: async () => ({}), slack, messageId: "msg_1", saveSession: async () => {}, title: "t", webHandoff: false, now: () => 20_000 })
     expect(calls.some((call) => call.method === "chat.postMessage")).toBe(false)
   })
 
@@ -265,12 +292,10 @@ test("labels and summaries are short and readable", () => {
   expect(doneSummary("x".repeat(300)).length).toBe(140)
 })
 
-test("the runner-path prompt never points to OpenWork Web and says Slack files can be opened", () => {
+test("the runner-path prompt says Slack files and images can be opened", () => {
   const input = { event: { type: "app_mention", user: "U1", text: "<@B1> what is written here", files: [{ id: "F1", name: "image.png" }] }, teamId: "T1", botUserId: "B1", context: {}, privateReply: false }
   const headless = buildSlackPrompt({ ...input, webHandoff: false })
-  expect(headless).not.toContain("open OpenWork Web")
-  expect(headless).toContain("Never suggest OpenWork Web")
   expect(headless).toContain("Open them before saying you can't read them")
   expect(headless).toContain("F1")
-  expect(buildSlackPrompt(input)).toContain("open OpenWork Web")
+  expect(buildSlackPrompt(input)).not.toContain("Open them before saying you can't read them")
 })

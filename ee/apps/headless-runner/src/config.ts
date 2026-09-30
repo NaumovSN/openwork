@@ -23,7 +23,6 @@ const configSchema = z.object({
   HEADLESS_MODEL_PROTOCOL: z.enum(["anthropic", "openai"]),
   HEADLESS_MODEL_BASE_URL: safeUrl,
   HEADLESS_MODEL: z.string().min(1),
-  HEADLESS_MODEL_LABEL: z.string().min(1).max(100).optional(),
   HEADLESS_MODEL_API_KEY: z.string().min(1).optional(),
   HEADLESS_MCP_URL: safeUrl.optional(),
   HEADLESS_MCP_TOOL_ALLOWLIST: csv,
@@ -43,7 +42,6 @@ export type Config = {
     protocol: "anthropic" | "openai"
     baseUrl: string
     model: string
-    label?: string
     defaultApiKey?: string
     maxOutputTokens: number
   }
@@ -72,7 +70,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       protocol: value.HEADLESS_MODEL_PROTOCOL,
       baseUrl: value.HEADLESS_MODEL_BASE_URL,
       model: value.HEADLESS_MODEL,
-      label: value.HEADLESS_MODEL_LABEL,
       defaultApiKey: value.HEADLESS_MODEL_API_KEY,
       maxOutputTokens: value.HEADLESS_MAX_OUTPUT_TOKENS,
     },

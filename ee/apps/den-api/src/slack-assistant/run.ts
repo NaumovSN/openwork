@@ -22,7 +22,6 @@ export const checkpointSchema = z.object({
   titleSynced: z.boolean().default(false),
   startedAt: z.number().optional(),
   stillWorkingShown: z.boolean().default(false),
-  modelLabel: z.string().optional(),
 })
 type Checkpoint = z.infer<typeof checkpointSchema>
 const readSchema = z.object({
@@ -31,7 +30,6 @@ const readSchema = z.object({
   messageCount: z.number(),
   finalAssistantText: z.string(),
   terminalError: z.unknown().optional(),
-  modelLabel: z.string().nullable().optional(),
   messages: z.array(
     z.object({
       role: z.string(),
@@ -51,11 +49,8 @@ export function webLink(sessionId: string) {
   return url.toString()
 }
 
-/**
- * Runs longer than this get a separate "done" reply, because updating a streamed message does not notify anyone.
- * Shorter runs are usually watched as they stream, where a ping would only repeat the answer.
- */
-export const DONE_PING_AFTER_MS = 3 * 60_000
+/** Runs longer than this get a separate "done" reply, because updating a streamed message does not notify anyone. */
+export const DONE_PING_AFTER_MS = 60_000
 /** With no answer text by then, say the work continues and the reply will land in this thread. */
 export const STILL_WORKING_AFTER_MS = 20_000
 export const STILL_WORKING_LINE = "Still working on it. I'll reply here when it's done.\n\n"
@@ -184,6 +179,8 @@ export async function advanceSlackRun(input: {
   persist?: (checkpoint: Checkpoint) => Promise<void>
   /** False for the headless runner: there is no OpenWork Web session to hand off to. */
   webHandoff?: boolean
+  /** Gateway model alias for the headless runner, chosen by the workspace admin. */
+  model?: string
   now?: () => number
 }): Promise<{ checkpoint: Checkpoint; delayMs: number; done?: boolean }> {
   const cp = input.checkpoint
@@ -207,6 +204,7 @@ export async function advanceSlackRun(input: {
       sessionId: cp.sessionId,
       prompt: cp.prompt,
       messageId: input.messageId,
+      ...(input.model ? { model: input.model } : {}),
     })
     if (result.error) return retryProvisioning(result, cp, input.slack)
     cp.phase = "read"
@@ -227,7 +225,6 @@ export async function advanceSlackRun(input: {
     const result = await input.remote("read", { sessionId: cp.sessionId, messageId: input.messageId, limit: 100 })
     if (result.error) return retryProvisioning(result, cp, input.slack)
     const snapshot = readSchema.parse(result)
-    if (snapshot.modelLabel) cp.modelLabel = snapshot.modelLabel
     if (!cp.titleSynced && snapshot.title) {
       await input.slack("agents.sessions.rename", {
         channel_id: cp.channel,
@@ -301,9 +298,6 @@ export async function advanceSlackRun(input: {
       ? { chunks: [{ type: "markdown_text", text: `\n\n[Open in OpenWork Web](${webLink(cp.sessionId ?? "")})` }] }
       : {}),
     blocks: [
-      ...(cp.modelLabel && !webHandoff
-        ? [{ type: "context", elements: [{ type: "mrkdwn", text: `Answered by ${cp.modelLabel} · OpenWork` }] }]
-        : []),
       {
         type: "context_actions",
         elements: [

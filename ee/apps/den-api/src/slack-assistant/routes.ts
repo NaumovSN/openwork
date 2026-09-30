@@ -34,13 +34,14 @@ import {
 import { getExternalMcpConnection } from "../capability-sources/external-mcp-connections.js"
 import { getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { getOpenWorkWebRuntimeAccess } from "../openwork-web-runtime-access.js"
-import { slackRuntimeForOrganization } from "./headless.js"
+import { listHeadlessModels, slackRuntimeForOrganization } from "./headless.js"
 import { organizationHasCapability } from "../organization-capabilities.js"
 import { publicRequestUrl } from "../request-url.js"
 import { getOrganizationContextForUser } from "../orgs.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import {
   BOT_SCOPES,
+  OPTIONAL_BOT_SCOPES,
   isInvocation,
   scopeKey,
   slackEnvelopeSchema,
@@ -66,6 +67,12 @@ const configSchema = z.object({
     .default([]),
   shadowMode: z.boolean().default(false),
   dailyLimit: z.number().int().min(1).max(1000).default(100),
+  model: z
+    .string()
+    .regex(/^[A-Za-z0-9._:/-]{1,255}$/)
+    .nullable()
+    .optional()
+    .describe("Gateway model alias for headless runs; null restores the runner default. Omit to keep the current model."),
 })
 function publicBase(request: Request) {
   return env.apiPublicUrl ?? publicRequestUrl(request, { trustedOrigins: env.publicUrlTrustedOrigins }).origin
@@ -81,6 +88,11 @@ const setupResponseSchema = z.object({
   channelIds: z.array(z.string()),
   shadowMode: z.boolean(),
   dailyLimit: z.number().int(),
+  model: z.string().nullable().describe("Model chosen for headless runs, or null for the runner default."),
+  defaultModel: z.string().nullable().describe("The headless runner's default model, when this workspace uses it."),
+  models: z
+    .array(z.object({ id: z.string(), name: z.string() }))
+    .describe("Models the headless runner can use; empty when the workspace doesn't use the headless runner."),
   metrics: z.object({
     completed: z.number().int(),
     failed: z.number().int(),
@@ -144,6 +156,8 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       if (!connection) return c.json({ error: "not_found" }, 404)
       const installation = await getInstallation(connectionId)
       const web = await getOpenWorkWebRuntimeAccess(org.organization.id)
+      const catalog =
+        slackRuntimeForOrganization(org.organization.metadata) === "headless" ? await listHeadlessModels() : null
       return c.json({
         enabled: installation?.enabled ?? false,
         installed: Boolean(installation?.botToken),
@@ -155,6 +169,9 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
         channelIds: installation?.channelIds ?? [],
         shadowMode: installation?.shadowMode ?? false,
         dailyLimit: installation?.dailyLimit ?? 100,
+        model: installation?.model ?? null,
+        defaultModel: catalog?.defaultModel ?? null,
+        models: catalog?.models ?? [],
         metrics: await slackAssistantMetrics(connectionId),
         manifest: slackManifest(publicBase(c.req.raw), connectionId),
       })
@@ -269,7 +286,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
       })
       const url = new URL("https://slack.com/oauth/v2/authorize")
       url.searchParams.set("client_id", client.clientId)
-      url.searchParams.set("scope", BOT_SCOPES.join(","))
+      url.searchParams.set("scope", [...BOT_SCOPES, ...OPTIONAL_BOT_SCOPES].join(","))
       url.searchParams.set("state", nonce)
       url.searchParams.set("redirect_uri", `${publicBase(c.req.raw)}/v1/integrations/slack/oauth/callback`)
       return c.json({ url: url.toString() })

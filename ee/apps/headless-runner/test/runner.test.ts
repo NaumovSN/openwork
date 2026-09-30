@@ -294,7 +294,6 @@ test("an image from a tool is shown to the model in its turn, then dropped from 
   ])
   const { store, runner } = makeRunner({
     model,
-    modelLabel: "Claude Fable 5.1",
     mcp: async () => ({
       tools: [{ name: "slack_read_file", description: "read", inputSchema: { type: "object" } }],
       async call() {
@@ -308,7 +307,6 @@ test("an image from a tool is shown to the model in its turn, then dropped from 
   await runner.idle()
   const toolInTurn = requests[1].messages.find((message) => message.role === "tool")
   assert.deepEqual(toolInTurn?.role === "tool" && toolInTurn.images, [image])
-  assert.ok(requests[0].system.includes("You are running on Claude Fable 5.1"))
 
   runner.send({ sessionId: session.id, messageId: "msg_2", prompt: "thanks", credentials: creds })
   await runner.idle()

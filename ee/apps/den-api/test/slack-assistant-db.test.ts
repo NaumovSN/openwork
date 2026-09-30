@@ -196,7 +196,8 @@ suite("Slack assistant: real database and signed HTTP journey", () => {
     await drain()
     const card = slackCalls.at(-1)
     expect(card?.method).toBe("chat.postEphemeral")
-    expect(JSON.stringify(card?.body)).toContain("No need to send it again")
+    // The mention is acknowledged with 👀 before anything else happens.
+    expect(slackCalls.find((call) => call.method === "reactions.add")?.body).toMatchObject({ channel: "CSHARED", name: "eyes" })
     expect(remoteCalls).toHaveLength(0)
     const linked = await db.select().from(Identity).where(eq(Identity.connectionId, connectionId))
     expect(linked.map((row) => [row.memberId, row.slackUserId])).toEqual([[members[1], slackUsers[1]]])

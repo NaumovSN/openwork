@@ -16,6 +16,9 @@ const setupSchema = z.object({
   webAccess: z.boolean(),
   shadowMode: z.boolean(),
   dailyLimit: z.number(),
+  model: z.string().nullable().default(null),
+  defaultModel: z.string().nullable().default(null),
+  models: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
   channelIds: z.array(z.string()),
   metrics: z.object({
     completed: z.number(),
@@ -60,7 +63,7 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
   }
   if (!isSlack) return null;
   const data = query.data;
-  async function save(enabled: boolean, shadowMode = data?.shadowMode ?? false) {
+  async function save(enabled: boolean, shadowMode = data?.shadowMode ?? false, model?: string | null) {
     setBusy(true);
     setError(null);
     try {
@@ -74,6 +77,7 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
             dailyLimit: limit ?? data?.dailyLimit ?? 100,
             channelIds: channels === null ? (data?.channelIds ?? []) : channels.split(/[\s,]+/).filter(Boolean),
             ...(secret ? { signingSecret: secret } : {}),
+            ...(model !== undefined ? { model } : {}),
           }),
         });
         setSecret("");
@@ -186,6 +190,26 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
             Access follows this connector’s workspace, team, and member grants. Turning the assistant off stops
             accepting new requests.
           </p>
+          {data.models.length > 0 ? (
+            <label className="block text-sm">
+              Model
+              <select
+                value={data.model ?? ""}
+                disabled={busy || !data.hasSigningSecret}
+                onChange={(e) => void save(data.enabled, data.shadowMode, e.target.value || null)}
+                className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2"
+              >
+                <option value="">
+                  Default{data.defaultModel ? ` (${data.models.find((m) => m.id === data.defaultModel)?.name ?? data.defaultModel})` : ""}
+                </option>
+                {data.models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <details className="space-y-3">
             <summary className="cursor-pointer text-sm">Rollout limits</summary>
             <label className="block text-sm">
@@ -198,8 +222,7 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
               />
             </label>
             <p className="text-xs text-gray-500">
-              Separate IDs with commas. Direct messages remain available to eligible members. OpenWork only
-              answers in channels it has been invited to: run <code>/invite @openwork</code> in each one.
+              Separate IDs with commas. Direct messages remain available to eligible members.
             </p>
             <label className="block text-sm">
               Requests per member per day

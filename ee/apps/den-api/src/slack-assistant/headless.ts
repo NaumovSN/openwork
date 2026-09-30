@@ -56,7 +56,6 @@ const snapshotSchema = z.object({
   turns: z.array(turnSchema),
   messages: z.array(z.unknown()),
   finalAssistantText: z.string(),
-  modelLabel: z.string().nullable().optional(),
 })
 
 /** A short, human label for one tool step in Slack's task timeline. */
@@ -114,12 +113,37 @@ async function call(deps: HeadlessDeps, method: string, path: string, body?: unk
 /** Runner unavailable or overloaded: the Slack run loop retries these. */
 const retryable = (error: string) => ({ error, retryable: true, retryAfterMs: 5_000 })
 
-async function send(deps: HeadlessDeps, actor: Actor, sessionId: string, messageId: string, prompt: string) {
+const catalogSchema = z.object({
+  defaultModel: z.string(),
+  models: z.array(z.object({ id: z.string(), name: z.string() })),
+})
+
+/** The models the runner's Gateway route can serve, for the admin's model picker. Null when unavailable. */
+export async function listHeadlessModels(suppliedDeps: HeadlessDeps | null = defaultDeps()) {
+  if (!suppliedDeps) return null
+  try {
+    const { status, payload } = await call(suppliedDeps, "GET", "/v1/models")
+    const parsed = catalogSchema.safeParse(payload)
+    return status === 200 && parsed.success ? parsed.data : null
+  } catch {
+    return null
+  }
+}
+
+async function send(
+  deps: HeadlessDeps,
+  actor: Actor,
+  sessionId: string,
+  messageId: string,
+  prompt: string,
+  model?: string,
+) {
   // One fresh, member-scoped MCP token per admitted run; the runner holds it in memory only.
   const { token } = await deps.mintToken(actor)
   const { status, payload } = await call(deps, "POST", `/v1/sessions/${encodeURIComponent(sessionId)}/turns`, {
     messageId,
     prompt,
+    ...(model ? { model } : {}),
     credentials: { mcpToken: token },
   })
   if (status === 202) return {}
@@ -148,7 +172,14 @@ export async function headlessRemoteCall(
   }
 
   if (action === "send") {
-    return send(deps, actor, sessionId, messageId, typeof body.prompt === "string" ? body.prompt : "")
+    return send(
+      deps,
+      actor,
+      sessionId,
+      messageId,
+      typeof body.prompt === "string" ? body.prompt : "",
+      typeof body.model === "string" ? body.model : undefined,
+    )
   }
 
   if (action === "stop") {
@@ -187,7 +218,6 @@ export async function headlessRemoteCall(
   return {
     status: terminal ? "idle" : "busy",
     title: null,
-    modelLabel: snapshot.data.modelLabel ?? null,
     messageCount: messages.length,
     finalAssistantText,
     ...(failed ? { terminalError: { code: turn.error ?? "headless_run_failed" } } : {}),

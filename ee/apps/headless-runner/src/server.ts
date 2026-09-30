@@ -3,7 +3,7 @@ import { createApp } from "./app.js"
 import { loadConfig } from "./config.js"
 import { FILE_TOOL_NAMES } from "./files.js"
 import { remoteMcpConnector } from "./mcp.js"
-import { anthropicModel, openAIModel } from "./model.js"
+import { anthropicModel, fetchGatewayModels, openAIModel, type ModelOption } from "./model.js"
 import { Runner } from "./runner.js"
 import { Store } from "./store.js"
 
@@ -24,10 +24,31 @@ const runner = new Runner({
     : undefined,
   limits: config.limits,
   systemPrompt: config.systemPrompt,
-  modelLabel: config.model.label,
 })
 
-const server = serve({ fetch: createApp({ store, runner, apiToken: config.apiToken, modelLabel: config.model.label }).fetch, port: config.port }, (info) => {
+// The Gateway's model list, cached for five minutes; on failure only the default model is offered.
+let cachedModels: { at: number; models: ModelOption[] } | null = null
+async function models() {
+  const fallback = [{ id: config.model.model, name: config.model.model }]
+  if (!config.model.defaultApiKey) return { defaultModel: config.model.model, models: fallback }
+  if (!cachedModels || Date.now() - cachedModels.at > 5 * 60_000) {
+    try {
+      cachedModels = {
+        at: Date.now(),
+        models: await fetchGatewayModels({
+          baseUrl: config.model.baseUrl,
+          protocol: config.model.protocol,
+          apiKey: config.model.defaultApiKey,
+        }),
+      }
+    } catch {
+      return { defaultModel: config.model.model, models: fallback }
+    }
+  }
+  return { defaultModel: config.model.model, models: cachedModels.models.length ? cachedModels.models : fallback }
+}
+
+const server = serve({ fetch: createApp({ store, runner, apiToken: config.apiToken, models }).fetch, port: config.port }, (info) => {
   console.log(`[headless-runner] listening on :${info.port} (${recovered} interrupted turn(s) recovered)`)
 })
 

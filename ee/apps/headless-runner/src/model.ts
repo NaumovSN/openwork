@@ -364,3 +364,32 @@ export function openAIModel(options: { baseUrl: string; maxOutputTokens: number;
     },
   }
 }
+
+// ------------------------------------------------------------ model list
+
+export type ModelOption = { id: string; name: string }
+
+const modelList = z.object({ data: z.array(z.object({ id: z.string(), name: z.string().optional() }).loose()) }).loose()
+
+/**
+ * Models the configured Gateway route can serve with the runner's key, so an admin can only pick one that works.
+ * Gateway names carry a "(group / credentials)" suffix that means nothing to an admin; it is dropped.
+ */
+export async function fetchGatewayModels(input: {
+  baseUrl: string
+  protocol: "anthropic" | "openai"
+  apiKey: string
+  fetch?: Fetch
+}): Promise<ModelOption[]> {
+  const response = await (input.fetch ?? fetch)(`${input.baseUrl}/models`, {
+    headers: input.protocol === "anthropic" ? { "x-api-key": input.apiKey } : { authorization: `Bearer ${input.apiKey}` },
+    signal: AbortSignal.timeout(10_000),
+  })
+  if (!response.ok) throw new ModelError(`model_http_${response.status}`, "Could not list Gateway models.", false)
+  const parsed = modelList.safeParse(await response.json())
+  if (!parsed.success) throw new ModelError("model_bad_response", "Unexpected model list from the AI gateway.", false)
+  return parsed.data.data.map((model) => ({
+    id: model.id,
+    name: (model.name ?? model.id).replace(/\s*\([^()]*\/[^()]*\)\s*$/, "").trim() || model.id,
+  }))
+}

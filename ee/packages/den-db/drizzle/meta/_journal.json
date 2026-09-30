@@ -806,6 +806,13 @@
       "when": 1790785674344,
       "tag": "0115_slack_assistant",
       "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "5",
+      "when": 1790795681058,
+      "tag": "0116_slack_assistant_model",
+      "breakpoints": true
     }
   ]
 }
