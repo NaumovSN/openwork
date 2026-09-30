@@ -99,9 +99,13 @@ test(`ACT-WHOLE ${resolveEvalEngine()}: a person follows a whole conversation fr
     await user.press("Backspace");
     expect((await probe.composer()).draftText).toBe("");
     await user.click({ role: "button", label: "Change model" });
+    await probe.eventually(() => probe.dom('[data-testid="composer-model-picker"]'), {
+      within: 5_000, label: "the child's model picker is visibly open",
+      until: value => value.elements.some(element => element.rect.width > 0 && element.rect.height > 0),
+    });
     await user.press("Escape");
     await user.see({ text: "Task from the main chat" });
-    await probe.eventually(() => probe.dom('[role="dialog"]:not([data-closed]):not([data-state="closed"]), [role="menu"]:not([data-closed]):not([data-state="closed"]), [role="listbox"]:not([data-closed]):not([data-state="closed"])'), {
+    await probe.eventually(() => probe.dom('[data-testid="composer-model-picker"]'), {
       within: 5_000, label: "Escape closes the model menu before returning", until: value => value.elements.every(element => element.rect.width === 0 || element.rect.height === 0),
     });
     await world.finishChild();
@@ -122,7 +126,6 @@ test(`ACT-WHOLE ${resolveEvalEngine()}: a person follows a whole conversation fr
   });
   await step("a model switch keeps historical model identity, and Stop leaves an ordinary composer", async () => {
     await user.click({ role: "button", label: "Change model" });
-    await user.click({ role: "button", label: /^Model\s+First fixture model/ });
     await user.type({ placeholder: "Search models..." }, "Second fixture model");
     await user.click({ role: "option", label: /^Second fixture model/ });
     await user.press("Escape");
