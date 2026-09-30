@@ -65,7 +65,7 @@ describe("llms.txt agent block", () => {
   });
 
   test("links every published agent skill and the MCP discovery files", () => {
-    for (const name of ["install-openwork", "connect-openwork-mcp", "set-up-openwork-team", "workspace-guide"]) {
+    for (const name of ["install-openwork", "connect-openwork-mcp", "set-up-openwork-team", "workspace-guide", "set-up-openwork-slack"]) {
       expect(llms).toContain(`https://openworklabs.com/.well-known/agent-skills/${name}/SKILL.md`);
     }
     expect(llms).toContain("https://openworklabs.com/.well-known/mcp/server-card.json");
@@ -92,7 +92,7 @@ describe("agent skills index", () => {
 
   test("lists the setup skills and keeps workspace-guide", () => {
     const names = Array.isArray(skills) ? skills.map((skill) => field(skill, "name")) : [];
-    expect(names).toEqual(["install-openwork", "connect-openwork-mcp", "set-up-openwork-team", "workspace-guide"]);
+    expect(names).toEqual(["install-openwork", "connect-openwork-mcp", "set-up-openwork-team", "workspace-guide", "set-up-openwork-slack"]);
   });
 
   test("each entry's sha256, url, and description match its SKILL.md", () => {
