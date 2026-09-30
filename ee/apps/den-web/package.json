@@ -19,7 +19,7 @@
     "test:gateway-usage-limits": "bun test --conditions development tests/gateway-usage-limits.test.tsx",
     "typecheck:gateway-usage-limits": "tsc --noEmit --pretty false -p tsconfig.usage-limits.json",
     "test:scim-proxy": "bun test app/api/_lib/upstream-proxy-scim-failure.test.mjs",
-    "test:free-auto": "bun test --conditions development tests/free-auto-rollout.test.tsx"
+    "test:free-auto": "bun test --conditions development tests/free-auto-rollout.test.tsx && bun test --conditions development tests/admin-free-auto-usage.test.tsx"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

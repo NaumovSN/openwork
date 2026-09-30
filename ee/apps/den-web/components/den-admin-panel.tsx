@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DenSwitch } from "../app/(den)/_components/ui/switch";
 import { Copy, Pencil, Trash2 } from "lucide-react";
 import { denApiCredentials, denBrowserEndpoint } from "../app/(den)/_lib/den-api-origin";
+import { withStoredBearer } from "./admin/admin-request";
 
 type AccessState = "loading" | "ready" | "signed-out" | "forbidden" | "error";
 type ViewMode = "users" | "companies" | "organizations";
@@ -1012,21 +1013,6 @@ function adminScaleFixturePayload(path: string): unknown | null {
   }
 
   return null;
-}
-
-const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
-
-// Preserve existing password-login bearer credentials alongside the web-host
-// session cookie. The same-origin browser proxy forwards both to Den API.
-function withStoredBearer(headers: Record<string, string>): Record<string, string> {
-  if (typeof window === "undefined") {
-    return headers;
-  }
-  const token = window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)?.trim();
-  if (!token) {
-    return headers;
-  }
-  return { ...headers, Authorization: `Bearer ${token}` };
 }
 
 async function requestJson(path: string, signal?: AbortSignal) {

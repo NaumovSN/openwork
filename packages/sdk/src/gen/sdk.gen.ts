@@ -173,6 +173,8 @@ import type {
   GetMcpWellKnownOauthProtectedResourceResponses,
   GetReadyErrors,
   GetReadyResponses,
+  GetV1AdminFreeAutoUsageErrors,
+  GetV1AdminFreeAutoUsageResponses,
   GetV1AdminMetricsErrors,
   GetV1AdminMetricsResponses,
   GetV1AdminOrganizationsByOrganizationIdCapabilitiesErrors,
@@ -998,6 +1000,29 @@ export class DenClient extends HeyApiClient {
     return (options?.client ?? this.client).get<GetReadyResponses, GetReadyErrors, ThrowOnError>({
       url: "/ready",
       ...options,
+    });
+  }
+
+  /**
+   * Get free Auto usage across all organizations
+   *
+   * Returns free Auto usage for the last `days` UTC days: platform totals, members and guests, a daily series, this week's allowance pressure, and usage per organization. Guests are reported only in aggregate.
+   */
+  public getV1AdminFreeAutoUsage<ThrowOnError extends boolean = false>(
+    parameters?: {
+      days?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "days" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1AdminFreeAutoUsageResponses,
+      GetV1AdminFreeAutoUsageErrors,
+      ThrowOnError
+    >({
+      url: "/v1/admin/free-auto/usage",
+      ...options,
+      ...params,
     });
   }
 

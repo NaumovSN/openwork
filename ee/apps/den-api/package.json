@@ -21,6 +21,7 @@
     "test:agent-signup": "bun test --conditions development test/agent-signup-links.test.ts test/mcp-token-lifetime.test.ts && bun test --conditions development test/install-link-access.test.ts",
     "test:web-origins": "pnpm run build:mcp-apps && for spec in organization-web-origins organization-web-origins-routes desktop-handoff-public-url handoff-exchange-cors cors-handled-by-edge; do bun test --conditions development test/$spec.test.ts || exit $?; done",
     "test:gateway-deployment": "bun test --conditions development test/gateway-deployment-routes.test.ts && bun test --conditions development test/org-deployment-capabilities.test.ts",
+    "test:free-auto-usage:db": "DATABASE_URL=${DEN_TEST_DATABASE_URL:?Set DEN_TEST_DATABASE_URL to an isolated prepared test database} bun test --conditions development test/admin-free-auto-usage.test.ts",
     "test:gateway-dashboard:db": "DATABASE_URL=${DEN_TEST_DATABASE_URL:?Set DEN_TEST_DATABASE_URL to an isolated prepared test database} bun test --conditions development test/admin-organization-capabilities.test.ts",
     "test:free-inference": "bun test --conditions development test/free-inference.test.ts && bun test --conditions development test/free-provider-management.test.ts",
     "test:slack:db": "bun test --conditions development test/slack-assistant-db.test.ts",

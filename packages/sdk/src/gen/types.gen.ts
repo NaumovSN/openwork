@@ -18,6 +18,118 @@ export type DenApiReadinessResponse = {
   };
 };
 
+export type AdminFreeAutoUsageResponse = {
+  generatedAt: string;
+  range: {
+    days: number;
+    from: string;
+    to: string;
+    timezone: "UTC";
+  };
+  settings: {
+    membersEnabled: boolean;
+    rolloutAllOrganizations: boolean;
+    weeklyLimitMicroUsd: number;
+  };
+  totals: {
+    costMicroUsd: number;
+    requests: number;
+    /**
+     * Requests charged the fixed estimate because OpenAI reported no usage.
+     */
+    estimatedRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    activePeople: number;
+    activeOrganizations: number;
+  };
+  members: {
+    costMicroUsd: number;
+    requests: number;
+    /**
+     * Requests charged the fixed estimate because OpenAI reported no usage.
+     */
+    estimatedRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    activePeople: number;
+  };
+  guests: {
+    costMicroUsd: number;
+    requests: number;
+    /**
+     * Requests charged the fixed estimate because OpenAI reported no usage.
+     */
+    estimatedRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+  };
+  week: {
+    startsAt: string;
+    endsAt: string;
+    activePeople: number;
+    peopleAtWeeklyLimit: number;
+  };
+  daily: Array<{
+    date: string;
+    membersMicroUsd: number;
+    guestsMicroUsd: number;
+    requests: number;
+  }>;
+  organizations: Array<{
+    costMicroUsd: number;
+    requests: number;
+    /**
+     * Requests charged the fixed estimate because OpenAI reported no usage.
+     */
+    estimatedRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    id: string;
+    name: string;
+    slug: string | null;
+    /**
+     * Whether the organization's members are offered free Auto by the rollout.
+     */
+    enrolled: boolean;
+    /**
+     * Pays for OpenWork Models, so its members use paid Models rather than free Auto.
+     */
+    subscribed: boolean;
+    memberCount: number;
+    activePeople: number;
+    /**
+     * People in this organization who used free Auto this week and have reached their weekly allowance.
+     */
+    peopleAtWeeklyLimit: number;
+    lastUsedAt: string | null;
+  }>;
+  /**
+   * Organizations past the listed limit, summed so the table always adds up to the members total.
+   */
+  otherOrganizations: {
+    costMicroUsd: number;
+    requests: number;
+    /**
+     * Requests charged the fixed estimate because OpenAI reported no usage.
+     */
+    estimatedRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    organizations: number;
+  } | null;
+};
+
+export type InvalidRequestError = {
+  error: "invalid_request";
+  details: Array<{
+    message: string;
+    path?: Array<string | number>;
+    [key: string]: unknown;
+  }>;
+  capability?: string;
+};
+
 export type UnauthorizedError = {
   error: "unauthorized";
 };
@@ -31,16 +143,6 @@ export type ForbiddenError = {
 export type NotFoundError = {
   error: string;
   message?: string;
-};
-
-export type InvalidRequestError = {
-  error: "invalid_request";
-  details: Array<{
-    message: string;
-    path?: Array<string | number>;
-    [key: string]: unknown;
-  }>;
-  capability?: string;
 };
 
 export type AdminPageInfo = {
@@ -4700,6 +4802,41 @@ export type GetReadyResponses = {
 };
 
 export type GetReadyResponse = GetReadyResponses[keyof GetReadyResponses];
+
+export type GetV1AdminFreeAutoUsageData = {
+  body?: never;
+  path?: never;
+  query?: {
+    days?: number;
+  };
+  url: "/v1/admin/free-auto/usage";
+};
+
+export type GetV1AdminFreeAutoUsageErrors = {
+  /**
+   * The query parameters were invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be authenticated.
+   */
+  401: UnauthorizedError;
+  /**
+   * The authenticated user is not an admin.
+   */
+  403: ForbiddenError;
+};
+
+export type GetV1AdminFreeAutoUsageError = GetV1AdminFreeAutoUsageErrors[keyof GetV1AdminFreeAutoUsageErrors];
+
+export type GetV1AdminFreeAutoUsageResponses = {
+  /**
+   * Free Auto usage returned.
+   */
+  200: AdminFreeAutoUsageResponse;
+};
+
+export type GetV1AdminFreeAutoUsageResponse = GetV1AdminFreeAutoUsageResponses[keyof GetV1AdminFreeAutoUsageResponses];
 
 export type PostV1AdminAdminsData = {
   body?: never;
