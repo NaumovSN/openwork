@@ -118,6 +118,8 @@ export async function nativeSlackConnect(seed: Seed, { place }: { place: Place }
       VITE_DEN_BASE_URL: enabled.ref.webUrl,
       VITE_DEN_API_BASE_URL: "/api/den",
       OPENCODE_MODELS_URL: `${model.url}/models`,
+      // The isolated app runtime drops ambient package-manager settings.
+      ...(process.env.pnpm_config_verify_deps_before_run ? { pnpm_config_verify_deps_before_run: process.env.pnpm_config_verify_deps_before_run } : {}),
       ...(process.env.OPENWORK_OPENCODE_BIN ? { OPENWORK_OPENCODE_BIN: process.env.OPENWORK_OPENCODE_BIN } : {}),
       ...(process.env.OPENWORK_OPENCODE2_BIN ? { OPENWORK_OPENCODE2_BIN: process.env.OPENWORK_OPENCODE2_BIN } : {}),
     } });

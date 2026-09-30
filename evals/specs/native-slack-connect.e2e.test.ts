@@ -180,8 +180,9 @@ test("Cloud members connect different Slack workspaces without configuration and
     const consent = second;
     await consent.see({ text: "Synthetic Slack consent" });
     await consent.click({ role: "button", text: "Authorize member two" });
+    await consent.see({ role: "heading", text: "You're connected" }, { timeoutMs: 30_000 });
     const connected = await probe.eventually(() => world.connection("second"), {
-      within: 60_000, label: "the second member's Slack account connects", until: value => value?.connectedForMe === true,
+      within: 60_000, label: "the second member's replacement Slack identity connects", until: value => value?.externalAccountId === "slack:TSYNTHETIC:USYNTHSECOND",
     });
     expect(JSON.stringify(connected)).toContain("USYNTHSECOND");
     const firstIdentity = world.slack.calls().find(call => call.path === "/api/auth.test" && call.member === "first" && call.workspace === "TSYNTHETIC");
