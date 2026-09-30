@@ -29,6 +29,7 @@ import {
   useUpdateMcpConnection,
 } from "./mcp-connections-data";
 import { NativeProviderSettings } from "./native-provider-setup";
+import { SlackAssistantSetup } from "./slack-assistant-setup";
 import { WhoCanUseIt } from "./who-can-use-it";
 
 function UseInAnotherApp({ connection }: { connection: ExternalMcpConnection }) {
@@ -260,6 +261,8 @@ export function AdminConnectorPageScreen({ connection }: { connection: ExternalM
           ) : null}
         </section>
       ) : null}
+
+      {native ? null : <SlackAssistantSetup connection={connection} />}
 
       <Disclosure label="Settings" open={settingsOpen} onToggle={() => setSettingsOpen((value) => !value)} testId="connector-settings-toggle">
         {nativeKey ? (
