@@ -9,7 +9,7 @@ import {
 } from "../worlds/packaged-first-launch.ts";
 import type { PackagedFlavor } from "../worlds/packaged-first-launch.ts";
 
-const test = spec.world(packagedFirstLaunchWorld, { timeout: 180_000 });
+const test = spec.world(packagedFirstLaunchWorld, { needs: { env: ["OPENWORK_EVAL_ELECTRON_BINARY"] }, timeout: 180_000 });
 
 /**
  * What a brand-new machine sees on first launch. The cloud and enterprise
@@ -75,7 +75,7 @@ test("a packaged flavor renders its first-launch surface without a render crash"
   } else {
     expect(usable.some((control) => control.tag === "button" && control.text === "Sign in to OpenWork"), "Sign in must remain visible and enabled").toBe(true);
     expect(usable.some((control) => control.tag === "button" && control.text === "Paste sign-in code"), "Sign-in code disclosure must remain visible and enabled").toBe(true);
-    expect(final.rootText, "a cloud install let local work start before sign-in").not.toContain("What do you need done?");
+    expect(final.rootText, "a cloud install let local work start before sign-in").not.toContain("What should we work on?");
   }
   const exceptions = world.exceptions();
   const knownRejections = exceptions.filter(isKnownRejection);

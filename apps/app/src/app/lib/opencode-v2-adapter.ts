@@ -207,6 +207,10 @@ export type V2MappedMessage = {
       completed?: number;
     };
     error?: UnknownError | ApiError;
+    model?: ModelBinding & { variant?: string };
+    modelID?: string;
+    providerID?: string;
+    resolvedModel?: { id: string; providerID?: string; name?: string };
   };
   parts: Part[];
 };
@@ -682,6 +686,23 @@ function mapV2MessageParts(
   }];
 }
 
+function mapV2ReplyModel(value: Record<string, unknown>) {
+  const model = readRecord(value, "model");
+  const modelID = readString(value, "modelID") ?? readString(model, "id") ?? readString(model, "modelID");
+  const providerID = readString(value, "providerID") ?? readString(model, "providerID");
+  const variant = readString(model, "variant");
+  const resolved = readRecord(value, "resolvedModel");
+  const resolvedID = readString(resolved, "modelID") ?? readString(resolved, "id") ?? readString(value, "resolvedModelID");
+  const resolvedProviderID = readString(resolved, "providerID") ?? readString(value, "resolvedProviderID");
+  const name = readString(resolved, "name");
+  return {
+    ...(modelID ? { modelID } : {}),
+    ...(providerID ? { providerID } : {}),
+    ...(modelID && providerID ? { model: { id: modelID, providerID, ...(variant ? { variant } : {}) } } : {}),
+    ...(resolvedID ? { resolvedModel: { id: resolvedID, ...(resolvedProviderID ? { providerID: resolvedProviderID } : {}), ...(name ? { name } : {}) } } : {}),
+  };
+}
+
 /**
  * A native user turn stores the whole prompt string. Return the parts v1 keeps
  * for the same send: the words, pasted text marked as pasted, and hidden
@@ -734,6 +755,7 @@ function mapV2Message(
         created,
         ...(completed === undefined ? {} : { completed }),
       },
+      ...(role === "assistant" ? mapV2ReplyModel(value) : {}),
       ...(role === "assistant" && error
         ? { error: mapV2SessionError(error) }
         : {}),
@@ -1301,6 +1323,7 @@ export function translateV2Event(
             id: messageID,
             sessionID,
             role: "assistant",
+            ...mapV2ReplyModel(properties),
             time: { created: stream.start },
           },
         },
@@ -1343,7 +1366,14 @@ export function translateV2Event(
     };
     delete stream.text;
     clearV2SessionTranslation(state, stream.sessionID);
-    return [{ type: "message.part.updated", properties: { part } }];
+    const modelInfo = mapV2ReplyModel(properties);
+    return [
+      ...(Object.keys(modelInfo).length ? [{ type: "message.updated", properties: { info: {
+        id: stream.messageID, sessionID: stream.sessionID, role: "assistant", ...modelInfo,
+        time: { created: stream.start },
+      } } }] : []),
+      { type: "message.part.updated", properties: { part } },
+    ];
   }
 
   if (type === "session.tool.input.started" || type === "session.next.tool.input.started") {
@@ -1378,6 +1408,7 @@ export function translateV2Event(
             id: messageID,
             sessionID,
             role: "assistant",
+            ...mapV2ReplyModel(properties),
             time: { created: toolEventTimestamp(value, properties) },
           },
         },

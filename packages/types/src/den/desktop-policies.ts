@@ -793,3 +793,12 @@ export function normalizeDesktopConfig(value: unknown): DesktopConfig {
     ...(onboardingPromptConfig !== undefined ? onboardingPromptConfig : {}),
   };
 }
+
+/** Role assignments include built-in parent roles; custom members still match the member assignment. */
+export function matchingDesktopPolicyAssignmentRoles(memberRole: string) {
+  const levels = new Map<string, number>([["owner", 3], ["super-admin", 2], ["admin", 1], ["member", 0]]);
+  const roles = memberRole.split(",").map((role) => role.trim()).filter(Boolean);
+  return (["owner", "admin", "member"] as const).filter((required) => roles.some((role) =>
+    required === "member" || (levels.get(role) ?? -1) >= (levels.get(required) ?? 0),
+  ));
+}

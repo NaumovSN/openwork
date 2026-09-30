@@ -297,10 +297,14 @@ import type {
   GetV1GatewayUsageLimitsMembersErrors,
   GetV1GatewayUsageLimitsMembersResponses,
   GetV1GatewayUsageLimitsMeResponses,
+  GetV1InferenceAccessErrors,
+  GetV1InferenceAccessResponses,
   GetV1InferenceAnalyticsActivityResponses,
   GetV1InferenceAnalyticsConsumptionResponses,
   GetV1InferenceAnalyticsSettingsResponses,
   GetV1InferenceErrors,
+  GetV1InferenceFreeProviderErrors,
+  GetV1InferenceFreeProviderResponses,
   GetV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
   GetV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
   GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors,
@@ -519,6 +523,8 @@ import type {
   PatchApiAuthScimV2UsersByUserIdResponses,
   PatchV1AdminOrganizationsByOrganizationIdDpaErrors,
   PatchV1AdminOrganizationsByOrganizationIdDpaResponses,
+  PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors,
+  PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses,
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsErrors,
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses,
   PatchV1AdminOrganizationsByOrganizationIdPlanErrors,
@@ -539,6 +545,8 @@ import type {
   PatchV1GatewayUsageLimitPoliciesByPolicyIdResponses,
   PatchV1InferenceAnalyticsSettingsResponses,
   PatchV1InferenceErrors,
+  PatchV1InferenceFreePinsErrors,
+  PatchV1InferenceFreePinsResponses,
   PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors,
   PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses,
   PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors,
@@ -699,6 +707,8 @@ import type {
   PostV1InferenceAnalyticsLangfuseConnectResponses,
   PostV1InferenceAnalyticsLangfuseTestErrors,
   PostV1InferenceAnalyticsLangfuseTestResponses,
+  PostV1InferenceFreeCredentialErrors,
+  PostV1InferenceFreeCredentialResponses,
   PostV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
   PostV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
   PostV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors,
@@ -1138,6 +1148,45 @@ export class DenClient extends HeyApiClient {
       url: "/v1/admin/organizations/{organizationId}/free-seats",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * Set an organization's free Auto rollout
+   *
+   * Allowlisted platform administrators only. Sets the organization rollout override; null restores the deployment default. Default rollout is off. Does not override the global kill switch, DPA, billing eligibility, desktop policy or allowance. Atomically preserves unrelated metadata and records the actor and previous state.
+   */
+  public patchV1AdminOrganizationsByOrganizationIdFreeAuto<ThrowOnError extends boolean = false>(
+    parameters: {
+      organizationId: string;
+      enabled: boolean | null;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "organizationId" },
+            { in: "body", key: "enabled" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses,
+      PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors,
+      ThrowOnError
+    >({
+      url: "/v1/admin/organizations/{organizationId}/free-auto",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 
@@ -4395,6 +4444,73 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * Get organization Free provider summary
+   *
+   * Admins only. Returns the organization's Auto pin policy, joined-member allowance counts and recorded free usage attributed to this organization. Allowances are person-wide; usage totals exclude other organizations, anonymous devices and paid inference. No individual balances or identities are returned.
+   */
+  public getV1InferenceFreeProvider<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1InferenceFreeProviderResponses,
+      GetV1InferenceFreeProviderErrors,
+      ThrowOnError
+    >({ url: "/v1/inference/free/provider", ...options });
+  }
+
+  /**
+   * Set the organization Auto pin
+   *
+   * A fresh owner/admin session may change only defaultPinned. Unpinning changes picker curation, not free model availability or personal pins. The atomic metadata update preserves DPA, offerAllowed and all unrelated organization configuration.
+   */
+  public patchV1InferenceFreePins<ThrowOnError extends boolean = false>(
+    parameters: {
+      defaultPinned: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "defaultPinned" }] }]);
+    return (options?.client ?? this.client).patch<
+      PatchV1InferenceFreePinsResponses,
+      PatchV1InferenceFreePinsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference/free/pins",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Get my free Auto allowance
+   *
+   * Returns the authenticated joined member's person-wide weekly Auto allowance without credentials.
+   */
+  public getV1InferenceAccess<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1InferenceAccessResponses,
+      GetV1InferenceAccessErrors,
+      ThrowOnError
+    >({ url: "/v1/inference/access", ...options });
+  }
+
+  /**
+   * Get my free Auto credential
+   *
+   * Issues or reuses the member's OpenWork Models key for an organization without a Models subscription. Until the organization subscribes, the Gateway serves only free Auto on it, within the member's weekly allowance. Subscribed organizations and admin opt-outs are refused.
+   */
+  public postV1InferenceFreeCredential<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<
+      PostV1InferenceFreeCredentialResponses,
+      PostV1InferenceFreeCredentialErrors,
+      ThrowOnError
+    >({ url: "/v1/inference/free/credential", ...options });
+  }
+
+  /**
    * Get inference settings
    *
    * Returns OpenWork Models enablement and limit context for the active organization.
@@ -5836,7 +5952,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read organization Gateway usage by UTC day
    *
-   * Defaults to model grouping and the last 31 UTC calendar days including today. Empty filters mean all. Counts only org_provider traffic. requestCount includes completed request records of all outcomes, including gateway rejections and interrupted requests; unreportedRequests counts records without total tokens, not just successful generations with missing usage. uncountableRequests breaks missing token totals down by outcome (ok, upstream_error, upstream_unreachable, client_aborted, rejected); individual counts are null when historical summaries cannot separate them. These diagnostic counts are separate from plotted usage. Team requestCount and uncountableRequests sum current team attributions like the other totals. Token values omit zero subtotals, and series with neither positive tokens nor positive cost are omitted. Returns tokens and stored approximate cost in integer micro-USD in the same snapshot, without repricing historical requests. totalTokens, unreportedRequests and daily values remain token-only. totalCostMicroUsd sums known stored costs; unpricedRequests counts missing cost observations, or is null when legacy rollup observation counts leave coverage unknown. Daily costValues use the same stable series IDs: zero subtotals with missing or unknown cost coverage are null, fully observed zero costs are 0, and positive recorded subtotals remain numeric even with incomplete coverage indicated by unpricedRequests. Team view attributes each active org member's usage to every distinct current team membership; members without a team are omitted. Team token, cost and missing-observation totals sum these attributions and may exceed model/person totals; cost coverage is evaluated per team/day. No teams returns emptyReason=no_teams, zero totals and missing counts, and empty daily maps without querying usage. Absent keys in a day's sparse values and costValues maps mean no usage and are zero. Limits: 100 filter IDs, 366 days, 10,000 series and 20,000 filter options; oversized results fail without truncation.
+   * Defaults to model grouping and the last 31 UTC calendar days including today. Empty filters mean all. Counts org_provider, openwork_openrouter and openwork_free traffic. requestCount includes completed request records of all outcomes, including gateway rejections and interrupted requests; unreportedRequests counts records without total tokens, not just successful generations with missing usage. uncountableRequests breaks missing token totals down by outcome (ok, upstream_error, upstream_unreachable, client_aborted, rejected); individual counts are null when historical summaries cannot separate them. These diagnostic counts are separate from plotted usage. Team requestCount and uncountableRequests sum current team attributions like the other totals. Token values omit zero subtotals, and series with neither positive tokens nor positive cost are omitted. Returns tokens and stored approximate cost in integer micro-USD in the same snapshot, without repricing historical requests. totalTokens, unreportedRequests and daily values remain token-only. totalCostMicroUsd sums known stored costs; unpricedRequests counts missing cost observations, or is null when legacy rollup observation counts leave coverage unknown. Daily costValues use the same stable series IDs: zero subtotals with missing or unknown cost coverage are null, fully observed zero costs are 0, and positive recorded subtotals remain numeric even with incomplete coverage indicated by unpricedRequests. Team view attributes each active org member's usage to every distinct current team membership; members without a team are omitted. Team token, cost and missing-observation totals sum these attributions and may exceed model/person totals; cost coverage is evaluated per team/day. No teams returns emptyReason=no_teams, zero totals and missing counts, and empty daily maps without querying usage. Absent keys in a day's sparse values and costValues maps mean no usage and are zero. Limits: 100 filter IDs, 366 days, 10,000 series and 20,000 filter options; oversized results fail without truncation.
    */
   public getV1InferenceProvidersUsage<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -6654,7 +6770,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Update inference gateway provider
    *
-   * Partially updates the provider name, model universe or status and returns management details. Provider identity and upstream destination are immutable; changing them requires a new provider. Legacy credential or audience fields are rejected with matrix_write_required: edit credential sets and access grants instead. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   * Partially updates the provider name, model universe or status and returns management details. A pin-only PATCH with pinnedModelIds replaces the ordered catalog-model pins without changing models, groups, credentials or grants; duplicates and unknown models are rejected. Pins do not grant access. Provider identity and upstream destination are immutable; changing them requires a new provider. Legacy credential or audience fields are rejected with matrix_write_required: edit credential sets and access grants instead. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public patchV1InferenceProvidersByInferenceProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -6662,6 +6778,7 @@ export class DenClient extends HeyApiClient {
       name?: string;
       providerId?: string;
       modelIds?: Array<string>;
+      pinnedModelIds?: Array<string>;
       settings?: {
         project?: string;
         location?: string;
@@ -6696,6 +6813,7 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "name" },
             { in: "body", key: "providerId" },
             { in: "body", key: "modelIds" },
+            { in: "body", key: "pinnedModelIds" },
             { in: "body", key: "settings" },
             { in: "body", key: "status" },
             { in: "body", key: "credentialMode" },

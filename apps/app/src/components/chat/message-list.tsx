@@ -34,6 +34,10 @@ import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
 import { presentOpencodeSessionError, sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
 import { TaskRecovery } from "./task-recovery"
+import { messageAutoAccessWall } from "@/app/lib/inference-access"
+import { AutoAccessNotice } from "@/react-app/domains/cloud/auto-access-ui"
+import { rejectedRecoveryFromMessage } from "@/react-app/domains/session/sync/rejected-turn"
+import { replyModelLabel } from "@/react-app/domains/session/sync/reply-model"
 import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
@@ -373,9 +377,9 @@ function FileMessage({ part, tone }: FileMessageProps) {
   const openArtifactPath = useOpenArtifactPath()
   const title = getFileTitle(part)
   const badge = getMediaBadge(part)
-  const isImage = part.mediaType.startsWith("image/") && Boolean(part.url)
-  const downloadUrl = getSafeFileDownloadUrl(part)
   const revealPath = getSafeFileRevealPath(part)
+  const isImage = part.mediaType.startsWith("image/") && Boolean(part.url) && !revealPath
+  const downloadUrl = getSafeFileDownloadUrl(part)
   const canReveal = isElectronRuntime() && Boolean(revealPath)
 
   const handleDownload = React.useCallback(() => {
@@ -858,6 +862,8 @@ const UserMessage = React.memo(
     const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
     const references = useSessionReferencesMaybe()
     const branching = forkingMessageId === message.id
+    const wall = messageAutoAccessWall(message.metadata)
+    const { sessionId, workspaceId } = useMessageList()
     const { onOpenTarget } = useOpenTargets()
     const openLink = (event: React.MouseEvent) => {
       if (event.defaultPrevented || !onOpenTarget || !(event.target instanceof Element)) return
@@ -875,10 +881,10 @@ const UserMessage = React.memo(
     const hasContent = inlineParts.length > 0
     const menuActions: MenuAction[] = []
     if (messageText) menuActions.push(
-      { type: "item", id: "edit", label: "Edit message", icon: <Pencil className="size-4" />, disabled: readOnly, onSelect: () => onEditUserMessage(message.id, messageText) },
+      { type: "item", id: "edit", label: "Edit message", icon: <Pencil className="size-4" />, disabled: readOnly || Boolean(wall), onSelect: () => onEditUserMessage(message.id, messageText) },
       { type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />, onSelect: () => navigator.clipboard.writeText(messageText) },
     )
-    menuActions.push(
+    if (!wall) menuActions.push(
       { type: "item", id: "branch", label: branching ? "Branching..." : "Branch in new chat", icon: <Split className="size-4 rotate-90" />, disabled: Boolean(forkingMessageId), onSelect: () => onForkAtMessage(message.id) },
       { type: "item", id: "revert", label: "Revert", icon: <Undo2 className="size-4" />, disabled: readOnly, onSelect: () => onRevertToUserMessage(message.id) },
     )
@@ -897,7 +903,8 @@ const UserMessage = React.memo(
             className="!select-text"
             render={
               <div
-                className="group flex w-full flex-col items-end gap-1 !select-text"
+                className={cn("group flex w-full flex-col items-end gap-1 !select-text", wall && "opacity-50")}
+                data-unprocessed={wall ? "true" : undefined}
                 style={{ userSelect: "text" }}
               >
                 {hasContent ? (
@@ -940,7 +947,7 @@ const UserMessage = React.memo(
                     })}
                   </MessageContent>
                 ) : null}
-                {!isStreaming && (
+                {!isStreaming && !wall && (
                   <MessageActions
                     className={cn(
                       "flex items-center gap-0 transition-opacity duration-150 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100",
@@ -991,6 +998,7 @@ const UserMessage = React.memo(
               </div>
             }
           />
+          {wall ? <div className="w-full"><AutoAccessNotice wall={wall} sessionId={sessionId} workspaceId={workspaceId} recovery={rejectedRecoveryFromMessage(message)} /></div> : null}
       </Message>
     )
   }
@@ -1010,6 +1018,7 @@ const MessageComponent = React.memo(
   ({ message, isLastMessage, isStreaming, isLastStep, hideReasoning }: MessageComponentProps) => {
     if (isSessionErrorMessage(message)) {
       const presentation = sessionErrorPresentationFromUIMessage(message)
+      if (presentation?.autoAccessWall) return <TranscriptAutoAccessNotice wall={presentation.autoAccessWall} />
       return (
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
@@ -1049,6 +1058,11 @@ const MessageComponent = React.memo(
     )
   }
 )
+
+function TranscriptAutoAccessNotice({ wall }: { wall: NonNullable<ReturnType<typeof messageAutoAccessWall>> }) {
+  const { sessionId, workspaceId } = useMessageList()
+  return <div className="mx-auto w-full max-w-3xl px-2 md:px-10"><AutoAccessNotice wall={wall} sessionId={sessionId} workspaceId={workspaceId} /></div>
+}
 
 MessageComponent.displayName = "MessageComponent"
 
@@ -1256,7 +1270,7 @@ function LiveSteps({ children }: { children: React.ReactNode }) {
  * unprompted; once the answer is in, the reasoning is available but out
  * of the way.
  */
-function CompletedStepRun({ label, children }: { label: string; children: React.ReactNode }) {
+function CompletedStepRun({ label, modelLabel, children }: { label: string; modelLabel?: string | null; children: React.ReactNode }) {
   const [open, setOpen] = React.useState(false)
 
   return (
@@ -1264,9 +1278,9 @@ function CompletedStepRun({ label, children }: { label: string; children: React.
       <div className="mx-auto flex w-full max-w-3xl px-2 md:px-10">
         <CollapsibleTrigger
           className="group flex cursor-pointer items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-          aria-label={open ? `${label}. Hide steps` : `${label}. Show steps`}
+          aria-label={`${label}${modelLabel ? ` · ${modelLabel}` : ""}. ${open ? "Hide steps" : "Show steps"}`}
+          data-testid="completed-work-rail"
         >
-          <span>{label}</span>
           <ChevronRight
             aria-hidden="true"
             className={cn(
@@ -1274,6 +1288,8 @@ function CompletedStepRun({ label, children }: { label: string; children: React.
               open && "rotate-90"
             )}
           />
+          <span>{label}</span>
+          {modelLabel ? <span data-testid="reply-model"> · {modelLabel}</span> : null}
         </CollapsibleTrigger>
       </div>
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
@@ -1349,6 +1365,7 @@ function MessageGroup({
 
   const renderableItems = getRenderableMessages(items)
   const lastTextMessage = getLastTextPart(lastItem.message)
+  const resolvedReplyModel = lastRealItem?.message.role === "assistant" ? replyModelLabel(lastRealItem.message) : null
   const mcpAppParts = collectMcpAppParts(items)
 
   // Leading messages without prose (tool/reasoning steps) render inline and
@@ -1421,6 +1438,10 @@ function MessageGroup({
   // A short finished run reads fine as a list, so only long ones fold away.
   const collapseSteps =
     !isLiveGroup && stepItems.length > 0 && stepRowCount > COLLAPSED_STEP_RUN_MIN_ROWS
+  const replyStartedAt = stepsStartedAt ?? (lastRealItem ? getMessageCreated(lastRealItem.message) : null)
+  const replySummaryLabel = replyStartedAt !== null && stepsEndedAt !== null && stepsEndedAt > replyStartedAt
+    ? `Worked for ${formatToolCallDuration(stepsEndedAt - replyStartedAt)}${stepRowCount ? ` · ${stepRowCount} ${stepRowCount === 1 ? "step" : "steps"}` : ""}`
+    : stepRowCount ? stepRunLabel : ""
   const foldedReasoning = collapseSteps
     ? proseReasoning.map((reasoning) => (
       <Message
@@ -1489,9 +1510,12 @@ function MessageGroup({
       {/* The scroll area keeps the same 8px rhythm the parts inside a single
           message use, so a step row is spaced identically whether or not a
           message boundary happens to fall between it and the previous row. */}
+      {!isLiveGroup && resolvedReplyModel && !collapseSteps ? <div data-testid="completed-work-rail" className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-1 px-2 text-sm text-muted-foreground md:px-10">
+        {replySummaryLabel ? <span>{replySummaryLabel} · </span> : null}<span data-testid="reply-model">{resolvedReplyModel}</span>
+      </div> : null}
       {stepItems.length > 0 ? (
         collapseSteps ? (
-          <CompletedStepRun label={stepRunLabel}>
+          <CompletedStepRun label={resolvedReplyModel ? replySummaryLabel : stepRunLabel} modelLabel={resolvedReplyModel}>
             <div className="flex flex-col gap-2">
               {renderItems(stepItems, 0)}
               {foldedReasoning}
@@ -1538,7 +1562,7 @@ function MessageGroup({
               </>
             ) : null}
           </MessageActions>
-          <MessageTimestamp message={lastItem.message} />
+           <MessageTimestamp message={lastItem.message} />
           {/* <MessageSources messages={items.map((item) => item.message)} /> */}
         </div>
       )}

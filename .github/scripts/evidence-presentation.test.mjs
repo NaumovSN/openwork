@@ -9,7 +9,7 @@ function fixture() {
     repository: { id: 10, full_name: repo }, head_repository: { id: 10, full_name: repo },
     pull_requests: [{ number: 7, head: { sha, repo: { id: 10 } }, base: { repo: { id: 10 } } }] };
   const pr = { state: "open", head: { sha, repo: { id: 10 } }, base: { repo: { id: 10 } } };
-  const writes = [], checks = [], runs = [source], deployments = [];
+  const writes = [], checks = [], runs = [source], deployments = [], deploymentStatuses = {};
   let afterWrite = () => {};
   const api = async (path, method = "GET", body) => {
     if (method !== "GET") { writes.push({ path, method, body }); afterWrite(path); return { id: path.endsWith("deployments") ? 50 : 40 }; }
@@ -19,12 +19,13 @@ function fixture() {
     if (path.includes("/workflows/20/runs?")) return { total_count: runs.length, workflow_runs: runs };
     if (path.includes("/comments?")) return [];
     if (path.includes("/deployments?")) return deployments;
+    if (/\/deployments\/\d+\/statuses\?/.test(path)) return deploymentStatuses[path.match(/deployments\/(\d+)\//)[1]] ?? [];
     if (path.includes("/check-runs?")) return { total_count: checks.length, check_runs: checks };
     throw new Error(path);
   };
   const input = { repo, runId: 30, runAttempt: 1, phase: "complete", reviewUrl: "https://review.example.test",
     receipt: { state: "published", reportUrl: url, evidence: { gitSha: sha, verdict: "Passed", tests: 2, passedTests: 2, assertions: 4, passedAssertions: 4 } } };
-  return { source, pr, writes, checks, runs, deployments, api, input, afterWrite: fn => { afterWrite = fn; } };
+  return { source, pr, writes, checks, runs, deployments, deploymentStatuses, api, input, afterWrite: fn => { afterWrite = fn; } };
 }
 
 test("published evidence creates a SHA-bound check and native deployment with immutable report link", async () => {
@@ -101,4 +102,14 @@ test("new runs retire only authenticated older evidence deployments, never a new
   const statuses = f.writes.filter(w => w.path.endsWith("statuses"));
   assert.equal(statuses.length, 1); assert.match(statuses[0].path, /deployments\/29\/statuses$/);
   assert.equal(statuses[0].body.state, "inactive");
+});
+
+test("an older evidence deployment that is already inactive gets no new status", async () => {
+  const f = fixture(); f.input.phase = "progress";
+  for (const runId of [27, 29]) f.deployments.push({ id: runId, creator: { login: "github-actions[bot]" }, payload: { kind: "openwork-evidence-v1", pr: 7, runId, runAttempt: 1 } });
+  f.deploymentStatuses[27] = [{ state: "inactive" }];
+  f.deploymentStatuses[29] = [{ state: "success" }];
+  await presentEvidence(f.input, f.api);
+  const statuses = f.writes.filter(w => /deployments\/\d+\/statuses$/.test(w.path));
+  assert.deepEqual(statuses.map(w => w.path.match(/deployments\/(\d+)\//)[1]), ["29"]);
 });
