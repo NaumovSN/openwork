@@ -85,6 +85,11 @@ export type AdminOrganizationsPageResponse = {
        */
       gatewayDashboard: true;
     };
+    freeAuto: {
+      enabled: boolean;
+      globallyEnabled: boolean;
+      rolloutAllOrganizations: boolean;
+    };
     [key: string]: unknown;
   }>;
   page: AdminPageInfo;
@@ -161,6 +166,11 @@ export type AdminOverviewResponse = {
        * @deprecated
        */
       gatewayDashboard: true;
+    };
+    freeAuto: {
+      enabled: boolean;
+      globallyEnabled: boolean;
+      rolloutAllOrganizations: boolean;
     };
     [key: string]: unknown;
   }>;
@@ -1040,6 +1050,39 @@ export type DesktopPolicyListResponse = {
   }>;
 };
 
+export type InferenceAccessResponse = {
+  access: {
+    kind: "free" | "paid" | "exhausted" | "unavailable";
+    modelID: string | null;
+    weeklyLimitUsd: number | null;
+    usedUsd: number | null;
+    remainingUsd: number | null;
+    resetsAt: string | null;
+    reason:
+      | "admin_disabled"
+      | "not_eligible"
+      | "free_disabled"
+      | "accounting_unavailable"
+      | "free_allowance_exhausted"
+      | "upstream_unavailable"
+      | null;
+    /**
+     * Organization-managed Auto pin for this membership. False removes only the organization pin; model access and personal pins are unchanged. Pins never grant access.
+     */
+    defaultPinned?: boolean;
+    canUpgrade: false;
+    catalog?: Array<{
+      modelID: string;
+      displayName: string;
+      providerName: string;
+      summary: string;
+      recommended: boolean;
+      rank: number;
+      capabilities: Array<string>;
+    }>;
+  };
+};
+
 export type InferenceStatus = {
   enabled: boolean;
   tier: "tier1" | "tier2";
@@ -1468,6 +1511,10 @@ export type GatewayProviderDetails = {
    * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
    */
   modelIds: Array<string>;
+  /**
+   * Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access.
+   */
+  pinnedModelIds: Array<string>;
   catalogWarning?: string;
   /**
    * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
@@ -1629,6 +1676,10 @@ export type GatewayProviderSummary = {
    * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
    */
   modelIds: Array<string>;
+  /**
+   * Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access.
+   */
+  pinnedModelIds: Array<string>;
   catalogWarning?: string;
   /**
    * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
@@ -4992,6 +5043,72 @@ export type PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses = {
 
 export type PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponse =
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses[keyof PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses];
+
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoData = {
+  body: {
+    enabled: boolean | null;
+  };
+  path: {
+    organizationId: string;
+  };
+  query?: never;
+  url: "/v1/admin/organizations/{organizationId}/free-auto";
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors = {
+  /**
+   * Invalid rollout or organization identifier.
+   */
+  400: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * The caller must be authenticated.
+   */
+  401: UnauthorizedError;
+  /**
+   * The authenticated user is not an admin.
+   */
+  403: ForbiddenError;
+  /**
+   * Organization not found.
+   */
+  404: NotFoundError;
+  /**
+   * Organization metadata could not be read.
+   */
+  503: {
+    error: "managed_models_policy_unavailable";
+    message: string;
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoError =
+  PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors[keyof PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors];
+
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses = {
+  /**
+   * Free Auto rollout updated.
+   */
+  200: {
+    ok: true;
+    organization: {
+      /**
+       * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      freeAuto: {
+        enabled: boolean;
+        globallyEnabled: boolean;
+        rolloutAllOrganizations: boolean;
+      };
+    };
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponse =
+  PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses[keyof PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses];
 
 export type PatchV1AdminOrganizationsByOrganizationIdDpaData = {
   body: {
@@ -10903,6 +11020,201 @@ export type PutV1DiagnosticsEgressTokenResponses = {
 export type PutV1DiagnosticsEgressTokenResponse =
   PutV1DiagnosticsEgressTokenResponses[keyof PutV1DiagnosticsEgressTokenResponses];
 
+export type GetV1InferenceFreeProviderData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/provider";
+};
+
+export type GetV1InferenceFreeProviderErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Workspace admin permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * Free provider summary unavailable.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type GetV1InferenceFreeProviderError = GetV1InferenceFreeProviderErrors[keyof GetV1InferenceFreeProviderErrors];
+
+export type GetV1InferenceFreeProviderResponses = {
+  /**
+   * Free provider summary returned.
+   */
+  200: {
+    provider: {
+      state: "available" | "disabled" | "unavailable";
+      reason:
+        | "admin_disabled"
+        | "not_eligible"
+        | "free_disabled"
+        | "accounting_unavailable"
+        | "free_allowance_exhausted"
+        | "upstream_unavailable"
+        | null;
+      defaultPinned: boolean;
+      modelGroup: {
+        id: "free";
+        name: "Free";
+      };
+      catalog: Array<{
+        modelID: string;
+        displayName: string;
+        providerName: string;
+        summary: string;
+        recommended: boolean;
+        rank: number;
+        capabilities: Array<string>;
+      }>;
+      allowance: {
+        usageScope: "organization";
+        allowanceScope: "person";
+        windowStartAt: string;
+        resetsAt: string;
+        weeklyLimitUsd: number;
+        joinedMembers: number;
+        eligibleMembers: number;
+        /**
+         * Current eligible members whose recorded weekly usage has reached their person-wide limit; not a probe of Gateway request headroom. Null when accounting cannot be verified.
+         */
+        exhaustedMembers: number | null;
+        usedUsd: number | null;
+        requestCount: number | null;
+      };
+    };
+  };
+};
+
+export type GetV1InferenceFreeProviderResponse =
+  GetV1InferenceFreeProviderResponses[keyof GetV1InferenceFreeProviderResponses];
+
+export type PatchV1InferenceFreePinsData = {
+  body: {
+    defaultPinned: boolean;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/pins";
+};
+
+export type PatchV1InferenceFreePinsErrors = {
+  /**
+   * Provide only defaultPinned.
+   */
+  400: InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Fresh workspace admin permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * Organization policy unavailable.
+   */
+  503: {
+    error: "managed_models_disabled_for_dpa" | "managed_models_policy_unavailable";
+    message: string;
+  };
+};
+
+export type PatchV1InferenceFreePinsError = PatchV1InferenceFreePinsErrors[keyof PatchV1InferenceFreePinsErrors];
+
+export type PatchV1InferenceFreePinsResponses = {
+  /**
+   * Auto pin saved.
+   */
+  200: {
+    defaultPinned: boolean;
+  };
+};
+
+export type PatchV1InferenceFreePinsResponse =
+  PatchV1InferenceFreePinsResponses[keyof PatchV1InferenceFreePinsResponses];
+
+export type GetV1InferenceAccessData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/access";
+};
+
+export type GetV1InferenceAccessErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Active membership required.
+   */
+  403: ForbiddenError;
+};
+
+export type GetV1InferenceAccessError = GetV1InferenceAccessErrors[keyof GetV1InferenceAccessErrors];
+
+export type GetV1InferenceAccessResponses = {
+  /**
+   * Auto allowance returned.
+   */
+  200: InferenceAccessResponse;
+};
+
+export type GetV1InferenceAccessResponse = GetV1InferenceAccessResponses[keyof GetV1InferenceAccessResponses];
+
+export type PostV1InferenceFreeCredentialData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/credential";
+};
+
+export type PostV1InferenceFreeCredentialErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Auto access denied.
+   */
+  403: ForbiddenError;
+  /**
+   * Auto unavailable.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type PostV1InferenceFreeCredentialError =
+  PostV1InferenceFreeCredentialErrors[keyof PostV1InferenceFreeCredentialErrors];
+
+export type PostV1InferenceFreeCredentialResponses = {
+  /**
+   * Member Auto credential returned.
+   */
+  200: {
+    credential: {
+      apiKey: string;
+      baseURL: string;
+      statusURL: string;
+      modelID: string;
+    };
+  };
+};
+
+export type PostV1InferenceFreeCredentialResponse =
+  PostV1InferenceFreeCredentialResponses[keyof PostV1InferenceFreeCredentialResponses];
+
 export type GetV1InferenceData = {
   body?: never;
   path?: never;
@@ -15274,6 +15586,7 @@ export type PatchV1InferenceProvidersByInferenceProviderIdData = {
      * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
      */
     modelIds?: Array<string>;
+    pinnedModelIds?: Array<string>;
     settings?: {
       project?: string;
       location?: string;
@@ -15419,6 +15732,10 @@ export type GetV1InferenceProvidersByInferenceProviderIdConnectResponses = {
        * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
        */
       modelIds: Array<string>;
+      /**
+       * Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access.
+       */
+      pinnedModelIds: Array<string>;
       catalogWarning?: string;
       /**
        * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.

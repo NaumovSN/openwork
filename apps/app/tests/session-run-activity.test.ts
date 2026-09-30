@@ -1,10 +1,19 @@
 import { afterEach, expect, setSystemTime, test } from "bun:test";
 import type { UIMessage } from "ai";
-import { messageNotice, readRunActivities, runElapsed, sessionNotice } from "../src/lib/session-run";
+import { messageNotice, projectedMessageMetadata, readRunActivities, runElapsed, sessionNotice } from "../src/lib/session-run";
 import { transcriptProgress } from "../src/react-app/domains/session/status/session-progress";
 import { agentInventory, agentResultVersion } from "../src/lib/agent-inventory";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
 import { codeModeToolCalls } from "../src/lib/code-mode-tools";
+
+test("resolved reply identity survives the shared projection with timing and terminal outcome", () => {
+  const replyModel = { modelID: "served-model", providerID: "provider", name: "Served model", resolved: true };
+  const metadata = projectedMessageMetadata({ time: { created: 1_000, completed: 8_000 }, parentID: "prompt",
+    modelID: "requested-model", providerID: "provider", replyModel, error: { name: "MessageAbortedError" } });
+  expect(metadata.opencode).toEqual({ created: 1_000, completed: 8_000, parentID: "prompt",
+    model: { modelID: "requested-model", providerID: "provider" }, replyModel, outcome: "stopped" });
+  expect(projectedMessageMetadata({ time: { created: 1_000 } }).opencode).not.toHaveProperty("replyModel");
+});
 
 afterEach(() => { setSystemTime(); useSessionActivityStore.setState({ recordsByWorkspaceId: {}, statusesByWorkspaceId: {}, waitingByWorkspaceId: {} }); });
 

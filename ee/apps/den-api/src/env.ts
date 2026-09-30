@@ -8,6 +8,7 @@ import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
+import { readFreeInferenceConfig } from "@openwork/types/den/inference"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
 
@@ -847,6 +848,7 @@ export const env = {
   auditSelfHostedEnabled: parsed.DEN_AUDIT_SELF_HOSTED_ENABLED === "true",
   corsHandledByEdge,
   openworkWebEnabled,
+  inferenceFree: readFreeInferenceConfig(process.env),
   inferenceProxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   // Keep known public Models destinations even when Gateway management is off.
   modelsPublicBaseUrl: gatewayDeployment.modelsPublicBaseUrl ?? optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",

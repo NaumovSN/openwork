@@ -1,7 +1,10 @@
 import { peopleMemberCondition } from "./setup-agent-members.js"
-import { and, asc, eq, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, gte, lt, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
+  AuthUserTable,
   InferenceKeyTable,
+  InferenceFreeUsageBucketTable,
+  InferenceFreeUsageTable,
   InferenceOrgLimitPolicyTable,
   InferenceOrgUpstreamProviderKeyTable,
   InferenceOrgUsageBucketTable,
@@ -10,6 +13,7 @@ import {
   LlmProviderTable,
   MemberTable,
   OrganizationTable,
+  OrgSubscriptionTable,
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import {
@@ -23,6 +27,9 @@ import {
   INFERENCE_RESET_STRATEGY_BY_WINDOW_TYPE,
   INFERENCE_TIER_LIMITS,
   INFERENCE_WINDOW_DURATIONS_MS,
+  freeInferenceAccess, freeInferenceWindow, freeInferenceOrganizationAllowed, freeInferenceDefaultPinned, freeInferenceRolloutEnabled, inferenceSubscribed, inferenceSubscriptionLive, managedModelCatalog,
+  INFERENCE_USAGE_CONVERSION_FACTOR,
+  type InferenceAccess, type FreeInferenceProviderSummary,
   INFERENCE_WINDOW_TYPES,
 } from "@openwork/types/den/inference"
 import type { InferenceOrganizationMetadata, InferenceTier, InferenceWindowType } from "@openwork/types/den/inference"
@@ -32,6 +39,10 @@ import { env } from "./env.js"
 import { assertOrganizationManagedModelsAllowed, updateOrganizationMetadata } from "./organization-metadata.js"
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js"
+import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
+import { MEMBER_FREE_STATUS_PATH } from "@openwork/free-auto"
+import { appLogger } from "./observability/logger.js"
+import { calculateDesktopPolicyForOrgMember } from "./desktop-policies.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -39,6 +50,140 @@ type MemberId = typeof MemberTable.$inferSelect.id
 const OPENWORK_PROVIDER_ID = "openwork"
 const OPENROUTER_PROVIDER = "openrouter"
 const OPENROUTER_KEYS_URL = "https://openrouter.ai/api/v1/keys"
+
+type FreeMemberInput = { organizationId: OrgId; memberId: MemberId; userId: NonNullable<typeof MemberTable.$inferSelect.userId> }
+const freeHash = freeInferenceDigest
+const logger = appLogger.child({ component: "free_inference" })
+type Database = typeof db | Parameters<Parameters<typeof db.transaction>[0]>[0]
+
+/**
+ * Stripe still collects for this organization's Models although its metadata says they are off. Free Auto must not
+ * stand in for a paid entitlement that was lost by mistake (the #5324 class): refuse it and leave a trace for support.
+ */
+async function paidEntitlementMismatch(organizationId: OrgId, database: Database = db) {
+  const [row] = await database.select({ status: OrgSubscriptionTable.status }).from(OrgSubscriptionTable)
+    .where(and(eq(OrgSubscriptionTable.organization_id, organizationId), eq(OrgSubscriptionTable.type, "inference"))).limit(1)
+  if (!inferenceSubscriptionLive(row?.status)) return false
+  logger.warn("inference entitlement mismatch: Stripe still collects but Models are off; free Auto refused", { organization_id: organizationId, subscription_status: row?.status })
+  return true
+}
+
+/**
+ * Free Auto follows Den's "Free starter model (Auto)" switch, stored as `allowZenModel`: off means no free Auto,
+ * whether or not members may add their own providers. Read from the member's effective policy in Den, so it
+ * holds whether or not the desktop app enforces the policy locally.
+ */
+export async function freeAutoBlockedByDesktopPolicy(input: Pick<FreeMemberInput, "organizationId" | "memberId">): Promise<boolean> {
+  const policy = await calculateDesktopPolicyForOrgMember({ organizationId: input.organizationId, orgMemberId: input.memberId })
+  return policy.allowZenModel === false
+}
+
+export async function getMemberInferenceAccess(input: FreeMemberInput): Promise<InferenceAccess> {
+  let defaultPinned: boolean | undefined
+  const unavailable = (reason: "not_eligible" | "admin_disabled" | "accounting_unavailable") => ({
+    ...freeInferenceAccess({ config: env.inferenceFree, reason }), defaultPinned, usedUsd: null, remainingUsd: null,
+  })
+  try {
+    const [row] = await db.select({ metadata: OrganizationTable.metadata, nowMs: sql<number>`unix_timestamp(current_timestamp(3)) * 1000` })
+      .from(MemberTable).innerJoin(OrganizationTable, eq(OrganizationTable.id, MemberTable.organizationId))
+      .where(and(eq(MemberTable.id, input.memberId), eq(MemberTable.organizationId, input.organizationId),
+        eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt))).limit(1)
+    if (!row) return unavailable("not_eligible")
+    defaultPinned = freeInferenceDefaultPinned(row.metadata)
+    assertManagedModelsAllowed(row.metadata)
+    if (inferenceSubscribed(row.metadata)) return { kind: "paid", modelID: null, weeklyLimitUsd: null, usedUsd: null,
+      remainingUsd: null, resetsAt: null, reason: null, canUpgrade: false, defaultPinned }
+    if (!freeInferenceOrganizationAllowed(row.metadata)) return unavailable("admin_disabled")
+    const now = new Date(Number(row.nowMs))
+    if (!env.inferenceFree.enabled || !freeInferenceRolloutEnabled(row.metadata, env.inferenceFree)) return { ...freeInferenceAccess({ config: env.inferenceFree, now, reason: "free_disabled" }), defaultPinned }
+    if (await paidEntitlementMismatch(input.organizationId)) return unavailable("not_eligible")
+    if (await freeAutoBlockedByDesktopPolicy(input)) return unavailable("admin_disabled")
+    const identity = freeHash("member", input.userId)
+    const [bucket] = await db.select({ used_amount: InferenceFreeUsageBucketTable.used_amount }).from(InferenceFreeUsageBucketTable).where(and(
+      eq(InferenceFreeUsageBucketTable.identity_hash, identity), eq(InferenceFreeUsageBucketTable.window_start_at, freeInferenceWindow(now).start))).limit(1)
+    return { ...freeInferenceAccess({ config: env.inferenceFree, now, bucket }), defaultPinned }
+  } catch (error) {
+    return unavailable(error instanceof ManagedModelsPolicyError && error.code === "managed_models_disabled_for_dpa" ? "admin_disabled" : "accounting_unavailable")
+  }
+}
+
+export async function getFreeInferenceProviderSummary(organizationId: OrgId): Promise<FreeInferenceProviderSummary> {
+  const [organization] = await db.select({ metadata: OrganizationTable.metadata, nowMs: sql<number>`unix_timestamp(current_timestamp(3)) * 1000` })
+    .from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).limit(1)
+  if (!organization) throw new ManagedModelsPolicyError("managed_models_policy_unavailable")
+  const now = new Date(Number(organization.nowMs))
+  if (!Number.isFinite(now.getTime())) throw new Error("free_accounting_unavailable")
+  const window = freeInferenceWindow(now)
+  const members = await db.select({ userId: MemberTable.userId }).from(MemberTable)
+    .innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
+    .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt), isNotNull(MemberTable.userId)))
+  const identities = [...new Set(members.flatMap((member) => member.userId ? [freeHash("member", member.userId)] : []))]
+  let reason: InferenceAccess["reason"] = !env.inferenceFree.enabled || !freeInferenceRolloutEnabled(organization.metadata, env.inferenceFree) ? "free_disabled" : null
+  try { assertManagedModelsAllowed(organization.metadata) } catch (error) {
+    if (!(error instanceof ManagedModelsPolicyError) || error.code !== "managed_models_disabled_for_dpa") throw error
+    reason = "admin_disabled"
+  }
+  if (!freeInferenceOrganizationAllowed(organization.metadata)) reason = "admin_disabled"
+  // Subscribed organizations use paid OpenWork Models; free Auto is not offered to them.
+  else if (inferenceSubscribed(organization.metadata)) reason = "not_eligible"
+  const summary: FreeInferenceProviderSummary = {
+    state: reason ? "disabled" : "available", reason,
+    defaultPinned: freeInferenceDefaultPinned(organization.metadata),
+    modelGroup: { id: "free", name: "Free" }, catalog: managedModelCatalog(),
+    allowance: { usageScope: "organization", allowanceScope: "person", windowStartAt: window.start.toISOString(), resetsAt: window.end.toISOString(),
+      weeklyLimitUsd: env.inferenceFree.weeklyBudgetUsd, joinedMembers: identities.length, eligibleMembers: reason ? 0 : identities.length,
+      exhaustedMembers: null, usedUsd: null, requestCount: null },
+  }
+  if (reason) return summary
+  const buckets = identities.length ? await db.select({ identity_hash: InferenceFreeUsageBucketTable.identity_hash, used_amount: InferenceFreeUsageBucketTable.used_amount })
+    .from(InferenceFreeUsageBucketTable).where(and(inArray(InferenceFreeUsageBucketTable.identity_hash, identities),
+      eq(InferenceFreeUsageBucketTable.window_start_at, window.start))) : []
+  const [usage] = await db.select({
+    usedAmount: sql<number | string>`coalesce(sum(${InferenceFreeUsageTable.amount}), 0)`,
+    requestCount: sql<number | string>`count(*)`,
+  }).from(InferenceFreeUsageTable)
+    .where(and(eq(InferenceFreeUsageTable.organization_id, organizationId),
+      gte(InferenceFreeUsageTable.created_at, window.start), lt(InferenceFreeUsageTable.created_at, window.end)))
+  const bucketsByIdentity = new Map(buckets.map((bucket) => [bucket.identity_hash, bucket]))
+  const accesses = identities.map((identity) => freeInferenceAccess({ config: env.inferenceFree, now, bucket: bucketsByIdentity.get(identity) }))
+  if (!usage || accesses.some((access) => access.reason === "accounting_unavailable")
+    || Object.values(usage).some((amount) => !Number.isSafeInteger(Number(amount)) || Number(amount) < 0)) {
+    return { ...summary, state: "unavailable", reason: "accounting_unavailable" }
+  }
+  return { ...summary, allowance: { ...summary.allowance,
+    exhaustedMembers: accesses.filter((access) => access.kind === "exhausted").length,
+    usedUsd: Number(usage.usedAmount) / INFERENCE_USAGE_CONVERSION_FACTOR,
+    requestCount: Number(usage.requestCount),
+  } }
+}
+
+/**
+ * Signed-in members of unsubscribed organizations use a regular OpenWork Models
+ * (`ow_inf_`) key. The Gateway serves only free Auto on it until the organization
+ * subscribes, when the same key starts reaching paid Models.
+ */
+export async function ensureMemberFreeInferenceCredential(input: FreeMemberInput) {
+  if (!env.inferenceFree.enabled) return null
+  if (await freeAutoBlockedByDesktopPolicy(input)) return null
+  const apiKey = await db.transaction(async (tx) => {
+    const [organization] = await tx.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
+      .where(eq(OrganizationTable.id, input.organizationId)).limit(1).for("update")
+    if (!organization) return null
+    assertManagedModelsAllowed(organization.metadata)
+    if (inferenceSubscribed(organization.metadata) || !freeInferenceOrganizationAllowed(organization.metadata) || !freeInferenceRolloutEnabled(organization.metadata, env.inferenceFree)) return null
+    if (await paidEntitlementMismatch(input.organizationId, tx)) return null
+    const [member] = await tx.select({ id: MemberTable.id }).from(MemberTable).where(and(eq(MemberTable.id, input.memberId),
+      eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt))).limit(1).for("update")
+    if (!member) return null
+    const existing = await findActiveMemberInferenceKey(input, tx)
+    if (existing?.encryptedKey && (await inferenceBearerKeyLookupDigests(inferenceBearerKey(existing.encryptedKey))).includes(existing.keyHash)) return existing.encryptedKey
+    if (existing) await tx.update(InferenceKeyTable).set({ status: "revoked", revoked_at: new Date() })
+      .where(and(eq(InferenceKeyTable.org_membership_id, input.memberId), eq(InferenceKeyTable.status, "active")))
+    return (await createMemberInferenceKey(tx, input)).value
+  })
+  const base = env.modelsPublicBaseUrl.replace(/\/+$/, "")
+  return apiKey ? { apiKey, baseURL: `${base}/api/v1`, statusURL: `${base}${MEMBER_FREE_STATUS_PATH}`, modelID: env.inferenceFree.modelID } : null
+}
 
 // Read/repair surfaces omit only managed Models when policy cannot allow them.
 export async function organizationAllowsManagedModels(organizationId: OrgId): Promise<boolean> {
@@ -713,12 +858,21 @@ export async function getInferenceStatus(organizationId: OrgId) {
   }
 }
 
-export async function setInferenceEnabled(input: { organizationId: OrgId; enabled: boolean; tier?: InferenceTier }) {
+/** An admin turning Models on before subscribing lifts an earlier free Auto opt-out; paid Models still wait for checkout. */
+export async function allowFreeInferenceOffer(organizationId: OrgId) {
+  await updateOrganizationMetadata(organizationId, (metadata) => isRecord(metadata.inferenceFree) && metadata.inferenceFree.offerAllowed === false
+    ? { ...metadata, inferenceFree: { ...metadata.inferenceFree, offerAllowed: true } } : metadata)
+}
+
+export async function setInferenceEnabled(input: { organizationId: OrgId; enabled: boolean; tier?: InferenceTier; source?: "admin" }) {
   if (!input.enabled) {
     await db.transaction(async (tx) => {
       const [current] = await tx.select().from(OrganizationTable).where(eq(OrganizationTable.id, input.organizationId)).for("update")
       if (!current) return
-      await tx.update(OrganizationTable).set({ metadata: setInferenceMetadata(current.metadata, null) }).where(eq(OrganizationTable.id, input.organizationId))
+      const metadata = setInferenceMetadata(current.metadata, null)
+      // Keys are revoked below either way; an admin opt-out also stops free Auto re-issuing them.
+      if (input.source === "admin") metadata.inferenceFree = { ...(isRecord(metadata.inferenceFree) ? metadata.inferenceFree : {}), offerAllowed: false }
+      await tx.update(OrganizationTable).set({ metadata }).where(eq(OrganizationTable.id, input.organizationId))
       await tx.update(InferenceKeyTable).set({ status: "revoked", revoked_at: new Date() })
         .where(and(eq(InferenceKeyTable.organization_id, input.organizationId), eq(InferenceKeyTable.status, "active")))
     })
@@ -732,7 +886,9 @@ export async function setInferenceEnabled(input: { organizationId: OrgId; enable
   await updateOrganizationMetadata(input.organizationId, (metadata) => {
     assertManagedModelsAllowed(metadata)
     const tier = input.tier ?? readInferenceMetadata(metadata)?.tier ?? "tier1"
-    return setInferenceMetadata(metadata, { enabled: true, tier })
+    const next = setInferenceMetadata(metadata, { enabled: true, tier })
+    if (input.source === "admin") next.inferenceFree = { ...(isRecord(next.inferenceFree) ? next.inferenceFree : {}), offerAllowed: true }
+    return next
   })
   await syncInferenceForOrganizationMembers({ organizationId: input.organizationId })
   return getInferenceStatus(input.organizationId)

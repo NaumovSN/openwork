@@ -2,6 +2,7 @@
 import type { UIMessage } from "ai";
 import { projectedMessageMetadata, reasoningProviderMetadata, sessionNotice } from "../../../../lib/session-run";
 import { orderMessageParents } from "./message-merge";
+import { replyModelFromInfo } from "./reply-model";
 import type { FilePart, Part, TextPart, ToolPart } from "@opencode-ai/sdk/v2/client";
 
 import type { OpenworkSessionSnapshot } from "../../../../app/lib/openwork-server";
@@ -184,7 +185,7 @@ export function snapshotToUIMessages(snapshot: Pick<OpenworkSessionSnapshot, "me
     const uiMessage = {
       id: message.info.id,
       role: message.info.role,
-      metadata: projectedMessageMetadata(message.info),
+      metadata: projectedMessageMetadata({ ...message.info, replyModel: replyModelFromInfo(message.info) }),
       parts: message.parts.flatMap<UIMessage["parts"][number]>((part) => {
         if (part.type === "text") {
           const mapped = textPartToUIPart(part);

@@ -47,7 +47,7 @@ import {
   requireWorldResource,
   validateWorldResources,
 } from "@openwork/env";
-import type { App, Den, Place, WorldResources } from "@openwork/env";
+import type { App, Den, EvalEngine, Place, WorldResources } from "@openwork/env";
 import { chrome, desktop } from "@openwork/hosts";
 import type { DesktopHandle } from "@openwork/hosts";
 import { findCheckpointCapability, screenshot, takeCheckpoint, validate } from "@openwork/test-evidence";
@@ -85,6 +85,7 @@ interface EvidenceSink {
   recordTrace(entry: TraceEntryInput): TraceEntry;
   recordStep(step: StepRecordInput): StepRecord;
   setOutcome(outcome: TestOutcome, failure?: string): void;
+  setEngine(engine: EvalEngine): void;
 }
 
 export class BufferedEvidenceSink implements EvidenceSink {
@@ -92,6 +93,11 @@ export class BufferedEvidenceSink implements EvidenceSink {
   readonly steps: StepRecord[] = [];
   outcome: TestOutcome = "unknown";
   failure?: string;
+  engine?: EvalEngine;
+
+  setEngine(engine: EvalEngine): void {
+    this.engine = engine;
+  }
 
   recordTrace(entry: TraceEntryInput): TraceEntry {
     const recorded: TraceEntry = {
@@ -116,6 +122,7 @@ export class BufferedEvidenceSink implements EvidenceSink {
 }
 
 export function replayEvidence(buffer: BufferedEvidenceSink, evidence: TestEvidenceRecorder): void {
+  if (buffer.engine) evidence.setEngine(buffer.engine);
   for (const entry of buffer.trace) {
     const { seq, ...input } = entry;
     void seq;
@@ -575,6 +582,7 @@ export class SeedChannel implements Seed {
       throw new Error(`seed.appWeb() requires OPENWORK_EVAL_APP_SURFACE=web when a surface is explicitly requested; received ${JSON.stringify(requestedSurface)}.`);
     }
     return this.#runtime.call("seed", "appWeb", `appWeb(${this.#runtime.place.kind})`, null, async () => {
+      if (options.engine) this.#runtime.sink.setEngine(options.engine);
       const web = await startAppWeb({ ...options, place: this.#runtime.place });
       return this.#runtime.own(web, "chrome");
     });

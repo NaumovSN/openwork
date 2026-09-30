@@ -438,9 +438,12 @@ export type ModelOption = {
   behaviorOptions?: ModelBehaviorOption[];
   disabled?: boolean;
   isFree: boolean;
+  /** A free model of the engine's built-in OpenCode Zen provider that nobody configured: the silent fallback. */
+  zenFallback?: boolean;
   isRecommended?: boolean;
   /** "cloud" for org-managed providers (lpr_*), undefined for local. */
-  source?: "cloud";
+  source?: "cloud" | "gateway" | "local";
+  organizationPinOrder?: number;
   gatewayAuthorization?: { cloudProviderId: string; credentialSetId: string };
 };
 

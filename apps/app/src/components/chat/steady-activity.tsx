@@ -5,9 +5,9 @@ import { cn } from "@/lib/utils";
 import { useWorkbenchDisclosure } from "@/react-app/domains/session/chat/workbench-ui-state";
 
 /** One shell survives tool boundaries, waiting, and the terminal fold. */
-export function SteadyActivity({ active, waiting, label, summary, count, elapsed, models, children, disclosureKey }: {
+export function SteadyActivity({ active, waiting, label, summary, count, elapsed, models, modelsResolved, children, disclosureKey }: {
   active: boolean; waiting: boolean; label: string; summary: string; count: number;
-  elapsed: number; models?: string; children: ReactNode; disclosureKey?: string;
+  elapsed: number; models?: string; modelsResolved?: boolean; children: ReactNode; disclosureKey?: string;
 }) {
   const [open, setOpen] = useWorkbenchDisclosure(disclosureKey);
   const showLiveShimmer = !open || Children.count(children) === 0;
@@ -65,10 +65,10 @@ export function SteadyActivity({ active, waiting, label, summary, count, elapsed
     <div className="mx-auto w-full max-w-3xl px-2 md:px-10">
       <button type="button" onClick={() => { tallest.current = 0; terminalFoldPending.current = false; setOpen(!open); }}
         className="group flex h-7 w-full items-center gap-1 text-start text-sm text-muted-foreground hover:text-foreground"
-        aria-expanded={open} aria-label={`${active ? "Earlier steps" : summary}. ${open ? "Hide" : "Show"} steps`}>
+        data-testid={!active ? "completed-work-rail" : undefined} aria-expanded={open} aria-label={`${active ? "Earlier steps" : summary}. ${open ? "Hide" : "Show"} steps`}>
         <ChevronRight className={cn("size-3.5 transition-transform duration-150 motion-reduce:transition-none", open && "rotate-90")} aria-hidden />
         <span>{active ? `${Math.max(0, count - 1)} earlier steps` : summary}</span>
-        <span className="ms-2 text-xs opacity-0 transition-opacity duration-150 group-hover:opacity-60 group-focus-visible:opacity-60 motion-reduce:transition-none">{models}</span>
+        <span data-testid={modelsResolved ? "reply-model" : undefined} className="ms-2 text-xs opacity-0 transition-opacity duration-150 group-hover:opacity-60 group-focus-visible:opacity-60 motion-reduce:transition-none">{models}</span>
       </button>
       {active ? <>
         <div data-current-step className="relative flex h-8 items-center text-sm text-muted-foreground">

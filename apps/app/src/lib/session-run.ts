@@ -93,12 +93,13 @@ export function reasoningProviderMetadata(part: { id: string; time?: { start: nu
     ...(part.time ? { startedAt: part.time.start, ...(part.time.end === undefined ? {} : { endedAt: part.time.end }) } : {}) } };
 }
 
-export function projectedMessageMetadata(info: { time?: { created?: number; completed?: number }; parentID?: unknown; model?: unknown; modelID?: unknown; providerID?: unknown; error?: unknown }) {
+export function projectedMessageMetadata(info: { time?: { created?: number; completed?: number }; parentID?: unknown; model?: unknown; modelID?: unknown; providerID?: unknown; error?: unknown; replyModel?: unknown }) {
   return { opencode: {
     ...(typeof info.time?.created === "number" ? { created: info.time.created } : {}),
     ...(typeof info.time?.completed === "number" ? { completed: info.time.completed } : {}),
     ...(typeof info.parentID === "string" ? { parentID: info.parentID } : {}),
     ...(info.model ? { model: info.model } : typeof info.modelID === "string" ? { model: { modelID: info.modelID, providerID: info.providerID } } : {}),
+    ...(info.replyModel ? { replyModel: info.replyModel } : {}),
     ...(info.error ? { outcome: typeof info.error === "object" && "name" in info.error && info.error.name === "MessageAbortedError" ? "stopped" : "failed" } : {}),
   } };
 }

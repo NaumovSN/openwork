@@ -7,6 +7,7 @@ import { getReactQueryClient } from "../../../infra/query-client";
 import { readGatewayUsageScope } from "@/app/lib/gateway-usage-scope";
 import { refreshGatewayUsageAfterCompletion } from "../../cloud/gateway-usage-refresh";
 import { gatewayUsageQueryPrefix } from "../../cloud/gateway-usage-state";
+import { mergeReplyMetadata, replyModelFromInfo } from "./reply-model";
 import { closeSessionBrowserTabs } from "@/app/lib/desktop";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
@@ -905,7 +906,7 @@ function upsertMessage(messages: UIMessage[], next: UIMessage) {
   const index = messages.findIndex((message) => message.id === next.id);
   if (next.metadata !== undefined) {
     const existing = messages[index];
-    const merged = existing ? { ...existing, ...next, parts: next.parts.length > 0 ? next.parts : existing.parts } : next;
+    const merged = existing ? { ...existing, ...next, metadata: mergeReplyMetadata(existing.metadata, next.metadata), parts: next.parts.length > 0 ? next.parts : existing.parts } : next;
     return upsertMessageByChronology(messages, merged);
   }
   if (index === -1) return [...messages, next];
@@ -1241,7 +1242,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const next = {
       id: info.id,
       role: info.role,
-      metadata: projectedMessageMetadata(info),
+      metadata: projectedMessageMetadata({ ...info, replyModel: replyModelFromInfo(info) }),
       parts: [],
     } satisfies UIMessage;
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID), (current = []) =>

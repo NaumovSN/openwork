@@ -14,7 +14,7 @@ test("with \"Only models you provide\", the member's picker lists the organizati
   const rows = async () => {
     const text = await pickerText();
     return {
-      open: (await count('input[placeholder="Search models..."]')) > 0,
+      open: (await count('input[placeholder^="Search models"]')) > 0,
       organization: text.includes("Organization provider") || text.includes("Organization witness") || (await count(`[data-model-key="${key(world.organization)}"]`)) > 0 ? 1 : 0,
       personal: text.includes("Personal provider") || text.includes("Personal witness") || (await count(`[data-model-key="${key(world.personal)}"]`)) > 0 ? 1 : 0,
       text: text.slice(0, 600),
@@ -29,10 +29,10 @@ test("with \"Only models you provide\", the member's picker lists the organizati
   await step("after: the picker offers the organization's model and hides the member's personal provider", async () => {
     // The composer can re-render while the engine settles, so reopen the menu until the model list shows.
     await probe.eventually(async () => {
-      const list = await count('input[placeholder="Search models..."]');
+      const list = await count('input[placeholder^="Search models"]');
       if (!list && (await count('[data-slot="model-select-root"]'))) await user.click({ role: "button", label: /^Model\b/ });
       else if (!list) await user.click({ role: "button", label: "Change model" });
-      return { list: await count('input[placeholder="Search models..."]') };
+      return { list: await count('input[placeholder^="Search models"]') };
     }, { within: 60_000, label: "model list opens", until: (state) => state.list > 0 });
     const listed = await probe.eventually(rows, {
       within: 90_000, label: "model access picker", until: (state) => state.open && state.organization > 0 && state.personal === 0,
