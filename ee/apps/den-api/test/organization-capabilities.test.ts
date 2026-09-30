@@ -9,7 +9,7 @@ import {
   readOrganizationCapabilityOverrides,
 } from "../src/organization-capabilities.js"
 
-const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false, orgManagedDashboards: false, appMcpServers: false }
+const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, slackAssistantHeadless: false }
 
 test("auditLogs accepts only canonical literal booleans and defaults off even for Enterprise", () => {
   expect(organizationCapabilityKeySchema.parse("auditLogs")).toBe("auditLogs")
@@ -122,6 +122,20 @@ describe("organizationHasCapability", () => {
   })
 })
 
+test("Slack Assistant is an explicit platform capability in object and JSON metadata", () => {
+  for (const value of [undefined, null, false, "true", 1, {}, []]) {
+    for (const input of [{ capabilities: { slackAssistant: value } }, JSON.stringify({ capabilities: { slackAssistant: value } })]) {
+      expect(organizationHasCapability(input, "slackAssistant")).toBe(false)
+      expect(readOrganizationCapabilityOverrides(input)).toEqual(value === false ? { slackAssistant: false } : {})
+    }
+  }
+  for (const input of [{ capabilities: { slackAssistant: true } }, '{"capabilities":{"slackAssistant":true}}']) {
+    expect(normalizeOrganizationCapabilities(input)).toEqual({ ...defaultCapabilities, slackAssistant: true })
+    expect(readOrganizationCapabilityOverrides(input)).toEqual({ slackAssistant: true })
+  }
+  expect(organizationHasCapability({ complimentaryAccess: { openworkWeb: true } }, "slackAssistant")).toBe(false)
+})
+
 test("orgManagedDashboards is default-off and enabled only by a literal true", () => {
   for (const orgManagedDashboards of [undefined, null, false, "true", 1, {}, []]) {
     const metadata = { capabilities: { orgManagedDashboards } }
@@ -154,4 +168,14 @@ test("appMcpServers is default-off and enabled only by a literal true", () => {
   expect(organizationCapabilityKeySchema.parse("appMcpServers")).toBe("appMcpServers")
   expect(normalizeOrganizationCapabilities(enabled)).toEqual({ ...defaultCapabilities, appMcpServers: true })
   expect(readOrganizationCapabilityOverrides(enabled)).toEqual({ installLinks: false, appMcpServers: true })
+})
+
+test("the Slack headless runtime is its own default-off platform capability", () => {
+  expect(organizationCapabilityKeySchema.parse("slackAssistantHeadless")).toBe("slackAssistantHeadless")
+  for (const value of [undefined, null, false, "true", 1, {}, []]) {
+    expect(organizationHasCapability({ capabilities: { slackAssistant: true, slackAssistantHeadless: value } }, "slackAssistantHeadless")).toBe(false)
+  }
+  const enabled = { capabilities: { slackAssistant: true, slackAssistantHeadless: true } }
+  expect(normalizeOrganizationCapabilities(enabled)).toEqual({ ...defaultCapabilities, slackAssistant: true, slackAssistantHeadless: true })
+  expect(readOrganizationCapabilityOverrides(JSON.stringify(enabled))).toEqual({ slackAssistant: true, slackAssistantHeadless: true })
 })
