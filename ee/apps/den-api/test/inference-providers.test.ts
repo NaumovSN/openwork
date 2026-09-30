@@ -174,6 +174,9 @@ let ownerCookie = ""
 let memberCookie = ""
 let outsiderCookie = ""
 let catalogUnavailable = false
+let beforeCatalogRead: (() => Promise<void>) | null = null
+let countListQueries = false
+let listQueries = 0
 
 beforeAll(async () => {
   seedRequiredEnv()
@@ -182,11 +185,13 @@ beforeAll(async () => {
   const realDb = (await import("@openwork-ee/den-db")).createDenDb({
     databaseUrl: process.env.DATABASE_URL,
     mode: "mysql",
+    logger: { logQuery() { if (countListQueries) listQueries += 1 } },
   }).db
   mock.module("../src/db.js", () => ({ db: realDb }))
   mock.module("../src/llm/models-dev.js", () => ({
     getModelsDevProvider: async (providerId: string) => {
       catalogReads += 1
+      await beforeCatalogRead?.()
       if (catalogUnavailable) return null
       if (providerId === "anthropic") return catalog.anthropic
       if (providerId === "amazon-bedrock") return catalog["amazon-bedrock"]
@@ -291,6 +296,142 @@ function listOpenWorkLlmProviders(forMemberId: string) {
       drizzle.eq(schema.LlmProviderTable.source, "openwork"),
     ))
 }
+
+test("provider lists overlap bounded loading, preserve ordering and recheck team access after refresh", async () => {
+  const listOrgId = createDenTypeId("organization")
+  const listOwnerId = createDenTypeId("member")
+  const listMemberId = createDenTypeId("member")
+  const listOutsiderId = createDenTypeId("member")
+  const teamId = createDenTypeId("team")
+  const ids: Array<typeof schema.GatewayProviderTable.$inferSelect.id> = []
+  const fakeSecret = "sk-ant-list-fixture-never-returned"
+  const scoped = (cookie: string, path: string, init: RequestInit = {}) => {
+    const headers = new Headers(init.headers)
+    headers.set("x-openwork-org-id", listOrgId)
+    return request(cookie, path, { ...init, headers })
+  }
+  await db.insert(schema.OrganizationTable).values({ id: listOrgId, name: "Provider loading", slug: `provider-loading-${listOrgId}` })
+  await db.insert(schema.MemberTable).values([
+    { id: listOwnerId, organizationId: listOrgId, userId: ownerUserId, role: "owner" },
+    { id: listMemberId, organizationId: listOrgId, userId: memberUserId, role: "member" },
+    { id: listOutsiderId, organizationId: listOrgId, userId: outsiderUserId, role: "member" },
+  ])
+  await db.insert(schema.TeamTable).values({ id: teamId, organizationId: listOrgId, name: "Provider viewers" })
+  await db.insert(schema.TeamMemberTable).values({ id: createDenTypeId("teamMember"), teamId, orgMembershipId: listMemberId })
+  try {
+    const timings: Array<{ providers: number; durationMs: number; peakLoads: number; queries: number }> = []
+    for (const count of [1, 5, 10]) {
+      while (ids.length < count) {
+        const created = await scoped(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({
+          name: `Loading fixture ${ids.length + 1}`, providerId: "anthropic", modelIds: ["claude-sonnet-4"],
+          credential: { kind: "api_key", secret: fakeSecret }, teamIds: [teamId],
+        }) })
+        expect(created.status).toBe(201)
+        const id = normalizeDenTypeId("inferenceProvider", readString(readProvider(await created.json()), "id"))
+        ids.push(id)
+        await db.update(schema.GatewayProviderTable).set({ updated_at: new Date(1_700_000_000_000 + ids.length * 1000) })
+          .where(drizzle.eq(schema.GatewayProviderTable.id, id))
+      }
+      let active = 0
+      let peak = 0
+      let reads = 0
+      beforeCatalogRead = async () => {
+        active += 1
+        peak = Math.max(peak, active)
+        reads += 1
+        // Distinct delays finish out of order; assertions use scheduling, not a flaky timing threshold.
+        try { await new Promise((resolve) => setTimeout(resolve, reads % 2 ? 40 : 20)) }
+        finally { active -= 1 }
+      }
+      listQueries = 0
+      countListQueries = true
+      const started = performance.now()
+      const response = await scoped(ownerCookie, "/v1/inference-providers?scope=manageable")
+      const text = await response.text()
+      countListQueries = false
+      beforeCatalogRead = null
+      timings.push({ providers: count, durationMs: Math.round(performance.now() - started), peakLoads: peak, queries: listQueries })
+      expect(response.status).toBe(200)
+      expect(readProviderList(JSON.parse(text)).map((provider) => provider.id)).toEqual([...ids].reverse())
+      expect(text).not.toContain(fakeSecret)
+      expect(reads).toBe(count)
+      expect(active).toBe(0)
+      expect(peak).toBeLessThanOrEqual(2)
+    }
+    console.info("provider_list_controlled_latency", timings)
+    expect(timings.map((timing) => timing.peakLoads)).toEqual([1, 2, 2])
+    expect((await scoped(memberCookie, "/v1/inference-providers?scope=manageable")).status).toBe(403)
+    expect(readProviderList(await (await scoped(outsiderCookie, "/v1/inference-providers")).json())).toEqual([])
+    const memberResponse = await scoped(memberCookie, "/v1/inference-providers")
+    expect(memberResponse.status).toBe(200)
+    const memberProviders = readProviderList(await memberResponse.json())
+    expect(memberProviders.map((provider) => provider.id)).toEqual([...ids].reverse())
+    expect(memberProviders.every((provider) => readRows(provider, "models").length === 1 && provider.credentials === undefined)).toBe(true)
+
+    await db.update(schema.GatewayProviderTable).set({ status: "disabled" }).where(drizzle.eq(schema.GatewayProviderTable.id, ids[0]))
+    const disabled = readProviderList(await (await scoped(memberCookie, "/v1/inference-providers")).json())
+    expect(disabled.map((provider) => provider.id)).toEqual(ids.slice(1).reverse())
+    const manageable = readProviderList(await (await scoped(ownerCookie, "/v1/inference-providers?scope=manageable")).json())
+    expect(manageable).toHaveLength(10)
+    expect(manageable.find((provider) => provider.id === ids[0])?.status).toBe("disabled")
+
+    catalogUnavailable = true
+    const unavailable = readProviderList(await (await scoped(memberCookie, "/v1/inference-providers")).json())
+    expect(unavailable).toHaveLength(9)
+    expect(unavailable.every((provider) => typeof provider.catalogWarning === "string" && readRows(provider, "models").length === 1)).toBe(true)
+    catalogUnavailable = false
+
+    let removed = false
+    beforeCatalogRead = async () => {
+      if (removed) return
+      removed = true
+      await db.delete(schema.TeamMemberTable).where(drizzle.eq(schema.TeamMemberTable.teamId, teamId))
+    }
+    const revoked = readProviderList(await (await scoped(memberCookie, "/v1/inference-providers")).json())
+    beforeCatalogRead = null
+    expect(removed).toBe(true)
+    expect(revoked.every((provider) => readRows(provider, "models").length === 0 && readRows(provider, "authorizationRequests").length === 0)).toBe(true)
+    expect(readProviderList(await (await scoped(memberCookie, "/v1/inference-providers")).json())).toEqual([])
+
+    // Delete both initial providers so failure does not depend on which worker reaches the catalog first.
+    let reads = 0
+    let active = 0
+    beforeCatalogRead = async () => {
+      const call = ++reads
+      active += 1
+      try {
+        if (call === 1) await db.delete(schema.GatewayProviderTable).where(drizzle.inArray(schema.GatewayProviderTable.id, ids.slice(-2)))
+        await new Promise((resolve) => setTimeout(resolve, call === 1 ? 10 : 80))
+      } finally { active -= 1 }
+    }
+    const failed = await scoped(ownerCookie, "/v1/inference-providers?scope=manageable")
+    beforeCatalogRead = null
+    expect(failed.status).toBe(404)
+    expect(reads).toBe(2)
+    expect(active).toBe(0)
+  } finally {
+    beforeCatalogRead = null
+    countListQueries = false
+    catalogUnavailable = false
+    if (ids.length) {
+      const groups = db.select({ id: schema.GatewayModelGroupTable.id }).from(schema.GatewayModelGroupTable)
+        .where(drizzle.inArray(schema.GatewayModelGroupTable.gateway_provider_id, ids))
+      await db.delete(schema.GatewayModelGroupModelTable).where(drizzle.inArray(schema.GatewayModelGroupModelTable.model_group_id, groups))
+      await db.delete(schema.GatewayProviderAccessTable).where(drizzle.inArray(schema.GatewayProviderAccessTable.gateway_provider_id, ids))
+      await db.delete(schema.GatewayProviderCredentialTable).where(drizzle.eq(schema.GatewayProviderCredentialTable.organization_id, listOrgId))
+      await db.delete(schema.GatewayProviderModelTable).where(drizzle.inArray(schema.GatewayProviderModelTable.gateway_provider_id, ids))
+      await db.delete(schema.GatewayModelGroupTable).where(drizzle.inArray(schema.GatewayModelGroupTable.gateway_provider_id, ids))
+      await db.delete(schema.GatewayCredentialSetTable).where(drizzle.inArray(schema.GatewayCredentialSetTable.gateway_provider_id, ids))
+      await db.delete(schema.GatewayProviderTable).where(drizzle.eq(schema.GatewayProviderTable.organization_id, listOrgId))
+    }
+    await db.delete(schema.TeamMemberTable).where(drizzle.eq(schema.TeamMemberTable.teamId, teamId))
+    await db.delete(schema.TeamTable).where(drizzle.eq(schema.TeamTable.id, teamId))
+    const { cache } = await import("../src/cache.js")
+    await cache.org.deleteMembers(listOrgId)
+    await db.delete(schema.MemberTable).where(drizzle.eq(schema.MemberTable.organizationId, listOrgId))
+    await db.delete(schema.OrganizationTable).where(drizzle.eq(schema.OrganizationTable.id, listOrgId))
+  }
+})
 
 test("org-credential provider: create, scoped lists, connect with member key and gateway URL, no secret leaks", async () => {
   const orgSecret = "sk-ant-org-secret-must-not-leak"
