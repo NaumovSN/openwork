@@ -229,7 +229,7 @@ function isReservedConnectionQuestionPart(part: ToolUIPart | DynamicToolUIPart):
 }
 
 const ToolMessageContent = ({ part }: ToolMessageProps) => {
-  const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, connectionQuestionToolCallId, getConnectionDecision } = useMessageList()
+  const { connectorIdentities, onMcpReconnect, onMcpReopenAuthorization, connectionQuestionToolCallId } = useMessageList()
   const parentActive = React.useContext(ParentRunActiveContext)
   const resolveLifecycle = useCurrentToolLifecycleResolver()
   const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
@@ -327,10 +327,10 @@ const ToolMessageContent = ({ part }: ToolMessageProps) => {
     return <OpenWorkAutomationProposalTool part={part} />
   }
 
-  // OpenWork's own connection reports render as the native card: the host is
-  // the presentation; the Den App remains for external hosts.
+  // Connection actions are rendered beside the answer, outside the work fold.
+  // Keep their original step identity mounted without duplicating the card.
   if (part.type === "dynamic-tool" && connectionCardParts.has(part.toolCallId)) {
-    return <ConnectionCard part={part} allowDiscovery={Boolean(getConnectionDecision?.(part.toolCallId))} />
+    return null
   }
 
   // Failed calls use the same sentence line with the "failures are
@@ -1306,6 +1306,9 @@ function MessageGroup({
   const renderableItems = getRenderableMessages(items)
   const lastTextMessage = getLastTextPart(lastItem.message)
   const mcpAppParts = collectMcpAppParts(items)
+  const connectionParts = items.flatMap(item => item.message.role === "assistant"
+    ? item.message.parts.filter((part): part is DynamicToolUIPart => part.type === "dynamic-tool" && connectionCardParts.has(part.toolCallId))
+    : [])
 
   // Leading messages without prose (tool/reasoning steps) render inline and
   // rely on the transcript's one scroll container. Tool activity must never
@@ -1459,6 +1462,9 @@ function MessageGroup({
         {renderItems(stepItems, 0)}
         {!runItems && foldedReasoning}
       </SteadyActivity> : null}
+      {connectionParts.map(part => <Message key={`connection-${part.toolCallId}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10">
+        <ConnectionCard part={part} allowDiscovery={Boolean(getConnectionDecision?.(part.toolCallId))} />
+      </Message>)}
       {mcpAppParts.map(appFrame)}
       {renderItems(proseItems, stepItems.length, collapseSteps)}
       {lastTextMessage && !isStreaming && (

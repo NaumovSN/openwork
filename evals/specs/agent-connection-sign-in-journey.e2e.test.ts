@@ -13,11 +13,12 @@ const REPLY = "Notion needs you to connect it first.";
 const CARD = '[data-testid="desktop-connection-card"]';
 
 test(`AGENT-VIS-06 ${resolveEvalEngine()}: a person asks for something in a service they haven't connected and gets a Connect card`, async ({ world, user, probe, step, evidence }) => {
-  await step("the person asks for their Notion roadmap page", async () => {
+  await step("before: the person asks for their Notion roadmap page", async () => {
     await world.prepareNeedsSignIn(PROMPT, REPLY);
     await user.type("composer", PROMPT);
     await user.click("Run task");
     await user.see({ text: PROMPT });
+    await user.screenshot();
   });
 
   await step("after: the chat offers to connect Notion instead of showing an error", async () => {
@@ -31,8 +32,18 @@ test(`AGENT-VIS-06 ${resolveEvalEngine()}: a person asks for something in a serv
       cards.length ? `card reads "${text.slice(0, 160)}"` : "no connection card in the chat", cards.length === 1 && /Notion/.test(text));
     expect(cards).toHaveLength(1);
     expect(text).toMatch(/Notion/);
+    expect((await probe.dom(`[data-steps-rail] ${CARD}`)).elements).toHaveLength(0);
     await user.see({ role: "button", label: /Connect/ });
     await user.notSee({ text: /needs_connection|connectionStatus|openwork-cloud_/ });
+    await user.screenshot();
+  });
+  await step("after: reload keeps one visible connection action outside the folded steps", async () => {
+    await user.reload();
+    await user.see({ text: REPLY }, { timeoutMs: 30_000 });
+    await user.see({ role: "button", label: /Connect/ });
+    expect((await probe.dom(CARD)).elements).toHaveLength(1);
+    expect((await probe.dom(`[data-steps-rail] ${CARD}`)).elements).toHaveLength(0);
+    evidence.recordAssertionEvidence("Reload preserves the connection action", "One visible Connect card remains outside the folded steps after history hydration.", true);
     await user.screenshot();
   });
 });

@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
+import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { DynamicToolUIPart, UIMessage } from "ai";
 
 import { MessageList } from "../src/components/chat/message-list";
@@ -221,6 +222,24 @@ describe("native connection card in the transcript", () => {
     expect(markup).toContain("Connect Stripe");
     expect(markup).not.toContain('data-capability-call="openwork-cloud_execute_capability"');
     expect(markup).not.toContain("text-destructive");
+  });
+
+  test("a finished turn leaves one actionable connection card outside its folded steps", async () => {
+    const markup = renderList(turn(statusProbe));
+    const registered = typeof document === "undefined";
+    if (registered) GlobalRegistrator.register();
+    try {
+      const doc = document.implementation.createHTMLDocument("folded turn");
+      doc.body.innerHTML = markup;
+      const card = doc.querySelector('[data-testid="desktop-connection-card"]');
+      expect(doc.querySelector('[data-steps-rail]')?.hasAttribute("hidden")).toBe(true);
+      expect(card).not.toBeNull();
+      expect(card?.closest('[data-steps-rail]')).toBeNull();
+      expect(card?.querySelector('button')?.textContent).toContain("Connect");
+      expect(cards(markup)).toBe(1);
+    } finally {
+      if (registered) await GlobalRegistrator.unregister();
+    }
   });
 
   test("ordinary discovery stays a quiet sentence line until the native question binds to it", () => {

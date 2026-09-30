@@ -10,7 +10,7 @@ const test = spec.world(engineConnectorsParity, {
 const PROMPT = "What does the latest amber report say?";
 
 test(`AGENT-VIS-04 ${resolveEvalEngine()}: a person asks for a report from a connected service and can see what went where and what came back`, async ({ world, user, probe, step, evidence }) => {
-  await step("the person asks what the latest amber report says", async () => {
+  await step("before: the person asks what the latest amber report says", async () => {
     await world.prepareReport(PROMPT);
     await user.type("composer", PROMPT);
     await user.click("Run task");
@@ -35,9 +35,12 @@ test(`AGENT-VIS-04 ${resolveEvalEngine()}: a person asks for a report from a con
     expect.soft(gaps.map((gap) => gap.at), "glances without a Working line while the service answered").toEqual([]);
   });
 
-  await step("the step reads in plain words, never as raw tool names", async () => {
-    await user.see({ text: world.proof }, { timeoutMs: 60_000 });
+  await step("after: the step reads in plain words, never as raw tool names", async () => {
     await user.see("Run task", { timeoutMs: 30_000 });
+    if ((await probe.dom('[data-steady-activity] button[aria-expanded="false"]')).elements.length) {
+      await user.click({ role: "button", label: /(?:Worked for|Finished).*Show steps/ });
+    }
+    await user.see({ text: world.proof }, { timeoutMs: 60_000 });
     if (world.engine === "v2") await user.click({ role: "button", label: /Looked up.*Show steps/ });
     await user.notSee({ text: /openwork-cloud_execute_capability|execute_capability|search_capabilities/ });
     const rows = (await probe.dom("[data-capability-call]")).elements.map((element) => element.text);
