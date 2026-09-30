@@ -28,6 +28,13 @@
       "description": "Workspace guide to introduce OpenWork and onboard new users.",
       "url": "https://openworklabs.com/.well-known/agent-skills/workspace-guide/SKILL.md",
       "sha256": "3ac4a29e608decea652bed0aa0280b43d628f84cef6485bcb76de7cbfc655a69"
+    },
+    {
+      "name": "set-up-openwork-slack",
+      "type": "skill",
+      "description": "Configure and verify the OpenWork Slack assistant for an approved private-alpha organization, using its existing Slack app and individual-account connector. Use when a user wants @openwork in Slack or needs help installing or linking it.",
+      "url": "https://openworklabs.com/.well-known/agent-skills/set-up-openwork-slack/SKILL.md",
+      "sha256": "a9fed0a3ba296aedaacdf050b3784a4539fd3b1241fb8c80797a83680f1a0b1a"
     }
   ]
 }
