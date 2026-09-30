@@ -8,7 +8,7 @@ const test = spec.world(modelPicker, {
 
 const searchPlaceholder = "Search models…";
 
-test("a signed-in member keeps Auto and BYOK accessible while organizing pins without losing a draft", async ({ world, user, probe, step }) => {
+test("a signed-in member keeps Auto and BYOK accessible while organizing pins without losing a draft", async ({ world, user, probe, step, evidence }) => {
   const draft = "Keep this draft while choosing a model.";
   const picker = '[data-testid="composer-model-picker"]';
   const key = (model: { providerID: string; modelID: string }) => `${model.providerID}:${model.modelID}`;
@@ -52,6 +52,7 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
     expect(groups.slice(3)).toContain("BYOK provider");
     expect(groups.slice(3)).toEqual(groups.slice(3).sort((left, right) => left.localeCompare(right)));
     expect(await pins()).toEqual(["Organization witness", "Pinned witness"]);
+    evidence.recordAssertionEvidence("Auto is listed but not pinned by default", `Pinned rows: ${(await pins()).join(", ")}; Auto appears as an option and stays selected.`, !(await pins()).includes("Auto"));
     for (const model of [world.organization, world.favorite, world.auto, world.recent, world.byok, { providerID: "openwork", modelID: "hosted-model" }]) {
       expect((await probe.dom(`${picker} [data-model-key="${key(model)}"]`)).elements).toHaveLength(1);
     }
@@ -69,6 +70,7 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
     await user.hover(option(world.byok));
     await user.see({ role: "button", label: "Unpin: BYOK witness" });
     expect(await pins()).toEqual(["Organization witness", "Pinned witness", "BYOK witness"]);
+    evidence.recordAssertionEvidence("Pinning a BYOK model adds it after existing pins", `Pinned rows: ${(await pins()).join(", ")}.`, (await pins()).at(-1) === "BYOK witness");
     await selected(world.auto);
     await user.see("composer", { text: draft });
     expect(await probe.storage("openwork.modelCollections.v1")).toMatchObject({ favorites: [world.favorite, world.byok] });
@@ -92,6 +94,7 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
       expect(await pins()).toEqual(["Organization witness", "Pinned witness"]);
     }
     await user.notSee({ role: "button", label: "Unpin: Auto" });
+    evidence.recordAssertionEvidence("The organization pin stays fixed and Auto is not pinned by the organization", `Pinned rows: ${(await pins()).join(", ")}; the organization row offers no unpin.`, (await pins())[0] === "Organization witness" && !(await pins()).includes("Auto"));
     await user.notSee({ role: "button", label: "Unpin: Organization witness" });
     expect(await probe.storage("openwork.modelCollections.v1")).toMatchObject({ favorites: [world.favorite] });
     await selected(world.auto);
