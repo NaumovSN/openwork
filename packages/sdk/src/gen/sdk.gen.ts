@@ -14016,6 +14016,7 @@ export class DenClient extends HeyApiClient {
       channelIds?: Array<string>;
       shadowMode?: boolean;
       dailyLimit?: number;
+      model?: string | null;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -14030,6 +14031,7 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "channelIds" },
             { in: "body", key: "shadowMode" },
             { in: "body", key: "dailyLimit" },
+            { in: "body", key: "model" },
           ],
         },
       ],

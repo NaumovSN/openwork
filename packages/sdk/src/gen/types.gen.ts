@@ -26562,6 +26562,21 @@ export type GetV1McpConnectionsByConnectionIdSlackAssistantResponses = {
     channelIds: Array<string>;
     shadowMode: boolean;
     dailyLimit: number;
+    /**
+     * Model chosen for headless runs, or null for the runner default.
+     */
+    model: string | null;
+    /**
+     * The headless runner's default model, when this workspace uses it.
+     */
+    defaultModel: string | null;
+    /**
+     * Models the headless runner can use; empty when the workspace doesn't use the headless runner.
+     */
+    models: Array<{
+      id: string;
+      name: string;
+    }>;
     metrics: {
       completed: number;
       failed: number;
@@ -26592,6 +26607,10 @@ export type PutV1McpConnectionsByConnectionIdSlackAssistantData = {
     channelIds?: Array<string>;
     shadowMode?: boolean;
     dailyLimit?: number;
+    /**
+     * Gateway model alias for headless runs; null restores the runner default. Omit to keep the current model.
+     */
+    model?: string | null;
   };
   path: {
     /**

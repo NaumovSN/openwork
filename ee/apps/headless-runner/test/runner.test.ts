@@ -285,6 +285,35 @@ test("many members at once: each turn uses only its own credentials, transcript 
   for (const call of seen) assert.equal(call.token, `token-for-${String(call.input.who)}`)
 })
 
+test("an image from a tool is shown to the model in its turn, then dropped from later context and from the API", async () => {
+  const image = { mediaType: "image/png", data: "QUJD" }
+  const { model, requests } = scriptedModel([
+    calls({ id: "c1", name: "slack_read_file", input: { file_id: "F1" } }),
+    text("It says hello."),
+    text("Sure."),
+  ])
+  const { store, runner } = makeRunner({
+    model,
+    mcp: async () => ({
+      tools: [{ name: "slack_read_file", description: "read", inputSchema: { type: "object" } }],
+      async call() {
+        return { output: "[image 1: image/png, attached]", isError: false, images: [image] }
+      },
+      async close() {},
+    }),
+  })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "what is written here", credentials: creds })
+  await runner.idle()
+  const toolInTurn = requests[1].messages.find((message) => message.role === "tool")
+  assert.deepEqual(toolInTurn?.role === "tool" && toolInTurn.images, [image])
+
+  runner.send({ sessionId: session.id, messageId: "msg_2", prompt: "thanks", credentials: creds })
+  await runner.idle()
+  const toolLater = requests[2].messages.find((message) => message.role === "tool")
+  assert.equal(toolLater?.role === "tool" && toolLater.images, undefined)
+})
+
 test("context keeps whole recent turns within budget", () => {
   const entry = (seq: number, messageId: string, body: string) => ({
     seq,
