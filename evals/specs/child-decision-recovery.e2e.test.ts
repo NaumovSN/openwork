@@ -7,9 +7,8 @@ const test = spec.world(childDecisionsWeb, { timeout: 420_000,
   resources: { surfaces: ["appWeb"], services: ["mock"] } });
 
 test("a member recovers a helper's unanswered question after losing its live notification", async ({ world, user, probe, step, evidence }) => {
-  const mount = `/workspace/${encodeURIComponent(world.workspace.workspaceId)}/${world.engine === "v2" ? "opencode2/api" : "opencode"}`;
   const pending = async () => {
-    const response = await probe.desktopApi(mount + (world.engine === "v2" ? "/form/request" : "/question"));
+    const response = await world.nativePendingDecisions();
     expect(response.status).toBe(200);
     const data = isRecord(response.body) && "data" in response.body ? response.body.data : response.body;
     if (!Array.isArray(data)) throw new Error("Native pending decisions did not return a list");
