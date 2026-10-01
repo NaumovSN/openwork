@@ -5,7 +5,7 @@ import { agentChildWeb } from "../worlds/agent-child.ts";
 
 const test = spec.world(agentChildWeb, { timeout: 420_000, resources: { surfaces: ["appWeb"], services: ["mock"] } });
 
-test(`AGENT-CHILD-01 ${resolveEvalEngine()}: a person messages a busy child without stopping its grandchild and returns to its card`, async ({ world, user, probe, step, evidence }) => {
+test(`a member messages a busy helper and returns without losing its draft (${resolveEvalEngine()})`, async ({ world, user, probe, step, evidence }) => {
   await using commands = await observeSessionCommands(probe);
   await step("before: the main chat delegates a fixture review", async () => {
     await user.type("composer", world.prompt, { verify: true });
@@ -27,16 +27,22 @@ test(`AGENT-CHILD-01 ${resolveEvalEngine()}: a person messages a busy child with
     await user.screenshot();
   });
   await step("Enter admits a message to the child and issues no abort", async () => {
+    const childHash = await probe.hash();
+    const childId = childHash.split("/session/")[1]?.split(/[?&#/]/)[0];
+    if (!childId) throw new Error("The selected helper did not expose its conversation identity");
     await user.type("composer", world.followup, { verify: true });
     await user.press("Enter");
     await user.see({ text: world.followup });
-    const requests = await commands.read();
+    const requests = await probe.eventually(() => commands.read(), { within: 15_000,
+      label: "the busy helper receives its own prompt admission",
+      until: requests => requests.some(request => request.path.includes(`/session/${childId}/`) && /\/prompt(?:_async)?$/.test(request.path)),
+    });
     evidence.recordJsonArtifact("Scoped command transport", requests);
     expect(requests.filter(request => /\/(?:abort|interrupt)$/.test(request.path))).toEqual([]);
     const state = await world.grandchildState();
     expect(state.deliveredChunks).toBe(1);
     expect(state.complete).toBe(false);
-    evidence.recordAssertionEvidence("Busy-child messaging issues no abort", `The sent follow-up is visible with 0 aborts; the grandchild remains at ${state.deliveredChunks} chunk and complete=${state.complete}.`, true);
+    evidence.recordAssertionEvidence("the busy helper really receives the follow-up", `A prompt POST targets the selected helper with 0 aborts; the grandchild remains at ${state.deliveredChunks} chunk and complete=${state.complete}.`, true);
   });
   await step("Escape returns to the originating card and preserves the child's unsent draft", async () => {
     await user.type("composer", "Ask about the fixture provenance", { verify: true });
@@ -55,6 +61,43 @@ test(`AGENT-CHILD-01 ${resolveEvalEngine()}: a person messages a busy child with
     await user.see({ text: "The delegated fixture review is ready." }, { timeoutMs: 90_000 });
     await user.see("Run task");
     evidence.recordAssertionEvidence("The child result reaches the main chat", "Releasing delegated work finishes the child; returning shows the parent review result and an idle composer.", true);
+    await user.screenshot();
+  });
+});
+
+test(`a member stops one helper from its parent chat (${resolveEvalEngine()})`, async ({ world, user, probe, step, evidence }) => {
+  await using commands = await observeSessionCommands(probe);
+  let childId = "";
+  await step("before: delegated work is running and the parent still owns its own chat", async () => {
+    await user.type("composer", world.prompt, { verify: true });
+    await user.click("Run task");
+    await user.see({ role: "button", label: "Review fixture. Open sub-agent chat" }, { timeoutMs: 60_000 });
+    await user.click({ role: "button", label: "Review fixture. Open sub-agent chat" });
+    childId = (await probe.hash()).split("/session/")[1]?.split(/[?&#/]/)[0] ?? "";
+    expect(childId).not.toBe("");
+    await user.see({ text: "Check fixture output" }, { timeoutMs: 60_000 });
+    await probe.eventually(() => world.grandchildState(), { within: 60_000,
+      label: "the delegated work is really held", until: state => state.deliveredChunks === 1 });
+    await user.press("Escape");
+    await user.see({ role: "button", label: "Review fixture. Stop sub-agent" });
+    evidence.recordAssertionEvidence("the helper is really running", "Its grandchild has delivered one held chunk; the parent exposes a Stop for this helper", true);
+    await user.screenshot();
+  });
+  await step("after: Stop interrupts the selected helper and reports acknowledgement", async () => {
+    await user.click({ role: "button", label: "Review fixture. Stop sub-agent" });
+    await user.see({ text: "Stopped" }, { timeoutMs: 30_000 });
+    const interrupts = (await commands.read()).filter(request => /\/(?:abort|interrupt)$/.test(request.path));
+    expect(interrupts).toHaveLength(1);
+    expect(interrupts[0]?.path).toContain(`/session/${childId}/`);
+    evidence.recordAssertionEvidence("Stop targets only the selected helper", "Exactly one interruption targets that helper; no interruption targets its parent or grandchild", true);
+    await user.screenshot();
+  });
+  await step("returning to the helper keeps navigation usable after Stop", async () => {
+    await user.click({ role: "button", label: "Review fixture. Open sub-agent chat" });
+    await user.see("composer", { editable: true });
+    await user.press("Escape");
+    await user.see({ role: "button", label: "Review fixture. Open sub-agent chat" });
+    evidence.recordAssertionEvidence("return still works after interruption", "The stopped helper and parent can still be opened using the same transcript control", true);
     await user.screenshot();
   });
 });
