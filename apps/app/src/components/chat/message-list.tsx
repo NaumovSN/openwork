@@ -592,8 +592,6 @@ const AssistantMessage = React.memo(
                   key={`reasoning-${index}`}
                   disclosureKey={JSON.stringify(["reasoning", message.id, index])}
                   text={group.text}
-                  startedAt={group.startedAt}
-                  endedAt={group.endedAt}
                   isStreaming={group.isStreaming}
                 />
               )
