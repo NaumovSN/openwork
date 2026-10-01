@@ -297,7 +297,9 @@ chatTest("an owner follows App creation progress and opens the finished App besi
     builtAt = new Date().toISOString();
     await agent.send(buildPrompt);
     await user.see({ text: "Writing the app" });
-    expect((await probe.dom('[data-app-creation-step="needs"][data-step-status="complete"]')).elements).toHaveLength(1);
+    expect(await probe.eventually(async () => (await probe.dom('[data-app-creation-step="needs"][data-step-status="complete"]')).elements, {
+      within: 30_000, intervalMs: 200, label: "preparation completes while creation is held", until: elements => elements.length === 1,
+    })).toHaveLength(1);
     expect((await probe.dom('[data-app-creation-step="writing"][data-step-status="running"]')).elements).toHaveLength(1);
     expect((await probe.dom('[data-app-creation-step="ready"][data-step-status="pending"]')).elements).toHaveLength(1);
     expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(0);
@@ -310,7 +312,9 @@ chatTest("an owner follows App creation progress and opens the finished App besi
     await user.see({ text: buildReply }, { timeoutMs: 120_000 });
     const calls = (await world.den.mocks.inventory.agentRequests({ promptMarker: buildPrompt })).filter(request => request.kind === "tool");
     expect(calls.map(call => call.toolName)).toEqual([expect.stringMatching(/prepare_app$/), expect.stringMatching(/create_app$/)]);
-    expect((await probe.dom('[data-app-creation-step="ready"][data-step-status="complete"]')).elements).toHaveLength(1);
+    expect(await probe.eventually(async () => (await probe.dom('[data-app-creation-step="ready"][data-step-status="complete"]')).elements, {
+      within: 30_000, intervalMs: 200, label: "the checked App is ready to open", until: elements => elements.length === 1,
+    })).toHaveLength(1);
     await user.see({ role: "button", label: "Open preview" });
     await user.see({ role: "button", label: "Share" });
     expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(1);
