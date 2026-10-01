@@ -11,7 +11,7 @@ import {
   MemberTable,
   OrganizationTable,
 } from "@openwork-ee/den-db/schema"
-import { createAutomationSchema } from "@openwork/types/automations"
+import { AUTOMATION_CLOUD_DEFAULT_MODEL, createAutomationSchema } from "@openwork/types/automations"
 import { createHeadlessRunnerClient } from "../src/headless-runner/client.js"
 
 // Only opt into an explicitly isolated database, never a developer's regular Den.
@@ -101,7 +101,7 @@ suite("headless Automations: real database", () => {
     await db.delete(OrganizationTable).where(eq(OrganizationTable.id, orgId))
   })
 
-  async function queuedCloudRun(name: string) {
+  async function queuedCloudRun(name: string, model: { providerId: string; modelId: string } = { providerId: "ipr_test", modelId: "gwm_default" }) {
     const created = await repository.create({
       organizationId: orgId,
       ownerMemberId: memberId,
@@ -109,7 +109,7 @@ suite("headless Automations: real database", () => {
       definition: createAutomationSchema.parse({
         name,
         schedule: { kind: "daily", timezone: "UTC", hour: 8, minute: 0 },
-        action: { kind: "agent", instructions: `Run ${name}`, model: { providerId: "ipr_test", modelId: "gwm_default" } },
+        action: { kind: "agent", instructions: `Run ${name}`, model },
         executionTarget: "cloud",
       }),
     })
@@ -160,6 +160,37 @@ suite("headless Automations: real database", () => {
     expect(run.engine_receipt).toMatchObject({ runtime: "headless", sessionId: "hs_db_1" })
     const events = await db.select().from(AutomationRunEventTable).where(eq(AutomationRunEventTable.run_id, runId))
     expect(events.sort((left, right) => left.sequence - right.sequence).map((event) => event.event_type)).toEqual(["user", "assistant", "usage", "terminal"])
+  })
+
+  test("with a cloud computer too: only-connected-accounts runs headless, a chosen model runs on the computer", async () => {
+    const vmRuns: string[] = []
+    service.configureCloudAgentExecutor({
+      runtimeAvailable: async () => true,
+      execute: async (input) => {
+        vmRuns.push(input.automationRunId)
+        return { ok: true, threadId: "ses_vm", workspaceId: "ws_vm", resultSummary: "Ran on the cloud computer.", usage: { inputTokens: 1, outputTokens: 1, costMicros: null }, events: [] }
+      },
+    })
+    service.configureHeadlessAgentExecutor((input) => executor.executeHeadlessAgent(input, {
+      client: answeringRunner("Ran headless."),
+      ownerUserId: async () => userId,
+      stillHeadless: async () => true,
+      sleep: async () => {},
+      pollIntervalMs: 0,
+    }))
+    const automations = new service.AutomationService({
+      cloudRuntime: async () => "headless",
+      getOpenWorkWebAccess: async () => ({ hasAccess: true }),
+    })
+    const accountsOnly = await queuedCloudRun("Accounts only", { providerId: AUTOMATION_CLOUD_DEFAULT_MODEL.providerId, modelId: AUTOMATION_CLOUD_DEFAULT_MODEL.modelId })
+    const withFiles = await queuedCloudRun("With files", { providerId: "ipr_test", modelId: "gwm_picked" })
+    await automations.tick()
+    const [headlessRun, computerRun] = [await settled(accountsOnly), await settled(withFiles)]
+    expect(headlessRun.engine_kind).toBe(HEADLESS)
+    expect(headlessRun.result_summary).toBe("Ran headless.")
+    expect(computerRun.engine_kind).toBe("openwork-cloud-agent-v1")
+    expect(computerRun.result_summary).toBe("Ran on the cloud computer.")
+    expect(vmRuns).toEqual([withFiles])
   })
 
   test("headless runs have their own pool and never take or wait for OpenWork Web slots", async () => {

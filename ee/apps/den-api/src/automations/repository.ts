@@ -233,6 +233,13 @@ async function itemsFromRows(automations: AutomationRow[]): Promise<AutomationLi
   })
 }
 
+/** MySQL asked the transaction to be restarted: a deadlock victim or a lock wait that timed out. */
+function isLockConflict(error: unknown): boolean {
+  const cause = typeof error === "object" && error !== null && "cause" in error ? error.cause : error
+  return typeof cause === "object" && cause !== null && "code" in cause
+    && (cause.code === "ER_LOCK_DEADLOCK" || cause.code === "ER_LOCK_WAIT_TIMEOUT")
+}
+
 export class DenAutomationRepository implements AutomationRepository {
   async listQueuedCloud(input: { limit: number }): Promise<string[]> {
     const rows = await db.select({ id: AutomationRunTable.id }).from(AutomationRunTable).where(and(
@@ -588,10 +595,19 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   /** What a queued cloud run needs before it is claimed: whose it is, and which engine already owns it. */
-  async cloudRunTarget(runId: string): Promise<{ organizationId: string; actionKind: "agent" | "saved_script" | null; engineKind: string | null } | null> {
+  async cloudRunTarget(runId: string): Promise<{
+    organizationId: string
+    ownerMemberId: string
+    actionKind: "agent" | "saved_script" | null
+    engineKind: string | null
+    model: { providerId: string; modelId: string }
+  } | null> {
     const rows = await db.select({
       organizationId: AutomationTable.organization_id,
+      ownerMemberId: AutomationTable.owner_member_id,
       engineKind: AutomationRunTable.engine_kind,
+      providerId: AutomationRunTable.provider_id,
+      modelId: AutomationRunTable.model_id,
       action: AutomationRevisionTable.action,
     }).from(AutomationRunTable)
       .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
@@ -600,7 +616,13 @@ export class DenAutomationRepository implements AutomationRepository {
       .limit(1)
     const row = rows[0]
     if (!row) return null
-    return { organizationId: row.organizationId, actionKind: row.action?.kind ?? null, engineKind: row.engineKind ?? null }
+    return {
+      organizationId: row.organizationId,
+      ownerMemberId: row.ownerMemberId,
+      actionKind: row.action?.kind ?? null,
+      engineKind: row.engineKind ?? null,
+      model: { providerId: row.providerId, modelId: row.modelId },
+    }
   }
 
   /**
@@ -617,6 +639,20 @@ export class DenAutomationRepository implements AutomationRepository {
     headlessEngineKind?: string
     now: number
   }): Promise<DesktopClaim | null> {
+    // Claims started together serialize on the same locked ranges, so MySQL
+    // may pick one as a deadlock victim and ask to restart it. Restarting
+    // right away keeps that run from waiting a whole scheduler tick.
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await this.claimCloudOnce(input)
+      } catch (error) {
+        if (attempt >= 3 || !isLockConflict(error)) throw error
+        await new Promise((resolve) => setTimeout(resolve, 15 * attempt + Math.random() * 25))
+      }
+    }
+  }
+
+  private async claimCloudOnce(input: Parameters<DenAutomationRepository["claimCloud"]>[0]): Promise<DesktopClaim | null> {
     return db.transaction(async (tx) => {
       // Admission and the queued -> running transition share one transaction.
       // Locking the active status ranges serializes competing replicas even

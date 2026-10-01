@@ -118,8 +118,28 @@ export class AutomationService {
     await requireOpenWorkWebRuntimeAccess(organizationId, this.getOpenWorkWebAccess)
   }
 
-  private async cloudAgentAvailable(scope: OwnerScope) {
-    if (await this.cloudRuntime(scope.organizationId) === "headless") return headlessAgentExecutor !== null
+  /** Whether the owner has an OpenWork Web computer that can run agent Automations, with its files. */
+  private async cloudComputerAvailable(scope: OwnerScope) {
+    return (await this.getOpenWorkWebAccess(scope.organizationId)).hasAccess
+      && cloudAgentRuntimeAvailable !== null
+      && await cloudAgentRuntimeAvailable(scope)
+  }
+
+  /**
+   * Which engine runs a cloud agent Automation. Off the headless runtime it is
+   * always the owner's OpenWork Web computer. On it, the cloud default model
+   * ("only connected accounts") runs headless, and a chosen model runs on the
+   * owner's cloud computer when they have one, because it may need that
+   * computer's files; without one it runs headless too.
+   */
+  private async agentEngine(scope: OwnerScope, model: ModelSelection): Promise<typeof HEADLESS_AGENT_ENGINE_KIND | typeof CLOUD_AGENT_ENGINE_KIND> {
+    if (await this.cloudRuntime(scope.organizationId) !== "headless") return CLOUD_AGENT_ENGINE_KIND
+    if (isAutomationCloudDefaultModel(model)) return HEADLESS_AGENT_ENGINE_KIND
+    return await this.cloudComputerAvailable(scope) ? CLOUD_AGENT_ENGINE_KIND : HEADLESS_AGENT_ENGINE_KIND
+  }
+
+  private async cloudAgentAvailable(scope: OwnerScope, model: ModelSelection) {
+    if (await this.agentEngine(scope, model) === HEADLESS_AGENT_ENGINE_KIND) return headlessAgentExecutor !== null
     return cloudAgentRuntimeAvailable !== null && await cloudAgentRuntimeAvailable(scope)
   }
 
@@ -171,7 +191,7 @@ export class AutomationService {
         if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
         await validateWorkflowAutomationAction({ ...scope, action: definition.action })
       }
-      if (definition.action.kind === "agent" && !await this.cloudAgentAvailable(scope)) {
+      if (definition.action.kind === "agent" && !await this.cloudAgentAvailable(scope, definition.action.model)) {
         throw new Error("automation_cloud_worker_required")
       }
     } else {
@@ -198,12 +218,12 @@ export class AutomationService {
     if (nextAction?.kind === "saved_script") {
       await validateWorkflowAutomationAction({ ...scope, action: nextAction })
     } else if (nextAction?.kind === "agent") {
-      if ((current.revision.executionTarget ?? "desktop") === "cloud" && !await this.cloudAgentAvailable(scope)) {
-        throw new Error("automation_cloud_worker_required")
-      }
       const requestedModel = changes.action?.kind === "agent"
         ? changes.action.model
         : changes.model ?? nextAction.model
+      if ((current.revision.executionTarget ?? "desktop") === "cloud" && !await this.cloudAgentAvailable(scope, requestedModel)) {
+        throw new Error("automation_cloud_worker_required")
+      }
       if (!sameModel(requestedModel, current.revision.model)) {
         await this.requireNewModel(
           (current.revision.executionTarget ?? "desktop") === "cloud"
@@ -227,7 +247,7 @@ export class AutomationService {
     if (current.revision.action?.kind === "saved_script") {
       if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
     } else {
-      if ((current.revision.executionTarget ?? "desktop") === "cloud" && !await this.cloudAgentAvailable(scope)) {
+      if ((current.revision.executionTarget ?? "desktop") === "cloud" && !await this.cloudAgentAvailable(scope, current.revision.model)) {
         throw new Error("automation_cloud_worker_required")
       }
       await this.requireNewModel(
@@ -613,7 +633,7 @@ export class AutomationService {
     const engineKind = target.engineKind
       ?? (target.actionKind === "saved_script"
         ? CLOUD_CODEMODE_ENGINE_KIND
-        : runtime === "headless" ? HEADLESS_AGENT_ENGINE_KIND : CLOUD_AGENT_ENGINE_KIND)
+        : await this.agentEngine({ organizationId: target.organizationId, ownerMemberId: target.ownerMemberId }, target.model))
     const headlessEngine = engineKind === HEADLESS_AGENT_ENGINE_KIND
     const claimed = await automationRepository.claimCloud({
       runId,
