@@ -1,6 +1,6 @@
 # Chat improvements, organized by what a person can do
 
-The implementation is split into four outcomes. Each PR adds one reviewable
+The implementation is split into five outcomes. Each PR adds one reviewable
 layer; its own description explains the incremental change. The original PR is
 an index containing this document.
 
@@ -10,6 +10,8 @@ an index containing this document.
 | 2. Follow a task without losing its order or working time | A fast reply could appear before its prompt; a follow-up could restart elapsed time; decision waits could inflate work time. | Replies follow prompt ancestry. The same run survives follow-ups and reloads, with decision waits subtracted. Answers keep their own model and native timing. | [#5519](https://github.com/different-ai/openwork/pull/5519) | [Report and current status](https://github.com/different-ai/openwork/pull/5519#issuecomment-5939174809) |
 | 3. Answer a helper's question when an update was missed | A helper could remain blocked without its question or approval appearing in the parent. | Related active or waiting sessions reconcile again. Unanswered decisions and allowlisted native completion notices survive history without mixing unrelated tasks. | [#5521](https://github.com/different-ai/openwork/pull/5521) | [Report and current status](https://github.com/different-ai/openwork/pull/5521#issuecomment-5939234042) |
 | 4. Intervene in a helper and return to your work | Busy-helper Enter could queue; returning could lose a draft or pane; Stop could trust stale associations or imply success too soon. | Direct helper follow-ups; collapsed Original task; scoped draft, pane and position restoration; verified Stop with pending, acknowledgement and retry feedback. | [#5522](https://github.com/different-ai/openwork/pull/5522) | [Report and current status](https://github.com/different-ai/openwork/pull/5522#issuecomment-5939269920) |
+
+| 5. Keep live progress clear and stable | Folded execution lost shimmer; thinking pulsed; individual connected actions had no live duration or copy action. | Moving visible progress, distinct thinking, per-action elapsed time and Copy details; retain height hold, model placement and disclosed output. | [#5531](https://github.com/different-ai/openwork/pull/5531) | [Current CI evidence](https://github.com/different-ai/openwork/pull/5531) |
 
 ## What each report actually checks
 
@@ -26,6 +28,8 @@ an index containing this document.
   helper while its grandchild is held, checks draft restoration and return,
   finishes delegated work, and separately stops the selected helper and its verified descendants without
   stopping the parent.
+
+- **Clear and stable progress:** existing visibility and connector journeys sample moving shimmer and title weight, measure live height, inspect reasoning disclosure and answer model placement, advance the individual action timer and acknowledge its clipboard write. [Acceptance by reported gap](chat-progress-acceptance.md) records the limits.
 
 CI executes these journeys on both engines. The linked evidence comments
 track the exact current PR head and lead to its report. A red, incomplete or
