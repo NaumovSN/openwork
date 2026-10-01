@@ -174,3 +174,12 @@ describe("dashboard navigation index", () => {
     expect(searchBar).toContain('data-testid="den-command-palette-trigger"');
   });
 });
+
+
+test("My Drive appears in navigation and search only for an effective enabled capability", () => {
+  for (const flag of [undefined, false, true]) {
+    const sections = buildFor("member", { ...baseCapabilities, cloudDrive: flag });
+    const items = flattenNavigationForSearch(sections);
+    expect(items.some((item) => item.href === "/dashboard/drive")).toBe(flag === true);
+  }
+});

@@ -1,3 +1,4 @@
+import { readDriveStorageConfig } from "./cloud-drive-config.js"
 import os from "node:os"
 import { readFileSync } from "node:fs"
 import path from "node:path"
@@ -827,6 +828,7 @@ export const env = {
   workerActivityBaseUrl:
     optionalString(parsed.WORKER_ACTIVITY_BASE_URL) ??
     betterAuthUrl,
+  driveStorage: readDriveStorageConfig(process.env),
   automations: {
     enabled: automationsEnabled,
     runtimeEnabled: automationsRuntimeEnabled,

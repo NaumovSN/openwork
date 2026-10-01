@@ -1,7 +1,10 @@
 # Cloud Drive architecture
 
 Proposal at upstream `dev@74232f4c1`; all structures and routes below are new
-designs, not existing contracts.
+designs, not existing contracts. The bounded private Drive slice actually
+implemented in this draft is documented in [implementation.md](implementation.md);
+this document describes the longer-term architecture, including run-specific
+scopes and shared storage that are not yet implemented.
 
 ## Put the durable drive in Den
 

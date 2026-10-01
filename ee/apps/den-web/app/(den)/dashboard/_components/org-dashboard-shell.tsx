@@ -18,6 +18,7 @@ import {
   getAiGatewayRoute,
   getAnalyticsRoute,
   getAutomationsRoute,
+  getDriveRoute,
   getBackgroundAgentsRoute,
   getApiKeysRoute,
   getAuditLogsRoute,
@@ -247,6 +248,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   }
   if (pathname.startsWith(getBackgroundAgentsRoute(orgSlug))) {
     return "Background Tasks";
+  }
+  if (pathname.startsWith(getDriveRoute(orgSlug))) {
+    return "My Drive";
   }
   if (pathname.startsWith(getAutomationsRoute(orgSlug))) {
     return "My Automations";

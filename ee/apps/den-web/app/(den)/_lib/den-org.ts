@@ -251,6 +251,7 @@ export type DenOrgEntitlements = {
 
 /** Server-advertised and per-org capabilities; optional fields default to off. */
 export type DenOrgCapabilities = {
+  cloudDrive?: boolean;
   /** Effective organization rollout and deployment visibility, separate from capture entitlement. */
   auditLogs: boolean;
   orgManagedDashboards: boolean;
@@ -765,6 +766,10 @@ export function getToolTesterRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/tool-tester`;
 }
 
+export function getDriveRoute(orgSlug?: string | null): string {
+  return `${getOrgDashboardRoute(orgSlug)}/drive`;
+}
+
 export function getLibraryRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/library`;
 }
@@ -1084,6 +1089,7 @@ function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
   }
 
   return {
+    cloudDrive: value.cloudDrive === true,
     auditLogs: value.auditLogs === true,
     orgManagedDashboards: value.orgManagedDashboards === true,
     installLinks: value.installLinks === true,

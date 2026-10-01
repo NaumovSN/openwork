@@ -173,6 +173,8 @@ export type AdminUsersPageResponse = {
 export type AdminOrganizationsPageResponse = {
   organizations: Array<{
     capabilities: {
+      cloudDrive: boolean;
+      cloudDriveConfigured: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
       modelsAnalytics: boolean;
@@ -255,6 +257,8 @@ export type AdminOverviewResponse = {
   }>;
   organizations: Array<{
     capabilities: {
+      cloudDrive: boolean;
+      cloudDriveConfigured: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
       modelsAnalytics: boolean;
@@ -808,6 +812,7 @@ export type OrganizationContextResponse = {
   }>;
   capabilities: {
     auditLogs: boolean;
+    cloudDrive: boolean;
     /**
      * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
      *
@@ -1441,7 +1446,8 @@ export type CapabilityDisabledError = {
     | "orgManagedDashboards"
     | "appMcpServers"
     | "slackAssistant"
-    | "slackAssistantHeadless";
+    | "slackAssistantHeadless"
+    | "cloudDrive";
 };
 
 export type CreateInstallLinkRequest = {
@@ -5412,6 +5418,8 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
    */
   200: {
     capabilities: {
+      cloudDrive: boolean;
+      cloudDriveConfigured: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
       modelsAnalytics: boolean;
@@ -5477,6 +5485,8 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       id: string;
     };
     capabilities: {
+      cloudDrive: boolean;
+      cloudDriveConfigured: boolean;
       installLinks: boolean;
       mcpConnections: boolean;
       modelsAnalytics: boolean;
@@ -7818,6 +7828,457 @@ export type PostV1OrgsInvitationsAcceptResponses = {
 
 export type PostV1OrgsInvitationsAcceptResponse =
   PostV1OrgsInvitationsAcceptResponses[keyof PostV1OrgsInvitationsAcceptResponses];
+
+export type GetV1DriveData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/drive";
+};
+
+export type GetV1DriveErrors = {
+  /**
+   * Invalid input
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Folder or policy access denied
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Drive or file unavailable
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Quota, path, or unfinished operation conflict
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * File too large
+   */
+  413: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Storage unavailable
+   */
+  503: {
+    error: string;
+    message: string;
+  };
+};
+
+export type GetV1DriveError = GetV1DriveErrors[keyof GetV1DriveErrors];
+
+export type GetV1DriveResponses = {
+  /**
+   * List my Drive files and storage usage
+   */
+  200: {
+    items: Array<{
+      id: string;
+      path: string;
+      sizeBytes: number;
+      status: "uploading" | "ready" | "deleting";
+      createdAt: string;
+    }>;
+    usedBytes: number;
+    reservedBytes: number;
+    quotaBytes: number;
+    maxFileBytes: number;
+    allowedFolders: Array<string>;
+  };
+};
+
+export type GetV1DriveResponse = GetV1DriveResponses[keyof GetV1DriveResponses];
+
+export type PostV1DriveFilesData = {
+  body: {
+    /**
+     * A fresh UUID for this upload. Reuse it only to retry the same path and bytes.
+     */
+    id: string;
+    path: string;
+    contentBase64: string;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/drive/files";
+};
+
+export type PostV1DriveFilesErrors = {
+  /**
+   * Invalid input
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Folder or policy access denied
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Drive or file unavailable
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Quota, path, or unfinished operation conflict
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * File too large
+   */
+  413: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Storage unavailable
+   */
+  503: {
+    error: string;
+    message: string;
+  };
+};
+
+export type PostV1DriveFilesError = PostV1DriveFilesErrors[keyof PostV1DriveFilesErrors];
+
+export type PostV1DriveFilesResponses = {
+  /**
+   * Upload a private Drive file
+   */
+  200: {
+    id: string;
+    path: string;
+    sizeBytes: number;
+    status: "uploading" | "ready" | "deleting";
+    createdAt: string;
+  };
+};
+
+export type PostV1DriveFilesResponse = PostV1DriveFilesResponses[keyof PostV1DriveFilesResponses];
+
+export type DeleteV1DriveFilesByFileIdData = {
+  body?: never;
+  path: {
+    fileId: string;
+  };
+  query?: never;
+  url: "/v1/drive/files/{fileId}";
+};
+
+export type DeleteV1DriveFilesByFileIdErrors = {
+  /**
+   * Invalid input
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Folder or policy access denied
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Drive or file unavailable
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Quota, path, or unfinished operation conflict
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * File too large
+   */
+  413: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Storage unavailable
+   */
+  503: {
+    error: string;
+    message: string;
+  };
+};
+
+export type DeleteV1DriveFilesByFileIdError = DeleteV1DriveFilesByFileIdErrors[keyof DeleteV1DriveFilesByFileIdErrors];
+
+export type DeleteV1DriveFilesByFileIdResponses = {
+  /**
+   * Delete a private Drive file
+   */
+  200: {
+    ok: boolean;
+  };
+};
+
+export type DeleteV1DriveFilesByFileIdResponse =
+  DeleteV1DriveFilesByFileIdResponses[keyof DeleteV1DriveFilesByFileIdResponses];
+
+export type GetV1DriveFilesByFileIdData = {
+  body?: never;
+  path: {
+    fileId: string;
+  };
+  query?: never;
+  url: "/v1/drive/files/{fileId}";
+};
+
+export type GetV1DriveFilesByFileIdErrors = {
+  /**
+   * Invalid input
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Folder or policy access denied
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Drive or file unavailable
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Quota, path, or unfinished operation conflict
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * File too large
+   */
+  413: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Storage unavailable
+   */
+  503: {
+    error: string;
+    message: string;
+  };
+};
+
+export type GetV1DriveFilesByFileIdError = GetV1DriveFilesByFileIdErrors[keyof GetV1DriveFilesByFileIdErrors];
+
+export type GetV1DriveFilesByFileIdResponses = {
+  /**
+   * Read a private Drive file as base64
+   */
+  200: {
+    id: string;
+    path: string;
+    sizeBytes: number;
+    status: "uploading" | "ready" | "deleting";
+    createdAt: string;
+    contentBase64: string;
+  };
+};
+
+export type GetV1DriveFilesByFileIdResponse = GetV1DriveFilesByFileIdResponses[keyof GetV1DriveFilesByFileIdResponses];
+
+export type GetV1DrivePolicyData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/drive/policy";
+};
+
+export type GetV1DrivePolicyErrors = {
+  /**
+   * Invalid input
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Folder or policy access denied
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Drive or file unavailable
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Quota, path, or unfinished operation conflict
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * File too large
+   */
+  413: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Storage unavailable
+   */
+  503: {
+    error: string;
+    message: string;
+  };
+};
+
+export type GetV1DrivePolicyError = GetV1DrivePolicyErrors[keyof GetV1DrivePolicyErrors];
+
+export type GetV1DrivePolicyResponses = {
+  /**
+   * Read organization Drive limits and folder access
+   */
+  200: {
+    default: {
+      quotaBytes: number;
+      allowedFolders: Array<string>;
+    };
+    members?: {
+      [key: string]: {
+        quotaBytes: number;
+        allowedFolders: Array<string>;
+      };
+    };
+  };
+};
+
+export type GetV1DrivePolicyResponse = GetV1DrivePolicyResponses[keyof GetV1DrivePolicyResponses];
+
+export type PutV1DrivePolicyData = {
+  body: {
+    default: {
+      quotaBytes: number;
+      allowedFolders: Array<string>;
+    };
+    members?: {
+      [key: string]: {
+        quotaBytes: number;
+        allowedFolders: Array<string>;
+      };
+    };
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/drive/policy";
+};
+
+export type PutV1DrivePolicyErrors = {
+  /**
+   * Invalid input
+   */
+  400: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Folder or policy access denied
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Drive or file unavailable
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Quota, path, or unfinished operation conflict
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+  /**
+   * File too large
+   */
+  413: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Storage unavailable
+   */
+  503: {
+    error: string;
+    message: string;
+  };
+};
+
+export type PutV1DrivePolicyError = PutV1DrivePolicyErrors[keyof PutV1DrivePolicyErrors];
+
+export type PutV1DrivePolicyResponses = {
+  /**
+   * Set organization Drive limits and member folder access
+   */
+  200: {
+    default: {
+      quotaBytes: number;
+      allowedFolders: Array<string>;
+    };
+    members?: {
+      [key: string]: {
+        quotaBytes: number;
+        allowedFolders: Array<string>;
+      };
+    };
+  };
+};
+
+export type PutV1DrivePolicyResponse = PutV1DrivePolicyResponses[keyof PutV1DrivePolicyResponses];
 
 export type GetV1ApiKeysData = {
   body?: never;

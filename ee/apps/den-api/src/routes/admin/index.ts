@@ -113,6 +113,7 @@ const updateOrganizationDpaSchema = z.object({
 
 const updateOrganizationCapabilitiesSchema = z.object({
   capabilities: z.object({
+    cloudDrive: z.boolean().nullable().optional(),
     installLinks: z.boolean().nullable().optional(),
     mcpConnections: z.boolean().nullable().optional(),
     modelsAnalytics: z.boolean().nullable().optional(),
@@ -129,6 +130,8 @@ const updateOrganizationCapabilitiesSchema = z.object({
 })
 
 const adminOrganizationCapabilitiesSchema = z.object({
+  cloudDrive: z.boolean(),
+  cloudDriveConfigured: z.boolean(),
   installLinks: z.boolean(),
   mcpConnections: z.boolean(),
   modelsAnalytics: z.boolean(),
@@ -309,6 +312,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unknown> | string | null | undefined): z.infer<typeof adminOrganizationCapabilitiesSchema> {
   return {
+    cloudDrive: normalizeOrganizationCapabilities(metadata).cloudDrive,
+    cloudDriveConfigured: env.driveStorage !== null,
     installLinks: organizationInstallLinksEnabled(metadata, { gatingEnabled: false }),
     mcpConnections: memberFacingMcpConnectionsEnabled(metadata, { gatingEnabled: false }),
     modelsAnalytics: normalizeOrganizationCapabilities(metadata).modelsAnalytics,
@@ -356,7 +361,7 @@ function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Rec
     // OpenWork Web access instead), so stale stored overrides stay managed
     // (dropped on the next capabilities write) instead of passing through as
     // unmanaged metadata.
-    if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "auditLogs" && key !== "orgManagedDashboards" && key !== "appMcpServers" && key !== "slackAssistant" && key !== "slackAssistantHeadless" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
+    if (key !== "cloudDrive" && key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "auditLogs" && key !== "orgManagedDashboards" && key !== "appMcpServers" && key !== "slackAssistant" && key !== "slackAssistantHeadless" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
       capabilities[key] = value
     }
   }
@@ -2108,6 +2113,10 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         return c.json({ error: "not_found", message: "Organization not found." }, 404)
       }
 
+      if (body.data.capabilities.cloudDrive === true && !env.driveStorage) {
+        return c.json({ error: "invalid_request", message: "Configure Drive S3 storage before enabling Cloud Drive." }, 400)
+      }
+
       const metadata = await updateOrganizationMetadata(organizationId, (current) => {
         const capabilities = readOrganizationCapabilityOverrides(current)
         const installLinks = body.data.capabilities.installLinks
@@ -2126,6 +2135,10 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
             capabilities.mcpConnections = mcpConnections
           }
         }
+
+        const cloudDrive = body.data.capabilities.cloudDrive
+        if (cloudDrive === null) delete capabilities.cloudDrive
+        else if (cloudDrive !== undefined) capabilities.cloudDrive = cloudDrive
 
         const modelsAnalytics = body.data.capabilities.modelsAnalytics
         if (modelsAnalytics === null) delete capabilities.modelsAnalytics

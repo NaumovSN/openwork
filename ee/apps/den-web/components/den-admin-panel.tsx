@@ -131,6 +131,8 @@ type AdminUser = {
 };
 
 type AdminOrganizationCapabilities = {
+  cloudDrive: boolean;
+  cloudDriveConfigured: boolean;
   auditLogs: boolean;
   orgManagedDashboards: boolean;
   appMcpServers: boolean;
@@ -464,6 +466,8 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
           seatsFreeAdditional: toNumberValue(value.seatsFreeAdditional),
           billableSeatCount: toNumberValue(value.billableSeatCount),
           capabilities: {
+            cloudDrive: capabilities.cloudDrive === true,
+            cloudDriveConfigured: capabilities.cloudDriveConfigured === true,
             auditLogs: capabilities.auditLogs === true,
             orgManagedDashboards: capabilities.orgManagedDashboards === true,
             appMcpServers: capabilities.appMcpServers === true,
@@ -843,7 +847,7 @@ function buildFixtureOrganization(index: number): AdminOrganization {
     freeSeatCount: target ? 25 : DEFAULT_FREE_SEAT_COUNT,
     seatsFreeAdditional: target ? 20 : 0,
     billableSeatCount: target ? 103 : 0,
-    capabilities: { auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, slackAssistantHeadless: false, installLinks: target, mcpConnections: target, modelsAnalytics: false },
+    capabilities: { cloudDrive: false, cloudDriveConfigured: false, auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, slackAssistantHeadless: false, installLinks: target, mcpConnections: target, modelsAnalytics: false },
     freeAuto: { enabled: false, globallyEnabled: false, rolloutAllOrganizations: false },
     openworkWebAccess: {
       hasAccess: target,
@@ -2780,6 +2784,14 @@ export function DenAdminPanel() {
                         />
                         Audit logs
                       </label>
+                      {org.capabilities.cloudDriveConfigured && (
+                        <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                          <input type="checkbox" data-testid="admin-capability-cloudDrive"
+                            checked={org.capabilities.cloudDrive} disabled={savingCapabilityOrgId === org.id}
+                            onChange={(event) => void saveOrganizationCapability(org, "cloudDrive", event.target.checked)} />
+                          Cloud Drive
+                        </label>
+                      )}
                       <label className="inline-flex items-center gap-2 text-sm text-slate-700">
                         <input
                           type="checkbox"

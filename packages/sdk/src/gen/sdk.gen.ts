@@ -61,6 +61,8 @@ import type {
   DeleteV1DesktopPoliciesByDesktopPolicyIdErrors,
   DeleteV1DesktopPoliciesByDesktopPolicyIdResponses,
   DeleteV1DesktopPoliciesByKeyByExternalKeyResponses,
+  DeleteV1DriveFilesByFileIdErrors,
+  DeleteV1DriveFilesByFileIdResponses,
   DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdErrors,
   DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdResponses,
   DeleteV1InferenceAnalyticsLangfuseErrors,
@@ -285,6 +287,12 @@ import type {
   GetV1DesktopPoliciesResponses,
   GetV1DiagnosticsEgressErrors,
   GetV1DiagnosticsEgressResponses,
+  GetV1DriveErrors,
+  GetV1DriveFilesByFileIdErrors,
+  GetV1DriveFilesByFileIdResponses,
+  GetV1DrivePolicyErrors,
+  GetV1DrivePolicyResponses,
+  GetV1DriveResponses,
   GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsErrors,
   GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponses,
   GetV1GatewayUsageLimitPoliciesErrors,
@@ -689,6 +697,8 @@ import type {
   PostV1DirectUploadsGoogleWorkspaceDriveFilesResponses,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsErrors,
   PostV1DirectUploadsGoogleWorkspaceGmailDraftsResponses,
+  PostV1DriveFilesErrors,
+  PostV1DriveFilesResponses,
   PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveErrors,
   PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveResponses,
   PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsErrors,
@@ -871,6 +881,8 @@ import type {
   PutV1DesktopPoliciesByKeyByExternalKeyResponses,
   PutV1DiagnosticsEgressTokenErrors,
   PutV1DiagnosticsEgressTokenResponses,
+  PutV1DrivePolicyErrors,
+  PutV1DrivePolicyResponses,
   PutV1LlmProvidersByKeyByExternalKeyErrors,
   PutV1LlmProvidersByKeyByExternalKeyResponses,
   PutV1LlmProvidersByLlmProviderIdMemberCredentialsByOrgMembershipIdErrors,
@@ -2976,6 +2988,156 @@ export class DenClient extends HeyApiClient {
       ThrowOnError
     >({
       url: "/v1/orgs/invitations/accept",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * List my Drive files and storage usage
+   *
+   * Private files for the authenticated organization member. Requires configured S3 storage and explicit organization enablement. Limits and folder policies apply equally to browser and MCP requests.
+   */
+  public getV1Drive<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1DriveResponses, GetV1DriveErrors, ThrowOnError>({
+      url: "/v1/drive",
+      ...options,
+    });
+  }
+
+  /**
+   * Upload a private Drive file
+   *
+   * Private files for the authenticated organization member. Requires configured S3 storage and explicit organization enablement. Limits and folder policies apply equally to browser and MCP requests.
+   */
+  public postV1DriveFiles<ThrowOnError extends boolean = false>(
+    parameters: {
+      id: string;
+      path: string;
+      contentBase64: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "id" },
+            { in: "body", key: "path" },
+            { in: "body", key: "contentBase64" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<PostV1DriveFilesResponses, PostV1DriveFilesErrors, ThrowOnError>({
+      url: "/v1/drive/files",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Delete a private Drive file
+   *
+   * Private files for the authenticated organization member. Requires configured S3 storage and explicit organization enablement. Limits and folder policies apply equally to browser and MCP requests.
+   */
+  public deleteV1DriveFilesByFileId<ThrowOnError extends boolean = false>(
+    parameters: {
+      fileId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "fileId" }] }]);
+    return (options?.client ?? this.client).delete<
+      DeleteV1DriveFilesByFileIdResponses,
+      DeleteV1DriveFilesByFileIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/drive/files/{fileId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read a private Drive file as base64
+   *
+   * Private files for the authenticated organization member. Requires configured S3 storage and explicit organization enablement. Limits and folder policies apply equally to browser and MCP requests.
+   */
+  public getV1DriveFilesByFileId<ThrowOnError extends boolean = false>(
+    parameters: {
+      fileId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "fileId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1DriveFilesByFileIdResponses,
+      GetV1DriveFilesByFileIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/drive/files/{fileId}",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Read organization Drive limits and folder access
+   *
+   * Private files for the authenticated organization member. Requires configured S3 storage and explicit organization enablement. Limits and folder policies apply equally to browser and MCP requests.
+   */
+  public getV1DrivePolicy<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1DrivePolicyResponses, GetV1DrivePolicyErrors, ThrowOnError>({
+      url: "/v1/drive/policy",
+      ...options,
+    });
+  }
+
+  /**
+   * Set organization Drive limits and member folder access
+   *
+   * Private files for the authenticated organization member. Requires configured S3 storage and explicit organization enablement. Limits and folder policies apply equally to browser and MCP requests.
+   */
+  public putV1DrivePolicy<ThrowOnError extends boolean = false>(
+    parameters: {
+      default: {
+        quotaBytes: number;
+        allowedFolders: Array<string>;
+      };
+      members?: {
+        [key: string]: {
+          quotaBytes: number;
+          allowedFolders: Array<string>;
+        };
+      };
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "default" },
+            { in: "body", key: "members" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<PutV1DrivePolicyResponses, PutV1DrivePolicyErrors, ThrowOnError>({
+      url: "/v1/drive/policy",
       ...options,
       ...params,
       headers: {

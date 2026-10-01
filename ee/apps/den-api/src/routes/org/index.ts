@@ -1,3 +1,4 @@
+import { registerCloudDriveRoutes } from "./cloud-drive.js"
 import type { Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
 import { delegatedRoute } from "../../middleware/index.js"
@@ -63,6 +64,7 @@ function extractLegacyOrgProxyTarget(pathname: string) {
 
 export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & RequestIdVariables }>(app: Hono<T>) {
   registerOrgCoreRoutes(app)
+  registerCloudDriveRoutes(app)
   registerDeleteOrganizationRoutes(app)
   registerOrgApiKeyRoutes(app)
   registerOrgAuditRoutes(app)

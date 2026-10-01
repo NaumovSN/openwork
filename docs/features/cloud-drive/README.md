@@ -1,6 +1,12 @@
 # OpenWork Cloud Drive
 
-Local feature proposal · October 1, 2026 · No service provisioned or published.
+Draft feature implementation and product proposal · October 1, 2026.
+
+The branch now includes a working optional Den Drive backed by configured S3 storage,
+a per-organization switch in `/admin`, and private member file operations.
+See [implementation and setup](implementation.md) for the shipped draft scope.
+The prototype and architecture below explore the longer-term offering; sharing,
+paid usage, mounts, and run-specific folder grants are future work.
 
 ## The pitch
 

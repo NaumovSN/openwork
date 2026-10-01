@@ -134,3 +134,10 @@ test("public organization creation cannot enroll itself in free Auto rollout", a
     })
   }
 })
+
+
+test.each([true, false, null, "true", 1])("public organization creation cannot opt itself into Cloud Drive: %s", async (value) => {
+  for (const input of [{ capabilities: { cloudDrive: value } }, JSON.stringify({ capabilities: { cloudDrive: value } })]) {
+    await expect(beforeCreate(input)).rejects.toThrow("capabilities.cloudDrive is reserved for internal platform administration.");
+  }
+});

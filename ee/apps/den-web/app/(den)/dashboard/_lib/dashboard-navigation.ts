@@ -3,6 +3,7 @@ import {
   Box,
   CalendarClock,
   Globe,
+  Folder,
   Laptop,
   LayoutDashboard,
   LibraryBig,
@@ -26,6 +27,7 @@ import {
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
   getLibraryRoute,
+  getDriveRoute,
   getManagedDashboardsRoute,
   getMarketplacesRoute,
   getMcpConnectionsRoute,
@@ -93,6 +95,9 @@ export function buildDashboardNavSections({
       label: "My Library",
       icon: LibraryBig,
     },
+    ...(capabilities.cloudDrive && orgSlug
+      ? [{ href: getDriveRoute(orgSlug), label: "My Drive", icon: Folder, testId: "den-nav-drive" }]
+      : []),
     ...(workflowsEnabled && orgSlug
       ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }]
       : []),
@@ -178,6 +183,7 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Members: ["people", "users", "invite", "teams", "roles"],
   Models: ["llm", "provider", "byok", "api key"],
   "My Automations": ["schedule", "recurring", "tasks"],
+  "My Drive": ["files", "storage", "folders", "cloud drive"],
   "My Library": ["skills", "plugins", "connections"],
   "OpenWork Models": ["llm", "provider", "managed", "inference"],
   "OpenWork Web": ["cloud", "sessions"],

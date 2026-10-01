@@ -1,3 +1,5 @@
+import { cloudDriveEnabled } from "../cloud-drive-config.js"
+import { env as denEnv } from "../env.js"
 import { Tool, toolError } from "@openwork/codemode"
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
@@ -122,6 +124,7 @@ export type CapabilityRegistryContext = {
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
   externalMcpConnectionsEnabled: boolean
+  cloudDriveEnabled: boolean
   remoteSessionsEnabled: boolean
   resolvePlatformAdmin: () => Promise<boolean>
   resolveNamespaceContext: () => Promise<CodemodeConnectionNamespaceContext>
@@ -168,6 +171,7 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
     redirectUriBase: input.redirectUriBase,
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     externalMcpConnectionsEnabled,
+    cloudDriveEnabled: cloudDriveEnabled(input.organizationMetadata, denEnv.driveStorage !== null),
     remoteSessionsEnabled: remoteSessionCapabilitiesEnabled(input.organizationMetadata),
     resolvePlatformAdmin,
     resolveNamespaceContext,
@@ -175,12 +179,13 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
 }
 
 export function catalogOperationAvailableToCapabilities(
-  context: Pick<CapabilityRegistryContext, "generatedArtifactViewsEnabled">,
+  context: Pick<CapabilityRegistryContext, "generatedArtifactViewsEnabled"> & { cloudDriveEnabled?: boolean },
   operation: Pick<McpToolOperation, "method" | "path">,
 ) {
   // Standalone URL-App operations are deferred and never enter the generic
   // capability gateway, even if their retained storage routes are reworked.
   if (operation.path.startsWith("/v1/remote-mcp-apps")) return false
+  if (operation.path.startsWith("/v1/drive") && context.cloudDriveEnabled !== true) return false
   if (context.generatedArtifactViewsEnabled) return true
   return operation.path !== "/v1/workflows/{configObjectId}/views"
     && !operation.path.startsWith("/v1/artifact-views/")

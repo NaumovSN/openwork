@@ -1,3 +1,4 @@
+import { cloudDriveEnabled } from "../../cloud-drive-config.js"
 import { createHash } from "node:crypto"
 import { deploymentCapabilitiesSchema } from "@openwork/types/den/deployment-capabilities"
 import { eq } from "@openwork-ee/den-db/drizzle"
@@ -175,6 +176,7 @@ const organizationContextResponseSchema = z.object({
   currentMemberTeams: z.array(z.object({}).passthrough()),
   capabilities: z.object({
     auditLogs: z.boolean(),
+    cloudDrive: z.boolean(),
     gatewayDashboard: z.literal(true).meta({
       deprecated: true,
       description: "Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.",
@@ -720,6 +722,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         plan: parseOrganizationPlan(currentOrganization.metadata),
         entitlements: getOrganizationEntitlements(currentOrganization.metadata),
         capabilities: {
+          cloudDrive: cloudDriveEnabled(currentOrganization.metadata, env.driveStorage !== null),
           auditLogs: organizationHasCapability(currentOrganization.metadata, "auditLogs") && env.auditVisibilityEnabled,
           gatewayDashboard: true,
           // Protocol capability: clients must see this explicit signal before

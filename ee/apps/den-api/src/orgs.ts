@@ -390,22 +390,17 @@ function serializeMetadataRecord(metadata: Record<string, unknown>) {
 }
 
 export function serializeMemberFacingOrganizationMetadata(input: OrganizationMetadataInput) {
-  const metadata = parseMetadataRecord(input)
-  const capabilities = isRecord(metadata.capabilities) ? metadata.capabilities : null
-  if (!capabilities || !("cloud" in capabilities)) {
-    return serializeOrganizationMetadata(input)
+  const metadata = { ...parseMetadataRecord(input) }
+  // Policies contain other members' private grants. Only the caller's effective
+  // policy is exposed by Drive; S3 credentials never enter organization metadata.
+  delete metadata.cloudDrivePolicy
+  if (isRecord(metadata.capabilities)) {
+    const capabilities = { ...metadata.capabilities }
+    delete capabilities.cloud
+    if (Object.keys(capabilities).length > 0) metadata.capabilities = capabilities
+    else delete metadata.capabilities
   }
-
-  const nextCapabilities = { ...capabilities }
-  delete nextCapabilities.cloud
-  const nextMetadata = { ...metadata }
-  if (Object.keys(nextCapabilities).length > 0) {
-    nextMetadata.capabilities = nextCapabilities
-  } else {
-    delete nextMetadata.capabilities
-  }
-
-  return serializeMetadataRecord(nextMetadata)
+  return serializeMetadataRecord(metadata)
 }
 
 export function parsePermissionRecord(value: string | null) {
