@@ -6,7 +6,7 @@ const test = spec.world(taskActivityWeb, {
   resources: { surfaces: ["appWeb"], services: ["mock"] },
 });
 
-test("a member keeps the original task and working time when sending a follow-up", async ({ world, user, probe, step, evidence }) => {
+test("a member keeps the original task and working time when sending a follow-up (ACT-01)", async ({ world, user, probe, step, evidence }) => {
   await user.type("composer", world.prompt);
   await user.click("Run task");
   const native = await probe.eventually(() => world.native(), {
@@ -138,10 +138,10 @@ test("a member keeps the original task and working time when sending a follow-up
     await user.screenshot();
   });
   await user.click({ role: "button", label: /Build isolated Azure repro/ });
-  await user.see({ text: /ACTIVITY_CHILD_HOLD/ });
+  await user.see({ text: "Activity child started." });
   await user.see({ text: /Working/ });
   await user.reload();
-  await user.see({ text: /ACTIVITY_CHILD_HOLD/ }, { timeoutMs: 30_000 });
+  await user.see({ text: "Activity child started." }, { timeoutMs: 30_000 });
   await user.see({ text: /Working/ });
   expect((await probe.dom(`[data-session-surface-id="${native.childId}"]`)).elements).toHaveLength(1);
   expect((await world.replyState()).deliveredChunks).toBe(1);
