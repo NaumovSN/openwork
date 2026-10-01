@@ -1,3 +1,4 @@
+import { builtMcpAppCatalogSchema, type BuiltMcpAppCatalogEntry } from "./built-mcp-app-catalog";
 import {
   normalizeDesktopConfig,
   type DesktopConfig as SharedDesktopConfig,
@@ -3184,6 +3185,12 @@ export function createDenClient(options: {
       return gatewayUsageResetRequestSchema.parse(await requestJson<unknown>(baseUrls, "/v1/gateway/usage-limit-reset-requests", {
         method: "POST", token, organizationId: orgId, body: { bucketId: input.bucketId, reason },
       }));
+    },
+    async listBuiltMcpApps(orgId: string): Promise<BuiltMcpAppCatalogEntry[]> {
+      const payload = await requestJson<unknown>(baseUrls, "/v1/mcp-apps", {
+        method: "GET", token, organizationId: orgId,
+      });
+      return builtMcpAppCatalogSchema.parse(payload).apps;
     },
     async listSavedApps(orgId: string) {
       const payload = await requestJson<unknown>(baseUrls, "/v1/apps", {

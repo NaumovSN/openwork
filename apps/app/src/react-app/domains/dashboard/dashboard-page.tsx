@@ -1,18 +1,10 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Blocks } from "lucide-react";
 
 import { createDenClient, readDenSettings, type DenGrantedDashboard } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { dashboardTileCacheScopeKey } from "./dashboard-tile-cache";
 import {
@@ -166,17 +158,7 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
           )}
         </section>
       ))}
-      {!grantedError && grantedDashboards.length === 0 ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><Blocks /></EmptyMedia>
-            <EmptyTitle>No company apps yet</EmptyTitle>
-            <EmptyDescription>
-              Apps shared by your company will appear here.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : null}
+
     </div>
   );
 }

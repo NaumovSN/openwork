@@ -427,4 +427,37 @@ chatTest("an owner follows App creation progress and opens the finished App besi
     await user.screenshot();
     evidence.recordAssertionEvidence("Only an App's newest card stays live", `For "${reopenPrompt}" the model opened ${appTitle} a second time. The conversation shows one live ${appTitle}, the new card, and the earlier card now reads "${newerNote}", so the App is not loaded twice.`, true);
   });
+
+  await step("before: building an App does not place it on the owner’s dashboard", async () => {
+    await frame?.[Symbol.asyncDispose]();
+    frame = undefined;
+    await user.click({ role: "button", label: "Dashboard" });
+    await user.see({ role: "heading", label: "Dashboard" });
+    expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(0);
+    await user.screenshot();
+  });
+
+  await step("after: the owner chooses an existing App and uses it on their dashboard", async () => {
+    await user.click({ role: "button", label: "Add" });
+    await user.see({ role: "heading", label: "Choose an existing app" });
+    await user.type({ label: "Search apps" }, "qckordprcr", { replace: true });
+    await user.click({ role: "option", label: `Add ${pricerTitle}` });
+    expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(1);
+    pricer = await focus(pricerTitle);
+    await pricer.see({ testId: "order-line" }, { text: pricedLine, timeoutMs: 90_000 });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("An accessible built App can be added to a personal dashboard", "Fuzzy search finds Quick order pricer in the accessible App catalog. Choosing it adds one personal tile that opens the real App and loads its read-only data. Creation alone did not place it on the dashboard.", true);
+  });
+
+  await step("removing a dashboard tile keeps the App available to add again", async () => {
+    await user.hover({ label: pricerTitle });
+    await user.click({ role: "button", label: `Remove ${pricerTitle} from dashboard` });
+    expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(0);
+    await user.click({ role: "button", label: "Add" });
+    await user.type({ label: "Search apps" }, "qckordprcr", { replace: true });
+    await user.see({ role: "option", label: `Add ${pricerTitle}` });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Removing a tile changes only personal placement", "After removing Quick order pricer, its tile is gone but the App remains in the Add picker; neither the App nor its sharing grants were deleted.", true);
+  });
+
 });
