@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { childOrigin, rememberChildOrigin, prepareChildReturn, consumeChildReturn, registerChildDraftPersistence } from "@/lib/child-navigation";
+import { verifyChildTarget } from "@/lib/verify-child-target";
 import { isTaskToolPart, taskChildSessionId } from "@/lib/build-in-tools";
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
@@ -2211,13 +2212,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
       // bounded newest read; never wait on the uncapped read.
       const sendMessages = await openingHistory.readSendHistory({ revealLatest: true });
       if (getQueuedSendGeneration(props.sessionId) !== generation) throw new Error("Send cancelled by Stop.");
-      const result = await submitImmediateSessionTurn<CloudMcpSubmissionResult>(props.opencodeBaseUrl, opencodeClient, props.sessionId,
-        sendMessages, async () => {
-          if (getQueuedSendGeneration(props.sessionId) !== generation) {
-            return { outcome: "cancelled", reason: "context_changed" };
-          }
-          return props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared, agent);
-        }, { directory: props.workspaceRoot.trim() || undefined, messageID: messageId });
+      const submit = async () => {
+        if (getQueuedSendGeneration(props.sessionId) !== generation) return { outcome: "cancelled" as const, reason: "context_changed" as const };
+        return props.onSendDraft({ ...nextDraft, messageId }, props.sessionId, onPrepared, agent);
+      };
+      const result = snapshot?.session.parentID
+        ? await submitAfterInterruption(props.opencodeBaseUrl, props.sessionId, submit, messageId)
+        : await submitImmediateSessionTurn<CloudMcpSubmissionResult>(props.opencodeBaseUrl, opencodeClient, props.sessionId,
+          sendMessages, submit, { directory: props.workspaceRoot.trim() || undefined, messageID: messageId });
       // Drain listeners can reconcile idle and claim another item synchronously.
       // Consume the submitted row while its send slot is still held.
       if (options.consumeQueuedItem && (result.outcome === "sent" || result.outcome === "accepted")) {
@@ -2277,7 +2279,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
       pendingSendsRef.current.delete(submissionId);
       setPendingSendSessions([...pendingSendsRef.current.values()]);
     }
-  }, [archived, archiveStateKnown, opencodeClient, openingHistory.readSendHistory, props.onSendDraft, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError, props.client, props.openWorkModelsSyncing, sessionModel.selectedModel, rejectedOwner, localRejectedRuntime, baseRenderedMessages]);
+  }, [snapshot?.session.parentID, archived, archiveStateKnown, opencodeClient, openingHistory.readSendHistory, props.onSendDraft, props.opencodeBaseUrl, props.selectedAgent, props.sessionId, props.workspaceId, props.workspaceRoot, removeQueuedDraftFromStore, renderedMessages.length, sessionOwner, setError, props.client, props.openWorkModelsSyncing, sessionModel.selectedModel, rejectedOwner, localRejectedRuntime, baseRenderedMessages]);
 
   const clearComposer = useCallback(() => {
     clearPersistedDraft();
@@ -2514,8 +2516,21 @@ export function SessionSurface(props: SessionSurfaceProps) {
     const stopClient = isOpencodeV2BaseUrl(props.opencodeBaseUrl) ? opencodeClient
       : createClient(props.opencodeBaseUrl, props.workspaceRoot.trim() || undefined,
         { token: props.openworkToken, mode: "openwork" }, { desktopTransport: "main" });
-    await abortSession(stopClient, childSessionId, props.workspaceRoot.trim() || undefined);
-  }, [opencodeClient, props.opencodeBaseUrl, props.openworkToken, props.workspaceRoot]);
+    const directory = props.workspaceRoot.trim() || undefined;
+    await verifyChildTarget(props.sessionId, childSessionId, baseRenderedMessages,
+      useSessionActivityStore.getState().recordsByWorkspaceId[props.workspaceId],
+      async id => unwrap(await stopClient.session.get({ sessionID: id, directory })));
+    const composer = useComposerStateStore.getState();
+    const queue = getComposerQueuedDrafts(composer, childSessionId);
+    if (queue.length) {
+      composer.setDraft(childSessionId, [getComposerDraft(composer, childSessionId), ...queue.map(item => item.draft.resolvedText ?? item.draft.text)].filter(Boolean).join("\n\n"));
+      composer.setAttachments(childSessionId, [...getComposerAttachments(composer, childSessionId), ...queue.flatMap(item => item.draft.attachments)]);
+      composer.clearQueuedDrafts(childSessionId);
+    }
+    dispatchQueuedDrain(childSessionId, { type: "queue_cleared" });
+    await interruptSessionTurn(props.opencodeBaseUrl, stopClient, childSessionId, directory,
+      { onStopped: () => { useSessionActivityStore.getState().markRunStopped(props.workspaceId, childSessionId); dispatchQueuedDrain(childSessionId, { type: "stop_confirmed" }); } });
+  }, [baseRenderedMessages, opencodeClient, props.workspaceId, props.sessionId, props.opencodeBaseUrl, props.openworkToken, props.workspaceRoot]);
 
   const handleAbort = useCallback(async () => {
     if (pendingStopsRef.current.has(sessionOwner)) return;
