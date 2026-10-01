@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -185,6 +185,15 @@ afterEach(async () => {
 });
 
 describe("cloud provider sync gateway", () => {
+  // A headless server now registers signed-out Auto, whose relay rotates its local key (and rewrites the runtime
+  // config) when the Den identity changes. That rotation is covered in anonymous-inference.test.ts; these tests
+  // check that provider sync alone leaves the runtime config and engine untouched.
+  const previousFreeInference = process.env.OPENWORK_DISABLE_FREE_INFERENCE;
+  beforeAll(() => { process.env.OPENWORK_DISABLE_FREE_INFERENCE = "1"; });
+  afterAll(() => {
+    if (previousFreeInference === undefined) delete process.env.OPENWORK_DISABLE_FREE_INFERENCE;
+    else process.env.OPENWORK_DISABLE_FREE_INFERENCE = previousFreeInference;
+  });
   test("ordered pin metadata updates import status without changing engine config or reloading", async () => {
     const root = await createRoot();
     const config = serverConfig(root, "https://engine.example.test");
