@@ -30,6 +30,9 @@ test(`a member messages a busy helper and returns without losing its draft (AGEN
   await step("Enter admits a message to the child and issues no abort", async () => {
     const childId = await world.selectedSessionId();
     if (!childId) throw new Error("The selected helper did not expose its conversation identity");
+    expect(childId).not.toBe(world.session.sessionId);
+    const nativeChild = await world.nativeSession(childId);
+    expect(isRecord(nativeChild) && "data" in nativeChild ? nativeChild.data : nativeChild).toMatchObject({ parentID: world.session.sessionId });
     await user.type("composer", world.followup, { verify: true });
     await user.press("Enter");
     await user.see({ text: world.followup });
@@ -75,6 +78,9 @@ test(`a member stops one helper from its parent chat (AGENT-CHILD-STOP ${resolve
     await user.click({ role: "button", label: "Review fixture. Open sub-agent chat" });
     childId = await world.selectedSessionId();
     expect(childId).not.toBe("");
+    expect(childId).not.toBe(world.session.sessionId);
+    const nativeChild = await world.nativeSession(childId);
+    expect(isRecord(nativeChild) && "data" in nativeChild ? nativeChild.data : nativeChild).toMatchObject({ parentID: world.session.sessionId });
     await user.see({ text: "Check fixture output" }, { timeoutMs: 60_000 });
     await probe.eventually(() => world.grandchildState(), { within: 60_000,
       label: "the delegated work is really held", until: state => state.deliveredChunks === 1 });
@@ -103,6 +109,7 @@ test(`a member stops one helper from its parent chat (AGENT-CHILD-STOP ${resolve
   await step("returning to the helper keeps navigation usable after Stop", async () => {
     await user.click({ role: "button", label: "Review fixture. Open sub-agent chat" });
     await user.see("composer", { editable: true });
+    await user.click("composer");
     await user.press("Escape");
     await user.see({ role: "button", label: "Review fixture. Open sub-agent chat" });
     evidence.recordAssertionEvidence("return still works after interruption", "The stopped helper and parent can still be opened using the same transcript control", true);
