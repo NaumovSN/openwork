@@ -3,7 +3,7 @@ import { FreeAutoBusyError } from "../shared/capacity.js"
 import { z } from "zod"
 import {
   DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH,
-  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_POW_PATTERN, type DesktopRelease,
+  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_POW_PATTERN,
   type DesktopFreeAccessStatus, type DesktopFreeVersionError,
 } from "@openwork/free-auto"
 import { managedModelCatalog } from "@openwork/types/den/inference"
@@ -14,7 +14,6 @@ import { type AutoConfig } from "../shared/config.js"
 import type { GuestPrincipal } from "../shared/principal.js"
 import { checkDesktopFreeRequest, desktopFreeGateError, type DesktopFreeGateDependencies } from "./gate.js"
 import { releaseKeyFingerprint, sha256Hex, verifySessionPow } from "@openwork/free-auto/node"
-import { createDesktopFreeReleaseSource } from "./releases-source.js"
 import { dispatchFreeCompletion } from "../shared/dispatch.js"
 import { FreeRequestError } from "../shared/errors.js"
 import { prepareFreeRequest, readFreeRequest } from "../shared/request.js"
@@ -26,7 +25,6 @@ export type FreeRouteDependencies = {
   config: AutoConfig;
   store: FreeAllowanceStore;
   fetch: typeof fetch;
-  releases: () => Promise<DesktopRelease[] | null>;
   now?: () => number;
   clientAddress: (c: Context) => string | null;
 }
@@ -35,7 +33,6 @@ function defaults(): FreeRouteDependencies {
   // Compare with the fingerprint the desktop release build prints; a mismatch means every guest on that release is refused.
   if (config.releaseKey) console.info(`[free-auto] release key fingerprint ${releaseKeyFingerprint(config.releaseKey)}${config.releaseKeyPrevious ? `, previous ${releaseKeyFingerprint(config.releaseKeyPrevious)}` : ""}`)
   return { config, store: createFreeAllowanceStore(config, "anonymous"), fetch: createInferenceEgressFetch(),
-    releases: createDesktopFreeReleaseSource({ url: config.releasesUrl, token: process.env.GITHUB_TOKEN?.trim() || undefined }),
     clientAddress: (c) => resolveAnonymousClientAddress(c, config) }
 }
 function bearer(request: Request) {
@@ -56,7 +53,7 @@ function versionResponse(error: DesktopFreeVersionError) {
 /** Signed-out desktop Auto. Signed-in members use their OpenWork Models key on /api/v1 instead. */
 export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defaults()) {
   const { config, store } = dependencies
-  const gateDependencies: DesktopFreeGateDependencies = { releases: dependencies.releases, consumeNonce: store.consumeNonce, config, now: dependencies.now }
+  const gateDependencies: DesktopFreeGateDependencies = { consumeNonce: store.consumeNonce, config, now: dependencies.now }
   const route = (handler: (c: Context) => Promise<Response>) => async (c: Context) => {
     try { return await handler(c) } catch (error) { return errorResponse(error) }
   }
@@ -100,8 +97,9 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     const auth = await authenticate(c, sha256Hex(""))
     if (auth.error) return auth.error
     const status: DesktopFreeAccessStatus = { state: "unavailable", code: "anonymous_unavailable", currentVersion: auth.proof.appVersion,
-      minimumVersion: auth.minimumVersion, providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID,
-      allowance: null, catalog: managedModelCatalog(), defaultPinned: true }
+      // Desktops up to v0.18.55 refuse a ready guest status without a minimum; with none configured, this build is it.
+      minimumVersion: auth.minimumVersion ?? auth.proof.appVersion, providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID,
+      allowance: null, catalog: managedModelCatalog(), defaultPinned: false }
     if (auth.versionError) {
       status.state = auth.versionError.code === "desktop_update_required" ? "update_required" : "unavailable"
       status.code = auth.versionError.code

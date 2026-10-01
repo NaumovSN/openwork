@@ -17,6 +17,8 @@ export const SlackAssistantInstallationTable = mysqlTable(
     channelIds: compatJsonColumn<string[]>("channel_ids"),
     shadowMode: boolean("shadow_mode").notNull().default(false),
     dailyLimit: int("daily_limit").notNull().default(100),
+    /** Gateway model alias the headless runner uses for this workspace; null means the runner default. */
+    model: varchar("model", { length: 255 }),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("slack_assistant_team").on(t.teamId)],

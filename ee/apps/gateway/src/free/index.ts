@@ -1,7 +1,7 @@
 /**
  * Free Auto in the Gateway.
  *
- *   guest/   signed-out desktop: signed proofs, release window, guest tokens, session proof of work
+ *   guest/   signed-out desktop: signed proofs, version policy, guest tokens, session proof of work
  *   member/  signed-in members of unsubscribed organizations, on the regular /api/v1 routes
  *   shared/  config, request/response handling, allowance accounting, OpenAI dispatch
  *

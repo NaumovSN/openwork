@@ -14,7 +14,7 @@ export const desktopFreeAccessStatusSchema = z.object({
   // The desktop server has already verified the version floor for guests; signed-in members have none.
 }).refine((status) => status.state !== "ready" || Boolean(status.allowance), "Ready Auto access requires a verified allowance");
 export type DesktopFreeAccessStatus = z.infer<typeof desktopFreeAccessStatusSchema>;
-export const autoAccessWallSchema = z.object({ state: z.enum(["limit", "update", "unavailable", "sync"]), resetsAt: z.string().optional(), minimumVersion: z.string().optional() });
+export const autoAccessWallSchema = z.object({ state: z.enum(["limit", "update", "unavailable", "sync", "not_offered"]), resetsAt: z.string().optional(), minimumVersion: z.string().optional(), code: z.string().optional() });
 export type AutoAccessWall = z.infer<typeof autoAccessWallSchema>;
 export function messageAutoAccessWall(metadata: unknown) {
   const parsed = autoAccessWallSchema.safeParse(metadata && typeof metadata === "object" ? Reflect.get(metadata, "autoAccessWall") : null);
@@ -34,22 +34,37 @@ export function unavailableDesktopFreeStatus(): DesktopFreeAccessStatus {
 
 export function autoAccessWall(status: DesktopFreeAccessStatus): AutoAccessWall | null {
   if (status.state === "ready") return null;
+  if (autoNotOffered(status)) return { state: "not_offered", code: status.code ?? undefined };
   return { state: status.state === "exhausted" ? "limit" : status.state === "update_required" ? "update" : "unavailable",
     resetsAt: status.allowance?.resetsAt, minimumVersion: status.minimumVersion ?? undefined };
 }
 
 /**
- * The Gateway (or Den, for members) reports free Auto as switched off, not merely down. Until an operator turns it on,
- * the app shows no trace of Auto: no picker row, no Settings row, no first-use caption.
+ * Free Auto is switched off for the whole service, not merely down. Until an operator turns it on, the app shows no
+ * trace of Auto: no picker row, no Settings row, no first-use caption.
  */
 export function freeAutoSwitchedOff(status: { code?: string | null } | null | undefined): boolean {
-  // free_not_offered: the organization turned off the free starter model, so Den offers no free Auto.
-  return status?.code === "free_disabled" || status?.code === "inference_disabled" || status?.code === "free_not_offered";
+  return status?.code === "free_disabled" || status?.code === "inference_disabled";
+}
+
+const NOT_OFFERED_CODES = ["free_not_enrolled", "free_not_offered", "admin_disabled", "not_eligible", "member_free_policy_denied", "managed_models_disabled_for_dpa", "desktop_build_unverified"];
+/** Auto is running, but not for this account or organization. The row stays visible and says why. */
+export function autoNotOffered(status: { code?: string | null } | null | undefined): boolean {
+  return typeof status?.code === "string" && NOT_OFFERED_CODES.includes(status.code);
+}
+function notOfferedCopy(code?: string | null) {
+  switch (code) {
+    case "free_not_enrolled": return { subtitle: "Free · not on for your organization yet", detail: "Your organization hasn’t turned on Auto yet. An admin can turn it on. Other models still work." };
+    case "free_not_offered": case "admin_disabled": return { subtitle: "Free · turned off by your organization", detail: "Your organization has turned off Auto. Other models still work." };
+    case "desktop_build_unverified": return { subtitle: "Free · not available on this build", detail: "This build of OpenWork can’t use Auto. Install the latest release or alpha to use it. Other models still work." };
+    case "managed_models_disabled_for_dpa": return { subtitle: "Free · not available for your organization", detail: "Auto isn’t available under your organization’s data agreement. Other models still work." };
+    default: return { subtitle: "Free · not available for this account", detail: "Auto isn’t available for this account. Other models still work." };
+  }
 }
 
 /** New tasks cannot inherit a switched-off starter; saved conversation identities stay intact. */
 export function modelForNewTask(model: ModelRef | null, status: { code?: string | null } | null | undefined, pending = false): ModelRef | null {
-  return model && isAutoModel(model) && (pending || freeAutoSwitchedOff(status)) ? null : model;
+  return model && isAutoModel(model) && (pending || freeAutoSwitchedOff(status) || autoNotOffered(status)) ? null : model;
 }
 
 export function autoAccessWallFromError(value: unknown, model?: ModelRef | null, depth = 0): AutoAccessWall | null {
@@ -67,7 +82,7 @@ export function autoAccessWallFromError(value: unknown, model?: ModelRef | null,
     return typeof minimumVersion === "string" && minimumVersion.trim() ? { state: "update", minimumVersion } : { state: "update" };
   }
   if (["anonymous_limit_exceeded", "free_allowance_exhausted"].includes(code)) return { state: "limit" };
-  if (["desktop_version_unavailable", "anonymous_capacity_exceeded", "anonymous_unavailable"].includes(code)) return { state: "unavailable" };
+  if (["anonymous_capacity_exceeded", "anonymous_unavailable"].includes(code)) return { state: "unavailable" };
   if (code === "model_sync_pending") return { state: "sync" };
   for (const key of ["details", "error", "data", "responseBody", "message", "cause"]) {
     const wall = autoAccessWallFromError(Reflect.get(value, key), model, depth + 1);
@@ -89,14 +104,15 @@ export async function preflightAutoSubmission(input: {
   return wall ? { outcome: "blocked", reason: "auto-access", wall } : null;
 }
 
-export type AutoPickerState = "ready" | "exhausted" | "update_required" | "unavailable" | "sync";
-/** "v0.18.51 or newer" when the gateway told us the oldest supported release. */
+export type AutoPickerState = "ready" | "exhausted" | "update_required" | "unavailable" | "sync" | "not_offered";
+/** "v0.18.51 or newer" when the gateway told us the lowest version it accepts. */
 export function autoUpdateTarget(minimumVersion?: string | null) {
   const version = minimumVersion?.trim().replace(/^v/, "");
   return version ? `OpenWork v${version} or newer` : "OpenWork";
 }
-export function autoPickerCopy(state: AutoPickerState, signedIn: boolean, minimumVersion?: string | null) {
+export function autoPickerCopy(state: AutoPickerState, signedIn: boolean, minimumVersion?: string | null, code?: string | null) {
   switch (state) {
+    case "not_offered": return { ...notOfferedCopy(code), action: null };
     case "exhausted": return { subtitle: "Free limit used up · resets Monday", detail: signedIn ? "This week’s free limit is used up. It resets Monday." : "This week’s free limit is used up. Sign in for a larger free limit.", action: signedIn ? null : "Sign in" };
     case "update_required": return { subtitle: "Free · needs an OpenWork update", detail: `Update to ${autoUpdateTarget(minimumVersion)} to keep using Auto. Your draft is kept.`, action: "Update" };
     case "unavailable": return { subtitle: "Free · temporarily unavailable", detail: "Auto is having trouble right now. Other models still work.", action: "Retry" };
@@ -111,6 +127,7 @@ export function autoWallCopy(wall: AutoAccessWall, signedIn: boolean) {
     case "update": return { title: "Update OpenWork to use Auto", detail: `Your message was not processed. Update to ${autoUpdateTarget(wall.minimumVersion)} or switch to another model.` };
     case "sync": return { title: "Auto is still syncing", detail: "Your message was not processed. Wait for sync or switch to another model." };
     case "unavailable": return { title: "Auto is temporarily unavailable", detail: "Your message was not processed. Switch to another model or try again later." };
+    case "not_offered": return { title: "Auto isn’t available here", detail: `Your message was not processed. ${notOfferedCopy(wall.code).detail}` };
   }
 }
 

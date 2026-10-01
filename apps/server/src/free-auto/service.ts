@@ -304,7 +304,7 @@ export class AnonymousInferenceService {
       if (force) this.failures.clear();
       const timed = () => AbortSignal.any([signal, AbortSignal.timeout(SESSION_TIMEOUT_MS)]);
       const response = await this.remote(DESKTOP_FREE_STATUS_PATH, "GET", new Uint8Array(), true, timed());
-      const value = parseStatus(await readJson(response.body, ERROR_BODY_LIMIT, timed()), this.unavailable(), Boolean(authorization));
+      const value = parseStatus(await readJson(response.body, ERROR_BODY_LIMIT, timed()), this.unavailable());
       signal.throwIfAborted();
       if (authorization && this.memberCredential?.authorization !== authorization) throw new Error("Member Auto credential changed.");
       this.cachedStatus = { key, expiresAt: Date.now() + STATUS_CACHE_MS, value };

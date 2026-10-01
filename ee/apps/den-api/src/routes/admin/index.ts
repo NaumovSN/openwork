@@ -39,6 +39,7 @@ import { cache } from "../../cache.js"
 import { db } from "../../db.js"
 import { parseOrganizationPlan, type PlanTier } from "../../entitlements.js"
 import { adminRoute, jsonValidator, queryValidator } from "../../middleware/index.js"
+import { registerAdminFreeAutoUsageRoutes } from "./free-auto-usage.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
@@ -1302,6 +1303,7 @@ const adminRouteErrors = {
 }
 
 export function registerAdminRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  registerAdminFreeAutoUsageRoutes(app)
   app.post(
     "/v1/admin/admins",
     describeRoute({

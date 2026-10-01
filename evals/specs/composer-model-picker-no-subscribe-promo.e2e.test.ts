@@ -51,7 +51,7 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
     expect(groups.slice(0, 3)).toEqual(["Pinned", "Recent", "OpenWork Models"]);
     expect(groups.slice(3)).toContain("BYOK provider");
     expect(groups.slice(3)).toEqual(groups.slice(3).sort((left, right) => left.localeCompare(right)));
-    expect(await pins()).toEqual(["Auto", "Organization witness", "Pinned witness"]);
+    expect(await pins()).toEqual(["Organization witness", "Pinned witness"]);
     for (const model of [world.organization, world.favorite, world.auto, world.recent, world.byok, { providerID: "openwork", modelID: "hosted-model" }]) {
       expect((await probe.dom(`${picker} [data-model-key="${key(model)}"]`)).elements).toHaveLength(1);
     }
@@ -68,7 +68,7 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
     await user.click({ role: "button", label: "Pin to top: BYOK witness" });
     await user.hover(option(world.byok));
     await user.see({ role: "button", label: "Unpin: BYOK witness" });
-    expect(await pins()).toEqual(["Auto", "Organization witness", "Pinned witness", "BYOK witness"]);
+    expect(await pins()).toEqual(["Organization witness", "Pinned witness", "BYOK witness"]);
     await selected(world.auto);
     await user.see("composer", { text: draft });
     expect(await probe.storage("openwork.modelCollections.v1")).toMatchObject({ favorites: [world.favorite, world.byok] });
@@ -76,12 +76,12 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
     await user.screenshot();
   });
 
-  await step("after: unpinning restores BYOK to its provider while organization and Auto pins remain fixed", async () => {
+  await step("after: unpinning restores BYOK to its provider while the organization pin remains fixed and Auto stays unpinned by default", async () => {
     await user.click({ role: "button", label: "Unpin: BYOK witness" });
     await user.hover(option(world.byok));
     await user.see({ role: "button", label: "Pin to top: BYOK witness" });
-    expect(await pins()).toEqual(["Auto", "Organization witness", "Pinned witness"]);
-    for (const fixed of [world.organization, world.auto]) {
+    expect(await pins()).toEqual(["Organization witness", "Pinned witness"]);
+    for (const fixed of [world.organization]) {
       await user.rightClick(option(fixed));
       await user.see({ role: "menuitem", label: "Pinned by your org" });
       expect((await probe.dom('[role="menuitem"][aria-disabled="true"]')).elements.some((element) => element.text === "Pinned by your org")).toBe(true);
@@ -89,7 +89,7 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
       await user.notSee({ role: "menuitem", label: /^Pin to top/ });
       await user.screenshot();
       await user.press("Escape");
-      expect(await pins()).toEqual(["Auto", "Organization witness", "Pinned witness"]);
+      expect(await pins()).toEqual(["Organization witness", "Pinned witness"]);
     }
     await user.notSee({ role: "button", label: "Unpin: Auto" });
     await user.notSee({ role: "button", label: "Unpin: Organization witness" });

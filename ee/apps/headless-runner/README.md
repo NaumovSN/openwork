@@ -35,6 +35,7 @@ All `/v1` routes require `Authorization: Bearer $HEADLESS_API_TOKEN`.
 | Method | Path | Body / query | Result |
 |---|---|---|---|
 | `GET` | `/health` | | `{ ok: true }` |
+| `GET` | `/v1/models` | | `{ defaultModel, models: [{ id, name }] }`: the models the Gateway route serves with the runner's key (cached 5 min), for pickers. Pass one as a turn's `model` |
 | `POST` | `/v1/sessions` | `{ title?, instructions? }` | session (`hs_…`) |
 | `POST` | `/v1/sessions/:id/turns` | `{ messageId, prompt, model?, credentials: { modelApiKey?, mcpToken? } }` | `202 { state: accepted \| resumed \| already_present, turn }`. A message sent while another turn runs is accepted and answered next (`turn.status: queued`); only a runaway queue of 20+ returns `429 too_many_queued` |
 | `GET` | `/v1/sessions/:id` | `?messageId=&limit=` | `{ session, status: idle \| busy, turns, messages, finalAssistantText }` |
@@ -51,6 +52,8 @@ Turn status is one of `queued`, `running`, `completed`, `failed`, `interrupted` 
 - `turn_timeout`
 - `max_steps_exceeded`
 - `runner_restarted`
+
+Images that a tool returns (MCP `image` content, or `resource` blobs with an image type), for example a file read from Slack, are passed to the model as image input: PNG, JPEG, GIF or WebP, at most 4 per result and about 3.7 MB each. They go to Anthropic as image blocks in the tool result, and to OpenAI as image parts in a following user message. Only the turn that fetched an image sees it; later turns keep the text. The session API reports `imageCount` instead of the image data.
 
 The model sees these tools:
 

@@ -114,6 +114,9 @@ import {
   type OpenSessionTab,
   type SessionPagePaneRuntime,
 } from "@/react-app/domains/session/chat/session-page";
+import { ActivityPage } from "@/react-app/domains/activity/activity-page";
+import type { ActivityResource } from "@/react-app/kernel/activity-types";
+import { encodeConnectSkillToken } from "@/react-app/domains/session/surface/composer/connect-skill-token";
 import { AutomationsPage } from "@/react-app/domains/automations/automations-page";
 import { AppsPage } from "@/react-app/domains/apps/apps-page";
 import { DashboardPage } from "@/react-app/domains/dashboard/dashboard-page";
@@ -408,6 +411,7 @@ export function SessionRoute() {
   const appsRouteActive = /^(?:\/apps|\/dashboard\/apps)(?:\/|$)/.test(location.pathname);
   const automationsRouteRequested = /^\/automations(?:\/|$)/.test(location.pathname);
   const dashboardRouteRequested = /^\/dashboard(?:\/|$)/.test(location.pathname);
+  const activityRouteRequested = location.pathname === "/activity";
   const {
     enabled: mcpAppsDashboardEnabled,
     loading: dashboardAvailabilityLoading,
@@ -419,6 +423,7 @@ export function SessionRoute() {
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const denAuth = useDenAuth();
   const { config: shellConfig } = useShellConfig();
+  const activityRouteActive = shellConfig.notifications && activityRouteRequested;
   const local = useLocal();
   const automationDeploymentEnabled = useAutomationDeploymentEnabled();
   // Desktop and Web share one Automations surface; the runtime only decides
@@ -434,6 +439,9 @@ export function SessionRoute() {
   const requestedPendingId = new URLSearchParams(location.search).get("pendingConversation");
   const [automationsSupported, setAutomationsSupported] = useState(false);
   const [automationsNeedAttention, setAutomationsNeedAttention] = useState(false);
+  useEffect(() => {
+    if (activityRouteRequested && !shellConfig.notifications) navigate("/", { replace: true });
+  }, [activityRouteRequested, navigate, shellConfig.notifications]);
   useEffect(() => {
     if (!automationsRouteRequested || automationsEnabled) return;
     navigate("/", { replace: true });
@@ -548,7 +556,7 @@ export function SessionRoute() {
   } = useWorkspaceRouteState({
     preservePendingConversationRoute: Boolean(requestedPendingId && pendingConversations[requestedPendingId]?.scope === sessionDraftScope),
     developerMode,
-    workspaceRoute: appsRouteActive ? "apps" : automationsRouteActive ? "automations" : dashboardWorkspaceRoute ? "dashboard" : "session",
+    workspaceRoute: activityRouteActive ? "activity" : appsRouteActive ? "apps" : automationsRouteActive ? "automations" : dashboardWorkspaceRoute ? "dashboard" : "session",
     onServerSettingsChanged: () => setOpenworkServerSettingsVersion((value) => value + 1),
     onHostInfo: setOpenworkServerHostInfoState,
   });
@@ -1312,11 +1320,12 @@ export function SessionRoute() {
 
   useEffect(() => {
     if (hasPendingGatewayModelSelection()) return;
-    if (!selectedModelUnavailableKey) {
+    if (!selectedModelUnavailableKey || activityRouteActive) {
       // The active composer's model is fine (or pending). If the picker was
       // auto-opened for a previously broken composer — e.g. the New Task
       // default — do not let that recovery modal follow the user into a
-      // conversation whose own model is valid.
+      // conversation whose own model is valid, or into Activity where there
+      // is no composer to recover. Explicit model actions still open it.
       if (autoOpenedUnavailableModelRef.current) {
         modelPicker.setOpen(false);
       }
@@ -1345,7 +1354,7 @@ export function SessionRoute() {
     modelPicker.setRecentProviderIds(new Set());
     modelPicker.setCompactOpen(false);
     modelPicker.setOpen(true);
-  }, [activeComposerTargetsSession, cloudProviderSyncReady, denAuth.isSignedIn, entitledOrgDefaultModel, modelPicker.setCompactOpen, modelPicker.setOpen, modelPicker.setQuery, modelPicker.setRecentProviderIds, organizationModelsEmpty, selectedModelUnavailableKey, selectedSessionId, workspaceDefault]);
+  }, [activityRouteActive, activeComposerTargetsSession, cloudProviderSyncReady, denAuth.isSignedIn, entitledOrgDefaultModel, modelPicker.setCompactOpen, modelPicker.setOpen, modelPicker.setQuery, modelPicker.setRecentProviderIds, organizationModelsEmpty, selectedModelUnavailableKey, selectedSessionId, workspaceDefault]);
 
   // Optimistic model selection: a remembered model is treated as valid until
   // the availability gate CONFIRMS it absent (selectedModelUnavailable).
@@ -2211,6 +2220,31 @@ export function SessionRoute() {
     />
   ) : null;
   const gatedRouteNotFoundMessage = cloudWorkspaceReadyForRouteErrors ? routeNotFoundMessage : null;
+
+  // Activity "Try it": put the newly shared skill in the New session composer,
+  // after anything already drafted there, and open it. Nothing is sent.
+  const trySkillInNewSession = useCallback((resource: ActivityResource) => {
+    if (!selectedWorkspaceId || !resource.skillSlug || !resource.capability) return;
+    const destination = { workspaceId: selectedWorkspaceId };
+    const ownerKey = newSessionDraftOwnerKey(sessionDraftScope, destination);
+    const token = encodeConnectSkillToken({
+      slug: resource.skillSlug,
+      name: resource.label,
+      marketplace: resource.marketplaceName ?? "Library",
+      capability: resource.capability,
+    });
+    const composer = useComposerStateStore.getState();
+    const existing = (ownerKey ? composer.sessions[ownerKey]?.draft : undefined)
+      || getSessionDraft(sessionDraftScope, selectedWorkspaceId, newSessionDraftSlot(destination))?.text
+      || "";
+    const draft = existing.includes(token)
+      ? existing
+      : `${existing}${existing && !/\s$/.test(existing) ? " " : ""}${token} `;
+    saveSessionDraft(sessionDraftScope, selectedWorkspaceId, newSessionDraftSlot(destination), { text: persistableComposerDraftText(draft), mode: "prompt" });
+    if (ownerKey) composer.setDraft(ownerKey, draft);
+    openNewSessionDraft(destination, navigate);
+    focusPromptSoon();
+  }, [navigate, selectedWorkspaceId, sessionDraftScope]);
 
   // Workspace-scoped wiring for the empty-state hero's full composer. Unlike
   // `surfaceProps` this exists without a selected session, so the hero offers
@@ -3758,7 +3792,7 @@ export function SessionRoute() {
           ? t("status.connected")
           : (modelUnavailableMessage ?? t("session.loading_detail"))
       }
-      busyHint={cloudWorkspaceMainContentTakeover ? null : organizationModelsEmpty ? t("models.organization_models_empty") : effectiveLoading ? t("session.loading_detail") : null}
+      busyHint={activityRouteActive || cloudWorkspaceMainContentTakeover ? null : organizationModelsEmpty ? t("models.organization_models_empty") : effectiveLoading ? t("session.loading_detail") : null}
       startupPhase={effectiveLoading ? "nativeInit" : "ready"}
       providerConnectedIds={providerConnectedIds}
       hasUsableModel={hasUsableModel}
@@ -3820,8 +3854,9 @@ export function SessionRoute() {
           }}
         />
       }
-      primaryTitle={appsRouteActive ? "Dashboard" : automationsRouteActive ? "Automations" : dashboardRouteActive ? "Dashboard" : undefined}
-      primarySlot={pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
+      primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? "Dashboard" : automationsRouteActive ? "Automations" : dashboardRouteActive ? "Dashboard" : undefined}
+      primarySurface={activityRouteActive ? "flat" : undefined}
+      primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
         <WorkspaceProvider
           client={opencodeClient}
           opencodeBaseUrl={opencodeBaseUrl}
@@ -4042,9 +4077,9 @@ export function SessionRoute() {
         reloadError: reloadCoordinator.reloadError,
         openWorkConnectState: sessionMcpMaintenance,
       }}
-      notFoundMessage={gatedRouteNotFoundMessage}
+      notFoundMessage={activityRouteActive ? null : gatedRouteNotFoundMessage}
       mainContentTakeover={
-        extensionsMainOpen ? (
+        activityRouteActive ? null : extensionsMainOpen ? (
           <SettingsSurface
             standaloneExtensions
             libraryHeaderActionsTarget={libraryHeaderActionsTarget}

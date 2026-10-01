@@ -14,12 +14,8 @@ function isRecommendation(value: unknown): value is ManagedModelRecommendation {
     && Array.isArray(value.capabilities) && value.capabilities.every((capability) => typeof capability === "string");
 }
 
-/**
- * A validated status, merged over `base`. A ready status must carry an
- * allowance; guests also need a version floor, because the Gateway version-gates
- * guests while members use their Models key on /api/v1, which is not gated.
- */
-export function parseStatus(payload: unknown, base: DesktopFreeAccessStatus, member = false): DesktopFreeAccessStatus {
+/** A validated status, merged over `base`. A ready status must carry an allowance. */
+export function parseStatus(payload: unknown, base: DesktopFreeAccessStatus): DesktopFreeAccessStatus {
   if (!isRecord(payload)) throw new Error("Invalid desktop free status.");
   const allowance = payload.allowance;
   let validatedAllowance: DesktopFreeAccessStatus["allowance"] = null;
@@ -31,7 +27,7 @@ export function parseStatus(payload: unknown, base: DesktopFreeAccessStatus, mem
   }
   const state = payload.state;
   if (state !== "ready" && state !== "update_required" && state !== "unavailable" && state !== "exhausted") throw new Error("Invalid desktop free status state.");
-  if (state === "ready" && (!validatedAllowance || (!member && typeof payload.minimumVersion !== "string"))) throw new Error("Incomplete desktop free status.");
+  if (state === "ready" && !validatedAllowance) throw new Error("Incomplete desktop free status.");
   return {
     ...base, state, code: typeof payload.code === "string" ? payload.code : null,
     minimumVersion: typeof payload.minimumVersion === "string" ? payload.minimumVersion : null,
@@ -73,7 +69,7 @@ export function parseMemberCredential(payload: unknown, origin: string): string 
     || credential.statusURL !== `${origin}${MEMBER_FREE_STATUS_PATH}`) throw new Error("Invalid member Auto credential.");
   return credential.apiKey;
 }
-const DEN_ERROR_CODES = ["free_disabled", "free_not_offered", "free_accounting_unavailable", "managed_models_disabled_for_dpa", "managed_models_policy_unavailable"];
+const DEN_ERROR_CODES = ["free_disabled", "free_not_enrolled", "free_not_offered", "not_eligible", "free_accounting_unavailable", "managed_models_disabled_for_dpa", "managed_models_policy_unavailable"];
 /** Status and code for a refused credential exchange. */
 export function memberCredentialFailure(status: number, body: Uint8Array): { status: number; code: string } {
   const mapped = [401, 403, 429, 503].includes(status) ? status : 503;

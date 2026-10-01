@@ -50,13 +50,21 @@ export function buildContext(messages: StoredMessage[], currentMessageId: string
   let used = 0
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index]
-    const size = turn.reduce((sum, entry) => sum + JSON.stringify(entry.message).length, 0)
+    const size = turn.reduce(
+      (sum, entry) => sum + (entry.message.role === "tool" ? entry.message.output.length + 200 : JSON.stringify(entry.message).length),
+      0,
+    )
     const isCurrent = turn[0].messageId === currentMessageId
     if (!isCurrent && used + size > budget) break
     kept.unshift(turn)
     used += size
   }
-  return kept.flat().map((entry) => entry.message)
+  // Images are large; the model sees them in the turn that fetched them, earlier turns keep the text.
+  return kept.flat().map((entry) =>
+    entry.messageId !== currentMessageId && entry.message.role === "tool" && entry.message.images
+      ? { ...entry.message, images: undefined, output: `${entry.message.output}\n[images from an earlier turn not shown]` }
+      : entry.message,
+  )
 }
 
 /** Tool calls whose result was never recorded (process crashed or turn was aborted mid-call). */
@@ -241,7 +249,14 @@ export class Runner {
                     isError: true,
                   }))
                 : { output: `Unknown tool: ${call.name}`, isError: true }
-          store.appendMessage(sessionId, messageId, { role: "tool", callId: call.id, name: call.name, ...outcome })
+          store.appendMessage(sessionId, messageId, {
+            role: "tool",
+            callId: call.id,
+            name: call.name,
+            output: outcome.output,
+            isError: outcome.isError,
+            ...(outcome.images?.length ? { images: outcome.images } : {}),
+          })
         }
       }
       store.setTurnStatus(sessionId, messageId, "failed", "max_steps_exceeded")

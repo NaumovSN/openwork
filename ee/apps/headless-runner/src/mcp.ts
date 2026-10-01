@@ -1,6 +1,6 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client"
 import { z } from "zod"
-import type { ToolResult, ToolSpec } from "./types.js"
+import type { ToolImage, ToolResult, ToolSpec } from "./types.js"
 
 /** Tools from one remote MCP server, connected for the duration of one turn. */
 export type ToolSession = {
@@ -27,7 +27,21 @@ export function modelToolName(name: string, taken: ReadonlySet<string>) {
   return candidate
 }
 
-const contentBlock = z.object({ type: z.string(), text: z.string().optional() }).loose()
+/** Formats every model provider accepts as image input. */
+const IMAGE_TYPES: ReadonlySet<string> = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])
+/** Base64 characters per image (about 3.7 MB decoded, under provider limits) and images per tool result. */
+export const MAX_IMAGE_BASE64 = 5_000_000
+export const MAX_IMAGES_PER_RESULT = 4
+
+const contentBlock = z
+  .object({
+    type: z.string(),
+    text: z.string().optional(),
+    data: z.string().optional(),
+    mimeType: z.string().optional(),
+    resource: z.object({ blob: z.string().optional(), mimeType: z.string().optional() }).loose().optional(),
+  })
+  .loose()
 const callResult = z
   .object({
     content: z.array(contentBlock).optional(),
@@ -39,13 +53,34 @@ const callResult = z
 export function formatToolResult(value: unknown): ToolResult {
   const parsed = callResult.safeParse(value)
   if (!parsed.success) return { output: truncate(JSON.stringify(value)), isError: false }
-  const parts = (parsed.data.content ?? []).map((block) =>
-    block.type === "text" && block.text !== undefined ? block.text : `[${block.type} content omitted]`,
-  )
+  const parts: string[] = []
+  const images: ToolImage[] = []
+  for (const block of parsed.data.content ?? []) {
+    if (block.type === "text" && block.text !== undefined) {
+      parts.push(block.text)
+      continue
+    }
+    const data = block.type === "image" ? block.data : block.type === "resource" ? block.resource?.blob : undefined
+    const mediaType = block.type === "image" ? block.mimeType : block.resource?.mimeType
+    if (data && mediaType && IMAGE_TYPES.has(mediaType)) {
+      if (data.length > MAX_IMAGE_BASE64) parts.push(`[${mediaType} image too large to view]`)
+      else if (images.length >= MAX_IMAGES_PER_RESULT) parts.push(`[more images omitted]`)
+      else {
+        images.push({ mediaType, data })
+        parts.push(`[image ${images.length}: ${mediaType}, attached]`)
+      }
+      continue
+    }
+    parts.push(`[${block.type} content omitted]`)
+  }
   if (parts.length === 0 && parsed.data.structuredContent !== undefined) {
     parts.push(JSON.stringify(parsed.data.structuredContent))
   }
-  return { output: truncate(parts.join("\n") || "(no output)"), isError: parsed.data.isError === true }
+  return {
+    output: truncate(parts.join("\n") || "(no output)"),
+    isError: parsed.data.isError === true,
+    ...(images.length ? { images } : {}),
+  }
 }
 
 const toolList = z.object({

@@ -3,7 +3,6 @@ import { createHmac } from "node:crypto";
 import {
   DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_PATH, MEMBER_FREE_STATUS_PATH, clampSessionPowParams, compareDesktopVersions,
   desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeVersionError, isDesktopFreeSignableRoute, leadingZeroBits,
-  lowestDesktopVersion, parseDesktopReleases, supportedDesktopReleases,
 } from "../src/index.js";
 import { freeUsageAmount, parseInstallRamp, rampedDeviceAmount, DEFAULT_INSTALL_RAMP } from "../src/accounting.js";
 import { deriveReleaseSecret, matchReleaseTag, releaseKeyFingerprint, releaseTag, sha256Hex, solveSessionPow, startSessionPow, verifySessionPow } from "../src/node.js";
@@ -72,22 +71,17 @@ describe("release secrets", () => {
   });
 });
 
-describe("release window", () => {
-  const now = Date.parse("2026-09-23T12:00:00Z"), day = 86400000;
-  const releases = [["1.2.3", 0], ["1.2.2", 2], ["1.2.1", 5], ["1.2.0", 10], ["1.1.9", 30]].map(([version, age]) => ({ version: String(version), publishedAt: now - Number(age) * day }));
-  test("newest releases plus the floor, minus blocked, never prereleases", () => {
-    expect(supportedDesktopReleases(releases, { count: 3, minDays: 14, blocked: [] }, now)).toEqual(["1.2.3", "1.2.2", "1.2.1", "1.2.0"]);
-    expect(supportedDesktopReleases([...releases, { version: "1.3.0-alpha.1", publishedAt: now }], { count: 3, minDays: 0, blocked: ["1.2.2"] }, now)).toEqual(["1.2.3", "1.2.1"]);
-    expect(lowestDesktopVersion(["1.2.3", "1.2.0", "1.2.1"])).toBe("1.2.0");
+describe("version policy", () => {
+  test("every version passes by default; blocked or below the minimum is asked to update", () => {
+    const open = { minimumVersion: null, blocked: [] };
+    expect(desktopFreeVersionError("0.18.55-alpha.3244+4d3cfbd", open)).toBeNull();
+    expect(desktopFreeVersionError("0.1.0", open)).toBeNull();
+    expect(desktopFreeVersionError("0.18.55-alpha.3244+4d3cfbd", { minimumVersion: null, blocked: ["0.18.55-alpha.3244"] }))
+      .toEqual({ code: "desktop_update_required", currentVersion: "0.18.55-alpha.3244+4d3cfbd", minimumVersion: null, message: "Update OpenWork Desktop to use Auto." });
+    expect(desktopFreeVersionError("1.1.9", { minimumVersion: "1.2.0", blocked: [] })?.message).toBe("Update OpenWork Desktop to 1.2.0 or newer to use Auto.");
+    expect(desktopFreeVersionError("1.2.0", { minimumVersion: "1.2.0", blocked: [] })).toBeNull();
+    expect(desktopFreeVersionError("not-a-version", { minimumVersion: "1.2.0", blocked: [] })?.code).toBe("desktop_update_required");
     expect(compareDesktopVersions("1.2.3-alpha", "1.2.3")).toBe(-1);
-    expect(desktopFreeVersionError("1.1.9", ["1.2.3", "1.2.0"])?.minimumVersion).toBe("1.2.0");
-    expect(desktopFreeVersionError("1.2.3", [])?.code).toBe("desktop_version_unavailable");
-  });
-  test("release lists parse from GitHub or a plain list, and reject malformed entries", () => {
-    expect(parseDesktopReleases([{ tag_name: "v1.2.3", draft: false, prerelease: false, published_at: "2026-09-23T00:00:00Z" }, { tag_name: "v9", draft: true, prerelease: false, published_at: "2026-09-23T00:00:00Z" }])?.map((r) => r.version)).toEqual(["1.2.3"]);
-    expect(parseDesktopReleases({ releases: [{ version: "v1.2.3", publishedAt: "2026-09-23T00:00:00Z" }] })?.[0].version).toBe("1.2.3");
-    expect(parseDesktopReleases([{ tag_name: 1 }])).toBeNull();
-    expect(parseDesktopReleases({ latestAppVersion: "1.2.3" })).toBeNull();
   });
 });
 

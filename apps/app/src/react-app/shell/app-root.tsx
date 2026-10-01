@@ -21,6 +21,7 @@ import { isDesktopRuntime } from "../../app/lib/runtime-env";
 import { Button } from "../../components/ui/button";
 import { t } from "../../i18n";
 import { useDenAuth } from "../domains/cloud/den-auth-provider";
+import { useMemberActivitySync } from "../domains/cloud/use-member-activity-sync";
 import { useDesktopConfig } from "../domains/cloud/desktop-config-provider";
 import {
   clearCloudInventoryCache,
@@ -411,6 +412,7 @@ export function AppRoot() {
   useDesktopFontZoomBehavior();
   useVisualViewportInset();
   const egressAllowed = useOutboundEgressAllowed();
+  useMemberActivitySync(egressAllowed);
 
   // Module-level dedupe keeps StrictMode double-mounts from double-counting.
   useEffect(() => {
@@ -517,6 +519,7 @@ export function AppRoot() {
                   </DevProfiler>
                 }
               />
+              <Route path="/activity" element={<DevProfiler id="ActivityRoute"><SessionRoute /></DevProfiler>} />
               <Route path="/apps" element={<DevProfiler id="AppsRoute"><SessionRoute /></DevProfiler>} />
               <Route path="/dashboard/apps/:appId" element={<DevProfiler id="DashboardAppRoute"><SessionRoute /></DevProfiler>} />
               <Route path="/apps/:appId" element={<DevProfiler id="AppPreviewRoute"><SessionRoute /></DevProfiler>} />

@@ -53,6 +53,38 @@ test("create → send → read → files, with a messageId-scoped transcript", a
   assert.equal((await call("GET", `/v1/sessions/${created.id}/files/content?path=../x`)).status, 400)
 })
 
+test("the snapshot reports image counts, not image data", async () => {
+  const { model } = scriptedModel([calls({ id: "c1", name: "look", input: {} }), text("done")])
+  const { store, runner } = makeRunner({
+    model,
+    mcp: async () => ({
+      tools: [{ name: "look", description: "", inputSchema: { type: "object" } }],
+      async call() {
+        return { output: "img", isError: false, images: [{ mediaType: "image/png", data: "QUJD" }] }
+      },
+      async close() {},
+    }),
+  })
+  const app = createApp({ store, runner, apiToken: TOKEN })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "go", credentials: { modelApiKey: "k", mcpToken: "t" } })
+  await runner.idle()
+  const response = await app.request(`/v1/sessions/${session.id}`, { headers: { authorization: `Bearer ${TOKEN}` } })
+  const body = await response.text()
+  assert.ok(!body.includes("QUJD"))
+  const parsed = z.object({ messages: z.array(z.object({ imageCount: z.number().optional() })) }).parse(JSON.parse(body))
+  assert.ok(parsed.messages.some((message) => message.imageCount === 1))
+})
+
+test("lists the models a caller can pick", async () => {
+  const { store, runner } = makeRunner({ model: scriptedModel([]).model })
+  const catalog = { defaultModel: "gwm_a", models: [{ id: "gwm_a", name: "Claude Fable 5.1" }] }
+  const app = createApp({ store, runner, apiToken: TOKEN, models: async () => catalog })
+  const response = await app.request("/v1/models", { headers: { authorization: `Bearer ${TOKEN}` } })
+  assert.deepEqual(await response.json(), catalog)
+  assert.equal((await app.request("/v1/models")).status, 401)
+})
+
 test("validates input and unknown sessions", async () => {
   const { call } = setup()
   assert.equal((await call("POST", "/v1/sessions/hs_missing/turns", { messageId: "m", prompt: "x" })).status, 404)
