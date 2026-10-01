@@ -444,7 +444,7 @@ chatTest("an owner follows App creation progress and opens the finished App besi
 
   await step("after: the owner chooses an existing App and uses it on their dashboard", async () => {
     await user.click({ role: "button", label: "Add" });
-    await user.see({ role: "textbox", label: "Search apps" });
+    await user.see({ label: "Search apps" });
     await user.type({ label: "Search apps" }, "qckordprcr", { replace: true });
     await user.screenshot();
     await user.click({ role: "option", label: `Add ${pricerTitle}` });
