@@ -122,6 +122,7 @@ export type AdminFreeAutoUsageResponse = {
 
 export type InvalidRequestError = {
   error: "invalid_request";
+  message?: string;
   details: Array<{
     message: string;
     path?: Array<string | number>;
