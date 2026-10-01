@@ -4,6 +4,7 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
+import { QueryObserver } from "@tanstack/react-query";
 
 import { createClient } from "../src/app/lib/opencode";
 import type { ProviderListItem, WorkspaceDisplay } from "../src/app/types";
@@ -17,7 +18,9 @@ import { AiSettingsView } from "../src/react-app/domains/settings/pages/ai-view"
 import {
   clearProviderListQueries,
   ensureProviderListQuery,
+  fetchProviderList,
   providerListQueryKey,
+  refreshProviderListQueries,
 } from "../src/react-app/infra/provider-list-query";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 
@@ -356,4 +359,58 @@ test("a superseded read cannot replace a recovered inventory with an older failu
   expect(render(harness)).toContain("OpenAI");
   expect(render(harness)).not.toContain('role="alert"');
   expectReadOnly(harness);
+});
+
+test("provider discovery starts the catalog while config is held and waits to apply disabled providers", async () => {
+  const harness = createHarness();
+  const config = deferredResponse();
+  const catalog = deferredResponse();
+  harness.engine.readConfig = () => config.promise;
+  harness.engine.readProviders = () => catalog.promise;
+  const refresh = harness.store.refreshProviders({ force: true });
+  try {
+    // Both requests must start before either response is released.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(harness.requests.map(({ path }) => path).sort()).toEqual(["/config", "/provider"]);
+    catalog.resolve(json(harness.engine.catalog));
+    await ensureProviderListQuery(getReactQueryClient(), harness.queryInput);
+    expect(harness.ui.providers).toEqual([]);
+    expect(harness.store.getSnapshot().providerLoadState.status).toBe("loading");
+    config.resolve(json({ disabled_providers: [provider.id] }));
+    const result = await refresh;
+    expect(result?.all).toEqual([]);
+    expect(result?.connected).toEqual([]);
+    expect(harness.ui.disabled).toEqual([provider.id]);
+    expect(harness.store.getSnapshot().providerLoadState.status).toBe("ready");
+    expectReadOnly(harness);
+  } finally {
+    config.resolve(json(harness.engine.config));
+    catalog.resolve(json(harness.engine.catalog));
+    await refresh;
+  }
+});
+
+test("an explicit refresh fetches an observed provider catalog once and leaves inactive scopes invalidated", async () => {
+  const harness = createHarness();
+  const queryClient = getReactQueryClient();
+  await ensureProviderListQuery(queryClient, harness.queryInput);
+  const inactiveKey = providerListQueryKey({ baseUrl: "https://other-engine.example.test", directory: "/other" });
+  queryClient.setQueryData(inactiveKey, harness.engine.catalog);
+  const observer = new QueryObserver(queryClient, {
+    queryKey: harness.queryKey,
+    queryFn: () => fetchProviderList(harness.queryInput),
+    staleTime: Infinity,
+    retry: false,
+  });
+  const unsubscribe = observer.subscribe(() => {});
+  try {
+    harness.engine.catalog = { all: [], connected: [], default: {} };
+    await refreshProviderListQueries(queryClient);
+    expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(2);
+    expect(queryClient.getQueryData(harness.queryKey)).toEqual(harness.engine.catalog);
+    expect(queryClient.getQueryState(inactiveKey)?.isInvalidated).toBe(true);
+    expectReadOnly(harness);
+  } finally {
+    unsubscribe();
+  }
 });

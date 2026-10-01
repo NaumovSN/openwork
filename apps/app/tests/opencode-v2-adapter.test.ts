@@ -2537,6 +2537,90 @@ describe("OpenCode v2 client compatibility", () => {
 });
 
 
+test("v2 provider catalog starts all three reads before models respond", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Request[] = [];
+  let releaseModels: () => void = () => {};
+  const modelsHeld = new Promise<void>((resolve) => { releaseModels = resolve; });
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    requests.push(request);
+    if (request.url.endsWith("/api/model")) {
+      await modelsHeld;
+      return jsonResponse({ data: [{ id: "coding", providerID: "lpr_fixture", name: "Coding" }] });
+    }
+    if (request.url.endsWith("/api/provider")) return jsonResponse({ data: [{ id: "lpr_fixture", name: "Assigned Coding" }] });
+    if (request.url.endsWith("/api/model/default")) return jsonResponse({ data: { lpr_fixture: "coding" } });
+    throw new Error(`Unexpected request: ${request.url}`);
+  };
+  const client = createClientV2("http://opencode.test/opencode2", "/workspace", { token: "fixture-token" });
+  const loading = client.provider.list();
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests.map((request) => new URL(request.url).pathname).sort()).toEqual([
+      "/opencode2/api/model", "/opencode2/api/model/default", "/opencode2/api/provider",
+    ]);
+    expect(requests.every((request) => request.headers.get("Authorization") === "Bearer fixture-token")).toBe(true);
+    releaseModels();
+    const result = await loading;
+    expect(result.data?.all[0]?.name).toBe("Assigned Coding");
+    expect(result.data?.connected).toEqual(["lpr_fixture"]);
+    expect(result.data?.default).toEqual({ lpr_fixture: "coding" });
+  } finally {
+    releaseModels();
+    await loading;
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("cancelling v2 provider discovery aborts all three catalog reads", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Request[] = [];
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    requests.push(request);
+    return new Promise<Response>((_resolve, reject) => {
+      request.signal.addEventListener("abort", () => reject(request.signal.reason), { once: true });
+    });
+  };
+  const controller = new AbortController();
+  const loading = createClientV2("http://opencode.test/opencode2", "/workspace", {}).provider.list({}, { signal: controller.signal });
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requests).toHaveLength(3);
+    controller.abort(new Error("fixture discovery cancelled"));
+    await expect(loading).rejects.toThrow("fixture discovery cancelled");
+    expect(requests.every((request) => request.signal.aborted)).toBe(true);
+  } finally {
+    controller.abort();
+    await loading.catch(() => {});
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test.each(["/api/provider", "/api/model/default", "/api/model"])("v2 provider catalog preserves HTTP failure behavior for %s", async (failedPath) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (request.url.endsWith(failedPath)) return jsonResponse({ error: "catalog unavailable" }, 503);
+    if (request.url.endsWith("/api/model")) return jsonResponse({ data: [{ id: "coding", providerID: "lpr_fixture", name: "Coding" }] });
+    if (request.url.endsWith("/api/provider")) return jsonResponse({ data: [{ id: "lpr_fixture", name: "Assigned Coding" }] });
+    return jsonResponse({ data: { lpr_fixture: "coding" } });
+  };
+  try {
+    const result = await createClientV2("http://opencode.test/opencode2", "/workspace", {}).provider.list();
+    if (failedPath === "/api/model") {
+      expect(result.response.status).toBe(503);
+      expect(result.data).toBeUndefined();
+    } else {
+      expect(result.data?.all[0]?.name).toBe(failedPath === "/api/provider" ? "lpr_fixture" : "Assigned Coding");
+      expect(result.data?.default).toEqual(failedPath === "/api/model/default" ? {} : { lpr_fixture: "coding" });
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("v2 provider catalog retains display names and advertised effort without exposing provider credentials", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {

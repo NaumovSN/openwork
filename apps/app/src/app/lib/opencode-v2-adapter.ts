@@ -2312,12 +2312,18 @@ export function createClientV2(
     _parameters: DirectoryParameters = {},
     options?: RequestOptions,
   ): Promise<FieldsResult<ProviderListResponse>> => {
-    const modelsResult = await request("GET", "/api/model", undefined, options?.signal);
-    if (!modelsResult.response.ok) return failedResult(modelsResult);
-    const [defaultsResult, providersResult] = await Promise.all([
+    // None of these catalog reads depends on another response.
+    const modelsRequest = request("GET", "/api/model", undefined, options?.signal);
+    const metadataRequest = Promise.all([
       request("GET", "/api/model/default", undefined, options?.signal),
       request("GET", "/api/provider", undefined, options?.signal),
     ]);
+    // Handle early metadata rejection even if the required model read fails.
+    // Awaiting it below still surfaces transport errors when models succeed.
+    void metadataRequest.catch(() => undefined);
+    const modelsResult = await modelsRequest;
+    if (!modelsResult.response.ok) return failedResult(modelsResult);
+    const [defaultsResult, providersResult] = await metadataRequest;
     const providerNames = new Map<string, string>();
     if (providersResult.response.ok) {
       for (const provider of responseItems(providersResult.payload)) {

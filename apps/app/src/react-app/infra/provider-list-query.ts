@@ -57,9 +57,10 @@ export function providerCatalogQueryKey(input: {
 }
 
 export async function refreshProviderListQueries(queryClient: QueryClient) {
+  // Invalidation already refetches active queries. A second refetch repeats
+  // the connected-provider request after the first one has completed.
   await queryClient.invalidateQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT });
   await queryClient.invalidateQueries({ queryKey: PROVIDER_CATALOG_QUERY_ROOT });
-  await queryClient.refetchQueries({ queryKey: PROVIDER_LIST_QUERY_ROOT, type: "active" });
 }
 
 /** Drop account-sensitive provider snapshots when the Den session ends. */
