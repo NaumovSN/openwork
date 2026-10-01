@@ -513,6 +513,14 @@ function appPreparationArguments(messages) {
   return { preparationId };
 }
 
+// Code Mode uses the same actual preparation id, embedded as a JSON literal in
+// the scripted call. The marker is a fixture placeholder, never a guessed id.
+function appPreparationStepArguments(messages, argumentsValue) {
+  const prepared = appPreparationArguments(messages);
+  if (typeof argumentsValue.code === "string") return { ...argumentsValue, code: argumentsValue.code.replace('"__APP_PREPARATION_ID__"', JSON.stringify(prepared.preparationId)) };
+  return { ...argumentsValue, ...prepared };
+}
+
 // list_skills handoff: the next get_skill reads the one skill the catalog returned.
 function skillListArguments(messages) {
   let payload = JSON.parse(lastToolText(messages));
@@ -672,7 +680,7 @@ async function handleAgentCompletion(req, res, entry) {
     : step.argumentsFrom === "skill-catalog" ? skillCatalogArguments(messages, step.arguments.skill)
     : step.argumentsFrom === "capability-search" ? { ...step.arguments, ...capabilitySearchArguments(scopedMessages) }
     : step.argumentsFrom === "skill-list" ? { ...step.arguments, ...skillListArguments(scopedMessages) }
-    : step.argumentsFrom === "app-preparation" ? { ...step.arguments, ...appPreparationArguments(scopedMessages) } : step.arguments;
+    : step.argumentsFrom === "app-preparation" ? appPreparationStepArguments(scopedMessages, step.arguments) : step.arguments;
   if (step.argumentsFrom === "skill-catalog" && toolArguments === null) {
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     agentStream(res, model, [agentChunk(model, { role: "assistant" }),

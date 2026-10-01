@@ -252,3 +252,20 @@ test("degraded sync does not claim that creation is still running", () => {
   expect(markup).toContain("Reconnecting");
   expect(markup).not.toContain('data-step-status="running"');
 });
+
+
+test("an explicit App request shows actual discovery before preparation and keeps one rail", () => {
+  const search: DynamicToolUIPart = { type: "dynamic-tool", toolCallId: "search", toolName: "openwork-cloud_search_capabilities", state: "input-available", input: { query: "Inventory lookup unit price" } };
+  const message = { id: "assistant", role: "assistant" as const, parts: [search] };
+  expect(appCreationRuns([message])).toHaveLength(0);
+  const discovered = appCreationRuns([message], true);
+  expect(discovered).toHaveLength(1);
+  expect(appCreationProgress(discovered[0], true)).toMatchObject({ stage: "needs", prepared: false, running: true });
+  const markup = renderToStaticMarkup(provider(<AppBuilderStep run={discovered[0]} active />));
+  expect(markup).toContain("Finding what it needs");
+  expect(markup).toContain("Inventory lookup unit price");
+  const readyToWrite = appCreationRuns([{ ...message, parts: [search, prepare()] }], true);
+  expect(readyToWrite).toHaveLength(1);
+  expect(readyToWrite[0].id).toBe("search");
+  expect(appCreationProgress(readyToWrite[0], true).stage).toBe("writing");
+});

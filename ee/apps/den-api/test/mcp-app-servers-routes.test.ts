@@ -314,7 +314,7 @@ test("create_app builds an App that opens in OpenWork and names its own MCP serv
     for (const text of [description("update_app"), client.getInstructions() ?? ""]) expect(text).not.toContain("app.callServerTool")
 
     const createdResult = await client.callTool({ name: "create_app", arguments: source })
-    expect(createdResult.structuredContent).toEqual({ app: appSummary, input: {}, mcpUrl: appUrl })
+    expect(createdResult.structuredContent).toEqual({ app: appSummary, input: {}, mcpUrl: appUrl, launch: launchMeta(appSummary)["openwork/mcpApp"] })
     expect(createdResult._meta).toEqual(launchMeta(appSummary))
     expect(JSON.stringify(createdResult.content)).toContain(appUrl)
     // Creation opens a sidebar tab; other clients still receive the text and MCP URL.
@@ -331,7 +331,7 @@ test("create_app builds an App that opens in OpenWork and names its own MCP serv
     // Hosts that forward only text still get the source update_app replaces.
     expect(JSON.stringify(read.content)).toContain("source-marker")
     const updated = await client.callTool({ name: "update_app", arguments: { ...source, appId, expectedRevisionId: revisionId } })
-    expect(updated.structuredContent).toEqual({ app: nextSummary, input: {}, mcpUrl: appUrl })
+    expect(updated.structuredContent).toEqual({ app: nextSummary, input: {}, mcpUrl: appUrl, launch: launchMeta(nextSummary)["openwork/mcpApp"] })
     expect(updated._meta).toEqual(launchMeta(nextSummary))
     expect(normalExecutions).toEqual([])
   })
@@ -398,11 +398,11 @@ test("search and execute open a built App through its own server instead of its 
       expect(matches.some((match) => match.name === `plugin:${pluginId}:${otherAppId}`)).toBe(true)
     }
     const opened = await client.callTool({ name: "execute_capability", arguments: { name: `plugin:${pluginId}:${appId}` } })
-    expect(opened.structuredContent).toEqual({ app: appSummary, input: {}, mcpUrl: appUrl })
+    expect(opened.structuredContent).toEqual({ app: appSummary, input: {}, mcpUrl: appUrl, launch: launchMeta(appSummary)["openwork/mcpApp"] })
     expect(opened._meta).toEqual(launchMeta(appSummary))
     // A body object is the App's launch input, as a connection App gets its call arguments.
     const withInput = await client.callTool({ name: "execute_capability", arguments: { name: `plugin:${pluginId}:${appId}`, body: { project: "Apollo" } } })
-    expect(withInput.structuredContent).toEqual({ app: appSummary, input: { project: "Apollo" }, mcpUrl: appUrl })
+    expect(withInput.structuredContent).toEqual({ app: appSummary, input: { project: "Apollo" }, mcpUrl: appUrl, launch: { ...launchMeta(appSummary)["openwork/mcpApp"], arguments: { input: { project: "Apollo" } } } })
     expect(withInput._meta).toEqual({ "openwork/mcpApp": { ...launchMeta(appSummary)["openwork/mcpApp"], arguments: { input: { project: "Apollo" } } } })
     for (const body of ["Apollo", ["Apollo"], null]) {
       const ignored = await client.callTool({ name: "execute_capability", arguments: { name: `plugin:${pluginId}:${appId}`, body } })

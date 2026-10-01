@@ -11,7 +11,7 @@ import {
   latestBuiltAppParts,
 } from "./built-mcp-app-model";
 
-export function BuiltAppChatPreview({ part }: { part: DynamicToolUIPart }) {
+export function BuiltAppChatPreview({ part, compact = false }: { part: DynamicToolUIPart; compact?: boolean }) {
   const { sessionId, mcpAppOrigin } = useMessageList();
   const app = builtAppSummary(part);
   if (!app) return null;
@@ -20,7 +20,7 @@ export function BuiltAppChatPreview({ part }: { part: DynamicToolUIPart }) {
       className="mt-2 flex items-center gap-2 text-sm"
       data-built-app-result={app.appId}
     >
-      <span className="min-w-0 flex-1 truncate">{app.title}</span>
+      {!compact ? <span className="min-w-0 flex-1 truncate">{app.title}</span> : null}
       <Button
         variant="ghost"
         size="sm"
@@ -59,6 +59,17 @@ export function BuiltAppPreviewSync({
   const seen = useRef<Set<string> | null>(null);
   const pending = useRef(new Set<string>());
   useEffect(() => {
+    const updating = new Set<string>();
+    if (active) for (const message of messages) for (const part of message.parts) {
+      if (part.type !== "dynamic-tool" || !/(?:^|_)update_app$/.test(part.toolName) || (part.state !== "input-streaming" && part.state !== "input-available")) continue;
+      const appId = part.input && typeof part.input === "object" ? Reflect.get(part.input, "appId") : null;
+      if (typeof appId === "string") updating.add(appId);
+    }
+    const state = usePanelTabStore.getState();
+    const session = state.sessions[sessionId];
+    if (session?.tabs.some(tab => tab.type === "mcp-app" && Boolean(tab.updating) !== updating.has(tab.appId))) {
+      usePanelTabStore.setState({ sessions: { ...state.sessions, [sessionId]: { ...session, tabs: session.tabs.map(tab => tab.type === "mcp-app" ? { ...tab, updating: updating.has(tab.appId) } : tab) } } });
+    }
     for (const message of messages)
       for (const part of message.parts) {
         if (
@@ -100,6 +111,7 @@ export function BuiltAppPreviewSync({
             type: "mcp-app",
             id,
             appId: app.appId,
+            updating: updating.has(app.appId),
             label: app.title,
             part,
             origin: mcpAppOrigin,

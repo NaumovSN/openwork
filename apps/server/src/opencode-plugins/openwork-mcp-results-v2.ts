@@ -11,7 +11,7 @@ type Context = {
   };
 };
 
-/** One OpenWork Cloud call made inside a Code Mode `execute`, kept because it reports a connection. */
+/** One OpenWork Cloud call made inside a Code Mode `execute`, kept because it reports a connection or an App build. */
 export type PreservedMcpResult =
   | { tool: string; input: unknown; status: "completed"; output: unknown }
   | { tool: string; input: unknown; status: "error"; error: string };
@@ -60,14 +60,13 @@ function jsonCopy(value: unknown): unknown {
 }
 
 export function preservedEntry(event: ExecuteAfter): PreservedMcpResult | null {
-  // Discovery results only become a card when a connection decision is bound to
-  // that exact call (v1), which Code Mode calls cannot have; keeping them would
-  // only duplicate the inner row.
-  if (!OPENWORK_CLOUD_TOOL.test(event.tool) || event.tool.endsWith("_search_capabilities")) return null;
+  if (!OPENWORK_CLOUD_TOOL.test(event.tool)) return null;
+  const appBuilder = /_(?:search_capabilities|prepare_app|create_app|update_app)$/.test(event.tool);
+  const appLaunch = event.status === "completed" && isRecord(event.result.output) && isRecord(event.result.output.launch);
   const input = jsonCopy(event.input);
   const entry: PreservedMcpResult | null = event.status === "completed"
-    ? reportsConnection(event.result.output) ? { tool: event.tool, input, status: "completed", output: jsonCopy(event.result.output) } : null
-    : reportsConnection(parseRecord(errorText(event.error))) ? { tool: event.tool, input, status: "error", error: errorText(event.error) } : null;
+    ? (appBuilder || appLaunch || reportsConnection(event.result.output)) ? { tool: event.tool, input, status: "completed", output: jsonCopy(event.result.output) } : null
+    : (appBuilder || reportsConnection(parseRecord(errorText(event.error)))) ? { tool: event.tool, input, status: "error", error: errorText(event.error) } : null;
   if (!entry) return null;
   return new TextEncoder().encode(JSON.stringify(entry)).byteLength <= MAX_ENTRY_BYTES ? entry : null;
 }

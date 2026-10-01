@@ -23,6 +23,7 @@ export function BuiltMcpAppPanel({
         <div className="flex min-w-0 items-center gap-2">
           <img src="/openwork-mark.svg" alt="" className="size-4 dark:invert" />
           <span className="truncate text-sm font-medium">{tab.label}</span>
+          <span role="status" className={`shrink-0 text-xs ${tab.updating ? "text-muted-foreground" : "text-emerald-700 dark:text-emerald-400"}`}>{tab.updating ? "Updating" : "Ready"}</span>
         </div>
         <div className="flex items-center gap-1">
           {!tab.origin.readOnly && summary ? (
@@ -45,7 +46,7 @@ export function BuiltMcpAppPanel({
           </Button>
         </div>
       </header>
-      <div className="p-3">
+      <div className={`p-3 ${tab.updating ? "opacity-60" : ""}`} aria-busy={tab.updating || undefined}>
         <McpAppFrame part={tab.part} origin={tab.origin} />
       </div>
     </section>

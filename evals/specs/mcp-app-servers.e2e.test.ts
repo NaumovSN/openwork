@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { appSource, appTitle, buildPrompt, buildReply, chatPrompt, chatReply, launchInput, mcpAppServers, mcpAppServersChat, payload, pricerTitle, record, reopenPrompt, reopenReply, reservationId, rows, toolNames } from "../worlds/mcp-app-servers.ts";
+import { appSource, appTitle, buildPrompt, buildReply, chatPrompt, chatReply, launchInput, mcpAppServers, mcpAppServersChat, mcpAppCreationV1, mcpAppCreationV2, mcpAppCreationDesktop, payload, pricerTitle, record, reopenPrompt, reopenReply, reservationId, rows, toolNames } from "../worlds/mcp-app-servers.ts";
 
 const test = spec.world(mcpAppServers, {
   resources: { surfaces: ["web"], services: ["den", "mock"] },
@@ -473,3 +473,114 @@ chatTest("an owner follows App creation progress and opens the finished App besi
   });
 
 });
+
+
+const creationResources = { surfaces: ["appWeb"] as const, services: ["den", "mock"] as const };
+const lifecycleTests = [
+  { name: "v1 web", test: spec.world(mcpAppCreationV1, { resources: creationResources, needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000 }) },
+  { name: "v2 web", test: spec.world(mcpAppCreationV2, { resources: creationResources, needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000 }) },
+  { name: "native Desktop", test: spec.world(mcpAppCreationDesktop, { resources: { surfaces: ["desktop"], services: ["den", "mock"], nativeReason: "Verify the App pane beside Electron's native composer and personal dashboard tile controls in the Desktop shell." }, needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000 }) },
+];
+
+for (const { name, test: lifecycleTest } of lifecycleTests) {
+  lifecycleTest(`an owner creates, edits, reopens and stops an App on ${name}`, async ({ world, agent, user, probe, step, evidence }) => {
+    let frame: Awaited<ReturnType<typeof world.appFrame>> | undefined;
+    const closeFrame = async () => { await frame?.[Symbol.asyncDispose](); frame = undefined; };
+    await using cleanup = { [Symbol.asyncDispose]: async () => { await frame?.[Symbol.asyncDispose](); } };
+    const revision = async (text: string) => {
+      await frame?.[Symbol.asyncDispose]();
+      frame = await world.appFrame(pricerTitle);
+      await user.on(frame).see({ text: `Ready — ${text}` }, { timeoutMs: 90_000 });
+    };
+    await step("before: discovery and preparation have no App preview", async () => {
+      await world.holdCreation(true);
+      expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(0);
+      await agent.send(buildPrompt);
+      await user.see({ text: "Writing the app" }, { timeoutMs: 120_000 });
+      expect((await probe.dom('[data-app-creation-step="needs"][data-step-status="complete"]')).elements).toHaveLength(1);
+      expect((await probe.dom('[data-app-creation-step="writing"][data-step-status="running"]')).elements).toHaveLength(1);
+      expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(0);
+      const calls = (await world.den.mocks.inventory.agentRequests({ promptMarker: buildPrompt })).filter(request => request.kind === "tool");
+      expect(calls).toHaveLength(2);
+      evidence.recordAssertionEvidence("Discovery and preparation are real calls before any preview", `${name}: two model calls completed before the held build. The preparation stage is complete, writing is active, and the preview remains absent.`, true);
+      await user.screenshot();
+      await world.holdCreation(false);
+    });
+    await step("after: a verified App opens beside the composer", async () => {
+      await user.see({ text: buildReply }, { timeoutMs: 120_000 });
+      expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(1);
+      await revision("revision one");
+      await user.see({ role: "button", label: "Open preview" });
+      const pane = (await probe.dom("[data-built-app-preview]")).elements[0]?.rect;
+      const composer = (await probe.dom('textarea, [contenteditable="true"][role="textbox"]')).elements.find(element => element.rect.width > 0)?.rect;
+      if (!pane || !composer) throw new Error("The preview or composer is not visible");
+      expect(pane.left).toBeGreaterThanOrEqual(composer.right - 1);
+      evidence.recordAssertionEvidence("Verified launch opens a usable App beside the composer", `${name}: one preview loads revision one; the rendered pane begins at ${pane.left}, beside the composer ending at ${composer.right}.`, true);
+      await user.screenshot();
+    });
+    await step("after: editing refreshes the same tab and closing it permits reopening from the creation step", async () => {
+      const prompt = "Update this App to revision two.";
+      const appId = await world.prepareLifecycleTurn(prompt, "edit");
+      await agent.send(prompt);
+      await user.see({ text: "The App has been updated." }, { timeoutMs: 120_000 });
+      expect((await probe.dom(`[data-built-app-preview="${appId}"]`)).elements).toHaveLength(1);
+      expect((await probe.dom('[data-built-app-preview]')).elements).toHaveLength(1);
+      await revision("revision two");
+      await closeFrame();
+      await user.click({ role: "button", label: "Close panel" });
+      expect((await probe.dom('[data-built-app-preview]')).elements).toHaveLength(0);
+      // Every creation step reopens the App's current revision, including the original step.
+      await user.click({ role: "button", label: "Open preview", nth: 0 });
+      await revision("revision two");
+      expect((await probe.dom('[data-built-app-preview]')).elements).toHaveLength(1);
+      evidence.recordAssertionEvidence("Edits preserve one tab; the original creation step reopens the current revision", `${name}: update_app targets the created App id. The preview contains revision two with one tab; closing removes the pane and Open preview restores revision two.`, true);
+      await user.screenshot();
+      await closeFrame();
+      await user.click({ role: "button", label: "Close panel" });
+    });
+    await step("after: a failed build shows its failure and never opens a preview", async () => {
+      const prompt = "Create an App with the invalid source to check the failure.";
+      await world.prepareLifecycleTurn(prompt, "failure");
+      await agent.send(prompt);
+      await user.see({ text: "Needs a fix" }, { timeoutMs: 120_000 });
+      expect((await probe.dom('[data-built-app-preview]')).elements).toHaveLength(0);
+      evidence.recordAssertionEvidence("A real compilation failure never becomes readiness", `${name}: create_app rejects invalid source; the creation step says Needs a fix and opens no App.`, true);
+      await user.screenshot();
+    });
+    await step("after: stopping creation pauses its step without opening an App", async () => {
+      const prompt = "Create an App and hold while writing so I can stop it.";
+      await world.prepareLifecycleTurn(prompt, "interrupt");
+      await world.holdCreation(true);
+      await agent.send(prompt);
+      await user.see({ text: "Writing the app" }, { timeoutMs: 120_000 });
+      await user.click({ role: "button", label: "Stop" });
+      await user.see({ text: "Paused" }, { timeoutMs: 30_000 });
+      expect((await probe.dom('[data-app-builder-step] [data-step-status="running"]')).elements).toHaveLength(0);
+      expect((await probe.dom('[data-built-app-preview]')).elements).toHaveLength(0);
+      evidence.recordAssertionEvidence("Interrupted creation stays paused without an App", `${name}: the owner stops the held creation through the composer; no running stage or preview remains.`, true);
+      await user.screenshot();
+      await world.holdCreation(false);
+    });
+    await step("after: a personal tile can be refreshed, removed and restored without losing the App", async () => {
+      await user.click({ role: "button", label: "Dashboard" });
+      await user.see({ role: "heading", label: "Your dashboard" });
+      await user.click({ role: "button", label: "Add an app" });
+      await user.type({ label: "Search apps" }, pricerTitle, { replace: true });
+      await user.click({ role: "option", label: new RegExp(pricerTitle) });
+      await revision("revision two");
+      await closeFrame();
+      await user.click({ role: "button", label: `More options for ${pricerTitle}` });
+      await user.click({ role: "menuitem", label: `Refresh ${pricerTitle}` });
+      await revision("revision two");
+      await closeFrame();
+      await user.click({ role: "button", label: `More options for ${pricerTitle}` });
+      await user.click({ role: "menuitem", label: `Remove ${pricerTitle} from dashboard` });
+      expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(0);
+      await user.click({ role: "button", label: "Undo" });
+      expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(1);
+      await revision("revision two");
+      evidence.recordAssertionEvidence("Personal placement survives refresh, removal and Undo", `${name}: the real App shows revision two in its personal tile, refreshes through the tile menu, and remains usable after remove and Undo.`, true);
+      await user.screenshot();
+    });
+  });
+}

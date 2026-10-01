@@ -1,7 +1,7 @@
 "use memo";
 
 import { appCreationRuns } from "@/react-app/domains/apps/app-creation-progress"
-import { BuiltAppChatPreview, BuiltAppPreviewSync } from "@/react-app/domains/apps/built-app-chat-preview"
+import { BuiltAppPreviewSync } from "@/react-app/domains/apps/built-app-chat-preview"
 import { builtAppSummary } from "@/react-app/domains/apps/built-mcp-app-model"
 import { AppBuilderStep } from "./app-builder-step"
 import * as React from "react"
@@ -1312,6 +1312,7 @@ interface AssistantMessageGroupProps {
   isStreaming: boolean
   /** Newline-joined tool call ids of each built App's newest card in the conversation. */
   newestAppCallIds: string
+  creationRequested: boolean
 }
 
 function isMcpAppFramePart(part: UIMessage["parts"][number]): part is DynamicToolUIPart {
@@ -1355,6 +1356,7 @@ function MessageGroup({
   isLastGroup,
   isStreaming,
   newestAppCallIds,
+  creationRequested,
 }: AssistantMessageGroupProps) {
   const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, showThinking, readOnly, getConnectionDecision } = useMessageList()
   const connectionCardParts = React.useMemo(() => connectionCardPartIds(items, getConnectionDecision), [items, getConnectionDecision])
@@ -1365,8 +1367,8 @@ function MessageGroup({
   // silently corrupt fork/revert boundaries.
   const lastRealItem = items.findLast((item) => !isSessionErrorMessage(item.message))
   const parentActive = React.useContext(ParentRunActiveContext)
-  const creationRuns = React.useMemo(() => appCreationRuns(items.map(item => item.message)), [items])
-  const creationParts = React.useMemo(() => new Set(creationRuns.flatMap(run => [...(run.preparation ? [run.preparation.toolCallId] : []), ...run.builds.map(part => part.toolCallId)])), [creationRuns])
+  const creationRuns = React.useMemo(() => appCreationRuns(items.map(item => item.message), creationRequested), [items, creationRequested])
+  const creationParts = React.useMemo(() => new Set(creationRuns.flatMap(run => [...(run.discoveries ?? []).map(part => part.toolCallId), ...(run.preparation ? [run.preparation.toolCallId] : []), ...run.builds.map(part => part.toolCallId)])), [creationRuns])
   const isLiveGroup = isStreaming && isLastGroup
 
   if (!lastItem || isMessageEmptyGroup(items)) {
@@ -1405,7 +1407,7 @@ function MessageGroup({
     >
       {builtMcpAppId(part) && !newestAppCalls.has(part.toolCallId)
         ? <p className="mt-2 text-xs text-muted-foreground">This App has a newer version below.</p>
-        : builtAppSummary(part) ? <BuiltAppChatPreview part={part} /> : <McpAppFrame part={part} />}
+        : builtAppSummary(part) ? null : <McpAppFrame part={part} />}
     </Message>
   )
   // How long the turn spent working, from the first step to when the answer
@@ -1588,6 +1590,7 @@ function MessageGroup({
 function sameMessageGroupProps(left: AssistantMessageGroupProps, right: AssistantMessageGroupProps): boolean {
   return left.isLastGroup === right.isLastGroup
     && left.isStreaming === right.isStreaming
+    && left.creationRequested === right.creationRequested
     && left.newestAppCallIds === right.newestAppCallIds
     && left.items.length === right.items.length
     && left.items.every((item, index) => (
@@ -1760,6 +1763,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
               isLastGroup={item.messages.at(-1)?.index === messages.length - 1}
               isStreaming={isStreaming && item.messages.at(-1)?.index === messages.length - 1}
               newestAppCallIds={newestAppCallIds}
+              creationRequested={messages.slice(0, item.messages[0]?.index ?? 0).findLast(message => message.role === "user")?.parts.some(part => part.type === "text" && /\b(?:build|create|make|edit|update)\b[\s\S]*\b(?:mcp\s+)?app\b/i.test(part.text)) ?? false}
             />
           )
         }

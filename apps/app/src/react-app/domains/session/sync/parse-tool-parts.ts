@@ -71,7 +71,7 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
   const childSessionId = part.tool === "task" && typeof stateMetadata.sessionId === "string" && stateMetadata.sessionId.trim()
     ? stateMetadata.sessionId.trim()
     : null;
-  const appBuilder = /(?:^|_)(?:prepare_app|create_app|update_app)$/.test(part.tool);
+  const appBuilder = /(?:^|_)(?:search_capabilities|prepare_app|create_app|update_app)$/.test(part.tool);
   const toolStartedAt = (appBuilder || part.tool === "task" || part.metadata?.openworkV2CodeMode === true) && "time" in part.state && typeof part.state.time?.start === "number"
     && Number.isFinite(part.state.time.start)
     ? part.state.time.start
@@ -172,7 +172,7 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
     toolCallId: part.callID,
     // The engine's running event means the full builder input was submitted;
     // pending events still represent the model writing its arguments.
-    state: part.state.status === "running" && /(?:^|_)(?:prepare_app|create_app|update_app)$/.test(part.tool) ? "input-available" : "input-streaming",
+    state: part.state.status === "running" && /(?:^|_)(?:search_capabilities|prepare_app|create_app|update_app)$/.test(part.tool) ? "input-available" : "input-streaming",
     input: part.state.input,
     callProviderMetadata: toolCallProviderMetadata(part),
   };

@@ -34,6 +34,7 @@ const appResultSchema = z.object({
   app: mcpAppSummarySchema,
   input: z.record(z.string(), z.json()),
   mcpUrl: z.string(),
+  launch: z.object({ connectionId: z.string(), toolName: z.literal("open_app"), resourceUri: z.string(), arguments: z.object({ input: z.record(z.string(), z.json()) }) }).optional(),
 }).strict()
 
 export class AppBuilderError extends Error {
@@ -66,7 +67,10 @@ function mcpUrl(publicOrigin: string, serverPath: string) {
 export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: string; message: string; launchInput?: unknown; canOpen?: boolean; built?: boolean }) {
   const launchInput = mcpAppLaunchInput(input.launchInput)
   const url = mcpUrl(input.publicOrigin, input.app.serverPath)
-  const structuredContent = { app: input.app, input: launchInput, mcpUrl: url }
+  // Code Mode retains structuredContent but omits transport _meta. Keep the
+  // server-issued launch in both projections; capacity-denied Apps have neither.
+  const launch = { connectionId: input.app.appId, toolName: MCP_APP_LAUNCH_TOOL_NAME, resourceUri: input.app.resourceUri, arguments: { input: launchInput } }
+  const structuredContent = { app: input.app, input: launchInput, mcpUrl: url, ...(input.canOpen === false ? {} : { launch }) }
   if (input.canOpen === false) {
     return {
       content: [{ type: "text" as const, text: `${input.message} OpenWork lists at most 100 connections and Apps for you, and this App is past that limit, so it cannot open inside OpenWork. Its MCP URL works in any MCP client: ${url}\n\n${input.app.textFallback}` }],

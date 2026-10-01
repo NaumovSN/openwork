@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { chrome, defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import { browserScript, connect, debuggerUrlFor, evaluate, listTargets, type Surface } from "@openwork/cdp";
-import type { Place, Seed } from "@openwork/env";
+import type { EvalEngine, Place, Seed } from "@openwork/env";
 import type { MockMcpTool } from "@openwork/labs";
 import { reconcileDraftHost } from "../fixtures/cloud-draft-host.ts";
 import { configureProvider } from "./chat.ts";
@@ -513,9 +513,12 @@ export const buildReply = "The Quick order pricer is ready in this conversation.
  * create_app and opens an existing one with launch input, both through
  * Connect, and each App's own tools run in the conversation.
  */
-export async function mcpAppServersChat(seed: Seed, benchmark = false) {
+export async function mcpAppServersChat(seed: Seed, benchmark: boolean | { place: Place } = false, options: { engine?: EvalEngine; desktop?: boolean; lifecycle?: boolean } = {}) {
+  const measured = benchmark === true;
+  const engine = options.engine ?? "v1";
+  const toolStep = (tool: string, args: Record<string, unknown>) => engine === "v2" ? { tool: "execute", arguments: { code: `return await tools["openwork-cloud"].${tool}(${JSON.stringify(args)});` } } : { tool, arguments: args };
   const den = await seed.den({
-    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_APP_MCP_SERVERS_ENABLED: "true", DEN_DASHBOARDS_ENABLED: "true", ...(benchmark ? { OPENWORK_MCP_APP_TIMINGS: "1" } : {}) },
+    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_APP_MCP_SERVERS_ENABLED: "true", DEN_DASHBOARDS_ENABLED: "true", ...(measured ? { OPENWORK_MCP_APP_TIMINGS: "1" } : {}) },
     org: { name: `App servers chat ${Date.now()}` },
     mocks: { inventory: seed.mock({ allowUnauthenticatedMcp: true, tools: [inventoryTool, reserveTool] }) },
   });
@@ -545,7 +548,7 @@ export async function mcpAppServersChat(seed: Seed, benchmark = false) {
   };
   const { created, tools } = await composeOrderCalculator(seed, den.admin, connection.id, call);
   const performanceApps = [];
-  if (benchmark) for (let i = 0; i < 10; i++) performanceApps.push(appSummary(await call("create_app", {
+  if (measured) for (let i = 0; i < 10; i++) performanceApps.push(appSummary(await call("create_app", {
     ...appSource("revision one", { title: `Performance App ${i}`, sampleOrder: true }), tools,
   })));
   // Each prompt is matched on its own turn, since they share one conversation.
@@ -553,8 +556,9 @@ export async function mcpAppServersChat(seed: Seed, benchmark = false) {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ workloads: [
       { promptMarker: buildPrompt, finalReply: buildReply, latestUserTurn: true, steps: [
-        { tool: "prepare_app", arguments: { title: pricerTitle, tools } },
-        { tool: "create_app", argumentsFrom: "app-preparation", holdUntilReleased: true, arguments: { ...appSource("revision one", { title: pricerTitle, sampleOrder: true }), tools } },
+        ...(options.lifecycle ? [toolStep("search_capabilities", { query: "Inventory lookup unit price", type: "mcp", limit: 2 })] : []),
+        toolStep("prepare_app", { title: pricerTitle, tools }),
+        { ...toolStep("create_app", { ...appSource("revision one", { title: pricerTitle, sampleOrder: true }), tools, ...(engine === "v2" ? { preparationId: "__APP_PREPARATION_ID__" } : {}) }), argumentsFrom: "app-preparation", holdUntilReleased: true },
       ] },
       { promptMarker: chatPrompt, finalReply: chatReply, latestUserTurn: true, steps: [
         { tool: "execute_capability", arguments: { name: `plugin:${created.pluginId}:${created.appId}`, body: launchInput } },
@@ -568,15 +572,15 @@ export async function mcpAppServersChat(seed: Seed, benchmark = false) {
   if (!configured.ok) throw new Error(`Chat model setup failed: ${configured.status}`);
   const workspacePath = seed.tmpPath("mcp-app-servers-chat");
   const denOrigin = new URL(den.ref.apiUrl);
-  const app = await seed.appWeb({ name: "mcp-app-servers-chat", workspacePath, headless: true,
+  const app = options.desktop ? await seed.desktop({ den, as: "admin", workspacePath, enterpriseActivated: true }) : await seed.appWeb({ name: `mcp-app-servers-chat-${engine}`, workspacePath, headless: true, engine,
     env: {
       OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "1", OPENWORK_DEV_DEN_PROXY_TARGET: den.ref.webUrl,
       OPENWORK_DEV_HEADLESS_DEN_API_TARGET: den.ref.apiUrl,
       VITE_DEN_BASE_URL: den.ref.webUrl, VITE_DEN_API_BASE_URL: "/api/den",
-      ...(benchmark ? { OPENWORK_MCP_APP_TIMINGS: "1" } : {}),
+      ...(measured ? { OPENWORK_MCP_APP_TIMINGS: "1" } : {}),
     },
     ...(denOrigin.protocol === "https:" ? { syntheticPreactivatedDenOrigin: denOrigin.origin } : {}) });
-  await seed.signIn(app, den.admin, "App owner");
+  if (!options.desktop) await seed.signIn(app, den.admin, "App owner");
   const workspace = await seed.workspace(app, workspacePath);
   await configureProvider(seed, app, workspace.workspaceId, "app-chat-model", "app-chat-model", {
     provider: { "app-chat-model": {
@@ -585,21 +589,47 @@ export async function mcpAppServersChat(seed: Seed, benchmark = false) {
       models: { "app-chat-model": { name: "App chat model fixture", tool_call: true } },
     } },
     mcp: { "openwork-cloud": { type: "remote", url: `${den.ref.apiUrl}/mcp/agent`, enabled: true, oauth: false, headers: { Authorization: `Bearer ${token}` } } },
-  });
+  }, engine);
   const session = await seed.session(app, { title: appTitle });
   // The private App host reads the Connect server index, which lists the App as its own server.
+  if ("openworkUrl" in app) {
   const hostSetup = {
-    name: app.handle.name, openworkUrl: app.openworkUrl, workspaceRoot: app.workspaceRoot,
-    workspaceId: workspace.workspaceId, cloudUrl: `${den.ref.apiUrl}/mcp/agent`, token, appHostToken: field(minted.body, "appHostToken"),
-  };
-  const reconciled = record(app.handle.sandboxId
-    ? JSON.parse((await execInSandbox(defaultDaytonaExec, app.handle.sandboxId,
-      `node /workspace/evals/fixtures/cloud-draft-host.ts ${Buffer.from(JSON.stringify(hostSetup)).toString("base64url")}`,
-      { context: "Reconcile the App chat host", timeoutMs: 150_000 })).stdout.trim())
-    : await reconcileDraftHost(hostSetup));
-  if (reconciled.status !== 200 || reconciled.phase !== "ready" || reconciled.diagnostic !== "ready") throw new Error(`Cloud reconcile failed: ${JSON.stringify(reconciled)}`);
+      name: app.handle.name, openworkUrl: app.openworkUrl, workspaceRoot: app.workspaceRoot,
+      workspaceId: workspace.workspaceId, cloudUrl: `${den.ref.apiUrl}/mcp/agent`, token, appHostToken: field(minted.body, "appHostToken"),
+    };
+    const reconciled = record(app.handle.sandboxId
+      ? JSON.parse((await execInSandbox(defaultDaytonaExec, app.handle.sandboxId,
+        `node /workspace/evals/fixtures/cloud-draft-host.ts ${Buffer.from(JSON.stringify(hostSetup)).toString("base64url")}`,
+        { context: "Reconcile the App chat host", timeoutMs: 150_000 })).stdout.trim())
+      : await reconcileDraftHost(hostSetup));
+    if (reconciled.status !== 200 || reconciled.phase !== "ready" || reconciled.diagnostic !== "ready") throw new Error(`Cloud reconcile failed: ${JSON.stringify(reconciled)}`);
+  } else {
+    const status = await seed.evalIn(app, browserScript(async (workspaceId, url, mcpToken, appHostToken) => {
+      const port = localStorage.getItem("openwork.server.port");
+      const credential = localStorage.getItem("openwork.server.token");
+      const response = await fetch(`http://127.0.0.1:${port}/workspace/${encodeURIComponent(workspaceId)}/mcp/openwork-cloud/reconcile`, {
+        method: "POST", headers: { Authorization: `Bearer ${credential}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ config: { type: "remote", url, enabled: true, oauth: false, headers: { Authorization: `Bearer ${mcpToken}` } }, appHostAuthorization: `Bearer ${appHostToken}`, trigger: "app-creation-world" }),
+      });
+      return response.status;
+    }, [workspace.workspaceId, `${den.ref.apiUrl}/mcp/agent`, token, field(minted.body, "appHostToken")]), { awaitPromise: true, timeoutMs: 150_000 });
+    if (status !== 200) throw new Error(`Desktop App host reconciliation failed: ${status}`);
+  }
   return {
-    app, session, den, created, performanceApps, workspace,
+    app, session, den, created, performanceApps, workspace, engine,
+    async prepareLifecycleTurn(prompt: string, kind: "edit" | "failure" | "interrupt") {
+      const catalog = rows(record((await seed.api(den.admin, "/v1/mcp-apps")).body).apps);
+      const built = catalog.find(app => app.title === pricerTitle);
+      if (!built) throw new Error("Created App is missing from the accessible catalog");
+      const steps = kind === "edit"
+        ? [toolStep("update_app", { ...appSource("revision two", { title: pricerTitle, sampleOrder: true }), appId: field(built, "connectionId") })]
+        : kind === "failure"
+          ? [toolStep("create_app", { title: "Broken App", reactSource: "export default function App( {", tools, textFallback: "The App is unavailable." })]
+          : [toolStep("prepare_app", { title: "Interrupted App", tools }), { ...toolStep("create_app", { ...appSource("interrupted", { title: "Interrupted App", sampleOrder: true }), tools, ...(engine === "v2" ? { preparationId: "__APP_PREPARATION_ID__" } : {}) }), argumentsFrom: "app-preparation", holdUntilReleased: true }];
+      const response = await fetch(`${den.mocks.inventory.url}/admin/agent-workloads`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ workloads: [{ promptMarker: prompt, finalReply: kind === "edit" ? "The App has been updated." : "The App could not be created.", latestUserTurn: true, steps }] }) });
+      if (!response.ok) throw new Error("Could not prepare the lifecycle turn");
+      return field(built, "connectionId");
+    },
     /** Hold the model after preparation so the person can inspect real writing progress. */
     async holdCreation(held: boolean) {
       const response = await fetch(`${den.mocks.inventory.url}/admin/agent-hold`, {
@@ -648,3 +678,7 @@ export async function mcpAppServersChat(seed: Seed, benchmark = false) {
     },
   };
 }
+
+export const mcpAppCreationV1 = (seed: Seed) => mcpAppServersChat(seed, false, { engine: "v1", lifecycle: true });
+export const mcpAppCreationV2 = (seed: Seed) => mcpAppServersChat(seed, false, { engine: "v2", lifecycle: true });
+export const mcpAppCreationDesktop = (seed: Seed) => mcpAppServersChat(seed, false, { engine: "v1", desktop: true, lifecycle: true });

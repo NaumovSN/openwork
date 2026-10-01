@@ -9,6 +9,7 @@ import {
   appCreationProgress,
   type AppCreationRun,
 } from "@/react-app/domains/apps/app-creation-progress";
+import { BuiltAppChatPreview } from "@/react-app/domains/apps/built-app-chat-preview";
 import { TechnicalDetailsPanel } from "./capability-call-line";
 
 const stages = [
@@ -27,7 +28,7 @@ export function AppBuilderStep({
 }) {
   const context = useOptionalMessageList();
   const resolveLifecycle = useCurrentToolLifecycleResolver();
-  const latest = run.builds.at(-1) ?? run.preparation;
+  const latest = run.builds.at(-1) ?? run.preparation ?? run.discoveries?.at(-1);
   const lifecycle = latest
     ? resolveLifecycle(latest.toolCallId, isToolPartInFlight(latest))
     : null;
@@ -38,7 +39,7 @@ export function AppBuilderStep({
       lifecycle !== "interrupted" &&
       lifecycle !== "waiting",
   );
-  const parts = [...(run.preparation ? [run.preparation] : []), ...run.builds];
+  const parts = [...(run.discoveries ?? []), ...(run.preparation ? [run.preparation] : []), ...run.builds];
   const starts = parts.flatMap((part) =>
     typeof part.callProviderMetadata?.openwork?.toolStartedAt === "number"
       ? [part.callProviderMetadata.openwork.toolStartedAt]
@@ -83,6 +84,7 @@ export function AppBuilderStep({
       aria-label={`${label} ${progress.title}`}
     >
       {progress.app ? (
+        <div className="flex items-center justify-between gap-2">
         <Button variant="ghost" className="h-auto justify-start gap-2 px-0 py-1 text-sm" aria-expanded={expanded}
           onClick={() => setExpanded((value) => !value)}>
           <img src="/openwork-mark.svg" alt="" className="size-5 dark:invert" />
@@ -90,6 +92,8 @@ export function AppBuilderStep({
           <span className="font-normal text-muted-foreground">{stages.length} steps{elapsed !== null ? ` · ${formatToolCallDuration(elapsed)}` : ""}</span>
           <ChevronRight className={`size-4 text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`} />
         </Button>
+        {progress.build ? <BuiltAppChatPreview part={progress.build} compact /> : null}
+        </div>
       ) : <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <img src="/openwork-mark.svg" alt="" className="size-5 dark:invert" />
         <span className="font-medium">
@@ -141,6 +145,8 @@ export function AppBuilderStep({
                   .slice(0, 3)
                   .map((tool) => tool.description.slice(0, 80))
                   .join(" · ") || "Self-contained app"
+              : i === 0 && current && run.discoveries?.length
+                ? (() => { const input = run.discoveries.at(-1)?.input; const query = input && typeof input === "object" ? Reflect.get(input, "query") : null; return typeof query === "string" ? query.slice(0, 140) : null; })()
               : i === 1 && current
                 ? progress.detail || "Building the view and interactions"
                 : i === 2 && current
@@ -165,7 +171,7 @@ export function AppBuilderStep({
                 )}
               </span>
               <span>
-                {stage.label}
+                {i === 0 && current ? "Finding what it needs" : stage.label}
                 {hint ? (
                   <span className="ml-3 text-muted-foreground">{hint}</span>
                 ) : null}

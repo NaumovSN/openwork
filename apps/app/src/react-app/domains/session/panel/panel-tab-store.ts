@@ -22,7 +22,7 @@ export type ArtifactPanelTab = {
 
 export type AppPanelTab = { id: string; type: "app"; label: string; appId: string; revisionId?: string; receiptId?: string };
 
-export type McpAppPanelTab = { id: string; type: "mcp-app"; label: string; appId: string; part: DynamicToolUIPart; origin: McpAppOrigin };
+export type McpAppPanelTab = { id: string; type: "mcp-app"; label: string; appId: string; updating?: boolean; part: DynamicToolUIPart; origin: McpAppOrigin };
 
 export type PanelTab = BrowserPanelTab | ArtifactPanelTab | AppPanelTab | McpAppPanelTab;
 

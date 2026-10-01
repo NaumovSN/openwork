@@ -9,6 +9,7 @@ import {
 export type AppCreationRun = {
   id: string;
   preparation?: DynamicToolUIPart;
+  discoveries?: DynamicToolUIPart[];
   builds: DynamicToolUIPart[];
 };
 export type AppCreationStage = "needs" | "writing" | "checking" | "ready";
@@ -49,7 +50,7 @@ export function appPreparation(part: DynamicToolUIPart | undefined) {
 }
 
 /** Correlate by the server-issued preparation id, keeping separate Apps and retries separate. */
-export function appCreationRuns(messages: UIMessage[]): AppCreationRun[] {
+export function appCreationRuns(messages: UIMessage[], creationRequested = false): AppCreationRun[] {
   const runs: AppCreationRun[] = [];
   const byPreparation = new Map<string, AppCreationRun>();
   const parts = new Map<string, DynamicToolUIPart>();
@@ -59,14 +60,19 @@ export function appCreationRuns(messages: UIMessage[]): AppCreationRun[] {
       if (part.type === "dynamic-tool") parts.set(part.toolCallId, part);
     }
   }
+  let discovery: AppCreationRun | undefined;
   for (const part of parts.values()) {
-    if (isAppPreparationPart(part)) {
-      const run: AppCreationRun = {
-        id: part.toolCallId,
-        preparation: part,
-        builds: [],
-      };
-      runs.push(run);
+    if (creationRequested && /(?:^|_)search_capabilities$/.test(part.toolName)) {
+      if (!discovery) {
+        discovery = { id: part.toolCallId, discoveries: [], builds: [] };
+        runs.push(discovery);
+      }
+      discovery.discoveries?.push(part);
+    } else if (isAppPreparationPart(part)) {
+      const run: AppCreationRun = discovery ?? { id: part.toolCallId, builds: [] };
+      run.preparation = part;
+      if (!discovery) runs.push(run);
+      discovery = undefined;
       const preparation = appPreparation(part);
       if (preparation) byPreparation.set(preparation.preparationId, run);
     } else if (isAppBuilderPart(part)) {
