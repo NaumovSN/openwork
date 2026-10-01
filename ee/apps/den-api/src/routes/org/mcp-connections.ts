@@ -6,6 +6,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import {
   discoverConnectionRequirements,
+  ENTERPRISE_MCP_REQUESTED_SCOPES_LIMIT,
   EnterpriseMcpOAuthContractError,
   selectRecoverableAuthorizationServerIssuer,
   validateMcpAuthorizationResponseIssuer,
@@ -339,7 +340,7 @@ const createExternalConnectionBodySchema = z.object({
     tokenEndpointAuthMethod: z.enum(["client_secret_basic", "client_secret_post"]).optional(),
   }).optional(),
   authorizationServerIssuer: z.string().trim().url().max(2048).nullable().optional(),
-  requestedScopes: z.array(z.string().trim().min(1).max(255)).max(100).optional(),
+  requestedScopes: z.array(z.string().trim().min(1).max(255)).max(ENTERPRISE_MCP_REQUESTED_SCOPES_LIMIT).optional(),
   /** Who can USE the connection. Defaults to org-wide so the naive quick-add path matches expectations, but it's an explicit, editable choice. */
   access: accessInputSchema.optional().default({ orgWide: true, memberIds: [], teamIds: [] }),
 })
@@ -381,7 +382,7 @@ const updateConnectionBodySchema = z.object({
     tokenEndpointAuthMethod: z.enum(["client_secret_basic", "client_secret_post"]).optional(),
   }).optional(),
   authorizationServerIssuer: z.string().trim().url().max(2048).nullable().optional(),
-  requestedScopes: z.array(z.string().trim().min(1).max(255)).max(100).optional(),
+  requestedScopes: z.array(z.string().trim().min(1).max(255)).max(ENTERPRISE_MCP_REQUESTED_SCOPES_LIMIT).optional(),
   access: accessInputSchema,
 })
 
