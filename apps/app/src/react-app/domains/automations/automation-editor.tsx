@@ -5,8 +5,9 @@ import { AUTOMATION_FREE_MODEL, type AutomationExecutionTarget, type AutomationS
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Textarea } from "@/components/ui/textarea"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { IconImage } from "@/react-app/design-system/icon-image"
 import { ChevronDown } from "lucide-react"
 
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal"
@@ -78,8 +79,14 @@ export type AutomationEditorProps = {
   initialKey?: string
   /** Where the Automation runs unless the person picks the other of `placementChoices`. */
   placement: AutomationExecutionTarget
-  /** Offered as a "Runs on" choice only when it holds both targets. */
+  /** Offered as a choice of what the Automation can use only when it holds both targets. */
   placementChoices?: readonly AutomationExecutionTarget[]
+  /** What a cloud run can reach: connected accounts only (headless) or a cloud computer's files too (web). */
+  cloudRuntime?: "headless" | "web" | null
+  /** True in the desktop app, where the desktop choice means this very computer. */
+  onThisComputer?: boolean
+  /** The person's connected accounts, shown on the choice that uses only them. */
+  connectedAccounts?: readonly AutomationConnectedAccount[]
   pinnedWorkflow?: AutomationEditorPinnedWorkflow
   modelOptions: readonly AutomationModelOption[]
   /** Models each placement can use, when they differ; defaults to `modelOptions`. */
@@ -90,6 +97,51 @@ export type AutomationEditorProps = {
   submitLabel: string
   onCancel: () => void
   onSave: (input: CreateAutomation, placement: AutomationExecutionTarget) => Promise<void> | void
+}
+
+export type AutomationConnectedAccount = { id: string; name: string; iconUrl: string | null }
+
+const PLACEMENT_OPTIONS: readonly AutomationExecutionTarget[] = ["desktop", "cloud"]
+
+/** The words for each choice say what the Automation can reach, not where it runs. */
+export function automationPlacementLabel(
+  placement: AutomationExecutionTarget,
+  context: { cloudRuntime?: "headless" | "web" | null; onThisComputer?: boolean },
+) {
+  if (placement === "desktop") {
+    return context.onThisComputer ? "Your connected accounts and files on this computer" : "Your connected accounts and files on your computer"
+  }
+  return context.cloudRuntime === "web" ? "Your connected accounts and files on your cloud computer" : "Only your connected accounts"
+}
+
+export function automationPlacementNote(placement: AutomationExecutionTarget, cloudRuntime?: "headless" | "web" | null) {
+  if (placement === "desktop") return "Needs OpenWork open on one of your computers at the scheduled time."
+  return cloudRuntime === "web"
+    ? "Runs on your cloud computer, even when your desktop is offline."
+    : "Runs in the cloud, even when your computer is off."
+}
+
+function ConnectedAccountLogos({ accounts }: { accounts: readonly AutomationConnectedAccount[] }) {
+  if (accounts.length === 0) return <span className="text-xs text-muted-foreground">None connected yet</span>
+  const shown = accounts.slice(0, 4)
+  const names = accounts.map((account) => account.name)
+  const label = names.length > 3 ? `${names.slice(0, 3).join(", ")} and ${names.length - 3} more` : names.join(", ")
+  return (
+    <span className="flex shrink-0 items-center gap-1.5" aria-label={label} title={label} data-automation-connected-accounts={accounts.length}>
+      <span className="flex gap-1">
+        {shown.map((account) => (
+          <span key={account.id} className="grid size-5 place-items-center overflow-hidden rounded-md border border-border bg-background">
+            <IconImage
+              src={account.iconUrl}
+              size={14}
+              fallback={<span className="text-[10px] font-medium text-muted-foreground">{account.name.charAt(0).toUpperCase()}</span>}
+            />
+          </span>
+        ))}
+      </span>
+      {accounts.length > shown.length ? <span className="text-xs text-muted-foreground">+{accounts.length - shown.length}</span> : null}
+    </span>
+  )
 }
 
 export function AutomationEditor(props: AutomationEditorProps) {
@@ -227,7 +279,9 @@ export function AutomationEditor(props: AutomationEditorProps) {
               setInput((current) => ({ ...current, instructions }))
             }}
           />
-          <p className="text-xs text-muted-foreground">{cloud ? "Each run starts a new task on your cloud computer." : "Each run starts a new task on your desktop computer."}</p>
+          <p className="text-xs text-muted-foreground">{cloud
+            ? props.cloudRuntime === "web" ? "Each run starts a new task on your cloud computer." : "Each run starts fresh in the cloud."
+            : "Each run starts a new task on your desktop computer."}</p>
         </div>
       )}
 
@@ -327,7 +381,9 @@ export function AutomationEditor(props: AutomationEditorProps) {
             options={pickerOptions}
             query={modelQuery}
             setQuery={setModelQuery}
-            subtitle={cloud ? "Your cloud computer uses this model and reasoning level." : "Your desktop computer uses this model and reasoning level."}
+            subtitle={cloud
+              ? props.cloudRuntime === "web" ? "Your cloud computer uses this model and reasoning level." : "Cloud runs use this model and reasoning level."
+              : "Your desktop computer uses this model and reasoning level."}
             target="default"
             current={{ providerID: input.model.providerId, modelID: input.model.modelId }}
             onSelect={(model) => {
@@ -355,30 +411,33 @@ export function AutomationEditor(props: AutomationEditorProps) {
 
       {canChoosePlacement ? (
         <div className="space-y-2">
-          <Label id="automation-runs-on">Runs on</Label>
-          <ToggleGroup
-            aria-labelledby="automation-runs-on"
+          <Label id="automation-can-use">What it can use</Label>
+          <RadioGroup
+            aria-labelledby="automation-can-use"
             data-automation-runs-on={placement}
-            value={[placement]}
-            onValueChange={(values) => {
-              const next = values[0]
+            value={placement}
+            onValueChange={(next) => {
               if (next === "desktop" || next === "cloud") choosePlacement(next)
             }}
-            variant="segmented"
-            spacing={0.5}
-            size="sm"
+            className="gap-0 overflow-hidden rounded-xl border border-border"
           >
-            <ToggleGroupItem value="desktop">My desktops</ToggleGroupItem>
-            <ToggleGroupItem value="cloud">Cloud</ToggleGroupItem>
-          </ToggleGroup>
+            {PLACEMENT_OPTIONS.map((option) => (
+              <label
+                key={option}
+                className="flex min-h-11 cursor-pointer items-center gap-3 border-border px-3 py-2.5 text-sm transition-colors duration-150 hover:bg-muted/40 has-[[data-checked]]:bg-muted/50 [&:not(:first-child)]:border-t"
+              >
+                <RadioGroupItem value={option} />
+                <span className="min-w-0 flex-1">{automationPlacementLabel(option, { cloudRuntime: props.cloudRuntime, onThisComputer: props.onThisComputer })}</span>
+                {option === "cloud" && props.cloudRuntime !== "web" ? <ConnectedAccountLogos accounts={props.connectedAccounts ?? []} /> : null}
+              </label>
+            ))}
+          </RadioGroup>
         </div>
       ) : null}
 
-      <div className="rounded-xl border border-border bg-muted/30 p-3 text-sm text-muted-foreground" data-automation-placement={placement}>
-        {cloud
-          ? "Runs on your cloud computer, even when your desktop is offline. You can check past runs here."
-          : "Runs on whichever of your desktops is connected. Keep OpenWork open and signed in on one of them at the scheduled time, or the run is marked as missed."}
-      </div>
+      <p className="text-sm text-muted-foreground" data-automation-placement={placement}>
+        {automationPlacementNote(placement, props.cloudRuntime)}
+      </p>
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="outline" disabled={props.busy} onClick={props.onCancel}>Cancel</Button>

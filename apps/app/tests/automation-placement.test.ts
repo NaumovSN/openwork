@@ -10,7 +10,7 @@ import type {
 } from "@openwork/types/automations"
 
 import {
-  automationCloudRunAvailable,
+  automationCloudRunAvailable, automationCloudRuntime,
   automationPlacementChoices,
   resolveAutomationPlacement,
 } from "../src/react-app/domains/automations/automation-placement"
@@ -64,6 +64,13 @@ describe("Automation placement choices", () => {
     expect(resolveAutomationPlacement("cloud", ["desktop"])).toBe("desktop")
   })
 
+  test("a cloud run reaches connected accounts only on the headless runtime, files too on a cloud computer", () => {
+    expect(automationCloudRuntime(targets([desktop, { kind: "cloud", available: true, runtime: "headless" }]))).toBe("headless")
+    expect(automationCloudRuntime(targets([desktop, { kind: "cloud", available: true, runtime: "web" }]))).toBe("web")
+    expect(automationCloudRuntime(targets([desktop, cloud(false)]))).toBeNull()
+    expect(automationCloudRuntime(null)).toBeNull()
+  })
+
   test("running once in the cloud is offered only when Cloud can run it now", () => {
     expect(automationCloudRunAvailable(targets([desktop, cloud(true)]))).toBe(true)
     expect(automationCloudRunAvailable(targets([desktop, cloud(false)]))).toBe(false)
@@ -77,11 +84,14 @@ describe("Automation placement choices", () => {
   })
 })
 
-describe("Automation editor: Runs on", () => {
+describe("Automation editor: what it can use", () => {
   const starter: AutomationModelOption = { providerId: "opencode", modelId: "big-pickle", providerName: "OpenCode Zen", modelName: "Big Pickle", accessKind: "free" }
   const team: AutomationModelOption = { providerId: "lpr_fixture", modelId: "team-model", providerName: "Team provider", modelName: "Team model", accessKind: "authorized_custom" }
 
-  async function renderEditor(placementChoices: readonly AutomationExecutionTarget[]) {
+  async function renderEditor(
+    placementChoices: readonly AutomationExecutionTarget[],
+    context: { cloudRuntime?: "headless" | "web" | null; onThisComputer?: boolean } = { cloudRuntime: "headless", onThisComputer: true },
+  ) {
     const { AutomationEditor } = await import("../src/react-app/domains/automations/automation-editor")
     const saved: Array<{ input: CreateAutomation; placement: AutomationExecutionTarget }> = []
     const host = document.createElement("div")
@@ -90,6 +100,8 @@ describe("Automation editor: Runs on", () => {
     await act(async () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children:
       createElement(AutomationEditor, {
         placement: "desktop", placementChoices, modelOptions: [starter, team],
+        cloudRuntime: context.cloudRuntime, onThisComputer: context.onThisComputer,
+        connectedAccounts: [{ id: "c1", name: "Slack", iconUrl: null }, { id: "c2", name: "Notion", iconUrl: null }],
         modelOptionsByPlacement: { desktop: [starter, team], cloud: [team] },
         busy: false, submitLabel: "Create and activate", onCancel: () => undefined,
         onSave: (input, placement) => { saved.push({ input, placement }) },
@@ -104,6 +116,11 @@ describe("Automation editor: Runs on", () => {
           Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(field, value)
           field.dispatchEvent(new Event("input", { bubbles: true }))
         })
+      },
+      async choose(index: number) {
+        const radio = document.querySelectorAll<HTMLElement>('[data-automation-runs-on] [role="radio"]')[index]
+        if (!radio) throw new Error(`Missing choice ${index}`)
+        await act(async () => radio.click())
       },
       async click(label: string) {
         const control = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === label)
@@ -127,14 +144,36 @@ describe("Automation editor: Runs on", () => {
     }
   })
 
-  test("choosing Cloud keeps what was typed, leaves the desktop-only starter model, and saves with the choice", async () => {
+  test("the choices say what it can use, with the connected accounts it would use", async () => {
+    const editor = await renderEditor(["desktop", "cloud"])
+    try {
+      const choices = document.querySelector("[data-automation-runs-on]")?.textContent ?? ""
+      expect(choices).toContain("Your connected accounts and files on this computer")
+      expect(choices).toContain("Only your connected accounts")
+      expect(document.querySelector("[data-automation-connected-accounts]")?.getAttribute("aria-label")).toBe("Slack, Notion")
+    } finally {
+      await editor.unmount()
+    }
+    const web = await renderEditor(["desktop", "cloud"], { cloudRuntime: "web", onThisComputer: false })
+    try {
+      const choices = document.querySelector("[data-automation-runs-on]")?.textContent ?? ""
+      expect(choices).toContain("Your connected accounts and files on your computer")
+      expect(choices).toContain("Your connected accounts and files on your cloud computer")
+      expect(document.querySelector("[data-automation-connected-accounts]")).toBeNull()
+    } finally {
+      await web.unmount()
+    }
+  })
+
+  test("choosing connected accounts only keeps what was typed, leaves the desktop-only starter model, and saves with the choice", async () => {
     const editor = await renderEditor(["desktop", "cloud"])
     try {
       await editor.type("#automation-name", "Morning brief")
       await editor.type("#automation-instructions", "Summarize what changed overnight.")
       expect(document.querySelector("#automation-model")?.textContent).toContain("Big Pickle")
-      await editor.click("Cloud")
+      await editor.choose(1)
       expect(document.querySelector("[data-automation-runs-on]")?.getAttribute("data-automation-runs-on")).toBe("cloud")
+      expect(document.querySelector("[data-automation-placement]")?.textContent).toBe("Runs in the cloud, even when your computer is off.")
       expect(document.querySelector("[data-automation-placement]")?.getAttribute("data-automation-placement")).toBe("cloud")
       expect(document.querySelector("#automation-model")?.textContent).toContain("Team model")
       expect(document.querySelector<HTMLInputElement>("#automation-name")?.value).toBe("Morning brief")
