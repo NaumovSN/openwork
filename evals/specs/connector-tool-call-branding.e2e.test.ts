@@ -9,6 +9,23 @@ test("connector-backed tool calls show first-class branding and human-readable l
   await user.type("composer", world.prompt);
   await user.click("Run task");
 
+  // TODO(primitive): observe the elapsed label on this individual connected action.
+  const readRunning = () => probe.eval(() => {
+    const row = [...document.querySelectorAll<HTMLElement>('[data-capability-call]')]
+      .find(node => node.innerText.includes('Listing channels'));
+    return { duration: row?.querySelector('.tabular-nums')?.textContent ?? null,
+      rawVisible: Boolean(row?.querySelector('pre')), text: row?.innerText ?? "" };
+  });
+  const first = await probe.eventually(readRunning, { within: 90_000, intervalMs: 100,
+    label: "individual lookup has its own running duration", until: value => value.duration !== null });
+  const advanced = await probe.eventually(readRunning, { within: 5_000, intervalMs: 100,
+    label: "individual lookup elapsed time advances", until: value => value.duration !== null && value.duration !== first.duration });
+  expect(first.rawVisible).toBe(false);
+  expect(advanced.rawVisible).toBe(false);
+  evidence.recordJsonArtifact("Connected action live elapsed time", { first, advanced });
+  evidence.recordAssertionEvidence("Each running connected action shows advancing elapsed time",
+    `${first.duration} advanced to ${advanced.duration} on Listing channels, with raw output still disclosed`, true);
+
   await step("before: a member sees the running lookup without raw tool output", async () => {
     await user.see({ text: /Searched your connections for.*Slack list_channels/ }, { timeoutMs: 60_000 });
     await user.see({ text: /^(Listing|Listed) channels$/ }, { timeoutMs: 30_000 });
@@ -45,6 +62,10 @@ test("connector-backed tool calls show first-class branding and human-readable l
       expect(await savedResult()).toContain(world.proof);
       expect(await savedResult()).not.toContain("The result was not recorded");
     }
+    await user.click({ role: "button", label: "Copy technical details" });
+    await user.see({ text: "Copied" });
+    evidence.recordAssertionEvidence("The disclosed action can copy its technical details",
+      "Opening Listed channels exposes the Copy technical details action; its real clipboard write is acknowledged as Copied", true);
     await user.screenshot();
     await user.reload();
     if (world.engine === "v2") await user.click({ role: "button", label: /Looked up.*Show steps/ });
