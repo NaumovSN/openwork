@@ -379,7 +379,23 @@ export async function connectorBranding(seed: Seed) {
     } },
   });
   await seed.session(app);
-  return { app, den, engine, prompt, failurePrompt, mutationPrompt, mutationProof, proof };
+  return { app, den, engine, prompt, failurePrompt, mutationPrompt, mutationProof, proof,
+    nativeToolHistory: () => seed.evalIn(app, browserScript(async (workspaceId, engine) => {
+      const sessionId = document.querySelector('[data-session-surface-id]')?.getAttribute("data-session-surface-id");
+      const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/workspace/" + encodeURIComponent(workspaceId)
+        + (engine === "v2" ? "/opencode2/api" : "/opencode");
+      const response = await fetch(base + "/session/" + encodeURIComponent(sessionId ?? "") + "/message?limit=50", {
+        headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") }, signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) return { status: response.status };
+      const raw = await response.json();
+      const messages = Array.isArray(raw) ? raw : raw.data ?? [];
+      return messages.map((message: { id?: string; type?: string; info?: unknown; content?: { type: string }[]; parts?: { type: string }[] }) => ({
+        id: message.id, type: message.type, info: message.info,
+        tools: (message.content ?? message.parts ?? []).filter(part => part.type === "tool"),
+      }));
+    }, [workspace.workspaceId, engine]), { awaitPromise: true }),
+  };
 }
 
 export async function connectorCatalogManagement(seed: Seed) {

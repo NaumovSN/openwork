@@ -28,9 +28,14 @@ test("connector-backed tool calls show first-class branding and human-readable l
   expect(first.rawVisible).toBe(false);
   expect(advanced.rawVisible).toBe(false);
   if (world.engine === "v2") {
+    evidence.recordJsonArtifact("Running v2 native history before reload", await world.nativeToolHistory());
     await user.reload();
     const restored = await probe.eventually(readRunning, { within: 15_000, intervalMs: 100,
-      label: "the same live connected action restores its elapsed time", until: value => value.duration !== null });
+      label: "the same live connected action restores its elapsed time", until: value => value.duration !== null }).catch(async error => {
+      evidence.recordJsonArtifact("Running v2 reload diagnostics", { screen: await probe.text(), nativeHistory: await world.nativeToolHistory() });
+      await user.screenshot();
+      throw error;
+    });
     const seconds = (duration: string | null) => [...(duration ?? "").matchAll(/(\d+)\s*(m|s)/g)]
       .reduce((total, match) => total + Number(match[1]) * (match[2] === "m" ? 60 : 1), 0);
     expect(seconds(restored.duration)).toBeGreaterThanOrEqual(seconds(advanced.duration));
