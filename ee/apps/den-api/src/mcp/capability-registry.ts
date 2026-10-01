@@ -425,6 +425,7 @@ async function executeMarketplaceSource(
     validateScriptOutput: true,
     enabled: ctx.externalMcpConnectionsEnabled,
     redirectUriBase: ctx.redirectUriBase,
+    describeUnavailable: (missing) => liveArtifactConnectionFailure(ctx, missing),
   })
 }
 

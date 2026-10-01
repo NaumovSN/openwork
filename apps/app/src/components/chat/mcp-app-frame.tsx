@@ -8,7 +8,8 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js"
 
 import { connectionActionAppResourceUri, legacyConnectionActionAppResourceUri } from "@openwork/types/connection-action-app"
 import { parseMcpAppResourceUri } from "@openwork/types/mcp-app"
-import { isConnectionDiscoveryTool } from "@/components/tools/error-attribution"
+import { appToolResultConnectionToolName, connectionCardFromMcpToolResult, isConnectionDiscoveryTool } from "@/components/tools/error-attribution"
+import { DashboardConnectionCard } from "@/react-app/domains/dashboard/dashboard-connection-card"
 import { AppChatArtifact } from "@/react-app/domains/apps/app-chat-artifact"
 import { createConnectionActionController, hasHostConnectionActions, standardMcpToolResult } from "./mcp-connection-action"
 import { openDesktopUrl } from "@/app/lib/desktop"
@@ -856,6 +857,8 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
   // preview origin stable across unrelated re-renders.
   const previewOrigin = useMemo(() => origin ? { ...origin, readOnly: true } : origin, [origin])
   const [error, setError] = useState<McpAppDiagnostic | null>(null)
+  // A connection failure from the App's own call, shown as OpenWork's card in place of the App.
+  const [appConnection, setAppConnection] = useState<{ toolName: string; output: unknown } | null>(null)
   const [resolveToken, setResolveToken] = useState(0)
   const consumedRetryToken = useRef(0)
   // The sandbox view unmounts on every preserved-result change; keep the last
@@ -958,6 +961,8 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
   if (error) return <McpAppDiagnosticNotice error={error} notice={CHAT_MCP_APP_UNAVAILABLE_NOTICE} onRetry={() => setResolveToken((token) => token + 1)} />
   if (!app || resolvedFor.current !== resolution) return launch && resolvedFor.current !== resolution
     ? <p role="status">Opening App…</p> : null
+  if (appConnection) return <DashboardConnectionCard toolName={appConnection.toolName} toolCallId={`${part.toolCallId}:app`}
+    output={appConnection.output} onConnected={() => { setAppConnection(null); setResolveToken((token) => token + 1) }} />
   return (
     <McpAppSandboxView
       origin={previewActions && previewOrigin ? previewOrigin : origin}
@@ -974,6 +979,12 @@ function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
       }}
       initialHeight={heightRef.current}
       onHeightChange={(next) => { heightRef.current = next }}
+      onAppToolResult={(appResult) => {
+        if (!isRecord(appResult) || appResult.isError !== true) return
+        const toolName = appToolResultConnectionToolName(app, part.toolName)
+        const match = connectionCardFromMcpToolResult(toolName, appResult)
+        if (match) setAppConnection({ toolName, output: match.output })
+      }}
     />
   )
 }
