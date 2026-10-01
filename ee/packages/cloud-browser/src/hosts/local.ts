@@ -119,6 +119,13 @@ export function createLocalBrowserHost(options: LocalBrowserHostOptions = {}): L
     const current = running.get(id)
     if (current && await answers(current.endpoint)) return current.endpoint
     running.delete(id)
+    // A browser an earlier Den process started is still this member's browser.
+    const previous = await activePort(join(profileRoot, id))
+    if (previous && await answers(endpointFor(previous))) {
+      const endpoint = endpointFor(previous)
+      running.set(id, { child: null, endpoint })
+      return endpoint
+    }
     return null
   }
 

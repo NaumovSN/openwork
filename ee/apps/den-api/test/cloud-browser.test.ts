@@ -151,6 +151,17 @@ describe("cloud browser tools", () => {
     })
   })
 
+  test("a hand-off with nothing open opens the named site, so the person lands on it", async () => {
+    const browser = createFakeCloudBrowser()
+    await withTools(browser, async (call) => {
+      const handoff = payloadOf(await call("browser_handoff", { reason: "sign_in", site: "github.com" }))
+      expect(handoff).toMatchObject({ ok: true, status: "waiting_for_person", browserUrl: `${BROWSER_URL}?site=github.com` })
+      expect(browser.calls.filter((entry) => entry.method === "open").map((entry) => entry.input)).toEqual([{ url: "https://github.com/" }])
+    })
+    expect(tools.siteAddress("Example Mail")).toBeNull()
+    expect(tools.siteAddress("https://app.example.com/login")).toBe("https://app.example.com/login")
+  })
+
   test("failures are structured, with a next step and no retry", async () => {
     const browser = createFakeCloudBrowser()
     await withTools(browser, async (call) => {

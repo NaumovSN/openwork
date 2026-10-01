@@ -96,6 +96,18 @@ function siteOf(url: string | null): string | null {
   }
 }
 
+/** "github.com" or "https://github.com/login" to an address to open; a plain name ("Gusto") opens nothing. */
+export function siteAddress(site: string | undefined): string | null {
+  if (!site) return null
+  const candidate = /^https?:\/\//i.test(site) ? site : `https://${site}`
+  try {
+    const url = new URL(candidate)
+    return url.hostname.includes(".") && !/\s/.test(site) ? url.toString() : null
+  } catch {
+    return null
+  }
+}
+
 export function registerCloudBrowserTools(input: {
   server: McpServer
   browser: CloudBrowser
@@ -161,7 +173,14 @@ export function registerCloudBrowserTools(input: {
       site: z.string().trim().min(1).max(253).optional().describe("The site's name or host, for the person. Defaults to the open page's host."),
     }),
   }, async ({ reason, site }) => run(async () => {
-    const current = site ?? siteOf((await browser.status(key).catch(() => null))?.url ?? null)
+    let status = await browser.status(key).catch(() => null)
+    // The person needs the page in front of them: open the named site when nothing is open yet.
+    const address = !status?.running || !status.url ? siteAddress(site) : null
+    if (address) {
+      await browser.open(key, { url: address })
+      status = await browser.status(key).catch(() => null)
+    }
+    const current = site ?? siteOf(status?.url ?? null)
     return json(handoffGuidance({ reason, site: current, browserUrl: input.browserUrl(current) }))
   }))
 }
