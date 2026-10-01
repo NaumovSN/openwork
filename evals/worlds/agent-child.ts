@@ -23,6 +23,16 @@ async function childConversation(seed: Seed, surface: "web" | "electron") {
   const session = await seed.session(base.app, { title: "Fixture review" });
   return { ...base, session, engine, prompt, childPrompt, grandchildPrompt, followup, finalReply,
     selectedSessionId: () => seed.evalIn(base.app, () => document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? ""),
+    nativeSession: (sessionId: string) => seed.evalIn(base.app, browserScript(async (workspaceId, engine, sessionId) => {
+      const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/workspace/" + encodeURIComponent(workspaceId)
+        + (engine === "v2" ? "/opencode2/api" : "/opencode");
+      const response = await fetch(base + "/session/" + encodeURIComponent(sessionId), {
+        headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") },
+      });
+      if (!response.ok) throw new Error("Native session ownership: " + response.status);
+      const body: unknown = await response.json();
+      return body;
+    }, [base.workspace.workspaceId, engine, sessionId]), { awaitPromise: true }),
     delegatedTools: () => seed.evalIn(base.app, browserScript(async (workspaceId, engine) => {
       const sessionId = document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id");
       const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/workspace/" + encodeURIComponent(workspaceId)
