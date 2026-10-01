@@ -148,18 +148,24 @@ describe("Automation editor: what it can use", () => {
     const editor = await renderEditor(["desktop", "cloud"])
     try {
       const choices = document.querySelector("[data-automation-runs-on]")?.textContent ?? ""
-      expect(choices).toContain("Your connected accounts and files on this computer")
-      expect(choices).toContain("Only your connected accounts")
-      expect(document.querySelector("[data-automation-connected-accounts]")?.getAttribute("aria-label")).toBe("Slack, Notion")
+      expect(choices).toContain("Connected accounts and files on this computer")
+      expect(choices).toContain("Only connected accounts")
+      // Both choices show the accounts; only the one with files adds the computer.
+      const [withFiles, accountsOnly] = [...document.querySelectorAll("[data-automation-connected-accounts]")]
+      expect(withFiles?.getAttribute("aria-label")).toBe("Files on your computer, plus Slack, Notion")
+      expect(withFiles?.querySelector('[data-automation-files="computer"]')).not.toBeNull()
+      expect(accountsOnly?.getAttribute("aria-label")).toBe("Slack, Notion")
+      expect(accountsOnly?.querySelector("[data-automation-files]")).toBeNull()
     } finally {
       await editor.unmount()
     }
     const web = await renderEditor(["desktop", "cloud"], { cloudRuntime: "web", onThisComputer: false })
     try {
       const choices = document.querySelector("[data-automation-runs-on]")?.textContent ?? ""
-      expect(choices).toContain("Your connected accounts and files on your computer")
-      expect(choices).toContain("Your connected accounts and files on your cloud computer")
-      expect(document.querySelector("[data-automation-connected-accounts]")).toBeNull()
+      expect(choices).toContain("Connected accounts and files on your computer")
+      expect(choices).toContain("Connected accounts and files on your cloud computer")
+      expect(document.querySelectorAll('[data-automation-files="computer"]')).toHaveLength(1)
+      expect(document.querySelectorAll('[data-automation-files="cloud-computer"]')).toHaveLength(1)
     } finally {
       await web.unmount()
     }

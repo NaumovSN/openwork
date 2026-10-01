@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Textarea } from "@/components/ui/textarea"
 import { IconImage } from "@/react-app/design-system/icon-image"
-import { ChevronDown } from "lucide-react"
+import { ChevronDown, Cloud, Laptop } from "lucide-react"
 
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal"
 import type { AutomationModelOption, AutomationProviderCatalog } from "./automation-model-options"
@@ -109,9 +109,9 @@ export function automationPlacementLabel(
   context: { cloudRuntime?: "headless" | "web" | null; onThisComputer?: boolean },
 ) {
   if (placement === "desktop") {
-    return context.onThisComputer ? "Your connected accounts and files on this computer" : "Your connected accounts and files on your computer"
+    return context.onThisComputer ? "Connected accounts and files on this computer" : "Connected accounts and files on your computer"
   }
-  return context.cloudRuntime === "web" ? "Your connected accounts and files on your cloud computer" : "Only your connected accounts"
+  return context.cloudRuntime === "web" ? "Connected accounts and files on your cloud computer" : "Only connected accounts"
 }
 
 export function automationPlacementNote(placement: AutomationExecutionTarget, cloudRuntime?: "headless" | "web" | null) {
@@ -121,16 +121,32 @@ export function automationPlacementNote(placement: AutomationExecutionTarget, cl
     : "Runs in the cloud, even when your computer is off."
 }
 
-function ConnectedAccountLogos({ accounts }: { accounts: readonly AutomationConnectedAccount[] }) {
-  if (accounts.length === 0) return <span className="text-xs text-muted-foreground">None connected yet</span>
+const LOGO_TILE = "grid size-5 place-items-center overflow-hidden rounded-md border border-border bg-background"
+
+/**
+ * What a choice can reach, at a glance: the computer whose files it can use
+ * (when it can), plus the logos of the person's connected accounts.
+ */
+function ConnectedAccountLogos({ accounts, files }: { accounts: readonly AutomationConnectedAccount[]; files?: "computer" | "cloud-computer" }) {
   const shown = accounts.slice(0, 4)
   const names = accounts.map((account) => account.name)
-  const label = names.length > 3 ? `${names.slice(0, 3).join(", ")} and ${names.length - 3} more` : names.join(", ")
+  const accountsLabel = names.length > 3 ? `${names.slice(0, 3).join(", ")} and ${names.length - 3} more` : names.join(", ")
+  const filesLabel = files === "computer" ? "Files on your computer" : files === "cloud-computer" ? "Files on your cloud computer" : null
+  const label = [filesLabel, accountsLabel].filter(Boolean).join(", plus ")
+  if (!filesLabel && accounts.length === 0) return <span className="text-xs text-muted-foreground">None connected yet</span>
   return (
     <span className="flex shrink-0 items-center gap-1.5" aria-label={label} title={label} data-automation-connected-accounts={accounts.length}>
+      {files ? (
+        <>
+          <span className={`${LOGO_TILE} text-muted-foreground`} data-automation-files={files}>
+            {files === "computer" ? <Laptop size={13} strokeWidth={1.5} aria-hidden /> : <Cloud size={13} strokeWidth={1.5} aria-hidden />}
+          </span>
+          {accounts.length > 0 ? <span aria-hidden className="text-xs text-muted-foreground">+</span> : null}
+        </>
+      ) : null}
       <span className="flex gap-1">
         {shown.map((account) => (
-          <span key={account.id} className="grid size-5 place-items-center overflow-hidden rounded-md border border-border bg-background">
+          <span key={account.id} className={LOGO_TILE}>
             <IconImage
               src={account.iconUrl}
               size={14}
@@ -428,7 +444,10 @@ export function AutomationEditor(props: AutomationEditorProps) {
               >
                 <RadioGroupItem value={option} />
                 <span className="min-w-0 flex-1">{automationPlacementLabel(option, { cloudRuntime: props.cloudRuntime, onThisComputer: props.onThisComputer })}</span>
-                {option === "cloud" && props.cloudRuntime !== "web" ? <ConnectedAccountLogos accounts={props.connectedAccounts ?? []} /> : null}
+                <ConnectedAccountLogos
+                  accounts={props.connectedAccounts ?? []}
+                  files={option === "desktop" ? "computer" : props.cloudRuntime === "web" ? "cloud-computer" : undefined}
+                />
               </label>
             ))}
           </RadioGroup>
