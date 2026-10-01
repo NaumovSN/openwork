@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { TaskRecovery } from "@/components/chat/task-recovery";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { useSessionActivityStore } from "../session/status/session-activity-store";
@@ -160,13 +161,14 @@ function AutoAccessFooterContent({ available, syncing = false }: { available: bo
 export function AutoAccessNotice({ wall, sessionId, workspaceId, recovery }: { wall: AutoAccessWall; sessionId: string; workspaceId?: string; recovery?: { owner: RejectedTurnOwner; id: string } }) {
   const auth = useDenAuth();
   const copy = autoWallCopy(wall, auth.isSignedIn);
-  return <section role="status" data-testid="auto-access-wall" data-state={wall.state} className="rounded-lg border border-border px-4 py-3 text-sm">
-    <p className="font-medium">{copy.title}</p>
-    <p className="mt-1 text-muted-foreground">{copy.detail}</p>
-    <div className="mt-3 flex flex-wrap gap-2">
-      {wall.state === "update" ? <Button size="sm" onClick={openAutoUpdate}>Update OpenWork</Button>
-        : wall.state === "limit" && auth.status === "signed_out" ? <Button size="sm" onClick={() => openAutoSignIn(recovery)}>Sign in to OpenWork</Button> : null}
-      <Button size="sm" variant="ghost" onClick={() => openAlternativeModelPicker(sessionId)}>Switch model</Button>
-    </div>
-  </section>;
+  // Signing in raises the free limit; offer it wherever the notice reads as the limit.
+  const offerSignIn = auth.status === "signed_out" && ["limit", "update", "not_offered"].includes(wall.state)
+    && wall.code !== "free_not_enrolled" && wall.code !== "managed_models_disabled_for_dpa";
+  return <div data-testid="auto-access-wall" data-state={wall.state}>
+    <TaskRecovery compact state="paused" title={copy.title} description={copy.detail} technicalDetails={copy.technicalDetails}
+      actions={<>
+        {offerSignIn ? <Button size="xs" variant="outline" onClick={() => openAutoSignIn(recovery)}>Sign in</Button> : null}
+        <Button size="xs" variant="ghost" onClick={() => openAlternativeModelPicker(sessionId)}>Choose a model</Button>
+      </>} />
+  </div>;
 }

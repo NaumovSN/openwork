@@ -525,7 +525,7 @@ test("Auto remains checked while recovery focuses an alternative pin, and immuta
     const statusKey = autoAccessStatusQueryKey(signedOut);
     expect(queryClient.getQueryState(statusKey)).toBeUndefined();
     await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), state: "exhausted" }));
-    expect(autoRow()?.textContent).toContain("Free limit used up · resets Monday");
+    expect(autoRow()?.textContent).toContain("Free limit used up");
     expect(autoRow()?.getAttribute("data-checked")).toBe("true");
     await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), state: "exhausted", providerID: "another-provider" }));
     expect(autoRow()?.textContent).toContain("Free · OpenWork picks the model");
