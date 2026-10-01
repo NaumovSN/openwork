@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -106,5 +106,27 @@ test("local source identity changes for tracked edits, staging and untracked byt
     const changed = await computeLocalSourceHash(root);
     assert.notEqual(changed, untracked);
     assert.notEqual(computeInvocationHash("recipe", [], "local", {}, untracked), computeInvocationHash("recipe", [], "local", {}, changed));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("local source identity hashes a nested repository instead of reading it as a file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "world-source-nested-"));
+  const exec = promisify(execFile);
+  const commit = ["-c", "user.name=Test", "-c", "user.email=test@example.invalid", "-c", "commit.gpgsign=false", "commit", "-m", "fixture"];
+  const nested = join(root, "nested");
+  try {
+    await exec("git", ["init"], { cwd: root });
+    await writeFile(join(root, "app.ts"), "initial");
+    await exec("git", ["add", "app.ts"], { cwd: root });
+    await exec("git", commit, { cwd: root });
+    await mkdir(nested);
+    await exec("git", ["init"], { cwd: nested });
+    await writeFile(join(nested, "inner.ts"), "first");
+    await exec("git", ["add", "inner.ts"], { cwd: nested });
+    await exec("git", commit, { cwd: nested });
+    const before = await computeLocalSourceHash(root);
+    assert.equal(await computeLocalSourceHash(root), before);
+    await writeFile(join(nested, "inner.ts"), "second");
+    assert.notEqual(await computeLocalSourceHash(root), before);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
