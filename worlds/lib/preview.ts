@@ -39,6 +39,15 @@ export const PREVIEW_SCENARIOS: Record<PreviewSurface, readonly PreviewScenario[
   full: DEN_SCENARIOS,
 };
 
+/** Point a Den scenario asked of the desktop-only preview at the world that has it. */
+function scenarioPointer(surface: PreviewSurface, scenario: string): string {
+  return surface === "desktop" && DEN_SCENARIOS.some((entry) => entry === scenario)
+    ? ` preview-desktop is the app alone; for ${scenario} use preview-full --seed ${scenario}.`
+    : "";
+}
+
+const SIGNED_IN_ELSEWHERE = " For a signed-in desktop use preview-full --place daytona --seed workspace.";
+
 export function parsePreviewOptions(argv: readonly string[], allowExternalRelease = false) {
   let scenario: PreviewScenario = "fresh";
   let lifetimeMinutes = 120;
@@ -358,10 +367,10 @@ export function freestyleDesktopPlan(input: {
   const parsed = parsePreviewOptions(input.argv);
   if (parsed.release) throw new Error("Freestyle desktop runs a pushed commit, not a published release; use --place daytona for releases.");
   if (input.argv.includes("--scenario") && parsed.scenario !== "fresh") {
-    throw new Error("Freestyle desktop supports only the signed-out fresh scenario.");
+    throw new Error(`Freestyle desktop supports only the signed-out fresh scenario.${SIGNED_IN_ELSEWHERE}`);
   }
   if (input.seeds.length > 1 || input.seeds.some((seed) => seed.name !== "fresh" || seed.arg !== undefined)) {
-    throw new Error("Freestyle desktop supports only --seed fresh.");
+    throw new Error(`Freestyle desktop supports only --seed fresh.${SIGNED_IN_ELSEWHERE}`);
   }
   const unknown = Object.keys(input.sources).filter((key) => key !== "*" && key !== "desktop");
   if (unknown.length > 0) throw new Error(`Freestyle desktop has no ${unknown.join(", ")} component; it runs without a Den.`);
@@ -465,12 +474,12 @@ export async function runPreview(surface: PreviewSurface, argv = process.argv.sl
   if (new Set(seedNames).size !== seedNames.length || seedNames.length > 1) throw new Error(`${name} accepts one scenario seed; choose ${allowed.join(", ")}.`);
   const seed = seeds[0];
   if (seed && (seed.arg !== undefined || !isPreviewScenario(seed.name) || !allowed.includes(seed.name))) {
-    throw new Error(`${name} --seed accepts exactly ${allowed.join(", ")} without arguments.`);
+    throw new Error(`${name} --seed accepts exactly ${allowed.join(", ")} without arguments.${scenarioPointer(surface, seed.name)}`);
   }
   if (seed && argv.includes("--scenario")) throw new Error("Choose either --seed or -- --scenario, not both.");
   const scenario: PreviewScenario = seed && isPreviewScenario(seed.name)
     ? seed.name : desktopSource?.kind === "release" ? "blank" : parsed.scenario;
-  if (!allowed.includes(scenario)) throw new Error(`${name} supports --scenario ${allowed.join(", ")}.`);
+  if (!allowed.includes(scenario)) throw new Error(`${name} supports --scenario ${allowed.join(", ")}.${scenarioPointer(surface, scenario)}`);
   const release = desktopSource?.kind === "release"
     ? { version: desktopSource.version, distribution: desktopSource.distribution } : parsed.release;
   if (release && scenario !== "blank") throw new Error("Published release previews support only --scenario blank.");

@@ -1,3 +1,4 @@
+export const summary = "The seeded Acme demo stack: Den, AI Gateway, and the web app.";
 export const supportedTargets = ["local/host", "daytona/linux", "freestyle/linux"];
 
 import { randomUUID } from "node:crypto";

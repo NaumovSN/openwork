@@ -3,13 +3,22 @@ import { fileURLToPath } from "node:url";
 import { createConnection } from "mysql2/promise";
 import { main as runWorldCli, parseWorldArgs, type PreflightCheck, type Reaper } from "@openwork/world";
 import { DEFAULT_MYSQL_URL, localMysqlIsRunning, localRedisIsRunning } from "./place.ts";
+import { daytonaLoginCheck, diagnoseWorldFailure, freestyleKeyCheck } from "./world-requirements.ts";
+
+/**
+ * What the world driver and its recipes load from this checkout. When a remote
+ * world builds another commit, drift here means the driver is not that commit's.
+ */
+const WORLD_RECIPE_PATHS = ["worlds", "packages/world", "packages/freestyle", "evals/packages", ".devcontainer"];
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const WORLDS_DIRECTORY = fileURLToPath(new URL("../../../../worlds", import.meta.url));
 
+// Health badges for worlds on this computer. Remote placements do not use them.
 const dockerCheck: PreflightCheck = {
   id: "docker",
   label: "docker",
+  places: ["local"],
   run: () => new Promise((resolve) => {
     execFile("docker", ["info"], (error) => resolve(error
       ? { ok: false, detail: "unavailable", hint: "start Docker Desktop" }
@@ -20,6 +29,7 @@ const dockerCheck: PreflightCheck = {
 const mysqlCheck: PreflightCheck = {
   id: "mysql",
   label: "mysql",
+  places: ["local"],
   async run() {
     return await localMysqlIsRunning()
       ? { ok: true }
@@ -30,6 +40,7 @@ const mysqlCheck: PreflightCheck = {
 const redisCheck: PreflightCheck = {
   id: "redis",
   label: "redis",
+  places: ["local"],
   async run() {
     return await localRedisIsRunning()
       ? { ok: true }
@@ -81,7 +92,9 @@ export function main(argv = process.argv.slice(2)): Promise<number> {
   return runWorldCli(argv, {
     cwd: REPO_ROOT,
     worldsDirectory: WORLDS_DIRECTORY,
-    preflight: [dockerCheck, mysqlCheck, redisCheck],
+    preflight: [dockerCheck, mysqlCheck, redisCheck, daytonaLoginCheck, freestyleKeyCheck],
+    diagnose: diagnoseWorldFailure,
+    recipePaths: WORLD_RECIPE_PATHS,
     reapers: {
       "mysql-db": dropEphemeralDatabase,
       "daytona-windows-preview": async (entry) => {

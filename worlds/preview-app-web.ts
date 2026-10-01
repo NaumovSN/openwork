@@ -1,3 +1,4 @@
+export const summary = "The source web app plus the server it needs, locally, on a private Daytona URL, or on Freestyle.";
 export const supportedTargets = ["local/host", "daytona/linux", "freestyle/linux"];
 
 import { execFile } from "node:child_process";
