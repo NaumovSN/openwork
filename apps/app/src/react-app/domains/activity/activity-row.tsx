@@ -11,7 +11,6 @@ import { resolveExtensionIconUrl } from "@/react-app/design-system/extension-ico
 import { IconImage } from "@/react-app/design-system/icon-image";
 import { ProviderIcon } from "@/react-app/design-system/provider-icon";
 import type { ActivityBaseline, ActivityResource, MemberActivityEntry } from "@/react-app/kernel/activity-types";
-import type { AppNotification } from "@/react-app/kernel/notification-store";
 import type { ActivityFeedItem } from "./use-activity-feed";
 
 /** Shared, actorless copy: Activity only knows what this device observed, never who did it. */
@@ -141,10 +140,9 @@ export type ActivityRowProps = {
   compact?: boolean;
   onResourceOpen?: () => void;
   onTrySkill?: (resource: ActivityResource) => void;
-  onSystemAction: (notification: AppNotification) => void;
 };
 
-export function ActivityRow({ item, now, compact = false, onResourceOpen, onTrySkill, onSystemAction }: ActivityRowProps) {
+export function ActivityRow({ item, now, compact = false, onResourceOpen, onTrySkill }: ActivityRowProps) {
   const rowLayout = cn("flex min-w-0 items-center rounded-lg", compact ? "h-8.5 gap-2.5 px-2" : "min-h-13 gap-3 px-3 py-2 hover:bg-muted/40");
   const titleClass = "block truncate text-sm font-normal leading-4.5";
   const detailClass = "mt-0.5 block truncate text-xs leading-4 text-muted-foreground/70";
@@ -177,39 +175,6 @@ export function ActivityRow({ item, now, compact = false, onResourceOpen, onTryS
       <div role="listitem" data-activity-row="baseline" data-activity-kind="baseline" className={rowLayout}>
         {content}
         <Link to="/extensions" className={cn(buttonVariants({ variant: "ghost", size: "xs" }), ACTION_LAYOUT)}>{t("activity.open_library")}</Link>
-      </div>
-    );
-  }
-
-  if (item.type === "system") {
-    const notice = item.notification;
-    const detail = notice.body ? `${notice.title}\n${notice.body}` : notice.title;
-    const content = (
-      <>
-        <span aria-hidden="true" className={cn("flex shrink-0 items-center justify-center", compact ? "size-3.5" : "size-6")}><ProviderIcon providerId="openwork" /></span>
-        <span className="min-w-0 flex-1 text-start" title={detail}>
-          <span className={cn("block truncate text-sm font-normal", notice.severity === "error" && "text-destructive", notice.severity === "warning" && "text-warning")}>{notice.title}</span>
-          {!compact && notice.body ? <span className="block truncate text-xs text-muted-foreground/70">{notice.body}</span> : null}
-        </span>
-        <ObservedTime timestamp={item.timestamp} now={now} compact={compact} />
-        {compact ? <UnreadDot unread={item.unread} /> : null}
-      </>
-    );
-    if (compact && notice.action) {
-      return (
-        <div role="listitem" data-activity-row={notice.id} data-activity-kind="system">
-          <Button variant="ghost" className={cn(rowLayout, "w-full justify-start")} aria-label={notice.actionLabel ?? notice.title} aria-description={detail} onClick={() => onSystemAction(notice)}>
-            {content}
-          </Button>
-        </div>
-      );
-    }
-    return (
-      <div role="listitem" data-activity-row={notice.id} data-activity-kind="system" className={rowLayout}>
-        {content}
-        {!compact ? (notice.action && notice.actionLabel ? (
-          <Button variant="ghost" size="xs" className={ACTION_LAYOUT} onClick={() => onSystemAction(notice)}>{notice.actionLabel}</Button>
-        ) : <span className="w-18 shrink-0" />) : null}
       </div>
     );
   }

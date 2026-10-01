@@ -8,7 +8,6 @@ import { useShellConfig } from "@/react-app/shell/shell-config";
 import { ActivityEmpty } from "./activity-empty";
 import { ActivityRow } from "./activity-row";
 import { ActivityLoading, ActivityNoMatches, ActivityNothingShared, ActivityRefreshError } from "./activity-status";
-import { useActivityActions } from "./use-activity-actions";
 import { useActivityFeed, type ActivityFeedItem } from "./use-activity-feed";
 
 type ActivityFilter = "all" | "skill" | "plugin" | "connection";
@@ -43,7 +42,6 @@ export function ActivityPage({ onTrySkill }: { onTrySkill?: (resource: ActivityR
   const { config } = useShellConfig();
   const [filter, setFilter] = useState<ActivityFilter>("all");
   const { items, context, refreshState, loading, now, nothingSharedYet } = useActivityFeed(config.notifications);
-  const runAction = useActivityActions();
   const groups = useMemo(() => {
     const byDay = new Map<string, ActivityFeedItem[]>();
     for (const item of items) {
@@ -66,7 +64,7 @@ export function ActivityPage({ onTrySkill }: { onTrySkill?: (resource: ActivityR
           <section key={day} aria-label={day} className="flex flex-col">
             <h2 className="px-3 pb-1.5 pt-4 text-xs font-medium text-muted-foreground">{day}</h2>
             <div role="list">
-              {group.map((item) => <ActivityRow key={item.id} item={item} now={now} onTrySkill={onTrySkill} onSystemAction={runAction} />)}
+              {group.map((item) => <ActivityRow key={item.id} item={item} now={now} onTrySkill={onTrySkill} />)}
             </div>
           </section>
         ))}</div>

@@ -305,7 +305,7 @@ describe("member Activity store", () => {
     expect(selectActivityContext(restored.getState()).entries).toEqual(history);
 
     expect(JSON.parse(storage.getItem(PERSISTED_ACTIVITY_STORE_KEY) ?? "null")).toEqual({
-      state: { contexts: restored.getState().contexts, noticesSeenAt: null },
+      state: { contexts: restored.getState().contexts },
       version: 1,
     });
     expect(history[0]).not.toHaveProperty("readAt");
@@ -477,9 +477,7 @@ describe("member Activity store", () => {
     const storage = memoryStorage();
     const store = createActivityStore(storage);
     store.getState().markSeen();
-    // Signed out, only the device-wide notice time moves.
     expect(store.getState().contexts).toEqual({});
-    expect(store.getState().noticesSeenAt).not.toBeNull();
     store.getState().setScope(scope);
     store.getState().observe({ scope, source: "providers", resources: [] });
     store.getState().observe({ scope, source: "providers", resources: [provider] });
@@ -492,7 +490,6 @@ describe("member Activity store", () => {
     const restored = createActivityStore(storage);
     restored.getState().setScope(scope);
     expect(selectActivityContext(restored.getState()).seenAt).toBe(seenAt);
-    expect(restored.getState().noticesSeenAt).toBe(seenAt);
     restored.getState().setScope({ ...scope, memberId: "member_other" });
     expect(selectActivityContext(restored.getState()).seenAt ?? null).toBeNull();
   });

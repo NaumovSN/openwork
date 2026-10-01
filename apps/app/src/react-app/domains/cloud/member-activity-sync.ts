@@ -136,8 +136,10 @@ export async function refreshMemberActivity(input: {
     input.feed.observe({ scope: input.scope, source: "connections", resources: connectionSnapshot, observedAt });
     input.feed.setRefreshState(input.scope, "idle");
     return "updated";
-  } catch {
+  } catch (error) {
     if (!input.isCurrent()) return "stale";
+    // Keep the reason findable; the UI only says "Couldn't refresh".
+    console.warn("[activity] member inventory refresh failed", error instanceof Error ? `${error.name}: ${error.message}` : error);
     input.feed.setRefreshState(input.scope, "error");
     return "failed";
   }

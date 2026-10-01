@@ -50,3 +50,30 @@ test("malformed and unsupported inventory responses cannot become access removal
     server.stop(true);
   }
 });
+
+test("Den object types the app does not model (MCP Apps) are outside the inventory, not proof it is incomplete", async () => {
+  let rows: Array<Record<string, unknown>> = [];
+  const server = Bun.serve({
+    hostname: "127.0.0.1", port: 0,
+    fetch(request) {
+      const path = new URL(request.url).pathname;
+      if (path.endsWith("/llm-providers")) return Response.json({ llmProviders: [] });
+      if (path.endsWith("/inference-providers")) return Response.json({ inferenceProviders: [] });
+      if (path.endsWith("/mcp-connections")) return Response.json({ connections: [] });
+      if (path.endsWith("/marketplace-capabilities")) return Response.json({ items: rows });
+      if (path.endsWith("/me/library")) return Response.json({ items: [] });
+      return Response.json({}, { status: 404 });
+    },
+  });
+  try {
+    const baseUrl = server.url.origin;
+    const client = createDenClient({ baseUrl, apiBaseUrl: baseUrl, token: "eng-278-fixture", requireCompleteInventory: true });
+    rows = [{ configObjectId: "app-1", marketplaceId: null, objectType: "app", pluginId: "plugin-1" }];
+    expect(await client.listAssignedMarketplaceCapabilities("org-278")).toEqual([]);
+    // A row of a modeled type that cannot be parsed still fails verification.
+    rows = [...rows, { configObjectId: 42, marketplaceId: null, objectType: "skill", pluginId: "plugin-1" }];
+    await expect(client.listAssignedMarketplaceCapabilities("org-278")).rejects.toThrow("could not be verified");
+  } finally {
+    server.stop(true);
+  }
+});

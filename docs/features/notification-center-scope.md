@@ -9,11 +9,13 @@ not part of this surface.
 - Changes to the signed-in member's usable model-provider access.
 - Newly available skills/plugins and published skill or connection revisions.
 - Meaningful connection configuration changes and observed unavailability.
-- Existing device/background notices: applied or pending engine reloads, update
-  checks and background failures, with their existing actions.
 
-Confirmations of the user's own actions, such as archiving a session or
-installing a skill, remain toast-only. Task permission/question prompts and
+Only these high-level changes, as on the Paper boards. Device notices (applied
+or pending engine reloads such as “Updates applied · Skill … is now active”,
+update checks, background failures) are not Activity: failures keep their
+toast with its action, and receipts stay silent. Confirmations of the user's
+own actions, such as archiving a session or installing a skill, remain
+toast-only. Task permission/question prompts and
 native OS notifications keep their separate delivery contracts. Activity does
 not collect all toasts, other people's activity, usage analytics or automation
 history.
@@ -50,7 +52,9 @@ Installation drift and engine connectivity are not permission evidence.
 The client reuses existing authorized Den reads. There is no new notification
 endpoint, table, server event writer or audit schema. Complete-inventory reads
 reject malformed/partial responses rather than silently turning omitted rows
-into removals. Grant-scoped marketplace references are resolved directly so a
+into removals. Rows of a config object type the app does not model (for
+example MCP Apps) are outside the inventory and do not count as missing.
+Grant-scoped marketplace references are resolved directly so a
 paginated management catalog cannot expand or truncate the member feed.
 
 ## Identity and persistence
@@ -64,8 +68,7 @@ identity changes invalidate in-flight deliveries.
 Only minimal display metadata, resource IDs, content revisions/digests,
 observation times and internal destinations are stored. Skill content,
 connection URLs, credentials and raw provider configuration are not retained.
-Read state is one "seen up to" time per member context (plus one device-wide
-time for device notices), not a per-entry flag. Closing the popover advances it
+Read state is one "seen up to" time per member context, not a per-entry flag. Closing the popover advances it
 (Paper A1/A5); there is no mark-all-read control, and it never mutates history.
 It is device-local: the Den-backed cross-device read state in D0 is a
 follow-up.
@@ -83,10 +86,10 @@ verified member refresh instead of adding duplicate, profile-wide notices.
 - With unread entries the popover shows the latest five, unread first with a
   dot (A1). With none it says **You’re caught up** above the last three (A5).
   An available resource row opens its existing destination; unavailable rows
-  have no dead action. System notices retain their existing action.
+  have no dead action.
 - `/activity` uses the normal conversation sidebar, groups entries by observed
-  day, and filters All / Skills / Plugins / Connections (A2). Model and device
-  notices appear under All. Row actions: **Try it** puts a newly shared skill
+  day, and filters All / Skills / Plugins / Connections (A2). Model changes
+  appear under All. Row actions: **Try it** puts a newly shared skill
   into the New session composer (nothing is sent), **Browse** for plugins,
   **Open** otherwise.
 - The empty popover follows Paper A4: a quiet bell, **Nothing new**, a short
@@ -118,8 +121,8 @@ C5/C6 (neutral unavailable states and useful recovery), and P10 (visual proof).
 - `evals/specs/member-activity-sync.e2e.test.ts`: real Den grants and version
   changes → real app Activity, refresh failures, restart and another member on
   the same device. HTTP reads witness the synchronization boundary.
-- `evals/specs/notification-center-scope.e2e.test.ts`: background notices still
-  work, archive/Undo remains toast-only, and Activity stays reachable with the
+- `evals/specs/notification-center-scope.e2e.test.ts`: device notices and
+  archive/Undo stay out of Activity, and Activity stays reachable with the
   sidebar hidden. The legacy event seam here is not evidence of Cloud sync.
 
 The previous notification-center contract (PR #2215, later scope clarification)

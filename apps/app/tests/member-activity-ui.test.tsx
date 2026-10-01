@@ -29,7 +29,7 @@ let root: Root;
 
 beforeEach(() => {
   window.localStorage.clear();
-  useActivityStore.setState({ activeScopeKey: null, contexts: {}, noticesSeenAt: null, refreshState: "idle" });
+  useActivityStore.setState({ activeScopeKey: null, contexts: {}, refreshState: "idle" });
   useNotificationStore.setState({ notifications: [] });
   reload.mockClear();
   container = document.createElement("div");
@@ -317,51 +317,26 @@ test("initial scoped refresh shows lane skeletons, failed refresh keeps history 
   }
 });
 
-test("recent member changes and system notices share chronology without mutating history; system actions still work", async () => {
+test("device notices such as engine reloads stay out of Activity; only member changes appear", async () => {
   seed(Array.from({ length: 6 }, (_, index) => ({
     id: `skill-${index}`, resource: resource(`skill-${index}`, "skill", `Skill ${index}`), change: "updated", observedAt: Date.now() - (index + 1) * 1_000,
-  })));
-  useNotificationStore.getState().add({ kind: "reload", title: "An engine restart is needed", body: "Installed extensions changed", action: { type: "reload-engine" }, actionLabel: "Reload engine" });
-  const historyBefore = JSON.stringify(Object.values(useActivityStore.getState().contexts)[0]?.entries);
+  })), undefined, { seenAt: Date.now() });
+  useNotificationStore.getState().add({ kind: "reload", severity: "success", title: "Updates applied", body: "Skill 'preview-my-work' is now active." });
+  useNotificationStore.getState().add({ kind: "update", severity: "error", title: "Update check failed" });
   await render();
+  expect(document.querySelector("[data-notification-unread]")).toBeNull();
   await toggleBell();
   const panel = document.querySelector("[data-notification-panel]");
-  expect(panel?.querySelectorAll("[data-activity-row]").length).toBe(5);
-  expect(panel?.querySelector("[data-activity-row]")?.textContent).toContain("An engine restart is needed");
-  expect(panel?.textContent).not.toContain("Skill 5");
-  await click("Reload engine");
-  expect(reload).toHaveBeenCalledTimes(1);
-  expect(JSON.stringify(Object.values(useActivityStore.getState().contexts)[0]?.entries)).toBe(historyBefore);
-  expect(useNotificationStore.getState().notifications).toHaveLength(1);
-  await toggleBell();
+  expect(panel?.textContent).not.toContain("Updates applied");
+  expect(panel?.textContent).not.toContain("Update check failed");
+  expect(panel?.textContent).toContain("You’re caught up");
   await viewAll();
-  expect(container.querySelectorAll("[data-activity-row]").length).toBe(7);
-  await click("Reload engine");
-  expect(reload).toHaveBeenCalledTimes(2);
+  expect(container.querySelectorAll("[data-activity-row]").length).toBe(6);
+  expect(container.textContent).not.toContain("Updates applied");
+  expect(container.querySelector('[data-activity-kind="system"]')).toBeNull();
   await act(async () => useActivityStore.setState({ activeScopeKey: null }));
   expect(container.textContent).not.toContain("Skill 0");
-  expect(container.textContent).toContain("An engine restart is needed");
-});
-
-test("compact system notices expose one whole-row action with no nested focus target and close after activation", async () => {
-  useNotificationStore.getState().add({ kind: "system", title: "Background verification finished" });
-  useNotificationStore.getState().add({ kind: "reload", title: "An engine restart is needed", body: "Installed extensions changed", action: { type: "reload-engine" }, actionLabel: "Reload engine" });
-  await render();
-  await toggleBell();
-  const action = button("Reload engine");
-  expect(action.textContent).toContain("An engine restart is needed");
-  expect(action.querySelector("time")?.getAttribute("title")).toStartWith("Observed on this device");
-  expect(action.querySelector("button, a, [tabindex='0']")).toBeNull();
-  const row = action.closest("[data-activity-row]");
-  expect(row?.querySelectorAll("button, a").length).toBe(1);
-  const passiveNotice = Array.from(document.querySelectorAll('[data-notification-panel] [data-activity-kind="system"]'))
-    .find((entry) => entry.textContent?.includes("Background verification finished"));
-  expect(passiveNotice?.querySelector("button, a, [tabindex='0']")).toBeNull();
-  await click("Reload engine");
-  expect(reload).toHaveBeenCalledTimes(1);
-  expect(bell().getAttribute("aria-expanded")).toBe("false");
-  await act(async () => useNotificationStore.getState().add({ kind: "system", title: "Background verification finished again" }));
-  expect(bell().getAttribute("aria-expanded")).toBe("false");
+  expect(container.textContent).toContain("Nothing new");
 });
 
 test("Activity stays hidden when the shell disables notifications", async () => {

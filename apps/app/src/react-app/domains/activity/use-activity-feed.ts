@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 
 import { selectActivityContext, useActivityStore } from "@/react-app/kernel/activity-store";
 import type { ActivityBaseline, ActivitySource, MemberActivityEntry } from "@/react-app/kernel/activity-types";
-import { useNotificationStore, type AppNotification } from "@/react-app/kernel/notification-store";
 
 export type ActivityFeedItem =
   | {
@@ -14,7 +13,6 @@ export type ActivityFeedItem =
     unavailable: boolean;
     unread: boolean;
   }
-  | { type: "system"; id: string; timestamp: number; notification: AppNotification; unread: boolean }
   /** Access that already existed when this device first verified the member. Never unread. */
   | { type: "baseline"; id: string; timestamp: number; baseline: ActivityBaseline; unread: false };
 
@@ -25,13 +23,15 @@ const RESOURCE_SOURCE: Record<MemberActivityEntry["resource"]["kind"], ActivityS
   connection: "connections",
 };
 
-/** Only the current member scope contributes resource history; notices stay local. */
+/**
+ * Only high-level changes to what the member can use (models, skills, plugins,
+ * connections), as on the Paper boards. Device notices such as engine reloads
+ * or update checks are not Activity: failures keep their toast instead.
+ */
 export function useActivityFeed(active = true) {
   const context = useActivityStore(selectActivityContext);
   const activeScopeKey = useActivityStore((state) => state.activeScopeKey);
   const refreshState = useActivityStore((state) => state.refreshState);
-  const notifications = useNotificationStore((state) => state.notifications);
-  const noticesSeenAt = useActivityStore((state) => state.noticesSeenAt);
   const [now, setNow] = useState(Date.now);
 
   useEffect(() => {
@@ -50,18 +50,11 @@ export function useActivityFeed(active = true) {
       ) === true;
       return { type: "member", id: `member:${entry.id}`, timestamp: entry.observedAt, entry, unavailable, unread: entry.observedAt > seenAt };
     });
-    result.push(...notifications.map((notification): ActivityFeedItem => ({
-      type: "system",
-      id: `system:${notification.id}`,
-      timestamp: notification.updatedAt,
-      notification,
-      unread: notification.updatedAt > (noticesSeenAt ?? 0),
-    })));
     if (activeScopeKey && context.baseline && context.baseline.labels.length > 0) {
       result.push({ type: "baseline", id: "baseline", timestamp: context.baseline.observedAt, baseline: context.baseline, unread: false });
     }
     return result.sort((left, right) => right.timestamp - left.timestamp || left.id.localeCompare(right.id));
-  }, [activeScopeKey, context, notifications, noticesSeenAt]);
+  }, [activeScopeKey, context]);
 
   const unreadCount = useMemo(() => items.filter((item) => item.unread).length, [items]);
   /** First verification found nothing shared: the first-week state replaces "Nothing new". */

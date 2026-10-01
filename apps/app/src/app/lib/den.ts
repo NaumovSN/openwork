@@ -2731,6 +2731,15 @@ function getOrgPluginResolved(plugin: DenOrgPlugin, payload: unknown): DenOrgPlu
   return { plugin, memberships };
 }
 
+/**
+ * Den can add config object types (for example MCP Apps) before the desktop
+ * models them. Such rows are outside this app's inventory, so a completeness
+ * check must not count them; malformed rows of a known type still fail it.
+ */
+function hasModeledObjectType(value: unknown): boolean {
+  return !isRecord(value) || typeof value.objectType !== "string" || parsePluginConfigObjectType(value.objectType) !== null;
+}
+
 function getAssignedMarketplaceCapabilities(payload: unknown): DenAssignedMarketplaceCapability[] {
   if (!isRecord(payload) || !Array.isArray(payload.items)) return [];
   return payload.items.flatMap((item) => {
@@ -3641,7 +3650,7 @@ export function createDenClient(options: {
         { method: "GET", token, organizationId: orgId },
       );
       const capabilities = getAssignedMarketplaceCapabilities(payload);
-      verifyInventory(payload, "items", capabilities.length);
+      verifyInventory(payload, "items", capabilities.length, hasModeledObjectType);
       return capabilities;
     },
 
@@ -3677,7 +3686,12 @@ export function createDenClient(options: {
         { method: "GET", token, organizationId: orgId },
       );
       const resolved = getOrgPluginResolved(plugin, payload);
-      verifyInventory(payload, "items", resolved.memberships.filter((item) => item.configObject).length);
+      verifyInventory(
+        payload,
+        "items",
+        resolved.memberships.filter((item) => item.configObject).length,
+        (item) => !isRecord(item) || hasModeledObjectType(item.configObject),
+      );
       return resolved;
     },
 

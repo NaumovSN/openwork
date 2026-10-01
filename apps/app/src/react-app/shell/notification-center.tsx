@@ -10,7 +10,6 @@ import { t } from "@/i18n";
 import { ActivityEmpty } from "@/react-app/domains/activity/activity-empty";
 import { ActivityRow } from "@/react-app/domains/activity/activity-row";
 import { ActivityCaughtUp, ActivityLoading, ActivityNothingShared, ActivityRefreshError } from "@/react-app/domains/activity/activity-status";
-import { useActivityActions } from "@/react-app/domains/activity/use-activity-actions";
 import { useActivityFeed, type ActivityFeedItem } from "@/react-app/domains/activity/use-activity-feed";
 import { useActivityStore } from "@/react-app/kernel/activity-store";
 import { useNotificationStore } from "@/react-app/kernel/notification-store";
@@ -26,7 +25,6 @@ export function NotificationBell({ align = "end" }: { align?: "start" | "end" })
   const { items, context, refreshState, loading, now, unreadCount, nothingSharedYet } = useActivityFeed(open && config.notifications);
   const markSeen = useActivityStore((state) => state.markSeen);
   const onActivityPage = useLocation().pathname === "/activity";
-  const runAction = useActivityActions();
   const navigate = useNavigate();
 
   const notificationsListAction = useMemo<OpenworkControlAction>(() => ({
@@ -77,7 +75,7 @@ export function NotificationBell({ align = "end" }: { align?: "start" | "end" })
 
   const close = () => handleOpenChange(false);
   const row = (item: ActivityFeedItem) => (
-    <ActivityRow key={item.id} item={item} now={now} compact onResourceOpen={close} onSystemAction={(notification) => { close(); runAction(notification); }} />
+    <ActivityRow key={item.id} item={item} now={now} compact onResourceOpen={close} />
   );
   const empty = items.length === 0;
   const body = () => {
