@@ -1769,24 +1769,23 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     if (!isRefreshCurrent()) return null;
     const activeClient = options.client() ?? c;
     try {
-      // These reads are independent. Wait for both before publishing so a
-      // slow config read cannot expose disabled providers or stale state.
-      const [disabledProviders, providerList] = await Promise.all([
-        readManagedDisabledProviders({
-          opencodeClient: activeClient,
-          openworkClient: options.openworkServer.getSnapshot().openworkServerClient,
-          workspaceId: options.runtimeWorkspaceId(),
-          workspaceType: options.selectedWorkspaceDisplay().workspaceType,
-        }),
-        ensureProviderListQuery(getReactQueryClient(), {
+      const disabledProviders = await readManagedDisabledProviders({
+        opencodeClient: activeClient,
+        openworkClient: options.openworkServer.getSnapshot().openworkServerClient,
+        workspaceId: options.runtimeWorkspaceId(),
+        workspaceType: options.selectedWorkspaceDisplay().workspaceType,
+      });
+      if (!isRefreshCurrent()) return null;
+      const updated = filterProviderList(
+        await ensureProviderListQuery(getReactQueryClient(), {
           client: activeClient,
           baseUrl,
           directory,
           force,
         }),
-      ]);
+        disabledProviders,
+      );
       if (!isRefreshCurrent()) return null;
-      const updated = filterProviderList(providerList, disabledProviders);
       options.setDisabledProviders(disabledProviders);
       applyProviderListState(updated);
       setStateField("providerLoadState", { status: "ready", error: null });

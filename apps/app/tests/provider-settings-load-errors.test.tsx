@@ -362,35 +362,6 @@ test("a superseded read cannot replace a recovered inventory with an older failu
   expectReadOnly(harness);
 });
 
-test("provider discovery starts the catalog while config is held and waits to apply disabled providers", async () => {
-  const harness = createHarness();
-  const config = deferredResponse();
-  const catalog = deferredResponse();
-  harness.engine.readConfig = () => config.promise;
-  harness.engine.readProviders = () => catalog.promise;
-  const refresh = harness.store.refreshProviders({ force: true });
-  try {
-    // Both requests must start before either response is released.
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(harness.requests.map(({ path }) => path).sort()).toEqual(["/config", "/config/providers"]);
-    catalog.resolve(json(connectedBody(harness.engine.catalog)));
-    await ensureProviderListQuery(getReactQueryClient(), harness.queryInput);
-    expect(harness.ui.providers).toEqual([]);
-    expect(harness.store.getSnapshot().providerLoadState.status).toBe("loading");
-    config.resolve(json({ disabled_providers: [provider.id] }));
-    const result = await refresh;
-    expect(result?.all).toEqual([]);
-    expect(result?.connected).toEqual([]);
-    expect(harness.ui.disabled).toEqual([provider.id]);
-    expect(harness.store.getSnapshot().providerLoadState.status).toBe("ready");
-    expectReadOnly(harness);
-  } finally {
-    config.resolve(json(harness.engine.config));
-    catalog.resolve(json(connectedBody(harness.engine.catalog)));
-    await refresh;
-  }
-});
-
 test("an explicit refresh fetches an observed provider catalog once and leaves inactive scopes invalidated", async () => {
   const harness = createHarness();
   const queryClient = getReactQueryClient();
