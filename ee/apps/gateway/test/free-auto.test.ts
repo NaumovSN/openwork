@@ -6,7 +6,7 @@ import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferenceWindow, managedModelCatalog, readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
   MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeSessionPowMessage, leadingZeroBits, type DesktopFreeProofClaims } from "@openwork/free-auto"
-import { readAutoConfig, FREE_OPENAI_CHAT_URL } from "../src/free/shared/config.js"
+import { readAutoConfig, untaggedAutoEnabled, FREE_OPENAI_CHAT_URL } from "../src/free/shared/config.js"
 import { freeUsageAmount, rampedDeviceAmount } from "@openwork/free-auto/accounting"
 import { verifyDesktopFreeProof } from "../src/free/guest/proof.js"
 import { deriveReleaseSecret, releaseTag, sha256Hex as desktopFreeHash } from "@openwork/free-auto/node"
@@ -371,7 +371,8 @@ test("the version the desktop reports passes unless the server blocks it or sets
   const alpha = guestFor("1.2.4-alpha.3244+4d3cfbd")
   assert.equal((await (await blocked.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${alpha.token}`, undefined, { version: "1.2.4-alpha.3244+4d3cfbd", source: alpha.source }))).json()).state, "update_required", "blocking ignores build metadata")
   const untagged = guestFor("1.2.4-alpha.1+abc")
-  assert.equal((await (await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${untagged.token}`, undefined, { version: "1.2.4-alpha.1+abc", source: untagged.source, proofVersion: 2 }))).json()).code, "desktop_build_unverified")
+  const untaggedOff = fixture({ config: { ...config, untaggedGlobalDailyAmount: 0 } })
+  assert.equal((await (await untaggedOff.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${untagged.token}`, undefined, { version: "1.2.4-alpha.1+abc", source: untagged.source, proofVersion: 2 }))).json()).code, "desktop_build_unverified")
 })
 
 test("the release tag must come from the secret of the claimed version, the previous master key overlaps, dev secrets only count in dev mode", async () => {
@@ -402,8 +403,29 @@ test("switched-off guest Auto says free_disabled, not unavailable, on every gues
   assert.equal(f.requests.length, 0)
 })
 
-test("an untagged (v2) proof from a current build says the build can't use Auto, not that it needs an update", async () => {
+test("an untagged (v2) proof, like a build from source, uses Auto on the per-IP untagged budget", async () => {
   const f = fixture()
+  const status = await (await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`, undefined, { proofVersion: 2 }))).json()
+  assert.deepEqual([status.state, status.code], ["ready", null])
+  const minted = await f.app.fetch(session({ proofVersion: 2 }))
+  assert.equal(minted.status, 200, "an untagged build can start a guest session")
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))).status, 200)
+  const ipHash = createAnonymousIdentities(device.binding, "127.0.0.1", config).ipHash
+  assert.deepEqual(f.principals.at(-1), { kind: "installation", id: createAnonymousIdentities(device.binding, "127.0.0.1", config).installationHash, untaggedIpHash: ipHash })
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 200)
+  assert.equal(f.principals.at(-1)?.kind === "installation" && f.principals.at(-1)?.untaggedIpHash, undefined, "a tagged proof is not held to the IP budget")
+  const blocked = fixture({ config: { ...config, blockedReleases: ["1.2.3"] } })
+  assert.equal((await blocked.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))).status, 426, "blocked versions still apply")
+  const defaults = readAutoConfig({})
+  assert.deepEqual([defaults.untaggedIpDailyAmount, defaults.untaggedGlobalDailyAmount], [0.2 * INFERENCE_USAGE_CONVERSION_FACTOR, 10 * INFERENCE_USAGE_CONVERSION_FACTOR], "$0.20 per IP a day, $10 for all untagged builds a day")
+  assert.equal(untaggedAutoEnabled(defaults), true)
+  assert.equal(untaggedAutoEnabled(readAutoConfig({ ANONYMOUS_UNTAGGED_IP_DAILY_MICRO_USD: "0" })), false, "either budget at 0 turns untagged builds off")
+  assert.equal(untaggedAutoEnabled(readAutoConfig({ ANONYMOUS_UNTAGGED_GLOBAL_DAILY_MICRO_USD: "0" })), false)
+  assert.throws(() => readAutoConfig({ ANONYMOUS_UNTAGGED_IP_DAILY_MICRO_USD: "-1" }))
+})
+
+test("with the untagged budgets off, an untagged (v2) proof says the build can't use Auto, not that it needs an update", async () => {
+  const f = fixture({ config: { ...config, untaggedIpDailyAmount: 0 } })
   const response = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))
   assert.equal(response.status, 503)
   assert.equal((await response.json()).error.code, "desktop_build_unverified")

@@ -68,16 +68,27 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
     if (gap > 0) await tx.update(Identity).set({ last_seen_at: now, active_ms: activeMs }).where(eq(Identity.id, principal.id))
     return activeMs
   }
-  /** Members: their weekly allowance only. Guests: the machine's weekly allowance, which grows with time the app is open, and the global daily and monthly caps. */
+  /**
+   * Members: their weekly allowance only. Guests: the machine's weekly allowance, which grows with time the app is
+   * open, and the global daily and monthly caps. Untagged guests also get their IP's daily budget and the shared
+   * untagged daily cap, since their machine id is only self-reported.
+   */
   function windows(principal: FreePrincipal, now: Date, activeMs: number): FreeWindow[] {
     const weekly = freeInferenceWindow(now)
+    const day = { start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())),
+      end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)) }
     const identity = freePrincipalHash(principal)
+    // The untagged per-IP window is last among the personal ones, so an untagged build's status reports its daily budget.
+    const untagged: Array<Omit<FreeWindow, "id">> = principal.kind === "installation" && principal.untaggedIpHash
+      ? [{ scope: "installation", identity: freeIdentityHash("untagged-ip", principal.untaggedIpHash), window: "daily", ...day, limit: config.untaggedIpDailyAmount },
+          { scope: "global", identity: "global-untagged", window: "daily", ...day, limit: config.untaggedGlobalDailyAmount }]
+      : []
     const values: Array<Omit<FreeWindow, "id">> = principal.kind === "member"
       ? [{ scope: "member", identity, window: "weekly", ...weekly, limit: config.member.weeklyLimitAmount }]
       : [
           { scope: "installation", identity, window: "weekly", ...weekly, limit: rampedDeviceAmount(config, activeMs) },
-          { scope: "global", identity: "global", window: "daily", start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())),
-            end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)), limit: config.globalDailyAmount },
+          ...untagged,
+          { scope: "global", identity: "global", window: "daily", ...day, limit: config.globalDailyAmount },
           { scope: "global", identity: "global", window: "monthly", start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
             end: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)), limit: config.globalMonthlyAmount },
         ]

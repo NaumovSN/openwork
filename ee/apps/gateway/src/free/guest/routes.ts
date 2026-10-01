@@ -86,9 +86,12 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     const address = dependencies.clientAddress(c)
     const guest = token && address ? verifyAnonymousToken(token, address, config) : null
     if (!guest || !address) return { error: desktopFreeGateError(401, "invalid_anonymous_token") }
-    const principal: GuestPrincipal = { kind: "installation", id: guest.installationHash }
     const gate = await checkDesktopFreeRequest(c.req.raw, bodyHash, gateDependencies, guest)
     if (gate.error) return { error: gate.error }
+    // The proof, not the token, decides: a token minted by a tagged build is still limited per IP on an untagged proof.
+    const principal: GuestPrincipal = gate.proof.version === 2
+      ? { kind: "installation", id: guest.installationHash, untaggedIpHash: guest.ipHash }
+      : { kind: "installation", id: guest.installationHash }
     return { ...gate, principal }
   }
 

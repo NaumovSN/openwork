@@ -1,13 +1,14 @@
 import { DESKTOP_FREE_PROOF_HEADER, desktopFreeVersionError } from "@openwork/free-auto"
 import { verifyDesktopFreeProof, type DesktopFreeBinding, type VerifiedDesktopFreeProof } from "./proof.js"
 import type { FreeAllowanceStore } from "../shared/allowance.js"
-import type { AutoConfig } from "../shared/config.js"
+import { untaggedAutoEnabled, type AutoConfig } from "../shared/config.js"
 import { freeError } from "../shared/errors.js"
 import { releaseSecretCandidates } from "./release-secrets.js"
 
 export type DesktopFreeGateDependencies = {
   consumeNonce: FreeAllowanceStore["consumeNonce"];
-  config: Pick<AutoConfig, "releaseKey" | "releaseKeyPrevious" | "devReleaseSecret" | "minimumVersion" | "blockedReleases">;
+  config: Pick<AutoConfig, "releaseKey" | "releaseKeyPrevious" | "devReleaseSecret" | "minimumVersion" | "blockedReleases"
+    | "untaggedIpDailyAmount" | "untaggedGlobalDailyAmount">;
   now?: () => number;
 }
 export const desktopFreeGateError = freeError
@@ -34,8 +35,9 @@ export async function checkDesktopFreeRequest(request: Request, bodyHash: string
     let versionError = proof.releaseSource === "dev" ? null
       : desktopFreeVersionError(proof.appVersion, { minimumVersion, blocked: config.blockedReleases })
     // An untagged (v2) proof comes from a build made without the release key (a local build, or an older alpha),
-    // or from a forged client. Updating would not help that build, so say it can't use Auto.
-    if (!versionError && proof.version === 2) {
+    // or from any other client. It may use Auto on the smaller untagged budgets; with those off, updating would not
+    // help that build, so say it can't use Auto.
+    if (!versionError && proof.version === 2 && !untaggedAutoEnabled(config)) {
       versionError = { code: "desktop_build_unverified", currentVersion: proof.appVersion, minimumVersion,
         message: "This build of OpenWork can't use Auto. Install an official release to use it." }
     }

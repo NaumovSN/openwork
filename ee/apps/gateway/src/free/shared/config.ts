@@ -56,6 +56,13 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
     deviceWeeklyAmount, installRamp,
     activityMaxGapMs: integer("ANONYMOUS_ACTIVITY_MAX_GAP_MS", 180000, 1000, 3600000),
     ipNewIdentitiesPerDay: integer("ANONYMOUS_IP_NEW_IDENTITIES_PER_DAY", 5, 1, 1000),
+    /**
+     * Builds without a release tag (built from source, or by anyone) still get Auto, like OpenCode's anonymous free
+     * models: their machine id is only self-reported, so each IP gets a small daily budget and all of them together a
+     * shared daily cap, on top of the normal device and global windows. 0 for either turns untagged builds off.
+     */
+    untaggedIpDailyAmount: integer("ANONYMOUS_UNTAGGED_IP_DAILY_MICRO_USD", 200000, 0, 100000000) * 100,
+    untaggedGlobalDailyAmount: integer("ANONYMOUS_UNTAGGED_GLOBAL_DAILY_MICRO_USD", 10000000, 0, 1000000000) * 100,
     sessionPowBits: integer("ANONYMOUS_SESSION_POW_BITS", DESKTOP_FREE_SESSION_POW_BITS, 0, DESKTOP_FREE_SESSION_POW_MAX_BITS),
     sessionPowRounds: integer("ANONYMOUS_SESSION_POW_ROUNDS", DESKTOP_FREE_SESSION_POW_ROUNDS, 1, DESKTOP_FREE_SESSION_POW_MAX_ROUNDS),
     globalDailyAmount: integer("ANONYMOUS_GLOBAL_DAILY_MICRO_USD", 100000000, 1, 1000000000) * 100,
@@ -77,3 +84,7 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
   }
 }
 export type AutoConfig = ReturnType<typeof readAutoConfig>
+/** Untagged builds may use guest Auto only while both of their budgets are on. */
+export function untaggedAutoEnabled(config: Pick<AutoConfig, "untaggedIpDailyAmount" | "untaggedGlobalDailyAmount">) {
+  return config.untaggedIpDailyAmount > 0 && config.untaggedGlobalDailyAmount > 0
+}

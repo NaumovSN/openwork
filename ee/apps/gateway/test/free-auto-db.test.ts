@@ -327,6 +327,32 @@ test("free Auto SQL and 0116 upgrade in an owned random database", { skip: !admi
     await db.update(GuestBucket).set({ used_amount: 0 }).where(eq(GuestBucket.id, daily.id))
   })
 
+  await t.test("untagged builds also get their IP's daily budget and a shared untagged cap; tagged guests on that IP are unaffected", async () => {
+    const ipHash = "9".repeat(64)
+    const untagged: GuestPrincipal = { kind: "installation", id: "u".repeat(64), untaggedIpHash: ipHash }
+    const windows = await admit(untagged)
+    assert.deepEqual(windows.map((window) => [window.scope, window.window, window.limit]), [
+      ["installation", "weekly", rampedDeviceAmount(config, 0)], ["installation", "daily", config.untaggedIpDailyAmount],
+      ["global", "daily", config.untaggedGlobalDailyAmount], ["global", "daily", config.globalDailyAmount], ["global", "monthly", config.globalMonthlyAmount],
+    ])
+    assert.equal((await guests.read(untagged)).allowance?.limitUsd, config.untaggedIpDailyAmount / INFERENCE_USAGE_CONVERSION_FACTOR, "status shows the daily IP budget")
+    await charge(untagged, windows, receipt(1))
+    const ipWindow = windows[1]
+    assert.ok(ipWindow)
+    await db.update(GuestBucket).set({ used_amount: config.untaggedIpDailyAmount }).where(eq(GuestBucket.id, ipWindow.id))
+    // A new self-reported machine id on the same IP does not reset the budget.
+    assert.deepEqual(await otherGuests.admit({ kind: "installation", id: "v".repeat(64), untaggedIpHash: ipHash }), { ok: false, code: "anonymous_limit_exceeded" })
+    assert.equal((await guests.read(untagged)).state, "exhausted")
+    assert.equal((await guests.admit({ kind: "installation", id: "u".repeat(64) })).ok, true, "a tagged proof from that machine is not held to the untagged budget")
+    assert.equal((await guests.admit({ kind: "installation", id: "w".repeat(64), untaggedIpHash: "8".repeat(64) })).ok, true, "another IP has its own budget")
+    const shared = windows[2]
+    assert.ok(shared)
+    await db.update(GuestBucket).set({ used_amount: config.untaggedGlobalDailyAmount }).where(eq(GuestBucket.id, shared.id))
+    assert.deepEqual(await guests.admit({ kind: "installation", id: "x".repeat(64), untaggedIpHash: "7".repeat(64) }), { ok: false, code: "anonymous_capacity_exceeded" })
+    assert.equal((await guests.admit({ kind: "installation", id: "y".repeat(64) })).ok, true, "the untagged cap never stops tagged guests")
+    await db.update(GuestBucket).set({ used_amount: 0 }).where(eq(GuestBucket.id, shared.id))
+  })
+
   await t.test("a guest's allowance unlocks with time the app is open, credited from heartbeats; each IP may introduce only a few new machines a day", async () => {
     const minute = 60000
     const newIp = "9".repeat(64)

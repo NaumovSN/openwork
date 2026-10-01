@@ -7,8 +7,11 @@ import { env } from "../../env.js"
 import { db, freeAutoDatabase } from "../../db.js"
 
 type InferenceKeyRow = typeof InferenceKeyTable.$inferSelect
-/** Signed-out desktop: the id is the keyed hash of the machine identifier. */
-export type GuestPrincipal = { kind: "installation"; id: string }
+/**
+ * Signed-out desktop: the id is the keyed hash of the machine identifier. An untagged build (no release tag) also
+ * carries its IP hash, because its machine id is only self-reported: it is limited per IP as well.
+ */
+export type GuestPrincipal = { kind: "installation"; id: string; untaggedIpHash?: string }
 /** Signed-in, unsubscribed member using their OpenWork Models key. The allowance is per person. */
 export type MemberPrincipal = { kind: "member"; id: NonNullable<typeof MemberTable.$inferSelect.userId>;
   inferenceKeyId: InferenceKeyRow["id"]; memberId: InferenceKeyRow["org_membership_id"]; organizationId: InferenceKeyRow["organization_id"] }
