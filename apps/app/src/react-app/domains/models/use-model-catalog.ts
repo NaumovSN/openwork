@@ -57,6 +57,21 @@ export type ModelCatalogView = {
 };
 
 /**
+ * A list saved from the last launch is still "loading": the picker renders its
+ * rows, but nothing is called unavailable until the engine answers.
+ */
+export function providerListLoadState(input: {
+  isError: boolean;
+  isPending: boolean;
+  isPlaceholderData: boolean;
+  active: boolean;
+}): ModelPickerCatalogState["state"] {
+  if (input.isError) return "error";
+  if (input.isPlaceholderData || (input.active && input.isPending)) return "loading";
+  return "ready";
+}
+
+/**
  * The single entitlement pipeline behind every model picker: engine models,
  * assigned and pending gateway models, organization pins, desktop policy,
  * disabled providers, the Zen fallback rule and Auto's pin and readiness.
@@ -65,7 +80,8 @@ export function useModelCatalog(input: UseModelCatalogInput): ModelCatalogView {
   const auth = useDenAuth();
   const signedIn = input.cloudProvidersEnabled ?? auth.isSignedIn;
   const checkRestriction = useCheckDesktopRestriction();
-  const providers = useProviderListQuery({ client: input.client, baseUrl: input.baseUrl, directory: input.directory || undefined, enabled: input.enabled && Boolean(input.client) });
+  // Pickers show the providers last seen for this folder while the engine starts.
+  const providers = useProviderListQuery({ client: input.client, baseUrl: input.baseUrl, directory: input.directory || undefined, enabled: input.enabled && Boolean(input.client), showSavedWhileLoading: true });
   const refetch = providers.refetch;
   useEffect(() => {
     if (input.refreshWhen && input.client) void refetch();
@@ -93,7 +109,7 @@ export function useModelCatalog(input: UseModelCatalogInput): ModelCatalogView {
     input.disabledProviders, input.gatewayProviderIds, autoStatus, autoPending]);
 
   const catalogState: ModelPickerCatalogState = {
-    state: providers.isError ? "error" : input.client && input.enabled && providers.isPending ? "loading" : "ready",
+    state: providerListLoadState({ ...providers, active: Boolean(input.client) && input.enabled }),
     lastVerifiedAt: providers.dataUpdatedAt || undefined,
     refreshing: providers.isFetching,
     onRetry: input.client ? () => refetch() : undefined,

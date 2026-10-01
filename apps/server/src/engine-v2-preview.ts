@@ -29,6 +29,7 @@ import {
 import type { EnvService } from "./env-file.js";
 import { selectPrimaryCredentialEnvName } from "./managed-provider-auth.js";
 import type { ServerConfig } from "./types.js";
+import { findManagedEngineWorkspace } from "./workspaces.js";
 import { localProviderDefinitions, readLocalProviderApiKeys } from "./opencode-v2-local-auth.js";
 
 const OPENCODE_V2_VERSION = constants.opencodeV2Version;
@@ -701,6 +702,9 @@ export function createEngineV2Preview(options: {
       const unsubscribeEnv = options.env?.onChange(scheduleMirror);
       unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); };
       scheduleMirror();
+      // Readiness joins the provider push itself; it must not wait for the
+      // mirror's slower catalog confirmation.
+      warmActiveWorkspace();
       if (mirrorInFlight) await mirrorInFlight;
       if (!enabled || !allowRunning) {
         await closeSidecar();
@@ -770,6 +774,7 @@ export function createEngineV2Preview(options: {
     requireNoMigration();
     await writeEngineV2PreviewState(config, { enabled, chatRouting: nextChatRouting });
     chatRouting = nextChatRouting;
+    warmActiveWorkspace();
     return status();
   }
 
@@ -811,6 +816,14 @@ export function createEngineV2Preview(options: {
     if (!sidecar || mcpLocations.has(directory)) return;
     void ensureWorkspaceReady(directory).catch(() => undefined);
     void syncWorkspaceMcp(workspaceId, directory).catch((error) => warn(`MCP: ${errorMessage(error)}`));
+  }
+
+  // When v2 serves chats, open the active workspace as soon as the sidecar is
+  // up, so the window's first model read does not wait on the location's setup.
+  function warmActiveWorkspace(): void {
+    if (!chatRouting || !sidecar) return;
+    const workspace = findManagedEngineWorkspace(config.workspaces);
+    if (workspace?.path) warmWorkspace(workspace.id, workspace.path);
   }
 
   function migrateHistory(): EngineV2PreviewStatus {
