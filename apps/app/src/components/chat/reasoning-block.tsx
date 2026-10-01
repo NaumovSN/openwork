@@ -1,7 +1,5 @@
 "use client"
 
-import { formatToolCallDuration } from "@/lib/tool-call-duration";
-
 import { useWorkbenchDisclosure } from "@/react-app/domains/session/chat/workbench-ui-state"
 import { ChevronDown } from "lucide-react"
 
@@ -14,8 +12,6 @@ import { MessageContent } from "@/components/ui/message"
 import { cn } from "@/lib/utils"
 
 type ReasoningBlockProps = {
-  startedAt?: number
-  endedAt?: number
   text: string
   isStreaming: boolean
   className?: string
@@ -27,17 +23,14 @@ type ReasoningBlockProps = {
  * line with a chevron; the full reasoning renders as markdown only
  * when the user opens it.
  */
-export function ReasoningBlock({ text, isStreaming, className, disclosureKey, startedAt, endedAt }: ReasoningBlockProps) {
+export function ReasoningBlock({ text, isStreaming, className, disclosureKey }: ReasoningBlockProps) {
   const [open, setOpen] = useWorkbenchDisclosure(disclosureKey)
-  const label = isStreaming ? "Thinking…" : startedAt !== undefined && endedAt !== undefined && Number.isFinite(startedAt) && Number.isFinite(endedAt) && endedAt >= startedAt
-    ? `Thought for ${formatToolCallDuration(endedAt - startedAt)}` : "Thought";
-  if (!text) return <div data-reasoning-block className={cn("text-sm text-muted-foreground", isStreaming && "ow-text-shimmer motion-reduce:animate-none", className)}>{label}</div>;
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className={cn("w-full", className)} data-reasoning-block="">
       <CollapsibleTrigger className="group flex cursor-pointer items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
-        <span className={cn(isStreaming && "ow-text-shimmer motion-reduce:animate-none")}>
-          {label}
+        <span className={cn(isStreaming && "animate-pulse")}>
+          {isStreaming ? "Thinking…" : "Thought"}
         </span>
         <ChevronDown
           aria-hidden="true"

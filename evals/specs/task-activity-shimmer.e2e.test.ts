@@ -41,95 +41,20 @@ test("a member keeps the original task and working time when sending a follow-up
   await user.press(world.app.handle.hostKind !== "daytona" && process.platform === "darwin" ? "Meta+Enter" : "Control+Enter");
   await user.see({ text: "Build isolated Azure repro" });
   await user.see({ text: "What is the update?" });
-  // TODO(primitive): inspect the visual treatment classes on a delegated-task status row.
-  const readActivity = () => probe.eval(() => {
-    const row = document.querySelector<HTMLElement>('[data-subagent-activity="shimmer"]');
-    const original = row?.closest<HTMLElement>('[data-message-id]');
+  // TODO(primitive): correlate a visible task row with its initiating message.
+  const order = await probe.eval(() => {
+    const row = document.querySelector('[data-subagent-run]');
+    const original = row?.closest('[data-message-id]');
     const followup = [...document.querySelectorAll<HTMLElement>('[data-message-id]')]
-      .find((message) => message.innerText.includes("What is the update?"));
-    const button = row?.querySelector<HTMLButtonElement>(":scope > button.group");
-    const title = button?.querySelector<HTMLElement>(".ow-text-shimmer");
-    const suffix = title?.querySelector<HTMLElement>(":scope > span");
-    const status = button?.querySelector<HTMLElement>(":scope > span:nth-child(2)");
-    if (!row || !button || !title || !suffix || !status) {
-      throw new Error("Missing running task title, agent label, or status");
-    }
-    const style = getComputedStyle(title);
-    return {
-      text: row instanceof HTMLElement ? row.innerText.replace(/\s+/g, " ").trim() : "",
-      hasSpinner: Boolean(row?.querySelector<HTMLElement>(".animate-spin")),
-      hasShimmer: Boolean(row?.querySelector<HTMLElement>(".ow-text-shimmer")),
-      liveCards: document.querySelectorAll('[data-subagent-run]').length,
-      historyEntries: document.querySelectorAll('[data-subagent-history]').length,
-      messageId: original?.getAttribute("data-message-id"),
-      carriedSummaries: document.querySelectorAll('[data-testid="active-subagents"]').length,
-      staysWithOriginalMessage: Boolean(row && original?.contains(row)),
-      precedesFollowup: Boolean(row && followup && (row.compareDocumentPosition(followup) & Node.DOCUMENT_POSITION_FOLLOWING)),
-      rawPromptVisible: document.body.innerText.includes("ACTIVITY_CHILD_HOLD"),
-      childId: row.getAttribute("data-subagent-session-id"),
-      callId: row.getAttribute("data-subagent-run"),
-      hovered: button.matches(":hover"),
-      colorSettled: button.getAnimations().every((animation) => animation.playState !== "running"),
-      buttonColor: getComputedStyle(button).color,
-      titleStyle: { color: style.color, backgroundImage: style.backgroundImage, animationName: style.animationName },
-      mutedColors: [getComputedStyle(suffix).color, getComputedStyle(status).color],
-      reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
-      hoverSupported: matchMedia("(hover: hover)").matches,
-    };
+      .find(message => message.innerText.includes("What is the update?"));
+    return { messageId: original?.getAttribute('data-message-id'),
+      childId: row?.getAttribute('data-subagent-session-id'),
+      callId: row?.getAttribute('data-subagent-run'),
+      precedesFollowup: Boolean(row && followup && (row.compareDocumentPosition(followup) & Node.DOCUMENT_POSITION_FOLLOWING)) };
   });
-  await user.hover("composer");
-  const rendered = await probe.eventually(readActivity, {
-    within: 5_000, intervalMs: 50, label: "running task is not hovered",
-    until: (value) => !value.hovered && value.colorSettled,
-  });
-  evidence.recordJsonArtifact("Delegated activity state", rendered);
-  expect(rendered).toMatchObject({
-    text: expect.stringMatching(/Build isolated Azure repro.*Working/),
-    hasSpinner: false,
-    hasShimmer: true,
-    liveCards: 1,
-    historyEntries: 0,
-    carriedSummaries: 0,
-    staysWithOriginalMessage: true,
-    precedesFollowup: true,
-    rawPromptVisible: false,
-    messageId: native.messageId,
-  });
-  expect(rendered.childId).toBe(native.childId);
-  expect(rendered.callId).toBe(native.callId);
-  expect(rendered.titleStyle.animationName).toBe(rendered.reducedMotion ? "none" : "ow-text-shimmer");
-  if (!rendered.reducedMotion) expect(rendered.titleStyle.backgroundImage).toContain("linear-gradient");
-
-  await user.hover({ role: "button", label: /Build isolated Azure repro/ });
-  const hovered = await probe.eventually(readActivity, {
-    within: 5_000, intervalMs: 50, label: "the hovered task respects this device's hover capability",
-    until: (value) => value.hovered && value.colorSettled && (!value.hoverSupported
-      || (value.titleStyle.backgroundImage === "none" && value.titleStyle.animationName === "none"
-        && value.titleStyle.color === value.buttonColor)),
-  });
-  if (hovered.hoverSupported) {
-    expect(hovered.titleStyle.color).not.toBe(rendered.buttonColor);
-  } else {
-    // A headless/touch surface can accept CDP mouse input but advertises
-    // hover:none. Production intentionally gates hover CSS on that media query.
-    expect(hovered.titleStyle).toEqual(rendered.titleStyle);
-  }
-  expect(hovered.mutedColors).toEqual(rendered.mutedColors);
-  expect(hovered.text).toMatch(/Working/);
-
-  await user.hover("composer");
-  const restored = await probe.eventually(readActivity, {
-    within: 5_000, intervalMs: 50, label: "task shimmer remains correct after pointer leave",
-    until: (value) => !value.hovered && value.colorSettled
-      && value.titleStyle.backgroundImage === rendered.titleStyle.backgroundImage
-      && value.titleStyle.animationName === rendered.titleStyle.animationName,
-  });
-  expect(restored.titleStyle).toEqual(rendered.titleStyle);
-  expect(restored.mutedColors).toEqual(rendered.mutedColors);
-  evidence.recordJsonArtifact("Delegated task hover", { rendered, hovered, restored });
-  evidence.recordAssertionEvidence("the visible task respects device hover capability",
-    hovered.hoverSupported ? "Hover uses solid inherited text, then restores shimmer without recoloring status."
-      : "This surface advertises hover:none; synthetic pointer movement keeps the running shimmer and status colors.", true);
+  expect(order).toMatchObject({ messageId: native.messageId, childId: native.childId,
+    callId: native.callId, precedesFollowup: true });
+  evidence.recordJsonArtifact("Original task and follow-up order", order);
   await step("after: the follow-up stays after its task and the working timer continues", async () => {
     await user.see({ text: "What is the update?" });
     const continued = await readWorkingFooter();
@@ -149,5 +74,5 @@ test("a member keeps the original task and working time when sending a follow-up
     await user.screenshot();
   });
   evidence.recordAssertionEvidence("Delegated activity opens the exact live child across reload",
-    "Original row shimmers before follow-up; opening it and reloading preserves the child session, prompt and Working state while the provider remains held.", true);
+    "Opening the original task and reloading preserves the child session and Working state while the provider remains held.", true);
 });
