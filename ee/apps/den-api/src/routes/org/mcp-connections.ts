@@ -1,3 +1,4 @@
+import { activeSecretMember, getSecretBinding, secretBindingStatus } from "../../secrets-store.js"
 import { createHash } from "node:crypto"
 import type { Context, Hono } from "hono"
 import { bodyLimit } from "hono/body-limit"
@@ -770,7 +771,7 @@ const connectionValidationFailedSchema = z.object({
 }).meta({ ref: "ExternalMcpConnectionValidationFailedError" })
 
 function isConnectionConnected(row: ExternalMcpConnectionRow): boolean {
-  if (row.credentialMode === "per_member") {
+  if (row.credentialMode === "per_member" && row.authType === "oauth") {
     // A per_member connection is "published" once created; individual
     // members connect their own accounts (connectedForMe).
     return true
@@ -810,7 +811,7 @@ async function resolveExternalMcpToolCredential(
       message: "A workspace admin must review this MCP connection's changed OAuth issuer before its tools can be used.",
     }
   }
-  if (connection.credentialMode === "per_member") {
+  if (connection.credentialMode === "per_member" && connection.authType === "oauth") {
     const account = await getConnectedAccount({
       organizationId: connection.organizationId,
       orgMembershipId,
@@ -822,7 +823,7 @@ async function resolveExternalMcpToolCredential(
   }
 
   return isConnectionConnected(connection)
-    ? { ok: true }
+    ? { ok: true, member: { orgMembershipId } }
     : { ok: false, message: "Connect this MCP before using its tools." }
 }
 
@@ -1114,7 +1115,7 @@ async function toConnectionResponse(
   let grantedScopes = row.scope?.split(/\s+/).filter(Boolean) ?? []
   let callerCredentialHealth = row.credentialHealth
   let callerExternalAccountId: string | null = null
-  if (row.credentialMode === "per_member") {
+  if (row.credentialMode === "per_member" && row.authType === "oauth") {
     const account = await getConnectedAccount({
       organizationId: row.organizationId,
       orgMembershipId: options.callerOrgMembershipId,
@@ -1135,6 +1136,13 @@ async function toConnectionResponse(
       connected = connectedForMe
       connectedAt = account?.accessToken ? account.connectedAt : null
     }
+  }
+
+  const templateBinding = await getSecretBinding(row.organizationId, row.id)
+  if (templateBinding) {
+    const member = await activeSecretMember(row.organizationId, options.callerOrgMembershipId)
+    const status = await secretBindingStatus({ organizationId: row.organizationId, memberId: member.id, userId: member.userId, admin: false }, row, templateBinding)
+    connectedForMe = status.ready
   }
 
   let access: { orgWide: boolean; memberIds: string[]; teamIds: string[] } | null = null
@@ -1586,8 +1594,8 @@ async function createExternalConnectionResponse(
   if (body.authType === "apikey" && !body.apiKey) {
     return c.json({ error: "invalid_request", message: "apiKey is required when authType is apikey." }, 400)
   }
-  if (body.credentialMode === "per_member" && body.authType !== "oauth") {
-    return c.json({ error: "invalid_request", message: "credentialMode per_member requires authType oauth — API keys and no-auth servers have no per-person identity to connect." }, 400)
+  if (body.credentialMode === "per_member" && body.authType === "apikey") {
+    return c.json({ error: "invalid_request", message: "Per-person API keys must use a named secret template instead of a shared API-key credential." }, 400)
   }
   if (!env.allowPrivateMcpUrls) {
     // Fail fast with a clear message; the guarded fetch inside the MCP
@@ -1775,8 +1783,8 @@ async function replaceExternalConnectionResponse(
   )) {
     return c.json({ error: "invalid_request", message: "OAuth issuer and scopes are only allowed when authType is oauth." }, 400)
   }
-  if (body.credentialMode === "per_member" && body.authType !== "oauth") {
-    return c.json({ error: "invalid_request", message: "credentialMode per_member requires authType oauth — API keys and no-auth servers have no per-person identity to connect." }, 400)
+  if (body.credentialMode === "per_member" && body.authType === "apikey") {
+    return c.json({ error: "invalid_request", message: "Per-person API keys must use a named secret template instead of a shared API-key credential." }, 400)
   }
 
   const apiKey = body.authType === "apikey"
@@ -1799,7 +1807,8 @@ async function replaceExternalConnectionResponse(
     }
   }
 
-  const shouldValidate = body.authType !== "oauth"
+  const hasTemplateBinding = Boolean(await getSecretBinding(connection.organizationId, connection.id))
+  const shouldValidate = !hasTemplateBinding && body.authType !== "oauth"
     && (identityChanged || connection.url !== body.url || body.apiKey !== undefined)
   let validatedAt: Date | undefined
   if (shouldValidate) {

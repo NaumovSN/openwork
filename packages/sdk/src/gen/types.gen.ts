@@ -26626,6 +26626,503 @@ export type DeleteV1OrgWebOriginsByWebOriginIdResponses = {
 export type DeleteV1OrgWebOriginsByWebOriginIdResponse =
   DeleteV1OrgWebOriginsByWebOriginIdResponses[keyof DeleteV1OrgWebOriginsByWebOriginIdResponses];
 
+export type GetV1OrgSecretsData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/org/secrets";
+};
+
+export type GetV1OrgSecretsErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Not permitted.
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Not found.
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Setup or revision changed.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type GetV1OrgSecretsError = GetV1OrgSecretsErrors[keyof GetV1OrgSecretsErrors];
+
+export type GetV1OrgSecretsResponses = {
+  /**
+   * List definitions and current-member value status; never returns secrets
+   */
+  200: {
+    canManage: boolean;
+    definitions: Array<{
+      name: string;
+      label: string;
+      helpText?: string;
+      kind: "secret" | "variable";
+      source: "member" | "organization";
+      required?: boolean;
+      id: string;
+      revision: number;
+      valueRevision: number;
+      saved: boolean;
+      updatedAt: string | null;
+      variableValue?: string;
+      completionCount?: number;
+    }>;
+    bindings: Array<{
+      connectionId: string;
+      connectionName: string;
+      endpoint: string;
+      revision: number;
+      headers: Array<{
+        name: string;
+        template: string;
+      }>;
+      labels: Array<string>;
+      approved: boolean;
+      ready: boolean;
+      missingLabels: Array<string>;
+      needsAdmin: boolean;
+    }>;
+  };
+};
+
+export type GetV1OrgSecretsResponse = GetV1OrgSecretsResponses[keyof GetV1OrgSecretsResponses];
+
+export type PostV1OrgSecretsDefinitionsData = {
+  body: {
+    name: string;
+    label: string;
+    helpText?: string;
+    kind: "secret" | "variable";
+    source: "member" | "organization";
+    required?: boolean;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/org/secrets/definitions";
+};
+
+export type PostV1OrgSecretsDefinitionsErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Not permitted.
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Not found.
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Setup or revision changed.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type PostV1OrgSecretsDefinitionsError =
+  PostV1OrgSecretsDefinitionsErrors[keyof PostV1OrgSecretsDefinitionsErrors];
+
+export type PostV1OrgSecretsDefinitionsResponses = {
+  /**
+   * Create an organization secret or variable requirement
+   */
+  200: {
+    saved: true;
+  };
+};
+
+export type PostV1OrgSecretsDefinitionsResponse =
+  PostV1OrgSecretsDefinitionsResponses[keyof PostV1OrgSecretsDefinitionsResponses];
+
+export type PatchV1OrgSecretsDefinitionsByDefinitionIdData = {
+  body: {
+    label: string;
+    helpText?: string;
+    required?: boolean;
+    expectedRevision: number;
+  };
+  path: {
+    definitionId: string;
+  };
+  query?: never;
+  url: "/v1/org/secrets/definitions/{definitionId}";
+};
+
+export type PatchV1OrgSecretsDefinitionsByDefinitionIdErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Not permitted.
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Not found.
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Setup or revision changed.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type PatchV1OrgSecretsDefinitionsByDefinitionIdError =
+  PatchV1OrgSecretsDefinitionsByDefinitionIdErrors[keyof PatchV1OrgSecretsDefinitionsByDefinitionIdErrors];
+
+export type PatchV1OrgSecretsDefinitionsByDefinitionIdResponses = {
+  /**
+   * Edit a requirement without changing its name, type, or source
+   */
+  200: {
+    saved: true;
+  };
+};
+
+export type PatchV1OrgSecretsDefinitionsByDefinitionIdResponse =
+  PatchV1OrgSecretsDefinitionsByDefinitionIdResponses[keyof PatchV1OrgSecretsDefinitionsByDefinitionIdResponses];
+
+export type DeleteV1OrgSecretsValuesByDefinitionIdData = {
+  body: {
+    expectedRevision: number;
+  };
+  path: {
+    definitionId: string;
+  };
+  query?: never;
+  url: "/v1/org/secrets/values/{definitionId}";
+};
+
+export type DeleteV1OrgSecretsValuesByDefinitionIdErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Not permitted.
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Not found.
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Setup or revision changed.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type DeleteV1OrgSecretsValuesByDefinitionIdError =
+  DeleteV1OrgSecretsValuesByDefinitionIdErrors[keyof DeleteV1OrgSecretsValuesByDefinitionIdErrors];
+
+export type DeleteV1OrgSecretsValuesByDefinitionIdResponses = {
+  /**
+   * Clear your value without reading it
+   */
+  200: {
+    saved: true;
+  };
+};
+
+export type DeleteV1OrgSecretsValuesByDefinitionIdResponse =
+  DeleteV1OrgSecretsValuesByDefinitionIdResponses[keyof DeleteV1OrgSecretsValuesByDefinitionIdResponses];
+
+export type PutV1OrgSecretsValuesByDefinitionIdData = {
+  body: {
+    value: string;
+    expectedRevision: number;
+  };
+  path: {
+    definitionId: string;
+  };
+  query?: never;
+  url: "/v1/org/secrets/values/{definitionId}";
+};
+
+export type PutV1OrgSecretsValuesByDefinitionIdErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Not permitted.
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Not found.
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Setup or revision changed.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type PutV1OrgSecretsValuesByDefinitionIdError =
+  PutV1OrgSecretsValuesByDefinitionIdErrors[keyof PutV1OrgSecretsValuesByDefinitionIdErrors];
+
+export type PutV1OrgSecretsValuesByDefinitionIdResponses = {
+  /**
+   * Set or replace your value; a secret is never returned
+   */
+  200: {
+    saved: true;
+  };
+};
+
+export type PutV1OrgSecretsValuesByDefinitionIdResponse =
+  PutV1OrgSecretsValuesByDefinitionIdResponses[keyof PutV1OrgSecretsValuesByDefinitionIdResponses];
+
+export type PutV1OrgSecretsConnectionsByConnectionIdData = {
+  body: {
+    expectedRevision: number;
+    headers: Array<{
+      name: string;
+      template: string;
+    }>;
+  };
+  path: {
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/org/secrets/connections/{connectionId}";
+};
+
+export type PutV1OrgSecretsConnectionsByConnectionIdErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Not permitted.
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Not found.
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Setup or revision changed.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type PutV1OrgSecretsConnectionsByConnectionIdError =
+  PutV1OrgSecretsConnectionsByConnectionIdErrors[keyof PutV1OrgSecretsConnectionsByConnectionIdErrors];
+
+export type PutV1OrgSecretsConnectionsByConnectionIdResponses = {
+  /**
+   * Bind approved HTTP header templates to an MCP connection
+   */
+  200: {
+    saved: true;
+  };
+};
+
+export type PutV1OrgSecretsConnectionsByConnectionIdResponse =
+  PutV1OrgSecretsConnectionsByConnectionIdResponses[keyof PutV1OrgSecretsConnectionsByConnectionIdResponses];
+
+export type PostV1OrgSecretsConnectionsByConnectionIdCheckData = {
+  body?: never;
+  path: {
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/org/secrets/connections/{connectionId}/check";
+};
+
+export type PostV1OrgSecretsConnectionsByConnectionIdCheckErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Not permitted.
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Not found.
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Setup or revision changed.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type PostV1OrgSecretsConnectionsByConnectionIdCheckError =
+  PostV1OrgSecretsConnectionsByConnectionIdCheckErrors[keyof PostV1OrgSecretsConnectionsByConnectionIdCheckErrors];
+
+export type PostV1OrgSecretsConnectionsByConnectionIdCheckResponses = {
+  /**
+   * Check the real MCP handshake with your current values
+   */
+  200: {
+    toolCount: number;
+  };
+};
+
+export type PostV1OrgSecretsConnectionsByConnectionIdCheckResponse =
+  PostV1OrgSecretsConnectionsByConnectionIdCheckResponses[keyof PostV1OrgSecretsConnectionsByConnectionIdCheckResponses];
+
+export type PostV1OrgSecretsConnectionsByConnectionIdApproveData = {
+  body: {
+    revision: number;
+  };
+  path: {
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/org/secrets/connections/{connectionId}/approve";
+};
+
+export type PostV1OrgSecretsConnectionsByConnectionIdApproveErrors = {
+  /**
+   * Invalid input.
+   */
+  400: InvalidRequestError;
+  /**
+   * Sign in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Not permitted.
+   */
+  403: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Not found.
+   */
+  404: {
+    error: string;
+    message: string;
+  };
+  /**
+   * Setup or revision changed.
+   */
+  409: {
+    error: string;
+    message: string;
+  };
+};
+
+export type PostV1OrgSecretsConnectionsByConnectionIdApproveError =
+  PostV1OrgSecretsConnectionsByConnectionIdApproveErrors[keyof PostV1OrgSecretsConnectionsByConnectionIdApproveErrors];
+
+export type PostV1OrgSecretsConnectionsByConnectionIdApproveResponses = {
+  /**
+   * Approve the displayed credential destination for your membership
+   */
+  200: {
+    saved: true;
+  };
+};
+
+export type PostV1OrgSecretsConnectionsByConnectionIdApproveResponse =
+  PostV1OrgSecretsConnectionsByConnectionIdApproveResponses[keyof PostV1OrgSecretsConnectionsByConnectionIdApproveResponses];
+
 export type GetV1McpConnectionsByConnectionIdSlackAssistantData = {
   body?: never;
   path: {

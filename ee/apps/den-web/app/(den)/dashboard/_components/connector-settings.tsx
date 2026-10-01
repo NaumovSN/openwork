@@ -35,7 +35,7 @@ export function ConnectorSettingsForm({ connection, onSaved }: { connection: Ext
   const managedByPlugin = connection.identityManagedBy.length > 0;
   const usesKey = authType === "apikey";
   const usesOAuthApp = authType === "oauth" && showOAuthApp;
-  const chosenMode = authType === "oauth" ? credentialMode : "shared";
+  const chosenMode = authType === "apikey" ? "shared" : credentialMode;
   const identityChanged = url.trim() !== connection.url || authType !== connection.authType || chosenMode !== connection.credentialMode;
   const requestedScopes = [...new Set(scopes.split(/[\s,]+/).filter(Boolean))];
   const scopesChanged = requestedScopes.join(" ") !== (connection.requestedScopes ?? []).join(" ");
@@ -101,15 +101,15 @@ export function ConnectorSettingsForm({ connection, onSaved }: { connection: Ext
         </DenSelect>
       </Field>
       <Field label="How people sign in">
-        <DenSelect value={chosenMode} disabled={managedByPlugin || authType !== "oauth"} onChange={(event) => {
+        <DenSelect value={chosenMode} disabled={managedByPlugin || authType === "apikey"} onChange={(event) => {
           const value = event.target.value;
           if (value === "per_member" || value === "shared") setCredentialMode(value);
         }}>
-          <option value="per_member">Each person signs in</option>
-          <option value="shared">One account for everyone</option>
+          <option value="per_member">{authType === "none" ? "Each person provides values" : "Each person signs in"}</option>
+          <option value="shared">{authType === "none" ? "Organization values" : "One account for everyone"}</option>
         </DenSelect>
       </Field>
-      {authType !== "oauth" ? <p className="text-[12px] text-gray-500">This connection is shared; nobody signs in individually.</p> : null}
+      {authType === "none" ? <p className="text-[12px] text-gray-500">Use Secrets and variables to bind named HTTP header values.</p> : authType === "apikey" ? <p className="text-[12px] text-gray-500">This connection uses a shared API key.</p> : null}
       {authType === "oauth" && !showOAuthApp ? <DenButton type="button" variant="secondary" size="sm" onClick={() => setShowOAuthApp(true)}>Add OAuth app</DenButton> : null}
       {usesKey && !managedByPlugin ? (
         <Field label={keyRequired ? "New API key" : "New API key (optional)"}>

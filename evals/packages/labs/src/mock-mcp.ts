@@ -14,6 +14,8 @@ export interface MockAuthorizeRequest {
   grantType?: string;
   /** Non-secret fingerprint, shared by token issuance and resource validation witnesses. */
   tokenId?: string | null;
+  /** Opt-in, non-secret fingerprints of application headers received by the mock. */
+  headerFingerprints?: Record<string, string | null>;
   refreshTokenIssued?: boolean;
   oauthError?: string;
 }
@@ -159,6 +161,7 @@ export interface StartMockMcpOptions {
   /** Token requests from these clients fail with invalid_client (unsupported client authentication). Entries are a client id, "id:secret" to reject only that exact presented secret, or "@dynamic" for every dynamically registered client. */
   rejectTokenClientIds?: string[];
   allowUnauthenticatedMcp?: boolean;
+  witnessHeaders?: string[];
   /** Reject dynamic client registration when the submitted OAuth redirect URI is not allowlisted. */
   rejectDynamicRedirectUris?: "invalid_redirect_uri" | "invalid_request";
   /** Serve this many additional synthetic mock_tool_<i> tools for scale specs. */
@@ -201,6 +204,7 @@ function parseRequest(value: unknown): MockAuthorizeRequest | null {
     ...(typeof value.status === "number" ? { status: value.status } : {}),
     ...(typeof value.grantType === "string" ? { grantType: value.grantType } : {}),
     ...(typeof value.tokenId === "string" || value.tokenId === null ? { tokenId: value.tokenId } : {}),
+    ...(isRecord(value.headerFingerprints) ? { headerFingerprints: Object.fromEntries(Object.entries(value.headerFingerprints).map(([name, fingerprint]) => [name, typeof fingerprint === "string" ? fingerprint : null])) } : {}),
     ...(typeof value.refreshTokenIssued === "boolean" ? { refreshTokenIssued: value.refreshTokenIssued } : {}),
     ...(typeof value.oauthError === "string" ? { oauthError: value.oauthError } : {}),
   };
@@ -446,6 +450,7 @@ export async function startMockMcp(options: StartMockMcpOptions = {}): Promise<M
         AUTO_APPROVE: "1",
         ...(options.authorizationResponseIssuerSupported === undefined ? {} : { MOCK_AUTHORIZATION_RESPONSE_ISSUER: options.authorizationResponseIssuerSupported ? "1" : "0" }),
         ...(options.allowUnauthenticatedMcp ? { MOCK_ALLOW_UNAUTHENTICATED_MCP: "1" } : {}),
+        ...(options.witnessHeaders?.length ? { MOCK_WITNESS_HEADERS: options.witnessHeaders.join(",") } : {}),
         ...(options.rejectDynamicRedirectUris ? { MOCK_REJECT_DCR_REDIRECT_URIS: options.rejectDynamicRedirectUris } : {}),
         ...(options.rejectTokenClientIds?.length ? { MOCK_REJECT_TOKEN_CLIENT_IDS: options.rejectTokenClientIds.join(",") } : {}),
         ...(options.extraToolCount ? { MOCK_EXTRA_TOOL_COUNT: String(options.extraToolCount) } : {}),

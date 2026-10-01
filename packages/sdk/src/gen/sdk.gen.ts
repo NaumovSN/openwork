@@ -98,6 +98,8 @@ import type {
   DeleteV1MemoryByIdErrors,
   DeleteV1OrgErrors,
   DeleteV1OrgResponses,
+  DeleteV1OrgSecretsValuesByDefinitionIdErrors,
+  DeleteV1OrgSecretsValuesByDefinitionIdResponses,
   DeleteV1OrgWebOriginsByWebOriginIdErrors,
   DeleteV1OrgWebOriginsByWebOriginIdResponses,
   DeleteV1PluginsByPluginIdAccessByGrantIdErrors,
@@ -425,6 +427,8 @@ import type {
   GetV1OauthProvidersByProviderIdStatusResponses,
   GetV1OrgErrors,
   GetV1OrgResponses,
+  GetV1OrgSecretsErrors,
+  GetV1OrgSecretsResponses,
   GetV1OrgsInvitationsPreviewErrors,
   GetV1OrgsInvitationsPreviewResponses,
   GetV1OrgWebOriginsErrors,
@@ -566,6 +570,8 @@ import type {
   PatchV1MeProfileResponses,
   PatchV1OrgErrors,
   PatchV1OrgResponses,
+  PatchV1OrgSecretsDefinitionsByDefinitionIdErrors,
+  PatchV1OrgSecretsDefinitionsByDefinitionIdResponses,
   PatchV1PluginsByPluginIdErrors,
   PatchV1PluginsByPluginIdResponses,
   PatchV1RolesByRoleIdErrors,
@@ -790,6 +796,12 @@ import type {
   PostV1OrgBrandAssetsResponses,
   PostV1OrgsByOrganizationIdInstallLinksErrors,
   PostV1OrgsByOrganizationIdInstallLinksResponses,
+  PostV1OrgSecretsConnectionsByConnectionIdApproveErrors,
+  PostV1OrgSecretsConnectionsByConnectionIdApproveResponses,
+  PostV1OrgSecretsConnectionsByConnectionIdCheckErrors,
+  PostV1OrgSecretsConnectionsByConnectionIdCheckResponses,
+  PostV1OrgSecretsDefinitionsErrors,
+  PostV1OrgSecretsDefinitionsResponses,
   PostV1OrgsInvitationsAcceptErrors,
   PostV1OrgsInvitationsAcceptResponses,
   PostV1OrgWebOriginsErrors,
@@ -889,6 +901,10 @@ import type {
   PutV1McpConnectionsByConnectionIdToolPolicyResponses,
   PutV1McpConnectionsByKeyByExternalKeyErrors,
   PutV1McpConnectionsByKeyByExternalKeyResponses,
+  PutV1OrgSecretsConnectionsByConnectionIdErrors,
+  PutV1OrgSecretsConnectionsByConnectionIdResponses,
+  PutV1OrgSecretsValuesByDefinitionIdErrors,
+  PutV1OrgSecretsValuesByDefinitionIdResponses,
   PutV1TeamsByKeyByExternalKeyErrors,
   PutV1TeamsByKeyByExternalKeyResponses,
   RunAutomationNowErrors,
@@ -14002,6 +14018,280 @@ export class DenClient extends HeyApiClient {
       url: "/v1/org/web-origins/{webOriginId}",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * List definitions and current-member value status; never returns secrets
+   */
+  public getV1OrgSecrets<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetV1OrgSecretsResponses, GetV1OrgSecretsErrors, ThrowOnError>({
+      url: "/v1/org/secrets",
+      ...options,
+    });
+  }
+
+  /**
+   * Create an organization secret or variable requirement
+   */
+  public postV1OrgSecretsDefinitions<ThrowOnError extends boolean = false>(
+    parameters: {
+      name: string;
+      label: string;
+      helpText?: string;
+      kind: "secret" | "variable";
+      source: "member" | "organization";
+      required?: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "body", key: "name" },
+            { in: "body", key: "label" },
+            { in: "body", key: "helpText" },
+            { in: "body", key: "kind" },
+            { in: "body", key: "source" },
+            { in: "body", key: "required" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1OrgSecretsDefinitionsResponses,
+      PostV1OrgSecretsDefinitionsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/org/secrets/definitions",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Edit a requirement without changing its name, type, or source
+   */
+  public patchV1OrgSecretsDefinitionsByDefinitionId<ThrowOnError extends boolean = false>(
+    parameters: {
+      definitionId: string;
+      label: string;
+      helpText?: string;
+      required?: boolean;
+      expectedRevision: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "definitionId" },
+            { in: "body", key: "label" },
+            { in: "body", key: "helpText" },
+            { in: "body", key: "required" },
+            { in: "body", key: "expectedRevision" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1OrgSecretsDefinitionsByDefinitionIdResponses,
+      PatchV1OrgSecretsDefinitionsByDefinitionIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/org/secrets/definitions/{definitionId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Clear your value without reading it
+   */
+  public deleteV1OrgSecretsValuesByDefinitionId<ThrowOnError extends boolean = false>(
+    parameters: {
+      definitionId: string;
+      expectedRevision: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "definitionId" },
+            { in: "body", key: "expectedRevision" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).delete<
+      DeleteV1OrgSecretsValuesByDefinitionIdResponses,
+      DeleteV1OrgSecretsValuesByDefinitionIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/org/secrets/values/{definitionId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Set or replace your value; a secret is never returned
+   */
+  public putV1OrgSecretsValuesByDefinitionId<ThrowOnError extends boolean = false>(
+    parameters: {
+      definitionId: string;
+      value: string;
+      expectedRevision: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "definitionId" },
+            { in: "body", key: "value" },
+            { in: "body", key: "expectedRevision" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<
+      PutV1OrgSecretsValuesByDefinitionIdResponses,
+      PutV1OrgSecretsValuesByDefinitionIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/org/secrets/values/{definitionId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Bind approved HTTP header templates to an MCP connection
+   */
+  public putV1OrgSecretsConnectionsByConnectionId<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+      expectedRevision: number;
+      headers: Array<{
+        name: string;
+        template: string;
+      }>;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "connectionId" },
+            { in: "body", key: "expectedRevision" },
+            { in: "body", key: "headers" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<
+      PutV1OrgSecretsConnectionsByConnectionIdResponses,
+      PutV1OrgSecretsConnectionsByConnectionIdErrors,
+      ThrowOnError
+    >({
+      url: "/v1/org/secrets/connections/{connectionId}",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Check the real MCP handshake with your current values
+   */
+  public postV1OrgSecretsConnectionsByConnectionIdCheck<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "connectionId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1OrgSecretsConnectionsByConnectionIdCheckResponses,
+      PostV1OrgSecretsConnectionsByConnectionIdCheckErrors,
+      ThrowOnError
+    >({
+      url: "/v1/org/secrets/connections/{connectionId}/check",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Approve the displayed credential destination for your membership
+   */
+  public postV1OrgSecretsConnectionsByConnectionIdApprove<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+      revision: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "connectionId" },
+            { in: "body", key: "revision" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).post<
+      PostV1OrgSecretsConnectionsByConnectionIdApproveResponses,
+      PostV1OrgSecretsConnectionsByConnectionIdApproveErrors,
+      ThrowOnError
+    >({
+      url: "/v1/org/secrets/connections/{connectionId}/approve",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 

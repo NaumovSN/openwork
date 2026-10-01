@@ -1,3 +1,4 @@
+import { secretConnectionReady } from "../secrets-store.js"
 import { isDeepStrictEqual } from "node:util"
 import { and, asc, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
@@ -1494,6 +1495,7 @@ export async function externalMcpConnectionReadyForMember(
   readAccount: typeof readConnectedAccountForExternalMcpIdentity = readConnectedAccountForExternalMcpIdentity,
 ): Promise<boolean> {
   if (connection.oauthIssuerReviewRequiredAt) return false
+  if (!await secretConnectionReady(connection, orgMembershipId)) return false
   if (connection.authType === "none") return true
   if (connection.credentialMode === "shared") {
     if (connection.authType === "oauth") return Boolean(connection.accessToken)

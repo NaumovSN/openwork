@@ -22,6 +22,8 @@ import {
   ScimUserTombstoneTable,
   SsoConnectionTable,
   SsoProviderTable,
+  SecretValueTable,
+  SecretBindingApprovalTable,
   TeamMemberTable,
   TeamTable,
 } from "@openwork-ee/den-db/schema"
@@ -2074,6 +2076,9 @@ export async function removeOrganizationMember(input: {
         eq(ConnectedAccountTable.organizationId, input.organizationId),
         eq(ConnectedAccountTable.orgMembershipId, member.id),
       ))
+
+    await tx.delete(SecretValueTable).where(and(eq(SecretValueTable.organizationId, input.organizationId), eq(SecretValueTable.ownerKey, member.id)))
+    await tx.delete(SecretBindingApprovalTable).where(and(eq(SecretBindingApprovalTable.organizationId, input.organizationId), eq(SecretBindingApprovalTable.memberId, member.id)))
 
     await tx
       .delete(LlmProviderMemberCredentialTable)

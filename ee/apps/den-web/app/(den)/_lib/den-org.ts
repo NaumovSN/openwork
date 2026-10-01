@@ -748,6 +748,10 @@ export function getGithubIntegrationRoute(orgSlug?: string | null): string {
   return `${getIntegrationsRoute(orgSlug)}/github`;
 }
 
+export function getSecretsRoute(orgSlug?: string | null) {
+  return `${getOrgDashboardRoute(orgSlug)}/secrets`;
+}
+
 export function getMcpConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/mcp-connections`;
 }

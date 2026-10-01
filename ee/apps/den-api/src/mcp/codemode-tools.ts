@@ -346,9 +346,7 @@ export async function buildExternalMcpToolTree(input: {
   const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
   const listed = (await mapConcurrent(connections, EXTERNAL_MCP_SEARCH_CONCURRENCY, async (connection) => {
     try {
-      const member = connection.credentialMode === "per_member"
-        ? { orgMembershipId: memberIdentity.orgMembershipId }
-        : undefined
+      const member = { orgMembershipId: memberIdentity.orgMembershipId }
       const tools = await listExternalMcpTools(
         connection,
         externalRedirectUri(input.redirectUriBase, connection.id),

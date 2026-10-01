@@ -54,6 +54,7 @@ const errorToolStatus = Number(process.env.MOCK_ERROR_TOOL_STATUS || 403);
 const errorToolMode = (process.env.MOCK_ERROR_TOOL_MODE || "result").trim();
 const errorToolConnectUrl = (process.env.MOCK_ERROR_TOOL_CONNECT_URL || "https://connect.example.test/salesforce/start").trim();
 const errorToolProvider = (process.env.MOCK_ERROR_TOOL_PROVIDER || "salesforce").trim();
+const witnessHeaders = (process.env.MOCK_WITNESS_HEADERS || "").split(",").map((name) => name.trim().toLowerCase()).filter(Boolean).slice(0, 10);
 const allowUnauthenticatedMcp = process.env.MOCK_ALLOW_UNAUTHENTICATED_MCP === "1";
 // An app-visible MCP App launch tool (`_meta.ui.resourceUri`), so dashboard
 // and MCP App specs can witness App catalogs without a real provider.
@@ -1253,6 +1254,7 @@ async function handleMcp(req, res, entry) {
 
   const authorized = isAuthorized(req);
   entry.tokenId = tokenFingerprint(req);
+  if (witnessHeaders.length) entry.headerFingerprints = Object.fromEntries(witnessHeaders.map((name) => [name, typeof req.headers[name] === "string" ? createHash("sha256").update(req.headers[name]).digest("hex").slice(0, 12) : null]));
   if (tokens.has(bearerToken(req)) && oauthCallback.resourceStatus !== undefined) {
     const error = oauthCallback.resourceStatus === 403 ? "insufficient_scope" : "invalid_token";
     entry.oauthError = error;

@@ -8,6 +8,7 @@ import {
   type EnterpriseMcpConnection,
   type EnterpriseMcpDiagnosticEvent,
 } from "@openwork/enterprise-mcp-client"
+import { createSecretTemplateFetch } from "../secrets-fetch.js"
 import { env } from "../env.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
 import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
@@ -196,13 +197,14 @@ function createOperationClient(input: {
   lifecycleDeadline?: ExternalMcpLifecycleDeadline
   operationTimeoutMs?: number
   toolCallInspector?: ExternalMcpToolCallInspector
+  member?: ExternalMcpMemberContext
 }): { client: EnterpriseMcpClient; tracker: ExternalMcpDiagnosticTracker } {
   const tracker = new ExternalMcpDiagnosticTracker(input.diagnosticReferenceId ?? randomUUID(), {
     authType: input.connection.authType,
     credentialMode: input.connection.credentialMode,
   })
   const diagnosticFetch = createExternalMcpDiagnosticFetch({
-    fetch: guardedFetch,
+    fetch: createSecretTemplateFetch({ connection: input.connection, member: input.member, fetch: guardedFetch }),
     endpoint: input.connection.url,
     tracker,
   })
@@ -231,6 +233,7 @@ async function runEnterpriseMcpOperation<T>(input: {
   lifecycleDeadline?: ExternalMcpLifecycleDeadline
   operationTimeoutMs?: number
   toolCallInspector?: ExternalMcpToolCallInspector
+  member?: ExternalMcpMemberContext
   operation: (client: EnterpriseMcpClient, tracker: ExternalMcpDiagnosticTracker) => Promise<T>
 }): Promise<T> {
   const { client, tracker } = createOperationClient(input)
@@ -250,6 +253,7 @@ export async function connectExternalMcp(
 ): Promise<ExternalMcpConnectResult> {
   return runEnterpriseMcpOperation({
     connection,
+    member,
     diagnosticReferenceId,
     operation: (client, tracker) => client.connect({
       connection: toEnterpriseConnection(connection, member, tracker),
@@ -271,6 +275,7 @@ export async function completeExternalMcpAuth(
   if (!signedState) throw new Error("The enterprise MCP OAuth callback requires its signed state transaction.")
   await runEnterpriseMcpOperation({
     connection,
+    member,
     diagnosticReferenceId,
     operation: (client, tracker) => client.completeAuthorization({
       connection: toEnterpriseConnection(connection, member, tracker),
@@ -290,6 +295,7 @@ export async function abandonExternalMcpAuth(
 ): Promise<void> {
   await runEnterpriseMcpOperation({
     connection,
+    member,
     diagnosticReferenceId,
     operation: (client, tracker) => client.abandonAuthorization({
       connection: toEnterpriseConnection(connection, member, tracker),
@@ -309,6 +315,7 @@ export async function listExternalMcpTools(
 ) {
   return runEnterpriseMcpOperation({
     connection,
+    member,
     diagnosticReferenceId,
     lifecycleDeadline,
     operationTimeoutMs,
@@ -335,6 +342,7 @@ function runExternalMcpToolCall(
 ) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
+    member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
     operationTimeoutMs: EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
@@ -355,6 +363,7 @@ export function callExternalMcpTool(input: ExternalMcpToolCallInput) {
 export function callExternalMcpToolRaw(input: ExternalMcpToolCallInput) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
+    member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
     operationTimeoutMs: EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
@@ -378,6 +387,7 @@ type ExternalMcpResourceInput = {
 export function describeExternalMcpServer(input: ExternalMcpResourceInput) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
+    member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
     operation: (client, tracker) => client.describeServer({
@@ -390,6 +400,7 @@ export function describeExternalMcpServer(input: ExternalMcpResourceInput) {
 export function listExternalMcpResources(input: ExternalMcpResourceInput) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
+    member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
     operation: (client, tracker) => client.listResources({
@@ -402,6 +413,7 @@ export function listExternalMcpResources(input: ExternalMcpResourceInput) {
 export function listExternalMcpResourceTemplates(input: ExternalMcpResourceInput) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
+    member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
     operation: (client, tracker) => client.listResourceTemplates({
@@ -414,6 +426,7 @@ export function listExternalMcpResourceTemplates(input: ExternalMcpResourceInput
 export function readExternalMcpResource(input: ExternalMcpResourceInput & { uri: string }) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
+    member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
     operation: (client, tracker) => client.readResource({

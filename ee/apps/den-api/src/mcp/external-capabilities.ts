@@ -686,7 +686,7 @@ async function probeExternalMcpConnection(input: {
     }
     return matches
   }
-  if (connection.credentialMode === "per_member") {
+  if (connection.credentialMode === "per_member" && connection.authType === "oauth") {
     const account = await getConnectedAccount({
       organizationId: connection.organizationId,
       orgMembershipId: input.member.orgMembershipId,
@@ -728,9 +728,7 @@ async function probeExternalMcpConnection(input: {
     return matches
   }
 
-  const member = connection.credentialMode === "per_member"
-    ? { orgMembershipId: input.member.orgMembershipId }
-    : undefined
+  const member = { orgMembershipId: input.member.orgMembershipId }
   let tools: Awaited<ReturnType<typeof listExternalMcpTools>>
   const cacheKey: ExternalToolsSearchCacheKey = {
     organizationId: connection.organizationId,
@@ -1064,7 +1062,7 @@ export async function probeExternalConnectionStatus(input: {
       }),
     }
   }
-  if (connection.credentialMode === "per_member") {
+  if (connection.credentialMode === "per_member" && connection.authType === "oauth") {
     const account = await getConnectedAccount({
       organizationId: connection.organizationId,
       orgMembershipId: input.member.orgMembershipId,
@@ -1188,8 +1186,8 @@ async function prepareExternalCapability(input: {
     }
   }
 
-  let member: { orgMembershipId: DenTypeId<"member"> } | undefined
-  if (connection.credentialMode === "per_member") {
+  let member: { orgMembershipId: DenTypeId<"member"> } | undefined = { orgMembershipId: input.member.orgMembershipId }
+  if (connection.credentialMode === "per_member" && connection.authType === "oauth") {
     const account = await getConnectedAccount({
       organizationId: connection.organizationId,
       orgMembershipId: input.member.orgMembershipId,

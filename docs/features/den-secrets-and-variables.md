@@ -1,7 +1,17 @@
 # Den secrets and variables for MCP connections
 
-Status: design draft. This document scopes the feature; it does not add runtime
-behavior, migrations, or a secret-management service.
+Status: draft implementation of the first delivery slice. Den now implements
+member requirements, encrypted personal and organization values, explicit MCP
+HTTP-header bindings, destination approval, replacement/clear, and a real
+connection check. The following sections retain the complete feature design.
+
+The current draft deliberately defers OAuth client-field references, definition
+retirement UI, automated rotation, and external vault integrations. OAuth
+metadata, registration, token requests, URLs, query strings, bodies, local
+process environments, prompts and exports do not receive MCP header templates.
+The proving journey is `evals/specs/den-secrets-variables.e2e.test.ts`; its
+screenshots and credential fingerprints exercise the running Den and a
+synthetic HTTP MCP, rather than a standalone UI mock.
 
 ## Outcome
 

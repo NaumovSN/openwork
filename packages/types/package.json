@@ -166,6 +166,11 @@
       "development": "./src/den/desktop-policies.ts",
       "bun": "./src/den/desktop-policies.ts",
       "default": "./dist/den/desktop-policies.js"
+    },
+    "./den/secrets": {
+      "types": "./src/den/secrets.ts",
+      "development": "./src/den/secrets.ts",
+      "default": "./dist/den/secrets.js"
     }
   },
   "files": [

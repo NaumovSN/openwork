@@ -30,6 +30,9 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   dpaSignedUpdated: "organization.dpa_signed.updated",
   webOriginApproved: "organization.web_origin.approved",
   webOriginRemoved: "organization.web_origin.removed",
+  secretDefinitionChanged: "organization.secret.definition_changed",
+  secretValueChanged: "organization.secret.value_changed",
+  secretBindingChanged: "organization.secret.binding_changed",
 }
 
 type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
@@ -80,6 +83,9 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.webOriginApproved:
     case ORGANIZATION_AUDIT_ACTIONS.webOriginRemoved:
       return true
+    case ORGANIZATION_AUDIT_ACTIONS.secretDefinitionChanged:
+    case ORGANIZATION_AUDIT_ACTIONS.secretValueChanged:
+    case ORGANIZATION_AUDIT_ACTIONS.secretBindingChanged:
     case ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun:
       return false
   }

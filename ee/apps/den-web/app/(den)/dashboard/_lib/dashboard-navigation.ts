@@ -33,6 +33,7 @@ import {
   getOrgSettingsRoute,
   getPluginsRoute,
   getScimRoute,
+  getSecretsRoute,
   getSsoRoute,
   getToolTesterRoute,
   getWebRoute,
@@ -88,6 +89,7 @@ export function buildDashboardNavSections({
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
   const workItems: DashboardNavItem[] = [
+    { href: orgSlug ? getSecretsRoute(orgSlug) : "#", label: "Secrets and variables", icon: LockKeyhole },
     {
       href: orgSlug ? getLibraryRoute(orgSlug) : "#",
       label: "My Library",
