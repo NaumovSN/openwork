@@ -19,7 +19,7 @@ async function childConversation(seed: Seed, surface: "web" | "electron") {
     { promptMarker: grandchildPrompt, latestUserTurn: true, steps: [], finalReply: "Checking the fixture. The fixture output is version 3.",
       finalReplyChunks: ["Checking the fixture. ", "The fixture output is version 3."], finalReplyInitiallyReleasedChunks: 1 },
     { promptMarker: followup, latestUserTurn: true, steps: [], finalReply },
-  ], { ...(engine === "v2" ? { experimental: { subagent_depth: 2 } } : { subagent_depth: 2 }), permission: { task: "allow", question: "allow" }, agent: { general: { tools: { task: true }, permission: { task: "allow" } } } }, surface, { createWorkspace: surface === "electron" });
+  ], { ...(engine === "v1" ? { model: "split-send-mock/split-send-model" } : {}), ...(engine === "v2" ? { experimental: { subagent_depth: 2 } } : { subagent_depth: 2 }), permission: { task: "allow", question: "allow" }, agent: { general: { tools: { task: true }, permission: { task: "allow" } } } }, surface, { createWorkspace: surface === "electron" });
   const session = await seed.session(base.app, { title: "Fixture review" });
   return { ...base, session, engine, prompt, childPrompt, grandchildPrompt, followup, finalReply,
     selectedSessionId: () => seed.evalIn(base.app, () => document.querySelector('[data-workbench-pane-focused="true"] [data-session-surface-id]')?.getAttribute("data-session-surface-id") ?? ""),
