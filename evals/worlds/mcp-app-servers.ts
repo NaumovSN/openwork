@@ -515,7 +515,7 @@ export const buildReply = "The Quick order pricer is ready in this conversation.
  */
 export async function mcpAppServersChat(seed: Seed, benchmark = false) {
   const den = await seed.den({
-    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_APP_MCP_SERVERS_ENABLED: "true", ...(benchmark ? { OPENWORK_MCP_APP_TIMINGS: "1" } : {}) },
+    env: { DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: "true", DEN_APP_MCP_SERVERS_ENABLED: "true", DEN_DASHBOARDS_ENABLED: "true", ...(benchmark ? { OPENWORK_MCP_APP_TIMINGS: "1" } : {}) },
     org: { name: `App servers chat ${Date.now()}` },
     mocks: { inventory: seed.mock({ allowUnauthenticatedMcp: true, tools: [inventoryTool, reserveTool] }) },
   });
