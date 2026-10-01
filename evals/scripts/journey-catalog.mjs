@@ -15,9 +15,6 @@ const definitions = {
   'agent-child-messaging.e2e.test.ts': {
     cases: [{ id: 'AGENT-CHILD-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
   },
-  'child-navigation-continuity.e2e.test.ts': {
-    cases: [{ id: 'AGENT-CHILD-NAV', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
-  },
   'opencode-v2-context-activity.e2e.test.ts': {
     cases: [{ id: 'V2-CONTEXT-ACTIVITY', engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
   },
