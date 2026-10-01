@@ -747,10 +747,10 @@ describe("cloud provider sync in server-capability mode", () => {
       expect(await store.runCloudProviderSync("model_picker_open")).toEqual({ outcome: "handled_server_side" });
       expect(requests.filter((request) => new URL(request.url).pathname === "/cloud-provider-sync/run")).toHaveLength(1);
       expect(requests.filter((request) => new URL(request.url).pathname === "/cloud-provider-sync/status")).toHaveLength(1);
-      expect(requests.filter((request) => new URL(request.url).pathname === "/provider")).toHaveLength(status === "noop" ? 0 : 1);
+      expect(requests.filter((request) => new URL(request.url).pathname === "/config/providers")).toHaveLength(status === "noop" ? 0 : 1);
       requests.length = 0;
       await store.runCloudProviderSync("manual");
-      expect(requests.filter((request) => new URL(request.url).pathname === "/provider")).toHaveLength(1);
+      expect(requests.filter((request) => new URL(request.url).pathname === "/config/providers")).toHaveLength(1);
     } finally { store.dispose(); }
   });
 
@@ -769,7 +769,7 @@ describe("cloud provider sync in server-capability mode", () => {
       else await queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "none" });
       requests.length = 0;
       await store.runCloudProviderSync("model_picker_open");
-      expect(requests.filter((request) => new URL(request.url).pathname === "/provider")).toHaveLength(1);
+      expect(requests.filter((request) => new URL(request.url).pathname === "/config/providers")).toHaveLength(1);
     } finally { store.dispose(); }
   });
 

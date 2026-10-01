@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, mock, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider, QueryObserver } from "@tanstack/react-query";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -13,7 +13,12 @@ import { providerListLoadState } from "../src/react-app/domains/models/use-model
 import {
   clearProviderListQueries,
   ensureProviderCatalogQuery,
+  ensureProviderListQuery,
+  fetchProviderCatalog,
   fetchProviderList,
+  providerCatalogQueryKey,
+  providerListQueryKey,
+  refreshProviderListQueries,
   readSavedProviderList,
   useProviderListQuery,
 } from "../src/react-app/infra/provider-list-query";
@@ -124,6 +129,32 @@ describe("v1 engine", () => {
       store.dispose();
     }
   });
+});
+
+test("explicit refresh reads each active connected list and Connect catalog once", async () => {
+  const requests = fakeV1Engine();
+  const queryClient = getReactQueryClient();
+  const input = { client: createClient("http://engine.test", directory), baseUrl: "http://engine.test", directory };
+  await ensureProviderListQuery(queryClient, input);
+  await ensureProviderCatalogQuery(queryClient, input);
+  const listObserver = new QueryObserver(queryClient, {
+    queryKey: providerListQueryKey(input), queryFn: () => fetchProviderList(input), staleTime: Infinity,
+  });
+  const catalogObserver = new QueryObserver(queryClient, {
+    queryKey: providerCatalogQueryKey(input), queryFn: () => fetchProviderCatalog(input), staleTime: Infinity,
+  });
+  const unsubscribeList = listObserver.subscribe(() => {});
+  const unsubscribeCatalog = catalogObserver.subscribe(() => {});
+  requests.length = 0;
+  try {
+    await refreshProviderListQueries(queryClient);
+    expect(requests.map(({ path }) => path).toSorted()).toEqual(["/config/providers", "/provider"]);
+    expect(queryClient.getQueryData(providerListQueryKey(input))).toEqual({ all: [zen], connected: ["opencode"], default: { opencode: "big-pickle" } });
+    expect(queryClient.getQueryData(providerCatalogQueryKey(input))).toEqual({ all: [zen, anthropic], connected: ["opencode"], default: { opencode: "big-pickle", anthropic: "claude" } });
+  } finally {
+    unsubscribeList();
+    unsubscribeCatalog();
+  }
 });
 
 describe("v2 engine", () => {

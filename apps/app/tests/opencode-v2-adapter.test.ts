@@ -2537,7 +2537,7 @@ describe("OpenCode v2 client compatibility", () => {
 });
 
 
-test("v2 provider catalog starts all three reads before models respond", async () => {
+test.each(["connected", "catalog"])("v2 %s provider reads all start before models respond", async (kind) => {
   const originalFetch = globalThis.fetch;
   const requests: Request[] = [];
   let releaseModels: () => void = () => {};
@@ -2554,7 +2554,7 @@ test("v2 provider catalog starts all three reads before models respond", async (
     throw new Error(`Unexpected request: ${request.url}`);
   };
   const client = createClientV2("http://opencode.test/opencode2", "/workspace", { token: "fixture-token" });
-  const loading = client.provider.list();
+  const loading = kind === "connected" ? client.config.providers() : client.provider.list();
   try {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(requests.map((request) => new URL(request.url).pathname).sort()).toEqual([
@@ -2563,8 +2563,9 @@ test("v2 provider catalog starts all three reads before models respond", async (
     expect(requests.every((request) => request.headers.get("Authorization") === "Bearer fixture-token")).toBe(true);
     releaseModels();
     const result = await loading;
-    expect(result.data?.all[0]?.name).toBe("Assigned Coding");
-    expect(result.data?.connected).toEqual(["lpr_fixture"]);
+    const providers = result.data && "providers" in result.data ? result.data.providers : result.data?.all;
+    expect(providers?.[0]?.name).toBe("Assigned Coding");
+    if (result.data && "connected" in result.data) expect(result.data.connected).toEqual(["lpr_fixture"]);
     expect(result.data?.default).toEqual({ lpr_fixture: "coding" });
   } finally {
     releaseModels();
@@ -2573,7 +2574,7 @@ test("v2 provider catalog starts all three reads before models respond", async (
   }
 });
 
-test("cancelling v2 provider discovery aborts all three catalog reads", async () => {
+test.each(["connected", "catalog"])("cancelling v2 %s provider discovery aborts all three reads", async (kind) => {
   const originalFetch = globalThis.fetch;
   const requests: Request[] = [];
   globalThis.fetch = async (input, init) => {
@@ -2584,7 +2585,9 @@ test("cancelling v2 provider discovery aborts all three catalog reads", async ()
     });
   };
   const controller = new AbortController();
-  const loading = createClientV2("http://opencode.test/opencode2", "/workspace", {}).provider.list({}, { signal: controller.signal });
+  const client = createClientV2("http://opencode.test/opencode2", "/workspace", {});
+  const loading = kind === "connected" ? client.config.providers({}, { signal: controller.signal })
+    : client.provider.list({}, { signal: controller.signal });
   try {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(requests).toHaveLength(3);

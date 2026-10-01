@@ -38,7 +38,8 @@ const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) 
   const delay = path.endsWith("/config") || path.endsWith("/api/provider") ? delayMs * 2 / 3
     : path.endsWith("/api/model/default") ? delayMs / 4 : delayMs;
   if (delay > 0) await Bun.sleep(delay);
-  const payload = path.endsWith("/config") ? { disabled_providers: [] }
+  const payload = path.endsWith("/config/providers") ? { providers: catalog.all, default: catalog.default }
+    : path.endsWith("/config") ? { disabled_providers: [] }
     : path.endsWith("/api/model") ? { data: models }
     : path.endsWith("/api/model/default") ? { data: catalog.default }
     : path.endsWith("/api/provider") ? { data: catalog.all.map(({ id, name }) => ({ id, name })) }
@@ -86,8 +87,8 @@ async function measure(version: typeof head, operation: "discovery" | "refresh" 
     } else if (operation === "refresh") {
       await version.queries.refreshProviderListQueries(queryClient);
     } else {
-      const result = await version.adapter.createClientV2(baseUrl + "/opencode2", workspace.path, {}).provider.list();
-      if (result.data?.all.flatMap((provider) => Object.keys(provider.models)).length !== modelCount) throw new Error("V2 returned an incomplete catalog");
+      const result = await version.adapter.createClientV2(baseUrl + "/opencode2", workspace.path, {}).config.providers();
+      if (result.data?.providers.flatMap((provider) => Object.keys(provider.models)).length !== modelCount) throw new Error("V2 returned an incomplete connected-provider list");
     }
     return { ms: performance.now() - started, requests, bytes };
   } finally {
@@ -123,5 +124,5 @@ try {
       }
     }
   }
-  console.log(JSON.stringify({ methodology: "Loopback HTTP; actual client/store/query code; one warmup and nine alternating samples per side; injected catalog latency; no production or cold-start claim", samples, results }, null, 2));
+  console.log(JSON.stringify({ methodology: "Loopback HTTP; actual client/store/query code; one warmup per side; alternating measured samples per side (see samples); connected providers via /config/providers and v2 config.providers; injected catalog latency; no production or cold-start claim", samples, results }, null, 2));
 } finally { server.stop(true); }

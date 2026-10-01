@@ -372,8 +372,8 @@ test("provider discovery starts the catalog while config is held and waits to ap
   try {
     // Both requests must start before either response is released.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(harness.requests.map(({ path }) => path).sort()).toEqual(["/config", "/provider"]);
-    catalog.resolve(json(harness.engine.catalog));
+    expect(harness.requests.map(({ path }) => path).sort()).toEqual(["/config", "/config/providers"]);
+    catalog.resolve(json(connectedBody(harness.engine.catalog)));
     await ensureProviderListQuery(getReactQueryClient(), harness.queryInput);
     expect(harness.ui.providers).toEqual([]);
     expect(harness.store.getSnapshot().providerLoadState.status).toBe("loading");
@@ -386,7 +386,7 @@ test("provider discovery starts the catalog while config is held and waits to ap
     expectReadOnly(harness);
   } finally {
     config.resolve(json(harness.engine.config));
-    catalog.resolve(json(harness.engine.catalog));
+    catalog.resolve(json(connectedBody(harness.engine.catalog)));
     await refresh;
   }
 });
@@ -407,7 +407,7 @@ test("an explicit refresh fetches an observed provider catalog once and leaves i
   try {
     harness.engine.catalog = { all: [], connected: [], default: {} };
     await refreshProviderListQueries(queryClient);
-    expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(2);
+    expect(harness.requests.filter(({ path }) => path === "/config/providers")).toHaveLength(2);
     expect(queryClient.getQueryData(harness.queryKey)).toEqual(harness.engine.catalog);
     expect(queryClient.getQueryState(inactiveKey)?.isInvalidated).toBe(true);
     expectReadOnly(harness);
@@ -421,12 +421,12 @@ test("provider metadata is reused while fresh and an expired cache fetches updat
   const queryClient = getReactQueryClient();
   const initial = await ensureProviderListQuery(queryClient, harness.queryInput);
   expect(await ensureProviderListQuery(queryClient, harness.queryInput)).toBe(initial);
-  expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(1);
+  expect(harness.requests.filter(({ path }) => path === "/config/providers")).toHaveLength(1);
 
   queryClient.setQueryData(harness.queryKey, initial, { updatedAt: Date.now() - PROVIDER_LIST_CACHE_MS - 1 });
   harness.engine.catalog = { ...initial, all: [{ ...provider, name: "Updated provider name" }] };
   expect((await ensureProviderListQuery(queryClient, harness.queryInput)).all[0]?.name).toBe("Updated provider name");
-  expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(2);
+  expect(harness.requests.filter(({ path }) => path === "/config/providers")).toHaveLength(2);
 });
 
 test("fresh provider caches stay scoped to their server and directory and sign-out clears them", async () => {
@@ -440,10 +440,10 @@ test("fresh provider caches stay scoped to their server and directory and sign-o
   expect((await ensureProviderListQuery(queryClient, otherDirectory)).all[0]?.name).toBe("Another scope");
   expect((await ensureProviderListQuery(queryClient, otherServer)).all[0]?.name).toBe("Another scope");
   expect((await ensureProviderListQuery(queryClient, harness.queryInput)).all[0]?.name).toBe(provider.name);
-  expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(3);
+  expect(harness.requests.filter(({ path }) => path === "/config/providers")).toHaveLength(3);
   clearProviderListQueries(queryClient);
   expect(queryClient.getQueryData(providerListQueryKey(otherDirectory))).toBeUndefined();
   expect(queryClient.getQueryData(providerListQueryKey(otherServer))).toBeUndefined();
   expect((await ensureProviderListQuery(queryClient, harness.queryInput)).all[0]?.name).toBe("Another scope");
-  expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(4);
+  expect(harness.requests.filter(({ path }) => path === "/config/providers")).toHaveLength(4);
 });
