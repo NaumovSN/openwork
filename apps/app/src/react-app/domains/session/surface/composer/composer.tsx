@@ -323,13 +323,14 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     const hasContent = props.draft.trim().length > 0 || props.attachments.length > 0;
     if (!hasContent) return;
     if (props.submissionPreparing || props.stopping) return;
+    if (props.childConversation) { void props.onSend(); return; }
     if (props.busy && !props.editing) {
       if (options.queue) void props.onSteer();
       else void props.onQueue();
       return;
     }
     void props.onSend();
-  }, [props.busy, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
+  }, [props.childConversation, props.busy, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
 
   const showStop = props.busy && !props.editing;
 
