@@ -346,7 +346,7 @@ export async function connectorBranding(seed: Seed) {
       allowUnauthenticatedMcp: true,
       tools: [
         { name: "list_channels", description: "List Slack channels", inputSchema,
-          delayMs: 7_000, result: { content: [{ type: "text", text: proof }] } },
+          delayMs: 12_000, result: { content: [{ type: "text", text: proof }] } },
         { name: "read_history", description: "Read Slack history", inputSchema,
           delayMs: 4_000, result: { isError: true, content: [{ type: "text", text: "History lookup failed." }] } },
         { name: "create_note", description: "Create a Slack note", inputSchema,

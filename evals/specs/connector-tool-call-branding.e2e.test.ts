@@ -22,6 +22,18 @@ test("connector-backed tool calls show first-class branding and human-readable l
     label: "individual lookup elapsed time advances", until: value => value.duration !== null && value.duration !== first.duration });
   expect(first.rawVisible).toBe(false);
   expect(advanced.rawVisible).toBe(false);
+  if (world.engine === "v2") {
+    await user.reload();
+    const restored = await probe.eventually(readRunning, { within: 15_000, intervalMs: 100,
+      label: "the same live connected action restores its elapsed time", until: value => value.duration !== null });
+    const seconds = (duration: string | null) => [...(duration ?? "").matchAll(/(\d+)\s*(m|s)/g)]
+      .reduce((total, match) => total + Number(match[1]) * (match[2] === "m" ? 60 : 1), 0);
+    expect(seconds(restored.duration)).toBeGreaterThanOrEqual(seconds(advanced.duration));
+    expect(restored.rawVisible).toBe(false);
+    evidence.recordJsonArtifact("Restored running v2 connected action", restored);
+    evidence.recordAssertionEvidence("V2 call starts survive reload while the action is still running",
+      `Listing channels continued from ${advanced.duration} to ${restored.duration} after a real page reload before its result arrived`, true);
+  }
   evidence.recordJsonArtifact("Connected action live elapsed time", { first, advanced });
   evidence.recordAssertionEvidence("Each running connected action shows advancing elapsed time",
     `${first.duration} advanced to ${advanced.duration} on Listing channels, with raw output still disclosed`, true);
