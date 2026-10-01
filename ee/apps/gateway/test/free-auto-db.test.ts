@@ -353,6 +353,24 @@ test("free Auto SQL and 0116 upgrade in an owned random database", { skip: !admi
     await db.update(GuestBucket).set({ used_amount: 0 }).where(eq(GuestBucket.id, shared.id))
   })
 
+  await t.test("an open request (no desktop proof) has no device window and shares its IP's untagged budget", async () => {
+    const ipHash = "6".repeat(64)
+    const open: GuestPrincipal = { kind: "installation", id: "o".repeat(64), untaggedIpHash: ipHash, deviceless: true }
+    const windows = await admit(open)
+    assert.deepEqual(windows.map((window) => [window.scope, window.window, window.limit]), [
+      ["installation", "daily", config.untaggedIpDailyAmount], ["global", "daily", config.untaggedGlobalDailyAmount],
+      ["global", "daily", config.globalDailyAmount], ["global", "monthly", config.globalMonthlyAmount],
+    ])
+    assert.equal((await rows("SELECT COUNT(*) AS amount FROM anonymous_inference_identities WHERE id=?", [open.id]))[0].amount, 0, "no machine is recorded")
+    await charge(open, windows, receipt(1))
+    const ipWindow = windows[0]
+    assert.ok(ipWindow)
+    await db.update(GuestBucket).set({ used_amount: config.untaggedIpDailyAmount }).where(eq(GuestBucket.id, ipWindow.id))
+    assert.deepEqual(await guests.admit({ kind: "installation", id: "z".repeat(64), untaggedIpHash: ipHash }), { ok: false, code: "anonymous_limit_exceeded" },
+      "an untagged desktop on the same IP shares that budget")
+    assert.equal((await guests.read(open)).state, "exhausted")
+  })
+
   await t.test("a guest's allowance unlocks with time the app is open, credited from heartbeats; each IP may introduce only a few new machines a day", async () => {
     const minute = 60000
     const newIp = "9".repeat(64)

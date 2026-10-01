@@ -5,7 +5,7 @@ import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferenceWindow, managedModelCatalog, readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
-  MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeSessionPowMessage, leadingZeroBits, type DesktopFreeProofClaims } from "@openwork/free-auto"
+  MEMBER_FREE_STATUS_PATH, DESKTOP_FREE_MODEL_ID, desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeSessionPowMessage, leadingZeroBits, type DesktopFreeProofClaims } from "@openwork/free-auto"
 import { readAutoConfig, untaggedAutoEnabled, FREE_OPENAI_CHAT_URL } from "../src/free/shared/config.js"
 import { freeUsageAmount, rampedDeviceAmount } from "@openwork/free-auto/accounting"
 import { verifyDesktopFreeProof } from "../src/free/guest/proof.js"
@@ -14,6 +14,7 @@ import { createAnonymousIdentities, issueAnonymousToken, verifyAnonymousToken, c
 import { prepareFreeRequest, readFreeRequest } from "../src/free/shared/request.js"
 import { FreeResponseReceipt, meterFreeResponse } from "../src/free/shared/meter.js"
 import type { FreePrincipal, MemberPrincipal } from "../src/free/shared/principal.js"
+import { freeInferenceDigest as freeIdentityHash } from "@openwork-ee/utils/free-inference-digest"
 import type { FreeAllowanceStore, FreeUsageReceipt } from "../src/free/shared/allowance.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
@@ -422,6 +423,33 @@ test("an untagged (v2) proof, like a build from source, uses Auto on the per-IP 
   assert.equal(untaggedAutoEnabled(readAutoConfig({ ANONYMOUS_UNTAGGED_IP_DAILY_MICRO_USD: "0" })), false, "either budget at 0 turns untagged builds off")
   assert.equal(untaggedAutoEnabled(readAutoConfig({ ANONYMOUS_UNTAGGED_GLOBAL_DAILY_MICRO_USD: "0" })), false)
   assert.throws(() => readAutoConfig({ ANONYMOUS_UNTAGGED_IP_DAILY_MICRO_USD: "-1" }))
+})
+
+test("like OpenCode Zen, any client with no proof and no key (or the key \"public\") gets Auto, limited by its IP", async () => {
+  const f = fixture()
+  const open = (path: string, headers: Record<string, string> = {}, body?: string) => new Request(`https://free.test${path}`, {
+    method: body === undefined ? "GET" : "POST", body, headers: { ...headers, ...(body === undefined ? {} : { "content-type": "application/json" }) } })
+  const status = await (await f.app.fetch(open(DESKTOP_FREE_STATUS_PATH, { authorization: "Bearer public" }))).json()
+  assert.deepEqual([status.state, status.code, status.currentVersion, status.minimumVersion], ["ready", null, "", null])
+  const models = await (await f.app.fetch(open(DESKTOP_FREE_MODELS_PATH, { authorization: "Bearer public" }))).json()
+  assert.deepEqual(models.data.map((model: { id: string }) => model.id), [DESKTOP_FREE_MODEL_ID])
+  for (const headers of [{ authorization: "Bearer public" }, {}]) {
+    assert.equal((await f.app.fetch(open(DESKTOP_FREE_CHAT_PATH, headers, prompt))).status, 200)
+  }
+  const ipHash = createAnonymousIdentities(device.binding, "127.0.0.1", config).ipHash
+  assert.deepEqual(f.principals.at(-1), { kind: "installation", id: freeIdentityHash("open-ip", ipHash), untaggedIpHash: ipHash, deviceless: true },
+    "an open request is charged to its IP, not a machine")
+  assert.equal(f.requests.length, 2)
+  assert.equal(f.calls.session, 0, "no guest session is needed")
+  // Anything that is not the open key is still a desktop request and needs its proof.
+  assert.equal((await f.app.fetch(open(DESKTOP_FREE_CHAT_PATH, { authorization: "Bearer sk-someone-elses-key" }, prompt))).status, 401)
+  assert.equal((await f.app.fetch(open(DESKTOP_FREE_CHAT_PATH, { authorization: "Bearer public", "x-api-key": "public" }, prompt))).status, 401)
+  assert.equal((await f.app.fetch(open(DESKTOP_FREE_CHAT_PATH, { authorization: "Bearer public" }, prompt.replace(INFERENCE_FREE_MODEL_ID, "paid-model")))).status, 400, "only the free model")
+  const off = fixture({ config: { ...config, untaggedIpDailyAmount: 0 } })
+  assert.equal((await off.app.fetch(open(DESKTOP_FREE_CHAT_PATH, { authorization: "Bearer public" }, prompt))).status, 401, "with the untagged budgets off, open requests are refused")
+  const disabled = fixture({ config: { ...config, anonymousEnabled: false } })
+  assert.equal((await (await disabled.app.fetch(open(DESKTOP_FREE_CHAT_PATH, {}, prompt))).json()).error.code, "free_disabled")
+  assert.equal(off.requests.length + disabled.requests.length, 0)
 })
 
 test("with the untagged budgets off, an untagged (v2) proof says the build can't use Auto, not that it needs an update", async () => {

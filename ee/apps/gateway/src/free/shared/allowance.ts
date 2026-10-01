@@ -58,7 +58,7 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
    * active time, unless the gap is long enough to mean the app was closed. Returns the total.
    */
   async function identityActivity(tx: Tx, principal: FreePrincipal, now: Date) {
-    if (principal.kind !== "installation") return 0
+    if (principal.kind !== "installation" || principal.deviceless) return 0
     // Insert first, then lock the row that now exists: a locking read of a missing row takes a gap lock that deadlocks parallel requests.
     await tx.insert(Identity).values({ id: principal.id, first_seen_at: now, last_seen_at: now, active_ms: 0 }).onDuplicateKeyUpdate({ set: { id: sql`${Identity.id}` } })
     const [existing] = await tx.select().from(Identity).where(eq(Identity.id, principal.id)).limit(1).for("update")
@@ -86,7 +86,8 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
     const values: Array<Omit<FreeWindow, "id">> = principal.kind === "member"
       ? [{ scope: "member", identity, window: "weekly", ...weekly, limit: config.member.weeklyLimitAmount }]
       : [
-          { scope: "installation", identity, window: "weekly", ...weekly, limit: rampedDeviceAmount(config, activeMs) },
+          // An open request has no machine, so only its IP's budget and the shared caps apply.
+          ...(principal.deviceless ? [] : [{ scope: "installation" as const, identity, window: "weekly" as const, ...weekly, limit: rampedDeviceAmount(config, activeMs) }]),
           ...untagged,
           { scope: "global", identity: "global", window: "daily", ...day, limit: config.globalDailyAmount },
           { scope: "global", identity: "global", window: "monthly", start: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
