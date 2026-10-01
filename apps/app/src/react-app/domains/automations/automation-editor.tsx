@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { ChevronDown } from "lucide-react"
 
 import { ModelPickerModal } from "@/react-app/domains/session/modals/model-picker-modal"
@@ -53,6 +54,12 @@ function modelKey(model: { providerId: string; modelId: string }) {
   return `${encodeURIComponent(model.providerId)}:${encodeURIComponent(model.modelId)}`
 }
 
+/** Keeps the chosen model when these options offer it; otherwise moves to the first one. */
+function withAvailableModel(input: CreateAutomation, options: readonly AutomationModelOption[]): CreateAutomation {
+  if (options.length === 0 || options.some((option) => modelKey(option) === modelKey(input.model))) return input
+  return { ...input, model: defaultInput(options).model }
+}
+
 function timeForSchedule(schedule: AutomationSchedule) {
   if (schedule.kind === "once") return { hour: 9, minute: 0 }
   return { hour: schedule.hour, minute: schedule.minute }
@@ -69,20 +76,29 @@ export type AutomationEditorProps = {
   onOpenProviderSettings?: () => void
   initial?: CreateAutomation | null
   initialKey?: string
-  /** Fixed by the creating surface; changes the copy, never a control. */
+  /** Where the Automation runs unless the person picks the other of `placementChoices`. */
   placement: AutomationExecutionTarget
+  /** Offered as a "Runs on" choice only when it holds both targets. */
+  placementChoices?: readonly AutomationExecutionTarget[]
   pinnedWorkflow?: AutomationEditorPinnedWorkflow
   modelOptions: readonly AutomationModelOption[]
+  /** Models each placement can use, when they differ; defaults to `modelOptions`. */
+  modelOptionsByPlacement?: Readonly<Record<AutomationExecutionTarget, readonly AutomationModelOption[]>>
   providerCatalog?: AutomationProviderCatalog
   busy: boolean
   openModelPickerOnMount?: boolean
   submitLabel: string
   onCancel: () => void
-  onSave: (input: CreateAutomation) => Promise<void> | void
+  onSave: (input: CreateAutomation, placement: AutomationExecutionTarget) => Promise<void> | void
 }
 
 export function AutomationEditor(props: AutomationEditorProps) {
-  const [input, setInput] = useState<CreateAutomation>(() => props.initial ?? defaultInput(props.modelOptions))
+  const [chosenPlacement, setChosenPlacement] = useState<AutomationExecutionTarget | null>(null)
+  const canChoosePlacement = props.placementChoices?.includes("desktop") === true
+    && props.placementChoices.includes("cloud")
+  const placement = canChoosePlacement && chosenPlacement ? chosenPlacement : props.placement
+  const modelOptions = props.modelOptionsByPlacement?.[placement] ?? props.modelOptions
+  const [input, setInput] = useState<CreateAutomation>(() => props.initial ?? defaultInput(modelOptions))
   const [pickerOpen, setPickerOpen] = useState(props.openModelPickerOnMount === true)
   const appliedInitialKey = useRef(props.initialKey)
 
@@ -93,8 +109,10 @@ export function AutomationEditor(props: AutomationEditorProps) {
       setInput(props.initial)
       return
     }
-    setInput(defaultInput(props.modelOptions))
-  }, [props.initial, props.initialKey, props.modelOptions])
+    // Creating: keep what the person typed; move only off a model this
+    // placement cannot use (models load late, or the placement changed).
+    setInput((current) => withAvailableModel(current, modelOptions))
+  }, [modelOptions, props.initial, props.initialKey])
 
   useEffect(() => {
     if (props.openModelPickerOnMount) setPickerOpen(true)
@@ -102,18 +120,25 @@ export function AutomationEditor(props: AutomationEditorProps) {
 
   const [modelQuery, setModelQuery] = useState("")
   const selectedModel = modelKey(input.model)
-  const currentModelAvailable = props.modelOptions.some((option) => modelKey(option) === selectedModel)
-  const modelLabel = describeAutomationModel(input.model, props.modelOptions)
+  const currentModelAvailable = modelOptions.some((option) => modelKey(option) === selectedModel)
+  const modelLabel = describeAutomationModel(input.model, modelOptions)
   const pickerOptions = useMemo(
     () => automationPickerOptions({
-      options: props.modelOptions,
+      options: modelOptions,
       catalog: props.providerCatalog ?? {},
       selected: input.model,
     }),
-    [input.model, props.modelOptions, props.providerCatalog],
+    [input.model, modelOptions, props.providerCatalog],
   )
   const pinnedWorkflow = props.pinnedWorkflow
-  const cloud = props.placement === "cloud"
+  const cloud = placement === "cloud"
+
+  const choosePlacement = (next: AutomationExecutionTarget) => {
+    setChosenPlacement(next)
+    // The free starter model runs only on a desktop: keep the model when the
+    // new placement offers it, otherwise switch visibly to one it does.
+    setInput((current) => withAvailableModel(current, props.modelOptionsByPlacement?.[next] ?? props.modelOptions))
+  }
   const canSave = useMemo(
     () => input.name.trim().length > 0
       && (pinnedWorkflow !== undefined || (input.instructions.trim().length > 0 && currentModelAvailable)),
@@ -164,7 +189,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
       data-automation-editor
       onSubmit={(event) => {
         event.preventDefault()
-        if (canSave && !props.busy) void props.onSave(input)
+        if (canSave && !props.busy) void props.onSave(input, placement)
       }}
     >
       <div className="space-y-2">
@@ -328,10 +353,31 @@ export function AutomationEditor(props: AutomationEditorProps) {
         </div>}
       </div>
 
-      <div className="rounded-xl border border-border bg-muted/30 p-3 text-sm text-muted-foreground" data-automation-placement={props.placement}>
+      {canChoosePlacement ? (
+        <div className="space-y-2">
+          <Label id="automation-runs-on">Runs on</Label>
+          <ToggleGroup
+            aria-labelledby="automation-runs-on"
+            data-automation-runs-on={placement}
+            value={[placement]}
+            onValueChange={(values) => {
+              const next = values[0]
+              if (next === "desktop" || next === "cloud") choosePlacement(next)
+            }}
+            variant="segmented"
+            spacing={0.5}
+            size="sm"
+          >
+            <ToggleGroupItem value="desktop">My desktops</ToggleGroupItem>
+            <ToggleGroupItem value="cloud">Cloud</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+      ) : null}
+
+      <div className="rounded-xl border border-border bg-muted/30 p-3 text-sm text-muted-foreground" data-automation-placement={placement}>
         {cloud
           ? "Runs on your cloud computer, even when your desktop is offline. You can check past runs here."
-          : "Runs on your desktop computer. Keep OpenWork open, signed in, and connected at the scheduled time. If your desktop stays unavailable, the run is marked as missed."}
+          : "Runs on whichever of your desktops is connected. Keep OpenWork open and signed in on one of them at the scheduled time, or the run is marked as missed."}
       </div>
 
       <div className="flex justify-end gap-2">

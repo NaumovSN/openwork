@@ -67,16 +67,24 @@ describe("Automations availability", () => {
     expect(proposal).toContain("data-automation-model-resolution")
   })
 
-  test("the creating surface fixes placement: Desktop stays local, every browser runtime is Cloud", () => {
+  test("the creating surface sets the default placement; the other target is a choice only where it exists", () => {
     const availability = read("src/react-app/domains/automations/automation-availability.ts")
     expect(availability).toContain('return isDesktopRuntime() ? "desktop" : "cloud"')
 
     const page = read("src/react-app/domains/automations/automations-page.tsx")
     expect(page).toContain("const placement = automationCreationPlacement()")
-    expect(page).toContain('placement === "cloud"\n                ? await client.createCloudAutomation(organizationId, {')
+    expect(page).toContain("automationPlacementChoices({ targets: targetsQuery.data, desktopRuntime: isDesktopRuntime() })")
+    expect(page).toContain("const createPlacement = resolveAutomationPlacement(placement, createChoices)")
+    // A Workflow runs only in the cloud, so its form keeps the fixed placement.
+    expect(page).toContain("const createChoices = workflowId ? [] : placementChoices")
+    expect(page).toContain('chosenPlacement === "cloud"\n                ? await client.createCloudAutomation(organizationId, {')
     expect(page).toContain(": await client.createAutomation(organizationId, {")
+    // A browser has no local workspace to pin a Desktop Automation to.
+    expect(page).toContain("const workspaceId = isDesktopRuntime() ? props.workspaceId?.trim() || null : null")
     // The free Zen starter is a published-Desktop exception that Cloud revalidation rejects.
-    expect(page).toContain('includeFreeStarter: placement === "desktop" && !zenModelRestricted && freeStarterInRuntime')
+    expect(page).toContain("includeFreeStarter: !zenModelRestricted && freeStarterInRuntime")
+    expect(page).toContain("automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: false })")
+    expect(page).toContain("const modelsFor = (target: AutomationExecutionTarget) => target === \"cloud\" ? cloudModels : desktopModels")
 
     const proposal = read("src/components/tools/openwork-automation-proposal.tsx")
     expect(proposal).toContain("const placement = automationCreationPlacement()")
@@ -86,6 +94,15 @@ describe("Automations availability", () => {
   test("the desktop runner never registers from a browser runtime", () => {
     const bridge = read("src/react-app/domains/automations/automation-runner-bridge.tsx")
     expect(bridge).toContain("if (!isDesktopRuntime() || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return")
+  })
+
+  test("one desktop install keeps its runner id across organizations", () => {
+    const bridge = read("src/react-app/domains/automations/automation-runner-bridge.tsx")
+    // Den scopes runner rows per organization and member, so the id is never reset.
+    expect(bridge).not.toContain("localStorage.removeItem(RUNNER_ID_KEY)")
+    expect(bridge).not.toContain("resetDesktopRunnerId")
+    // Only an older Den refuses it; that Den gets a derived per-organization id.
+    expect(bridge).toContain("runnerId = organizationRunnerId(runnerId, organizationId)")
   })
 
   test("the automations capability is listed for every runtime", () => {

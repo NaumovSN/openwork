@@ -10,6 +10,7 @@ export type AutomationsClient = Pick<
   | "deactivateAutomation"
   | "getAutomation"
   | "getAutomationRun"
+  | "listAutomationRunners"
   | "listAutomationRuns"
   | "listAutomations"
   | "listOrgLlmProviders"

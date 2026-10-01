@@ -16,21 +16,22 @@ import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { useEnterpriseActivationRequired } from "@/react-app/domains/cloud/enterprise-activation-gate"
 import { useAutomationDeploymentEnabled } from "./automation-availability"
 import { createAutomationRunnerConnectCoordinator } from "./automation-runner-connect-coordinator"
+import { organizationRunnerId } from "./automation-runner-identity"
 
 const RUNNER_TOKEN_REFRESH_MS = 30 * 60_000
 const RUNNER_ID_KEY = "openwork.automations.desktop-runner-id"
 
+/**
+ * One id per desktop install, kept for good. Den scopes runner rows by
+ * organization and member, so the same install is a runner in every
+ * organization it signs in to.
+ */
 function desktopRunnerId() {
   const existing = localStorage.getItem(RUNNER_ID_KEY)?.trim()
   if (existing) return existing
   const created = crypto.randomUUID()
   localStorage.setItem(RUNNER_ID_KEY, created)
   return created
-}
-
-function resetDesktopRunnerId() {
-  localStorage.removeItem(RUNNER_ID_KEY)
-  return desktopRunnerId()
 }
 
 /** Keeps this signed-in desktop registered as the owner's Automation runner when Den allows it. */
@@ -105,7 +106,11 @@ function ActivatedAutomationRunnerBridge() {
               throw error
             }
             if (!isCurrent()) return
-            runnerId = resetDesktopRunnerId()
+            // Only a Den from before runner rows were scoped refuses an install
+            // already registered in another organization. Use an id derived
+            // for this organization rather than replacing the install's id,
+            // which left a stale runner behind on every switch.
+            runnerId = organizationRunnerId(runnerId, organizationId)
             runner = await mintRunner(runnerId)
           }
           if (!isCurrent()) return

@@ -12,12 +12,14 @@ import type {
   AutomationDetail,
   AutomationDesktopRunnerPresence,
   AutomationDesktopRunnerRegistration,
+  AutomationExecutionTargetList,
   AutomationList,
   AutomationRun,
   AutomationRunReceipt,
   AutomationRunnerTokenResponse,
   CreateAutomation,
   CreateCloudAutomation,
+  RunAutomationNow,
   UpdateAutomation,
 } from "@openwork/types/automations";
 import { generatedArtifactViewSchema, savedAppDetailSchema, savedAppSummarySchema, type SaveApp, type WorkflowDetail } from "@openwork/types/workflows";
@@ -3429,6 +3431,25 @@ export function createDenClient(options: {
       }
     },
 
+    /**
+     * The member's desktops and whether Cloud can run their Automations. Null
+     * when this Den predates the route: where an Automation can run is then
+     * unknown, and the caller keeps its fixed placement.
+     */
+    async listAutomationRunners(orgId: string): Promise<AutomationExecutionTargetList | null> {
+      try {
+        return await requestJson<AutomationExecutionTargetList>(baseUrls, "/v1/automation-runners", {
+          method: "GET",
+          token,
+          organizationId: orgId,
+          automationModelAttentionCapable: true,
+        });
+      } catch (error) {
+        if (error instanceof DenApiError && error.status === 404) return null;
+        throw error;
+      }
+    },
+
     async mintAutomationRunnerToken(orgId: string, registration: AutomationDesktopRunnerRegistration): Promise<AutomationRunnerTokenResponse> {
       return requestJson<AutomationRunnerTokenResponse>(baseUrls, "/v1/automation-runners/token", {
         method: "POST",
@@ -3513,11 +3534,18 @@ export function createDenClient(options: {
       );
     },
 
-    async runAutomationNow(orgId: string, automationId: string): Promise<AutomationRun> {
+    /** `executionTarget` runs this one occurrence there instead of on the Automation's own target. */
+    async runAutomationNow(orgId: string, automationId: string, options: RunAutomationNow = {}): Promise<AutomationRun> {
       const payload = await requestJson<{ run: AutomationRun }>(
         baseUrls,
         `/v1/automations/${encodeURIComponent(automationId)}/run`,
-        { method: "POST", token, organizationId: orgId, body: {}, automationModelAttentionCapable: true },
+        {
+          method: "POST",
+          token,
+          organizationId: orgId,
+          body: options.executionTarget ? { executionTarget: options.executionTarget } : {},
+          automationModelAttentionCapable: true,
+        },
       );
       return payload.run;
     },

@@ -6,9 +6,11 @@ import {
   createDesktopAutomationRunner,
   executeDesktopAutomation,
   executeDesktopRemoteSession,
+  listLocalWorkspaceIds,
   normalizeRunnerBaseUrl,
   resolveAssignmentWorkspace,
   runnerTokenAudience,
+  selectRunnableWorkItem,
 } from "./automation-runner.mjs"
 
 function runnerTokenFor(audience, organizationId = "org-1") {
@@ -1894,4 +1896,104 @@ test("stopping the runner during terminal delivery aborts it without further req
   // retired generation never retries and never posts the completion.
   assert.equal(denPaths.filter((path) => path.endsWith("/events")).length, 4)
   assert.equal(denPaths.filter((path) => path.endsWith("/complete")).length, 0)
+})
+
+test("an unpinned run is selected without listing local workspaces", async () => {
+  let listed = 0
+  const item = await selectRunnableWorkItem(
+    [{ runId: "run-1", executionTarget: "desktop" }],
+    async () => { listed += 1; return new Set() },
+  )
+  assert.deepEqual(item, { runId: "run-1", executionTarget: "desktop" })
+  assert.equal(listed, 0)
+})
+
+test("a run pinned to a workspace this desktop lacks is skipped for the next one it can run", async () => {
+  let listed = 0
+  const items = [
+    { runId: "run-elsewhere", executionTarget: "desktop", workspaceId: "ws_elsewhere" },
+    { runId: "run-here", executionTarget: "desktop", workspaceId: "ws_here" },
+    { runId: "run-unpinned", executionTarget: "desktop" },
+  ]
+  const item = await selectRunnableWorkItem(items, async () => { listed += 1; return new Set(["ws_here"]) })
+  assert.equal(item?.runId, "run-here")
+  assert.equal(listed, 1, "local workspaces are listed once per poll")
+  assert.equal(await selectRunnableWorkItem(items.slice(0, 1), async () => new Set(["ws_here"])), null)
+})
+
+test("pinned runs wait while local workspaces cannot be listed; unpinned work still runs", async () => {
+  const unavailable = async () => { throw new Error("local runtime is starting") }
+  const pinned = { runId: "run-pinned", executionTarget: "desktop", workspaceId: "ws_here" }
+  assert.equal(await selectRunnableWorkItem([pinned], unavailable), null)
+  assert.equal(await selectRunnableWorkItem([pinned], async () => null), null)
+  const session = { kind: "remote_session_create", commandId: "command-1" }
+  assert.deepEqual(await selectRunnableWorkItem([pinned, { kind: "future_kind" }, session], unavailable), session)
+  assert.equal((await selectRunnableWorkItem([pinned, { runId: "run-unpinned", executionTarget: "desktop" }], unavailable))?.runId, "run-unpinned")
+  assert.equal(await selectRunnableWorkItem(undefined, unavailable), null)
+})
+
+test("local workspace ids come from the desktop's own runtime", async () => {
+  const requests = []
+  const ids = await listLocalWorkspaceIds({
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local-client-token" }),
+    fetchImpl: async (url, options = {}) => {
+      requests.push({ path: new URL(url).pathname, authorization: new Headers(options.headers).get("Authorization") })
+      return Response.json({ items: [{ id: "ws_one" }, { id: "" }, { name: "no id" }, { id: "ws_two" }], activeId: "ws_one" })
+    },
+  })
+  assert.deepEqual([...(ids ?? [])], ["ws_one", "ws_two"])
+  assert.deepEqual(requests, [{ path: "/workspaces", authorization: "Bearer local-client-token" }])
+  assert.equal(await listLocalWorkspaceIds({ getLocalRuntime: async () => null }), null)
+})
+
+test("a desktop leaves a run pinned to another desktop's workspace and claims the one it has", async () => {
+  const denPaths = []
+  let workPolls = 0
+  let resolveCompleted
+  const completed = new Promise((resolve) => { resolveCompleted = resolve })
+  let resolveSecondPoll
+  const secondPoll = new Promise((resolve) => { resolveSecondPoll = resolve })
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const local = localExecutionRoutes(sessionPaths, (parsed) => finishedSnapshot(parsed, sessionPaths))
+  const runner = createDesktopAutomationRunner({
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" }),
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(url)
+      if (parsed.origin === "http://127.0.0.1:3000") return local(parsed, options)
+      denPaths.push(parsed.pathname)
+      if (parsed.pathname === "/v1/automation-runner/work") {
+        workPolls += 1
+        if (workPolls === 2) resolveSecondPoll()
+        const elsewhere = { runId: "run-elsewhere", executionTarget: "desktop", workspaceId: "ws_other_desktop" }
+        return Response.json({
+          items: workPolls === 1
+            ? [elsewhere, { runId: "run-here", executionTarget: "desktop", workspaceId: "workspace-1" }]
+            : [elsewhere],
+        })
+      }
+      if (parsed.pathname === "/v1/automation-runs/run-here/claim") {
+        return Response.json({ assignment: { ...testAssignment(), runId: "run-here", workspaceId: "workspace-1" } })
+      }
+      if (parsed.pathname.endsWith("/events")) return Response.json({ ok: true })
+      if (parsed.pathname.endsWith("/complete")) {
+        resolveCompleted(JSON.parse(options.body))
+        return Response.json({ ok: true })
+      }
+      throw new Error(`Unexpected Den request ${parsed.pathname}`)
+    },
+    waitBeforeReconnect: () => new Promise(() => {}),
+  })
+  runner.configure({
+    baseUrl: "https://den.example.com",
+    token: runnerTokenFor("https://den.example.com"),
+    runnerId: "runner-1",
+  })
+  const completion = await withTimeout(completed, "the run this desktop can serve was never completed")
+  await withTimeout(secondPoll, "the runner did not poll again after its run")
+  await flushTasks()
+  runner.stop()
+  assert.equal(completion.status, "succeeded")
+  assert.equal(completion.workspaceId, "workspace-1")
+  assert.deepEqual(denPaths.filter((path) => path.endsWith("/claim")), ["/v1/automation-runs/run-here/claim"])
+  assert.equal(denPaths.some((path) => path.includes("run-elsewhere")), false, "the foreign-pinned run is never claimed")
 })

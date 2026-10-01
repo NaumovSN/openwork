@@ -57,6 +57,44 @@ describe("Automation desktop runner presence client", () => {
     expect(presence).toBeNull();
   });
 
+  test("lists where Automations can run, and leaves it unknown on a Den without the route", async () => {
+    const targets = {
+      items: [
+        { kind: "desktop", id: "rnr_test", platform: "darwin", appVersion: "0.0.0", lastSeenAt: 1_760_000_000_000, connected: true },
+        { kind: "cloud", available: true, runtime: "headless" },
+      ],
+    };
+    const requested: string[] = [];
+    stubFetch(async (input) => {
+      requested.push(String(input));
+      return new Response(JSON.stringify(targets), { status: 200, headers: { "Content-Type": "application/json" } });
+    });
+    const client = createDenClient({ baseUrl: "https://den.test", token: "tok_test" });
+    expect(await client.listAutomationRunners("org_test")).toEqual(targets);
+    expect(requested[0]).toContain("/v1/automation-runners");
+
+    stubFetch(async () => new Response(JSON.stringify({ error: "not_found" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json" },
+    }));
+    expect(await client.listAutomationRunners("org_test")).toBeNull();
+  });
+
+  test("runs once in the cloud only when asked; a plain run keeps the empty body older Dens accept", async () => {
+    const bodies: unknown[] = [];
+    stubFetch(async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body ?? "null")));
+      return new Response(JSON.stringify({ run: { id: "arun_test" } }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+    const client = createDenClient({ baseUrl: "https://den.test", token: "tok_test" });
+    await client.runAutomationNow("org_test", "aut_test");
+    await client.runAutomationNow("org_test", "aut_test", { executionTarget: "cloud" });
+    expect(bodies).toEqual([{}, { executionTarget: "cloud" }]);
+  });
+
   test("still surfaces a Den that fails for another reason", async () => {
     stubFetch(async () => new Response(JSON.stringify({ error: "internal_error" }), {
       status: 500,

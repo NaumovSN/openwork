@@ -200,7 +200,11 @@ export const automationExecutionThreadSchema = z.object({
 }).meta({ ref: "AutomationExecutionThread" })
 export type AutomationExecutionThread = z.infer<typeof automationExecutionThreadSchema>
 
-/** Creation surface fixes execution placement: Desktop stays local; Web runs in Cloud. */
+/**
+ * Where an Automation runs: on one of the owner's connected desktops, or in
+ * OpenWork Cloud. The owner may move it between the two (a new revision) or run
+ * it once on the other target; agents may only ever move work to the cloud.
+ */
 export const automationExecutionTargetSchema = z.enum(["desktop", "cloud"])
 export type AutomationExecutionTarget = z.infer<typeof automationExecutionTargetSchema>
 
@@ -239,6 +243,37 @@ export const automationDesktopRunnerPresenceSchema = z.object({
 }).meta({ ref: "AutomationDesktopRunnerPresence" })
 export type AutomationDesktopRunnerPresence = z.infer<typeof automationDesktopRunnerPresenceSchema>
 
+/** One of the owner's registered desktops. Any connected one may run a Desktop Automation. */
+export const automationDesktopTargetSchema = z.object({
+  kind: z.literal("desktop"),
+  id: idSchema,
+  platform: z.enum(["darwin", "win32", "linux"]),
+  appVersion: z.string().trim().min(1).max(80),
+  lastSeenAt: timestampSchema,
+  connected: z.boolean(),
+}).meta({ ref: "AutomationDesktopTarget" })
+export type AutomationDesktopTarget = z.infer<typeof automationDesktopTargetSchema>
+
+/**
+ * Whether the owner can run agent Automations in OpenWork Cloud right now, and
+ * on which runtime: the shared headless runner or their OpenWork Web computer.
+ * `runtime` is null when Cloud is unavailable.
+ */
+export const automationCloudTargetSchema = z.object({
+  kind: z.literal("cloud"),
+  available: z.boolean(),
+  runtime: z.enum(["headless", "web"]).nullable(),
+  /** The owner has an OpenWork Web computer, so a cloud run can also use its files. */
+  cloudComputer: z.boolean(),
+}).meta({ ref: "AutomationCloudTarget" })
+export type AutomationCloudTarget = z.infer<typeof automationCloudTargetSchema>
+
+/** Every place the owner's Automations can run: their desktops, then Cloud. */
+export const automationExecutionTargetListSchema = z.object({
+  items: z.array(z.discriminatedUnion("kind", [automationDesktopTargetSchema, automationCloudTargetSchema])),
+}).meta({ ref: "AutomationExecutionTargetList" })
+export type AutomationExecutionTargetList = z.infer<typeof automationExecutionTargetListSchema>
+
 export const automationRunnerNotificationSchema = z.object({
   type: z.enum(["automation_work_available", "automation_cancellation_available"]),
   cursor: z.string().trim().min(1).max(40),
@@ -249,11 +284,23 @@ export const automationRunnerWorkItemSchema = z.union([
   // The automation-run item shape predates remote-session commands and is
   // consumed by released desktop runners: it must keep every field it has
   // always carried.
-  z.object({ runId: idSchema, executionTarget: z.literal("desktop") }),
+  z.object({
+    runId: idSchema,
+    executionTarget: z.literal("desktop"),
+    /**
+     * Present only for a run pinned to one workspace. A workspace exists on the
+     * desktop that has its folder, so a runner without it leaves the run for
+     * the owner's desktop that does. Released runners ignore the field.
+     */
+    workspaceId: automationWorkspaceIdSchema.optional(),
+  }),
   z.object({ kind: z.literal("remote_session_create"), commandId: idSchema }),
 ])
+/** Runs a desktop may claim per work poll; a runner skips the ones pinned elsewhere. */
+export const AUTOMATION_RUNNER_WORK_RUN_LIMIT = 20
 export const automationRunnerWorkResponseSchema = z.object({
-  items: z.array(automationRunnerWorkItemSchema).max(9),
+  // Up to the run limit plus five remote-session commands.
+  items: z.array(automationRunnerWorkItemSchema).max(AUTOMATION_RUNNER_WORK_RUN_LIMIT + 5),
 })
 export type AutomationRunnerWorkResponse = z.infer<typeof automationRunnerWorkResponseSchema>
 
@@ -469,7 +516,11 @@ export const updateAutomationSchema = z.object({
   schedule: automationScheduleSchema.optional(),
   model: automationModelSchema.optional(),
   action: automationActionSchema.optional(),
-  /** Accepted for round-tripping; execution placement itself is immutable. */
+  /**
+   * Moves the Automation between the owner's desktops and the cloud. A pinned
+   * workspace belongs to one computer, so moving drops it unless `workspaceId`
+   * is set in the same request. Workflows run only in the cloud.
+   */
   executionTarget: automationExecutionTargetSchema.optional(),
   /** Re-pin to a different workspace; null clears the pin (legacy active-workspace fallback). */
   workspaceId: automationWorkspaceIdSchema.nullable().optional(),
@@ -478,6 +529,16 @@ export const updateAutomationSchema = z.object({
   "At least one behavior-changing field is required",
 )
 export type UpdateAutomation = z.infer<typeof updateAutomationSchema>
+
+/**
+ * Optional body of a manual run. `executionTarget` runs this one occurrence on
+ * the other target (a Desktop Automation once in the cloud, or the reverse)
+ * without changing the Automation. Older clients send `{}` or no body.
+ */
+export const runAutomationNowSchema = z.object({
+  executionTarget: automationExecutionTargetSchema.optional(),
+})
+export type RunAutomationNow = z.infer<typeof runAutomationNowSchema>
 
 export const automationListSchema = z.object({
   items: z.array(z.object({

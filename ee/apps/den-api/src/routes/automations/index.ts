@@ -11,6 +11,7 @@ import {
   automationDesktopRunnerPresenceSchema,
   automationDesktopRunnerResultSchema,
   automationDetailSchema,
+  automationExecutionTargetListSchema,
   automationListSchema,
   automationRunReceiptSchema,
   automationRunSchema,
@@ -25,6 +26,7 @@ import {
   remoteSessionCommandClaimResponseSchema,
   remoteSessionCommandCompleteRequestSchema,
   remoteSessionCommandCompleteResponseSchema,
+  runAutomationNowSchema,
   updateAutomationSchema,
 } from "@openwork/types/automations"
 import {
@@ -32,8 +34,10 @@ import {
   orgMemberRoute,
   paramValidator,
   queryValidator,
+  validationIssuesMessage,
   type OrganizationContextVariables,
 } from "../../middleware/index.js"
+import type { AuthContextVariables } from "../../session.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
 import { automationService, type AutomationService } from "../../automations/service.js"
 import { automationRunnerAudienceFromRequest, automationRunnerAuth } from "../../automations/runner-auth.js"
@@ -67,7 +71,7 @@ const describeMcpRoute = (options: McpDescribeRouteOptions) => describeRoute(opt
 type NonMcpDescribeRouteOptions = DescribeRouteOptions & { "x-mcp": false }
 const describeNonMcpRoute = (options: NonMcpDescribeRouteOptions) => describeRoute(options)
 
-type RouteVariables = Partial<OrganizationContextVariables>
+type RouteVariables = Partial<OrganizationContextVariables> & Partial<Pick<AuthContextVariables, "session">>
 
 function scope(c: {
   get(name: "organizationContext"): OrganizationContextVariables["organizationContext"]
@@ -82,6 +86,27 @@ function scope(c: {
   }
 }
 
+/** MCP tool calls reach these routes with the internal agent session. */
+function placementOptions(c: { get(name: "session"): { id: string } | null | undefined }) {
+  return { agentCaller: c.get("session")?.id === "mcp_internal" }
+}
+
+/**
+ * The run body is optional: released clients send `{}` and agents may send
+ * nothing, so it is read here instead of through a required-body validator.
+ */
+async function runNowBody(c: { req: { text(): Promise<string> } }) {
+  const text = await c.req.text()
+  if (!text.trim()) return runAutomationNowSchema.safeParse({})
+  let body: unknown
+  try {
+    body = JSON.parse(text)
+  } catch {
+    body = undefined
+  }
+  return runAutomationNowSchema.safeParse(body)
+}
+
 function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error: string; message?: string } } | null {
   if (error instanceof OpenWorkWebAccessRequiredError) {
     return { status: 403, body: { error: error.code, message: error.message } }
@@ -92,7 +117,10 @@ function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error
   }
   if (error.message === "automation_not_found") return { status: 404, body: { error: "automation_not_found" } }
   if (error.message === "automation_action_target_mismatch") {
-    return { status: 400, body: { error: "automation_action_target_mismatch", message: "Desktop creates local Automations; Web creates OpenWork Cloud Automations." } }
+    return { status: 400, body: { error: "automation_action_target_mismatch", message: "This Automation runs only in OpenWork Cloud." } }
+  }
+  if (error.message === "automation_agent_desktop_placement") {
+    return { status: 400, body: { error: error.message, message: "Agents can run Automations only in OpenWork Cloud. To use a desktop, change where it runs in OpenWork." } }
   }
   if (error.message === "automation_saved_script_input_invalid") {
     return { status: 400, body: { error: "automation_saved_script_input_invalid", message: "The existing Automation input does not match the selected Workflow version. Correct the input before creating the revision." } }
@@ -117,7 +145,7 @@ function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error
 
 const routeDescription = [
   "Den schedules Automations and keeps durable run history.",
-  "Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud.",
+  "A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud.",
   "If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed.",
   "Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations.",
   "Deactivation stops future runs but does not cancel a run already in progress.",
@@ -180,6 +208,24 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     }),
     orgMemberRoute(),
     async (c) => c.json(await service.desktopRunnerPresence(scope(c))),
+  )
+
+  app.get(
+    "/v1/automation-runners",
+    describeNonMcpRoute({
+      tags: ["Automations"], operationId: "listAutomationRunners", "x-mcp": false,
+      summary: "List where this member's Automations can run",
+      description: "Returns the member's registered desktops, most recently seen first, and whether OpenWork Cloud can run their "
+        + "agent Automations right now. Any connected desktop may run a Desktop Automation; one pinned to a workspace runs on a "
+        + "desktop that has that workspace. Management surfaces read this to offer a choice of where an Automation runs.",
+      responses: {
+        200: jsonResponse("Execution targets.", automationExecutionTargetListSchema),
+        401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        404: jsonResponse("Organization not found.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    async (c) => c.json(await service.executionTargets(scope(c))),
   )
 
   // Runner tokens are stateless 12h credentials, so authorization is re-derived
@@ -489,7 +535,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     describeNonMcpRoute({
       tags: ["Automations"], operationId: "createAutomation", "x-mcp": false,
       summary: "Create an active Automation from an app surface",
-      description: `${routeDescription} This compatibility route serves first-party Desktop clients. Agents must use createCloudAutomation so they cannot accidentally create Desktop placement.`,
+      description: `${routeDescription} This route creates Desktop Automations for first-party OpenWork clients, Desktop and Web alike. Agents must use createCloudAutomation so they cannot accidentally create Desktop placement.`,
       responses: {
         201: jsonResponse("Active Automation created.", automationDetailSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
@@ -555,17 +601,19 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     describeMcpRoute({
       tags: ["Automations"], operationId: "updateAutomation", "x-mcp": true,
       summary: "Update an Automation",
-      description: `${routeDescription} Every behavior-changing edit creates an immutable revision and applies it to future runs immediately.`,
+      description: `${routeDescription} Every behavior-changing edit creates an immutable revision and applies it to future runs immediately. `
+        + "Set executionTarget to move the Automation between the owner's desktops and OpenWork Cloud; agents may move it to the cloud only.",
       responses: {
         200: jsonResponse("Automation updated.", automationDetailSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         403: jsonResponse("OpenWork Web access is required for Cloud Automations.", openWorkWebAccessRequiredSchema),
+        409: jsonResponse("Cloud runtime or model access is unavailable.", invalidRequestSchema),
       },
     }),
     orgMemberRoute(), paramValidator(idParamsSchema), jsonValidator(updateAutomationSchema),
     async (c) => {
       try {
-        const item = await service.update(scope(c), c.req.valid("param").id, c.req.valid("json"))
+        const item = await service.update(scope(c), c.req.valid("param").id, c.req.valid("json"), placementOptions(c))
         return item ? c.json(item) : c.json({ error: "automation_not_found" }, 404)
       } catch (error) {
         const mapped = failure(error)
@@ -613,20 +661,49 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     "/v1/automations/:id/run",
     describeMcpRoute({
       tags: ["Automations"], operationId: "runAutomationNow", "x-mcp": true,
-      summary: "Run an Automation now", description: routeDescription,
+      summary: "Run an Automation now",
+      description: `${routeDescription} Send executionTarget "cloud" to run a Desktop Automation once in OpenWork Cloud without changing it. `
+        + "Agents cannot run a Cloud Automation on a desktop.",
+      // Optional: released clients send `{}` and agents may send no body at all.
+      requestBody: {
+        required: false,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: {
+                executionTarget: {
+                  type: "string",
+                  enum: ["desktop", "cloud"],
+                  description: "Run this one occurrence on this target instead of the Automation's own.",
+                },
+              },
+            },
+          },
+        },
+      },
       responses: {
         202: jsonResponse("Run queued.", runResponseSchema),
+        400: jsonResponse("Invalid request.", invalidRequestSchema),
         403: jsonResponse("OpenWork Web access is required to run a Cloud Automation.", openWorkWebAccessRequiredSchema),
         404: jsonResponse("Not found.", notFoundSchema),
+        409: jsonResponse("Cloud runtime or model access is unavailable.", invalidRequestSchema),
       },
     }),
     orgMemberRoute(), paramValidator(idParamsSchema),
     async (c) => {
+      const body = await runNowBody(c)
+      if (!body.success) {
+        return c.json({ error: "invalid_request", message: validationIssuesMessage(body.error.issues), details: body.error.issues }, 400)
+      }
       try {
         // Runner presence is advisory and must not require a database
         // heartbeat. The durable claim deadline records an unclaimed desktop
         // run as missed through the same path used by scheduled occurrences.
-        const run = await service.runNow(scope(c), c.req.valid("param").id)
+        const run = await service.runNow(scope(c), c.req.valid("param").id, {
+          ...placementOptions(c),
+          executionTarget: body.data.executionTarget,
+        })
         return run ? c.json({ run }, 202) : c.json({ error: "automation_not_found" }, 404)
       } catch (error) {
         const mapped = failure(error)

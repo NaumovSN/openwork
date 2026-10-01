@@ -804,9 +804,13 @@ test("every dispatch path revalidates the owner's model access", () => {
 test("Cloud placement never inherits the legacy Desktop model exception", () => {
   const create = serviceSource.slice(serviceSource.indexOf("async create"), serviceSource.indexOf("async update"))
   const update = serviceSource.slice(serviceSource.indexOf("async update"), serviceSource.indexOf("async activate"))
+  const runNow = serviceSource.slice(serviceSource.indexOf("async runNow"), serviceSource.indexOf("listRuns"))
   const reconcile = serviceSource.slice(serviceSource.indexOf("private async reconcileModelAttention"))
   assert.match(create, /requireNewModel\(\{ \.\.\.scope, modelAttentionCapable: true \}/)
-  assert.match(update, /executionTarget \?\? "desktop"\) === "cloud"[\s\S]*modelAttentionCapable: true/)
+  // Moving to the cloud revalidates under cloud rules, even for an unchanged model.
+  assert.match(update, /if \(moved \|\| !sameModel\(requestedModel, current\.revision\.model\)\)[\s\S]*nextTarget === "cloud" \? \{ \.\.\.scope, modelAttentionCapable: true \} : scope/)
+  // So does running once in the cloud.
+  assert.match(runNow, /modelAttentionCapable: target === "cloud" \|\| supportsModelAttention\(scope\)/)
   assert.match(reconcile, /executionTarget \?\? "desktop"\) === "cloud"[\s\S]*supportsModelAttention/)
 })
 

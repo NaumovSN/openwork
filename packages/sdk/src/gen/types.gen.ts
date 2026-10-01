@@ -484,6 +484,25 @@ export type AutomationDesktopRunnerPresence = {
   lastSeenAt: number | null;
 };
 
+export type AutomationDesktopTarget = {
+  kind: "desktop";
+  id: string;
+  platform: "darwin" | "win32" | "linux";
+  appVersion: string;
+  lastSeenAt: number;
+  connected: boolean;
+};
+
+export type AutomationCloudTarget = {
+  kind: "cloud";
+  available: boolean;
+  runtime: "headless" | "web" | null;
+};
+
+export type AutomationExecutionTargetList = {
+  items: Array<AutomationDesktopTarget | AutomationCloudTarget>;
+};
+
 export type AutomationRunTrigger = "scheduled" | "recovery" | "manual";
 
 export type AutomationRunStatus = "queued" | "claimed" | "running" | "succeeded" | "failed" | "cancelled" | "skipped";
@@ -7101,6 +7120,35 @@ export type GetAutomationDesktopRunnerPresenceResponses = {
 export type GetAutomationDesktopRunnerPresenceResponse =
   GetAutomationDesktopRunnerPresenceResponses[keyof GetAutomationDesktopRunnerPresenceResponses];
 
+export type ListAutomationRunnersData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/automation-runners";
+};
+
+export type ListAutomationRunnersErrors = {
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization not found.
+   */
+  404: NotFoundError;
+};
+
+export type ListAutomationRunnersError = ListAutomationRunnersErrors[keyof ListAutomationRunnersErrors];
+
+export type ListAutomationRunnersResponses = {
+  /**
+   * Execution targets.
+   */
+  200: AutomationExecutionTargetList;
+};
+
+export type ListAutomationRunnersResponse = ListAutomationRunnersResponses[keyof ListAutomationRunnersResponses];
+
 export type ListAutomationsData = {
   body?: never;
   path?: never;
@@ -7434,6 +7482,10 @@ export type UpdateAutomationErrors = {
    * OpenWork Web access is required for Cloud Automations.
    */
   403: AutomationOpenWorkWebAccessRequiredError;
+  /**
+   * Cloud runtime or model access is unavailable.
+   */
+  409: InvalidRequestError;
 };
 
 export type UpdateAutomationError = UpdateAutomationErrors[keyof UpdateAutomationErrors];
@@ -7506,7 +7558,12 @@ export type DeactivateAutomationResponses = {
 export type DeactivateAutomationResponse = DeactivateAutomationResponses[keyof DeactivateAutomationResponses];
 
 export type RunAutomationNowData = {
-  body?: never;
+  body?: {
+    /**
+     * Run this one occurrence on this target instead of the Automation's own.
+     */
+    executionTarget?: "desktop" | "cloud";
+  };
   path: {
     id: string;
   };
@@ -7516,6 +7573,10 @@ export type RunAutomationNowData = {
 
 export type RunAutomationNowErrors = {
   /**
+   * Invalid request.
+   */
+  400: InvalidRequestError;
+  /**
    * OpenWork Web access is required to run a Cloud Automation.
    */
   403: AutomationOpenWorkWebAccessRequiredError;
@@ -7523,6 +7584,10 @@ export type RunAutomationNowErrors = {
    * Not found.
    */
   404: NotFoundError;
+  /**
+   * Cloud runtime or model access is unavailable.
+   */
+  409: InvalidRequestError;
 };
 
 export type RunAutomationNowError = RunAutomationNowErrors[keyof RunAutomationNowErrors];

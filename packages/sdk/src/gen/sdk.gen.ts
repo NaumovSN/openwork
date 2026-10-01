@@ -493,6 +493,8 @@ import type {
   GoogleWorkspaceCreateCalendarEventBody,
   GoogleWorkspaceShareDriveFileBody,
   GoogleWorkspaceUpdateCalendarEventBody,
+  ListAutomationRunnersErrors,
+  ListAutomationRunnersResponses,
   ListAutomationRunsErrors,
   ListAutomationRunsResponses,
   ListAutomationsErrors,
@@ -2398,9 +2400,22 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * List where this member's Automations can run
+   *
+   * Returns the member's registered desktops, most recently seen first, and whether OpenWork Cloud can run their agent Automations right now. Any connected desktop may run a Desktop Automation; one pinned to a workspace runs on a desktop that has that workspace. Management surfaces read this to offer a choice of where an Automation runs.
+   */
+  public listAutomationRunners<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      ListAutomationRunnersResponses,
+      ListAutomationRunnersErrors,
+      ThrowOnError
+    >({ url: "/v1/automation-runners", ...options });
+  }
+
+  /**
    * List Automations
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public listAutomations<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -2430,7 +2445,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Create an active Automation from an app surface
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. This compatibility route serves first-party Desktop clients. Agents must use createCloudAutomation so they cannot accidentally create Desktop placement.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. This route creates Desktop Automations for first-party OpenWork clients, Desktop and Web alike. Agents must use createCloudAutomation so they cannot accidentally create Desktop placement.
    */
   public createAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2525,7 +2540,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Create an active OpenWork Cloud Automation
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. This is the Web and Cloud Chat creation surface. Placement is fixed to OpenWork Cloud and the Automation can wake a stopped Cloud container without a desktop. Create only when the person explicitly asks to create or schedule it; there is no draft step.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. This is the Web and Cloud Chat creation surface. Placement is fixed to OpenWork Cloud and the Automation can wake a stopped Cloud container without a desktop. Create only when the person explicitly asks to create or schedule it; there is no draft step.
    */
   public createCloudAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2602,7 +2617,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Archive an Automation
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. Durable run history is retained.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. Durable run history is retained.
    */
   public archiveAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2621,7 +2636,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get an Automation
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public getAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2640,7 +2655,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Update an Automation
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. Every behavior-changing edit creates an immutable revision and applies it to future runs immediately.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. Every behavior-changing edit creates an immutable revision and applies it to future runs immediately. Set executionTarget to move the Automation between the owner's desktops and OpenWork Cloud; agents may move it to the cloud only.
    */
   public updateAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2727,7 +2742,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Activate an Automation
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public activateAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2746,7 +2761,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Deactivate an Automation
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public deactivateAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2769,26 +2784,42 @@ export class DenClient extends HeyApiClient {
   /**
    * Run an Automation now
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. Send executionTarget "cloud" to run a Desktop Automation once in OpenWork Cloud without changing it. Agents cannot run a Cloud Automation on a desktop.
    */
   public runAutomationNow<ThrowOnError extends boolean = false>(
     parameters: {
       id: string;
+      executionTarget?: "desktop" | "cloud";
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "id" }] }]);
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { in: "body", key: "executionTarget" },
+          ],
+        },
+      ],
+    );
     return (options?.client ?? this.client).post<RunAutomationNowResponses, RunAutomationNowErrors, ThrowOnError>({
       url: "/v1/automations/{id}/run",
       ...options,
       ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 
   /**
    * List Automation runs
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public listAutomationRuns<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2820,7 +2851,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Inspect an Automation run receipt and execution thread
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public getAutomationRun<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2839,7 +2870,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Cancel an active Automation run
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public cancelAutomationRun<ThrowOnError extends boolean = false>(
     parameters: {

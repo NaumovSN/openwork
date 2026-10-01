@@ -152,6 +152,40 @@ export function resolveAssignmentWorkspace(listed, pinnedWorkspaceId) {
   return workspace
 }
 
+/**
+ * Ids of the workspaces this desktop has, or null when the local runtime
+ * cannot say (it is starting, or unreachable).
+ */
+export async function listLocalWorkspaceIds(options) {
+  const local = await options.getLocalRuntime()
+  if (!local?.baseUrl || !local?.token) return null
+  const listed = await requestJson(options.fetchImpl ?? fetch, local.baseUrl, local.token, "/workspaces", { signal: options.signal })
+  const items = Array.isArray(listed?.items) ? listed.items : []
+  return new Set(items.flatMap((item) => (typeof item?.id === "string" && item.id ? [item.id] : [])))
+}
+
+/**
+ * Picks the first work item this desktop can run. A member may have many
+ * desktops and every one of them sees the same work, so a run pinned to a
+ * workspace this desktop lacks is left for the desktop that has it rather
+ * than claimed and failed here. Local workspaces are listed only when a pinned
+ * item appears; when they cannot be listed, pinned items wait for the next poll.
+ */
+export async function selectRunnableWorkItem(items, listWorkspaceIds) {
+  let workspaceIds
+  for (const item of Array.isArray(items) ? items : []) {
+    if (item?.kind === "remote_session_create") {
+      if (item.commandId) return item
+      continue
+    }
+    if (!item?.runId) continue
+    if (!item.workspaceId) return item
+    if (workspaceIds === undefined) workspaceIds = await listWorkspaceIds().catch(() => null)
+    if (workspaceIds?.has(item.workspaceId)) return item
+  }
+  return null
+}
+
 /** Runs the assignment as a normal visible local OpenWork thread. */
 export async function executeDesktopAutomation(assignment, options) {
   const local = await options.getLocalRuntime()
@@ -580,9 +614,13 @@ export function createDesktopAutomationRunner(options) {
           signal: AbortSignal.timeout(workPollTimeoutMs),
         })
         if (!isCurrent(state)) break
-        const item = response?.items?.[0]
-        if (item?.kind === "remote_session_create") {
-          if (!item.commandId) break
+        const item = await selectRunnableWorkItem(response?.items, () => listLocalWorkspaceIds({
+          getLocalRuntime: options.getLocalRuntime,
+          fetchImpl,
+          signal: AbortSignal.any([state.controller.signal, AbortSignal.timeout(workPollTimeoutMs)]),
+        }))
+        if (!isCurrent(state) || !item) break
+        if (item.kind === "remote_session_create") {
           state.claimInFlight = true
           let claimed
           try {
@@ -601,7 +639,6 @@ export function createDesktopAutomationRunner(options) {
           await runRemoteSessionCommand(state, claimed.assignment)
           continue
         }
-        if (!item?.runId) break
         state.claimInFlight = true
         let claimed
         try {
