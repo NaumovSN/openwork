@@ -22,7 +22,7 @@ async function childConversation(seed: Seed, surface: "web" | "electron") {
   ], { ...(engine === "v2" ? { experimental: { subagent_depth: 2 } } : { subagent_depth: 2 }), permission: { task: "allow", question: "allow" }, agent: { general: { tools: { task: true }, permission: { task: "allow" } } } }, surface, { createWorkspace: surface === "electron" });
   const session = await seed.session(base.app, { title: "Fixture review" });
   return { ...base, session, engine, prompt, childPrompt, grandchildPrompt, followup, finalReply,
-    selectedSessionId: () => seed.evalIn(base.app, () => document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id") ?? ""),
+    selectedSessionId: () => seed.evalIn(base.app, () => document.querySelector('[data-workbench-pane-focused="true"] [data-session-surface-id]')?.getAttribute("data-session-surface-id") ?? ""),
     nativeSession: (sessionId: string) => seed.evalIn(base.app, browserScript(async (workspaceId, engine, sessionId) => {
       const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/workspace/" + encodeURIComponent(workspaceId)
         + (engine === "v2" ? "/opencode2/api" : "/opencode");
@@ -34,7 +34,7 @@ async function childConversation(seed: Seed, surface: "web" | "electron") {
       return body;
     }, [base.workspace.workspaceId, engine, sessionId]), { awaitPromise: true }),
     delegatedTools: () => seed.evalIn(base.app, browserScript(async (workspaceId, engine) => {
-      const sessionId = document.querySelector("[data-session-surface-id]")?.getAttribute("data-session-surface-id");
+      const sessionId = document.querySelector('[data-workbench-pane-focused="true"] [data-session-surface-id]')?.getAttribute("data-session-surface-id");
       const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/workspace/" + encodeURIComponent(workspaceId)
         + (engine === "v2" ? "/opencode2/api" : "/opencode");
       const response = await fetch(base + "/session/" + encodeURIComponent(sessionId ?? "") + "/message?limit=50", {
