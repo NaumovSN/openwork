@@ -208,7 +208,6 @@ export function BuiltDashboardTiles({
               kind: "mcp",
               id: `personal:${app.connectionId}`,
               launchArguments: { input: {} },
-              launchApproved: true,
               autoLaunch: true,
             }}
             renderActions={({ onRefresh, refreshing }) => (

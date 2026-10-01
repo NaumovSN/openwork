@@ -8,6 +8,7 @@ import type { GeneratedArtifactViewRevision, SavedAppDetail } from "@openwork/ty
 
 import type { BuiltMcpAppCatalogEntry } from "../src/app/lib/built-mcp-app-catalog";
 import type { DashboardTileActions } from "../src/react-app/domains/dashboard/dashboard-tile-shell";
+import type { DashboardMcpAppEntry } from "../src/react-app/domains/dashboard/granted-dashboard-store";
 import type { DenGrantedDashboard } from "../src/app/lib/den";
 import type { DenAuthStatus } from "../src/react-app/domains/cloud/den-auth-provider";
 import type { McpAppSandboxViewProps } from "../src/components/chat/mcp-app-frame";
@@ -65,11 +66,14 @@ mock.module("../src/components/chat/mcp-app-frame", () => ({
 }));
 
 const { DashboardTileShell } = await import("../src/react-app/domains/dashboard/dashboard-tile-shell");
+const { dashboardTileRunsAutomatically } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache");
 const refresh = mock(() => {});
 mock.module("../src/react-app/domains/dashboard/mcp-app-tile", () => ({
-  McpAppTile: ({ entry, cacheScopeKey, renderActions }: { entry: { title: string; toolName: string; launchArguments?: Record<string, unknown> }; cacheScopeKey: string; renderActions?: DashboardTileActions }) =>
+  McpAppTile: ({ entry, cacheScopeKey, renderActions }: { entry: DashboardMcpAppEntry; cacheScopeKey: string; renderActions?: DashboardTileActions }) =>
     <DashboardTileShell title={entry.title} compact renderActions={renderActions} onRefresh={refresh} badge={<span>Updated just now</span>}>
-      <div data-live-tool={entry.toolName} data-live-scope={cacheScopeKey} style={{ height: 720 }}>{JSON.stringify(entry.launchArguments)}</div>
+      <div data-live-tool={entry.toolName} data-live-scope={cacheScopeKey}
+        data-auto-launch={dashboardTileRunsAutomatically(entry.requiresApproval === true, entry.autoLaunch === true, entry.launchApproved === true, entry.organizationAutoLaunch === true)}
+        style={{ height: 720 }}>{JSON.stringify(entry.launchArguments)}</div>
     </DashboardTileShell>,
 }));
 
@@ -806,6 +810,7 @@ test("a member adds a shared built App with fuzzy search, refreshes it and remov
   expect(document.querySelector('[aria-label="Add Sales report"]')).toBeNull();
   await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
   expect(container.querySelector('[aria-label="Bug dashboard"]')).not.toBeNull();
+  expect(container.querySelector('[data-live-tool="open_app"]')?.getAttribute("data-auto-launch")).toBe("true");
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Refresh Bug dashboard"]')?.click());
   expect(refresh).toHaveBeenCalledTimes(1);
   expect(client.setAppOnDashboard).not.toHaveBeenCalled();
