@@ -1,3 +1,6 @@
+import { BuiltAppChatPreview, BuiltAppPreviewSync } from "@/react-app/domains/apps/built-app-chat-preview"
+import { appBuilderResultFailed, builtAppSummary, isAppBuilderPart } from "@/react-app/domains/apps/built-mcp-app-model"
+import { AppBuilderStep } from "./app-builder-step"
 "use memo";
 
 import * as React from "react"
@@ -337,6 +340,7 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   // Failed calls use the same sentence line with the "failures are
   // instructions" treatment (inline Reconnect/Retry).
   if (part.type === "dynamic-tool") {
+    if (isAppBuilderPart(part) && !appBuilderResultFailed(part)) return <AppBuilderStep part={part} statusUnknown={statusUnknown} />
     return (
       <CapabilityCallLine
         part={part}
@@ -1395,7 +1399,7 @@ function MessageGroup({
     >
       {builtMcpAppId(part) && !newestAppCalls.has(part.toolCallId)
         ? <p className="mt-2 text-xs text-muted-foreground">This App has a newer version below.</p>
-        : <McpAppFrame part={part} />}
+        : builtAppSummary(part) ? <BuiltAppChatPreview part={part} /> : <McpAppFrame part={part} />}
     </Message>
   )
   // How long the turn spent working, from the first step to when the answer
@@ -1724,6 +1728,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
 
   return (
     <ParentRunActiveContext.Provider value={runActive}>
+    <BuiltAppPreviewSync key={sessionId} messages={messages} active={runActive} />
     <CurrentToolLifecycleProvider
       activityStatus={activityStatus}
       currentToolCallIds={currentToolCallIds}

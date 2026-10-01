@@ -1,3 +1,4 @@
+import { BuiltMcpAppPanel } from "../../apps/built-mcp-app-panel";
 /** @jsxImportSource react */
 import * as React from "react";
 import {
@@ -146,7 +147,7 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
             ) : (
               <Globe />
             )
-          ) : tab.type === "app" ? <Blocks /> : (
+          ) : (tab.type === "app" || tab.type === "mcp-app") ? <Blocks /> : (
             <ArtifactIcon type={tab.preview} />
           )}
           <span className="min-w-0 flex-1 truncate text-left">{tab.label}</span>
@@ -766,6 +767,8 @@ export function SidePanel({
         ) : null}
         {activeTab?.type === "browser" ? (
           <BrowserPanelContent sessionId={sessionId} tab={activeTab} onClose={onClose} />
+        ) : activeTab?.type === "mcp-app" ? (
+          <BuiltMcpAppPanel key={activeTab.id} tab={activeTab} onClose={onClose} />
         ) : activeTab?.type === "app" ? (
           <div className="min-h-0 flex-1 overflow-hidden"><AppArtifact key={activeTab.id} appId={activeTab.appId} revisionId={activeTab.revisionId} receiptId={activeTab.receiptId} onClose={onClose} /></div>
         ) : activeTab?.type === "artifact" ? (

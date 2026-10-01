@@ -270,7 +270,7 @@ test("an owner composes an App that is its own MCP server, and a teammate uses i
   });
 });
 
-chatTest("an owner prompts OpenWork's chat to build an App and to open one, and both work inside the conversation", async ({ world, agent, user, probe, step, evidence }) => {
+chatTest("an owner builds an App beside the chat and uses an existing App inline", async ({ world, agent, user, probe, step, evidence }) => {
   const modelTool = async (marker: string) => (await world.den.mocks.inventory.agentRequests({ promptMarker: marker })).find(request => request.kind === "tool");
   const lookups = async (sinceIso: string) => (await world.inventoryCalls({ sinceIso, atLeast: 1 })).map(call => call.args);
   const reservations = async (sinceIso: string) => (await world.reservations({ sinceIso, atLeast: 1 })).map(call => call.args);
@@ -287,11 +287,19 @@ chatTest("an owner prompts OpenWork's chat to build an App and to open one, and 
   let pricer: Awaited<ReturnType<typeof focus>> | undefined;
   let calculator: Awaited<ReturnType<typeof focus>> | undefined;
 
-  await step("the owner asks the chat to build an App in plain words, and it opens in the conversation with its pricing date and price, no click needed", async () => {
+  await step("before: the conversation has no App preview until an App is ready", async () => {
+    expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(0);
+    await user.screenshot();
+  });
+
+  await step("after: creating an App opens its usable preview beside the conversation", async () => {
     builtAt = new Date().toISOString();
     await agent.send(buildPrompt);
     await user.see({ text: buildReply }, { timeoutMs: 120_000 });
     expect((await modelTool(buildPrompt))?.toolName).toMatch(/create_app$/);
+    await user.see({ role: "button", label: "Open preview" });
+    await user.see({ role: "button", label: "Share" });
+    expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(1);
     pricer = await focus(pricerTitle);
     await pricer.see({ role: "heading", label: pricerTitle });
     await pricer.see({ testId: "pricing-date" }, { text: /^Prices as of \d{4}-\d{2}-\d{2}$/, timeoutMs: 90_000 });
@@ -302,7 +310,7 @@ chatTest("an owner prompts OpenWork's chat to build an App and to open one, and 
     expect(await lookups(builtAt)).toEqual([{ sku: launchInput.sku }]);
     expect(await world.reservations({ sinceIso: builtAt })).toEqual([]);
     await user.screenshot();
-    evidence.recordAssertionEvidence("The chat builds the App, and opening it runs its read-only tools without a click", `For "${buildPrompt}", the model called create_app with ${pricerTitle}'s source and four declared tools. The App opened in the conversation and, with no click, loaded today's date from its live Workflow and the unit price from its Inventory lookup, which the provider marks read-only: the order line reads "${pricedLine}". The Inventory MCP recorded one lookup and no reservation.`, true);
+    evidence.recordAssertionEvidence("The chat builds the App, and opening it runs its read-only tools without a click", `For "${buildPrompt}", the model called create_app with ${pricerTitle}'s source and four declared tools. The App opened in the right preview and, with no click, loaded today's date from its live Workflow and the unit price from its Inventory lookup, which the provider marks read-only: the order line reads "${pricedLine}". The Inventory MCP recorded one lookup and no reservation.`, true);
   });
 
   await step("a click on Reserve stock from the App's own script is refused, because it is not a person's click", async () => {
@@ -335,6 +343,9 @@ chatTest("an owner prompts OpenWork's chat to build an App and to open one, and 
 
   await step("the owner asks the chat to open the Order calculator for an order, naming no App, and it opens with that order", async () => {
     for (const id of [world.created.appId, world.created.pluginId]) expect(chatPrompt).not.toContain(id);
+    await frame?.[Symbol.asyncDispose]();
+    frame = undefined;
+    await user.click({ role: "button", label: "Close panel" });
     openedAt = new Date().toISOString();
     await agent.send(chatPrompt);
     await user.see({ text: chatReply }, { timeoutMs: 120_000 });
@@ -342,6 +353,7 @@ chatTest("an owner prompts OpenWork's chat to build an App and to open one, and 
     // The App's result tells the model the person already sees the App, so its reply stays short.
     const final = (await world.den.mocks.inventory.agentRequests({ promptMarker: chatPrompt })).find(request => request.kind === "final");
     expect(final?.toolResultCodes).toEqual([expect.objectContaining({ hasAppShownNote: true })]);
+    expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(0);
     calculator = await focus(appTitle);
     await calculator.see({ role: "heading", label: appTitle });
     await calculator.see({ testId: "pricing-date" }, { text: /^Prices as of \d{4}-\d{2}-\d{2}$/, timeoutMs: 90_000 });

@@ -19,7 +19,7 @@ import {
   type OpenworkMcpAppLaunchReference,
   type OpenworkMcpAppResource,
 } from "@/app/lib/openwork-server"
-import { useMessageList } from "./message-list-provider"
+import { useOptionalMessageList } from "./message-list-provider"
 import { createMcpAppActions, type McpAppOrigin } from "./mcp-app-origin"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -795,15 +795,17 @@ export function isNativeConnectionAppLaunch(part: DynamicToolUIPart): boolean {
     && (launch.resourceUri === connectionActionAppResourceUri || launch.resourceUri === legacyConnectionActionAppResourceUri)
 }
 
-export function McpAppFrame({ part }: { part: DynamicToolUIPart }) {
+export function McpAppFrame({ part, origin }: { part: DynamicToolUIPart; origin?: McpAppOrigin }) {
   const result = preservedResult(part)
   if (isRetiredFirstPartyConfirmation(part.toolName, result)) return null
   if (isNativeConnectionAppLaunch(part)) return null
-  return <EmbeddedMcpAppFrame part={part} />
+  return <EmbeddedMcpAppFrame part={part} origin={origin} />
 }
 
-function EmbeddedMcpAppFrame({ part }: { part: DynamicToolUIPart }) {
-  const { mcpAppOrigin: nextOrigin, uiStateOwner, readOnly, getConnectionDecision, onMcpReconnect } = useMessageList()
+function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToolUIPart; origin?: McpAppOrigin }) {
+  const context = useOptionalMessageList()
+  const nextOrigin = surfaceOrigin ?? context?.mcpAppOrigin ?? null
+  const { uiStateOwner, readOnly, getConnectionDecision, onMcpReconnect } = context ?? {}
   const origin = useMemo(() => nextOrigin, [nextOrigin?.client, nextOrigin?.workspaceId, nextOrigin?.sessionId, nextOrigin?.engine, nextOrigin?.readOnly])
   const openworkServerClient = origin?.client
   const workspaceId = origin?.workspaceId
