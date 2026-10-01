@@ -147,7 +147,7 @@ test(`AGENT-VIS-01 ${resolveEvalEngine()}: a person asks a research question and
     // TODO(primitive): verify answer-level model placement while the completed rail is folded.
     const settled = await probe.eval(() => ({
       visibleModels: [...document.querySelectorAll<HTMLElement>('[data-testid="reply-model"]')]
-        .filter(node => node.getBoundingClientRect().height > 0).map(node => node.innerText),
+        .filter(node => node.getBoundingClientRect().height > 0).map(node => node.innerText.replace(/^\s*·\s*/, "").trim()),
       liveSteps: document.querySelectorAll('[data-live-steps]').length,
       liveShimmers: [...document.querySelectorAll<HTMLElement>('.ow-text-shimmer')]
         .filter(node => node.getBoundingClientRect().height > 0).length,
