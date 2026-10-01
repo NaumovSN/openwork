@@ -9,6 +9,7 @@ export async function childDecisionsWeb(seed: Seed) {
   // tool progress, session ownership and answers pass through unchanged.
   await addInitScript(world.app.client, () => {
     Reflect.set(window, "__childDecisionNotificationsDropped", 0);
+    Reflect.set(window, "__dropChildDecisionNotifications", false);
     const original = window.fetch.bind(window);
     window.fetch = async (...args) => {
       const response = await original(...args);
@@ -22,7 +23,7 @@ export async function childDecisionsWeb(seed: Seed) {
           const frames = buffer.split(/\r?\n\r?\n/);
           buffer = frames.pop() ?? "";
           for (const frame of frames) {
-            if (/"type"\s*:\s*"(?:form\.created|question\.asked)"/.test(frame)) {
+            if (Reflect.get(window, "__dropChildDecisionNotifications") && /"type"\s*:\s*"(?:form\.created|question\.asked)"/.test(frame)) {
               Reflect.set(window, "__childDecisionNotificationsDropped", Number(Reflect.get(window, "__childDecisionNotificationsDropped")) + 1);
             } else controller.enqueue(encoder.encode(frame + "\n\n"));
           }
@@ -32,5 +33,8 @@ export async function childDecisionsWeb(seed: Seed) {
       return new Response(filtered, { status: response.status, headers: response.headers });
     };
   });
-  return world;
+  return { ...world,
+    armNotificationFault: () => seed.evalIn(world.app, () => { Reflect.set(window, "__dropChildDecisionNotifications", true); }),
+    notificationDrops: () => seed.evalIn(world.app, () => Number(Reflect.get(window, "__childDecisionNotificationsDropped"))),
+  };
 }
