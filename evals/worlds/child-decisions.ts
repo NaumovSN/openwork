@@ -1,4 +1,4 @@
-import { addInitScript } from "@openwork/cdp";
+import { addInitScript, browserScript } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 import { delegatedQuestionHandoff } from "./chat.ts";
 
@@ -36,5 +36,12 @@ export async function childDecisionsWeb(seed: Seed) {
   return { ...world,
     armNotificationFault: () => seed.evalIn(world.app, () => { Reflect.set(window, "__dropChildDecisionNotifications", true); }),
     notificationDrops: () => seed.evalIn(world.app, () => Number(Reflect.get(window, "__childDecisionNotificationsDropped"))),
+    nativePendingDecisions: () => seed.evalIn(world.app, browserScript(async (workspaceId, engine) => {
+      const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port")
+        + "/workspace/" + encodeURIComponent(workspaceId) + (engine === "v2" ? "/opencode2/api/form/request" : "/opencode/question");
+      const response = await fetch(base, { headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") } });
+      const body: unknown = await response.json();
+      return { status: response.status, body };
+    }, [world.workspace.workspaceId, world.engine]), { awaitPromise: true }),
   };
 }
