@@ -151,7 +151,11 @@ function failure(input: {
   }
 }
 
-/** Runner error codes a person has to act on, mapped to the Automation contract. */
+/**
+ * Runner failures mapped to the Automation contract. A transient failure is
+ * retried: the retry re-sends the same message id, which resumes the turn
+ * where it stopped, and the runner never re-runs a tool call it already made.
+ */
 function turnFailure(turn: RunnerTurn, messages: RunnerMessage[]): CloudAgentExecution {
   const usage = usageFromTurn(turn)
   const events = [...transcriptEvents(messages, usage), { type: "terminal" as const, payload: { status: "failed", code: turn.error } }]
@@ -160,7 +164,10 @@ function turnFailure(turn: RunnerTurn, messages: RunnerMessage[]): CloudAgentExe
     return failure({ code: "execution_timed_out", message: "The Automation run exceeded its maximum runtime.", events, usage })
   }
   if (code === "mcp_unavailable") {
-    return failure({ code: "connect_access_unavailable", message: "OpenWork could not reach the owner's connections for this run.", events, usage })
+    return failure({ code: "connect_access_unavailable", message: "OpenWork could not reach the owner's connections for this run.", retryable: true, events, usage })
+  }
+  if (code === "model_unreachable" || code === "model_http_429" || code === "model_http_529" || /^model_http_5\d\d$/.test(code)) {
+    return failure({ code: "execution_failed", message: "The cloud model was briefly unavailable.", retryable: true, events, usage })
   }
   if (code === "model_credentials_missing" || code === "model_http_401" || code === "model_http_403") {
     return failure({ code: "provider_unavailable", message: "The cloud model is not available. An admin needs to check the headless runner's model access.", needsAttention: true, events, usage })
@@ -271,7 +278,10 @@ export async function executeHeadlessAgent(
       if (turn.status === "failed") return turnFailure(turn, read.value.messages)
 
       const usage = usageFromTurn(turn)
-      const resultSummary = read.value.finalAssistantText.trim() || "The Automation run finished without a written result."
+      // The answer is the last reply without tool calls; narration between steps is not the result.
+      const answer = read.value.messages.filter((message) => message.role === "assistant" && message.toolCalls.length === 0).at(-1)
+      const resultSummary = (answer?.role === "assistant" ? answer.text : read.value.finalAssistantText).trim()
+        || "The Automation run finished without a written result."
       return {
         ok: true,
         threadId: runSessionId,

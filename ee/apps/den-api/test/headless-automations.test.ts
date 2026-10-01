@@ -96,7 +96,8 @@ function fakeRunner(options: { reads?: string[]; final?: string; error?: string;
             ...(done ? [{ seq: 4, messageId, role: "assistant", text: options.final ?? "You missed 2 launch decisions.", toolCalls: [] }] : []),
           ]
         : [],
-      finalAssistantText: done ? options.final ?? "You missed 2 launch decisions." : "",
+      // Like the real runner: every assistant text of the turn, narration included.
+      finalAssistantText: done ? `Checking #launch.\n\n${options.final ?? "You missed 2 launch decisions."}` : "Checking #launch.",
     })
   }
   const client = createHeadlessRunnerClient({
@@ -149,6 +150,7 @@ describe("headless Automation runs", () => {
     const { input, admitted } = runInput()
     const result = await executeHeadlessAgent(input, deps(runner.client))
 
+    // The result is the final answer, not the narration between steps ("Checking #launch.").
     expect(result).toMatchObject({ ok: true, workspaceId: "headless", resultSummary: "You missed 2 launch decisions." })
     if (!result.ok) throw new Error("expected success")
     expect(result.usage).toEqual({ inputTokens: 1200, outputTokens: 90, costMicros: null })
@@ -225,9 +227,13 @@ describe("headless Automation runs", () => {
     expect(runner.calls).toEqual([])
   })
 
-  test("failures map onto the Automation contract", async () => {
+  test("failures map onto the Automation contract; transient ones are retried", async () => {
     const mcp = await executeHeadlessAgent(runInput().input, deps(fakeRunner({ reads: ["failed"], error: "mcp_unavailable" }).client))
-    expect(mcp).toMatchObject({ ok: false, code: "connect_access_unavailable", retryable: false })
+    expect(mcp).toMatchObject({ ok: false, code: "connect_access_unavailable", retryable: true })
+    const overloaded = await executeHeadlessAgent(runInput().input, deps(fakeRunner({ reads: ["failed"], error: "model_http_529" }).client))
+    expect(overloaded).toMatchObject({ ok: false, code: "execution_failed", retryable: true })
+    const steps = await executeHeadlessAgent(runInput().input, deps(fakeRunner({ reads: ["failed"], error: "max_steps_exceeded" }).client))
+    expect(steps).toMatchObject({ ok: false, code: "execution_failed", retryable: false })
     const model = await executeHeadlessAgent(runInput().input, deps(fakeRunner({ reads: ["failed"], error: "model_credentials_missing" }).client))
     expect(model).toMatchObject({ ok: false, code: "provider_unavailable", needsAttention: true })
     const timeout = await executeHeadlessAgent(runInput().input, deps(fakeRunner({ reads: ["failed"], error: "turn_timeout" }).client))
