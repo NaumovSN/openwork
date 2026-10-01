@@ -595,6 +595,11 @@ function mapV2ToolPart(
   const end = readNumber(time, "completed") ?? start;
   const title = readString(state, "title") ?? tool;
   const metadata = toolMetadata(sourceTool, readRecord(state, "metadata") ?? {}, sessionID, messageID, callID, taskSessions);
+  // SDK compatibility requires a numeric time pair. Do not present its
+  // fallback as an observed duration when old history lacks native timing.
+  if (readNumber(time, "ran") === undefined || ((status === "completed" || status === "error") && readNumber(time, "completed") === undefined)) {
+    metadata.openworkToolTimingUnavailable = true;
+  }
   const base: Omit<ToolPart, "state"> = {
     id: callID,
     messageID,
