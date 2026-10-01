@@ -57,12 +57,13 @@ export function ActivityRefreshError({ verifiedAt, now, compact = false }: { ver
 
 /** Says what the filter hid, in the same row lanes, with the way back as the one action (A6). */
 export function ActivityNoMatches({ kind, onShowAll }: { kind: "skill" | "plugin" | "connection"; onShowAll: () => void }) {
+  const noMatches = { skill: t("activity.no_matches_skill"), plugin: t("activity.no_matches_plugin"), connection: t("activity.no_matches_connection") };
   return (
     <div data-activity-no-matches className="flex min-h-13 items-center gap-3 px-3">
       <span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center text-muted-foreground">
         <Filter className="size-3.5" strokeWidth={1.5} />
       </span>
-      <span className="min-w-0 flex-1 text-sm">{t(`activity.no_matches_${kind}`)}</span>
+      <span className="min-w-0 flex-1 text-sm">{noMatches[kind]}</span>
       <Button variant="ghost" size="xs" className="shrink-0 justify-end px-0 font-medium" onClick={onShowAll}>{t("activity.show_all")}</Button>
     </div>
   );
