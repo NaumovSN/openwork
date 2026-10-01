@@ -9,7 +9,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
   await user.type("composer", world.prompt);
   await user.click("Run task");
 
-  await step("the search and connector action stay readable", async () => {
+  await step("before: a member sees the running lookup without raw tool output", async () => {
     await user.see({ text: /Searched your connections for.*Slack list_channels/ }, { timeoutMs: 60_000 });
     await user.see({ text: /^(Listing|Listed) channels$/ }, { timeoutMs: 30_000 });
     await user.notSee({ text: /openwork-cloud_execute_capability/ });
@@ -17,7 +17,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.screenshot();
   });
 
-  await step("the completed connector action exposes its arguments and survives reload", async () => {
+  await step("after: the member can inspect the saved lookup result after reload", async () => {
     await user.see({ text: world.proof }, { timeoutMs: 60_000 });
     await user.see("Run task");
     if (world.engine === "v2") await user.click({ role: "button", label: /Looked up.*Show steps/ });
@@ -38,6 +38,15 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.click({ role: "button", label: "Listed channels. Show technical details" });
     await user.see({ text: /mcp:.*:list_channels/ });
     await user.see({ text: /"limit":\s*3/ });
+    // Existing branding inspection has no primitive for the contents of one
+    // action's disclosure. Scope this observation to that row so the assistant
+    // repeating the same result cannot make missing tool capture pass.
+    const savedResult = () => probe.eval(() => [...document.querySelectorAll<HTMLElement>('[data-capability-call]')]
+      .find(row => row.textContent.includes('Listed channels'))?.textContent ?? '');
+    if (world.engine === "v2") {
+      expect(await savedResult()).toContain(world.proof);
+      expect(await savedResult()).not.toContain("The result was not recorded");
+    }
     await user.screenshot();
     await user.reload();
     if (world.engine === "v2") await user.click({ role: "button", label: /Looked up.*Show steps/ });
@@ -46,8 +55,10 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.notSee({ text: /openwork-cloud_execute_capability/ });
     await user.click({ role: "button", label: "Listed channels. Show technical details" });
     await user.see({ text: /"limit":\s*3/ });
+    if (world.engine === "v2") expect(await savedResult()).toContain(world.proof);
+    await user.screenshot();
     await user.click({ role: "button", label: "Listed channels. Hide technical details" });
-    evidence.recordAssertionEvidence("connector action after reload", "One branded Slack row; limit 3 is available under technical details", true);
+    evidence.recordAssertionEvidence("inspect the same action after reload", `One branded Slack row; limit 3${world.engine === "v2" ? ` and the captured result ${world.proof}` : ""} remain under technical details`, true);
   });
 
   await step("before: a note has not yet been created", async () => {
