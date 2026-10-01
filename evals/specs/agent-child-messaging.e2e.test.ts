@@ -5,7 +5,7 @@ import { agentChildWeb } from "../worlds/agent-child.ts";
 
 const test = spec.world(agentChildWeb, { timeout: 420_000, resources: { surfaces: ["appWeb"], services: ["mock"] } });
 
-test(`a member messages a busy helper and returns without losing its draft (${resolveEvalEngine()})`, async ({ world, user, probe, step, evidence }) => {
+test(`a member messages a busy helper and returns without losing its draft (AGENT-CHILD-01 ${resolveEvalEngine()})`, async ({ world, user, probe, step, evidence }) => {
   await using commands = await observeSessionCommands(probe);
   await step("before: the main chat delegates a fixture review", async () => {
     await user.type("composer", world.prompt, { verify: true });
@@ -27,8 +27,7 @@ test(`a member messages a busy helper and returns without losing its draft (${re
     await user.screenshot();
   });
   await step("Enter admits a message to the child and issues no abort", async () => {
-    const childHash = await probe.hash();
-    const childId = childHash.split("/session/")[1]?.split(/[?&#/]/)[0];
+    const childId = await world.selectedSessionId();
     if (!childId) throw new Error("The selected helper did not expose its conversation identity");
     await user.type("composer", world.followup, { verify: true });
     await user.press("Enter");
@@ -65,7 +64,7 @@ test(`a member messages a busy helper and returns without losing its draft (${re
   });
 });
 
-test(`a member stops one helper from its parent chat (${resolveEvalEngine()})`, async ({ world, user, probe, step, evidence }) => {
+test(`a member stops one helper from its parent chat (AGENT-CHILD-STOP ${resolveEvalEngine()})`, async ({ world, user, probe, step, evidence }) => {
   await using commands = await observeSessionCommands(probe);
   let childId = "";
   await step("before: delegated work is running and the parent still owns its own chat", async () => {
@@ -73,7 +72,7 @@ test(`a member stops one helper from its parent chat (${resolveEvalEngine()})`, 
     await user.click("Run task");
     await user.see({ role: "button", label: "Review fixture. Open sub-agent chat" }, { timeoutMs: 60_000 });
     await user.click({ role: "button", label: "Review fixture. Open sub-agent chat" });
-    childId = (await probe.hash()).split("/session/")[1]?.split(/[?&#/]/)[0] ?? "";
+    childId = await world.selectedSessionId();
     expect(childId).not.toBe("");
     await user.see({ text: "Check fixture output" }, { timeoutMs: 60_000 });
     await probe.eventually(() => world.grandchildState(), { within: 60_000,
