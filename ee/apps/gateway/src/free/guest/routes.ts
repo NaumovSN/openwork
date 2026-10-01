@@ -73,8 +73,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
       return Response.json({ error: { code: "session_pow_required", bits: config.sessionPowBits, rounds: config.sessionPowRounds, message: "A proof of work is required to start a guest session." } }, { status: 400, headers: { "cache-control": "no-store" } })
     }
     const identities = createAnonymousIdentities(gate.proof, address, config)
-    const minted = await store.consumeSession(identities.ipHash, identities.installationHash)
-    if (minted !== "accepted") return desktopFreeGateError(429, "anonymous_new_identity_capped")
+    await store.consumeSession(identities.installationHash)
     return c.json({ ...issueAnonymousToken(identities, gate.proof, config), model: DESKTOP_FREE_MODEL_ID }, 200, { "cache-control": "no-store" })
   }))
 

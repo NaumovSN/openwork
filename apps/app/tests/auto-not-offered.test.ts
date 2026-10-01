@@ -66,3 +66,9 @@ test("Auto refusals that arrive mid-send, like a key swapped when a trial ends, 
   expect(autoAccessWallFromError({ error: { code: "invalid_api_key" } }, { providerID: "openai", modelID: "gpt-5" })).toBeNull();
   expect(autoAccessWallFromError({ error: { code: "invalid_api_key" } })).toBeNull();
 });
+
+test("an older gateway's new-machine cap reads as the free limit, not as Auto being busy", () => {
+  const wall = autoAccessWallFromError({ error: { code: "anonymous_new_identity_capped" } }, { providerID: "openwork-free", modelID: "openai/gpt-5.6-luna" });
+  expect(wall).toMatchObject({ state: "limit", code: "anonymous_new_identity_capped" });
+  expect(autoWallCopy(wall!, false).title).toBe("You’ve reached the free Auto limit");
+});

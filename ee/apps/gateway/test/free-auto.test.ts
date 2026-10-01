@@ -87,7 +87,7 @@ function fakeStore(principals: FreePrincipal[], receipts: Array<FreeUsageReceipt
   return {
     family: "anonymous",
     async consumeNonce(proof) { const key = `${proof.keyThumbprint}:${proof.nonce}`; if (nonces.has(key)) return "replay"; nonces.add(key); return "accepted" },
-    async consumeSession() { calls.session++; return "accepted" as const },
+    async consumeSession() { calls.session++ },
     async read(principal) { return { state: "ready", code: null, allowance: { limitUsd: principal.kind === "member" ? 5 : 1,
       usedUsd: 0, remainingUsd: principal.kind === "member" ? 5 : 1, resetsAt: freeInferenceWindow().end.toISOString() } } },
     async admit(principal) { principals.push(principal); return { ok: true, windows: [] } },
@@ -225,17 +225,19 @@ test("minting a guest session costs a proof of work bound to the proof's own non
   assert.equal(f.calls.session, 1)
   const free = fixture({ config: { ...config, sessionPowBits: 0 } })
   assert.equal((await free.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, "", "{}"))).status, 200)
-  const base = fixture()
-  const capped = fixture({ store: { ...base.store, consumeSession: async () => "new_identity_capped" as const } })
-  const response = await capped.app.fetch(session())
-  assert.equal(response.status, 429)
-  assert.equal((await response.json()).error.code, "anonymous_new_identity_capped")
+  // Machines are not counted per IP: many machines behind one office IP all start sessions.
+  const office = fixture()
+  for (let index = 0; index < 50; index++) {
+    const response = await office.app.fetch(session({ source: signer(`${index.toString(16).padStart(2, "0")}`.padEnd(64, "d")) }))
+    assert.equal(response.status, 200, `machine ${index} starts a session`)
+  }
+  assert.equal(office.calls.session, 50)
 })
 
 test("the guest allowance unlocks over the machine's first 30 active minutes and never exceeds the device budget", () => {
   const defaults = readAutoConfig({})
   assert.deepEqual(defaults.installRamp, [{ minutes: 0, amount: 10000000 }, { minutes: 10, amount: 20000000 }, { minutes: 20, amount: 50000000 }, { minutes: 30, amount: 100000000 }])
-  assert.equal(defaults.ipNewIdentitiesPerDay, 5)
+  assert.equal("ipNewIdentitiesPerDay" in defaults, false, "there is no new-machines-per-IP cap")
   assert.deepEqual([defaults.sessionPowBits, defaults.sessionPowRounds, defaults.activityMaxGapMs], [19, 8, 180000])
   const minute = 60000
   assert.equal(rampedDeviceAmount(defaults, 0) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)

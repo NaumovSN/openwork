@@ -55,7 +55,6 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
     blockedReleases: (environment.DESKTOP_FREE_BLOCKED_RELEASES ?? "").split(",").map((value) => value.trim().replace(/^v/, "")).filter(Boolean),
     deviceWeeklyAmount, installRamp,
     activityMaxGapMs: integer("ANONYMOUS_ACTIVITY_MAX_GAP_MS", 180000, 1000, 3600000),
-    ipNewIdentitiesPerDay: integer("ANONYMOUS_IP_NEW_IDENTITIES_PER_DAY", 5, 1, 1000),
     /**
      * Builds without a release tag (built from source, or by anyone) still get Auto, like OpenCode's anonymous free
      * models: their machine id is only self-reported, so each IP gets a small daily budget and all of them together a

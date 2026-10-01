@@ -371,15 +371,14 @@ test("free Auto SQL and 0116 upgrade in an owned random database", { skip: !admi
     assert.equal((await guests.read(open)).state, "exhausted")
   })
 
-  await t.test("a guest's allowance unlocks with time the app is open, credited from heartbeats; each IP may introduce only a few new machines a day", async () => {
+  await t.test("a guest's allowance unlocks with time the app is open, credited from heartbeats; new machines are never capped per IP", async () => {
     const minute = 60000
-    const newIp = "9".repeat(64)
-    // Five fresh machines fit under the daily cap; the sixth does not, but a known machine still may.
-    const machines = Array.from({ length: 6 }, (_, index) => `e${index}`.padEnd(64, "e"))
-    for (const machine of machines.slice(0, 5)) assert.equal(await guests.consumeSession(newIp, machine), "accepted")
-    assert.equal(await otherGuests.consumeSession(newIp, machines[5]), "new_identity_capped")
-    assert.equal(await guests.consumeSession(newIp, machines[0]), "accepted")
-    assert.equal(await guests.consumeSession("8".repeat(64), machines[5]), "accepted", "another IP may introduce it")
+    // Fifty machines (say, one office behind one IP) all start sessions, each on the first ramp step.
+    const machines = Array.from({ length: 50 }, (_, index) => `e${index.toString(16).padStart(2, "0")}`.padEnd(64, "a"))
+    for (const [index, machine] of machines.entries()) await (index % 2 ? otherGuests : guests).consumeSession(machine)
+    assert.equal((await rows(`SELECT COUNT(*) AS amount FROM anonymous_inference_identities WHERE id IN (${machines.map(() => "?").join(",")})`, machines))[0].amount, 50)
+    for (const machine of [machines[0], machines[49]]) assert.equal((await guests.read({ kind: "installation", id: machine })).allowance?.limitUsd, 0.1)
+    await guests.consumeSession(machines[0])
     const guest: GuestPrincipal = { kind: "installation", id: machines[0] }
     assert.equal((await admit(guest))[0].limit, rampedDeviceAmount(config, 0))
     assert.equal((await guests.read(guest)).allowance?.limitUsd, 0.1)

@@ -92,7 +92,8 @@ export function autoAccessWallFromError(value: unknown, model?: ModelRef | null,
     const minimumVersion = Reflect.get(value, "minimumVersion");
     return typeof minimumVersion === "string" && minimumVersion.trim() ? { state: "update", minimumVersion, ...known } : { state: "update", ...known };
   }
-  if (["anonymous_limit_exceeded", "free_allowance_exhausted"].includes(code)) return { state: "limit", ...known };
+  // `anonymous_new_identity_capped` came from gateways that capped new machines per IP; it reads as the free limit.
+  if (["anonymous_limit_exceeded", "free_allowance_exhausted", "anonymous_new_identity_capped"].includes(code)) return { state: "limit", ...known };
   if (["anonymous_capacity_exceeded", "anonymous_unavailable", "free_auto_busy"].includes(code)) return { state: "unavailable", ...known };
   // These codes also come from other providers, so they are Auto's only when the send is known to be on Auto.
   if (model && isAutoModel(model)) {

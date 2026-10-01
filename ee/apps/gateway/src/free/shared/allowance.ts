@@ -1,6 +1,6 @@
 import { eq, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
-  DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity, AnonymousInferenceRateBucketTable as Rate,
+  DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity,
   AnonymousInferenceUsageBucketTable as GuestBucket, AnonymousInferenceUsageTable as GuestUsage,
   InferenceFreeUsageBucketTable as MemberBucket, InferenceFreeUsageTable as MemberUsage,
 } from "@openwork-ee/den-db"
@@ -35,8 +35,6 @@ function isDuplicate(error: unknown): boolean {
   }
   return false
 }
-
-class NewIdentityCapped extends Error {}
 
 let sharedCapacity: FreeCapacity | undefined
 /** One limit per process, shared by guests and members. */
@@ -143,32 +141,14 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
         return "accepted"
       })
     },
-    /** Starts a guest session. A machine never seen before counts against its IP's daily cap on new machines. */
-    async consumeSession(ipHash: string, installationHash: string): Promise<"accepted" | "new_identity_capped"> {
+    /**
+     * Starts a guest session: records the machine (first seen, active time) for its allowance ramp. Machines are not
+     * counted per IP; opening the app costs nothing, and spend is bounded by the device ramp and the global caps.
+     */
+    async consumeSession(installationHash: string): Promise<void> {
       if (family !== "anonymous") throw new Error("Guest sessions only")
       const now = new Date()
-      return capacity.run(async () => {
-        await database.delete(Rate).where(lte(Rate.expires_at, now)).limit(1000).catch(() => undefined)
-        try {
-          return await database.transaction(async (tx) => {
-            const [known] = await tx.select({ id: Identity.id }).from(Identity).where(eq(Identity.id, installationHash)).limit(1)
-            if (!known) {
-              // Count first, then check; a machine over the cap rolls the count back.
-              const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
-              const id = stableId(["rate", "new-identity-ip", ipHash, start.toISOString()])
-              await tx.insert(Rate).values({ id, used_amount: 1, expires_at: new Date(start.getTime() + 86400000) })
-                .onDuplicateKeyUpdate({ set: { used_amount: sql`${Rate.used_amount} + 1` } })
-              const [row] = await tx.select().from(Rate).where(eq(Rate.id, id)).limit(1)
-              if (!row || row.used_amount > config.ipNewIdentitiesPerDay) throw new NewIdentityCapped()
-            }
-            await identityActivity(tx, { kind: "installation", id: installationHash }, now)
-            return "accepted" as const
-          })
-        } catch (error) {
-          if (error instanceof NewIdentityCapped) return "new_identity_capped"
-          throw error
-        }
-      })
+      await capacity.run(() => database.transaction(async (tx) => { await identityActivity(tx, { kind: "installation", id: installationHash }, now) }))
     },
     async read(principal: FreePrincipal): Promise<Pick<DesktopFreeAccessStatus, "state" | "code" | "allowance">> {
       if (!owns(principal)) return { state: "unavailable", code: "free_principal_rejected", allowance: null }

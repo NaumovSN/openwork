@@ -37,7 +37,8 @@ export function parseStatus(payload: unknown, base: DesktopFreeAccessStatus): De
     ...(typeof payload.defaultPinned === "boolean" ? { defaultPinned: payload.defaultPinned } : {}),
   };
 }
-const EXHAUSTED_CODES = ["anonymous_limit_exceeded", "free_allowance_exhausted"];
+// `anonymous_new_identity_capped` came from gateways that capped new machines per IP; it reads as the free limit.
+const EXHAUSTED_CODES = ["anonymous_limit_exceeded", "free_allowance_exhausted", "anonymous_new_identity_capped"];
 /** The status a gateway rejection implies. */
 export function statusFromRejection(payload: Record<string, unknown>, base: DesktopFreeAccessStatus): DesktopFreeAccessStatus {
   const code = typeof payload.code === "string" ? payload.code : "anonymous_unavailable";
