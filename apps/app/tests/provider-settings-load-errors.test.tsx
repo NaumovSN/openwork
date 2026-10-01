@@ -20,6 +20,7 @@ import {
   ensureProviderListQuery,
   fetchProviderList,
   providerListQueryKey,
+  PROVIDER_LIST_CACHE_MS,
   refreshProviderListQueries,
 } from "../src/react-app/infra/provider-list-query";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
@@ -413,4 +414,36 @@ test("an explicit refresh fetches an observed provider catalog once and leaves i
   } finally {
     unsubscribe();
   }
+});
+
+test("provider metadata is reused while fresh and an expired cache fetches updated names", async () => {
+  const harness = createHarness();
+  const queryClient = getReactQueryClient();
+  const initial = await ensureProviderListQuery(queryClient, harness.queryInput);
+  expect(await ensureProviderListQuery(queryClient, harness.queryInput)).toBe(initial);
+  expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(1);
+
+  queryClient.setQueryData(harness.queryKey, initial, { updatedAt: Date.now() - PROVIDER_LIST_CACHE_MS - 1 });
+  harness.engine.catalog = { ...initial, all: [{ ...provider, name: "Updated provider name" }] };
+  expect((await ensureProviderListQuery(queryClient, harness.queryInput)).all[0]?.name).toBe("Updated provider name");
+  expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(2);
+});
+
+test("fresh provider caches stay scoped to their server and directory and sign-out clears them", async () => {
+  const harness = createHarness();
+  const queryClient = getReactQueryClient();
+  const initial = await ensureProviderListQuery(queryClient, harness.queryInput);
+  const otherDirectory = { ...harness.queryInput, directory: "/workspace/other" };
+  const otherBaseUrl = "https://other-engine.example.test";
+  const otherServer = { ...harness.queryInput, baseUrl: otherBaseUrl, client: createClient(otherBaseUrl, harness.queryInput.directory) };
+  harness.engine.catalog = { ...initial, all: [{ ...provider, name: "Another scope" }] };
+  expect((await ensureProviderListQuery(queryClient, otherDirectory)).all[0]?.name).toBe("Another scope");
+  expect((await ensureProviderListQuery(queryClient, otherServer)).all[0]?.name).toBe("Another scope");
+  expect((await ensureProviderListQuery(queryClient, harness.queryInput)).all[0]?.name).toBe(provider.name);
+  expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(3);
+  clearProviderListQueries(queryClient);
+  expect(queryClient.getQueryData(providerListQueryKey(otherDirectory))).toBeUndefined();
+  expect(queryClient.getQueryData(providerListQueryKey(otherServer))).toBeUndefined();
+  expect((await ensureProviderListQuery(queryClient, harness.queryInput)).all[0]?.name).toBe("Another scope");
+  expect(harness.requests.filter(({ path }) => path === "/provider")).toHaveLength(4);
 });

@@ -1,13 +1,13 @@
 import { freeAutoSwitchedOff } from "@/app/lib/inference-access";
 import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type { CloudImportedProvider } from "@/app/cloud/import-state";
 import type { Client, ModelOption, ModelRef } from "@/app/types";
-import { newProvidersEvent } from "@/app/lib/provider-events";
 import { useCheckDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { useAutoAccess } from "@/react-app/domains/cloud/auto-access-ui";
 import { useGatewayModelSelection } from "@/react-app/domains/connections/provider-auth/gateway-model-access";
-import { useProviderListQuery } from "@/react-app/infra/provider-list-query";
+import { ensureProviderListQuery, useProviderListQuery } from "@/react-app/infra/provider-list-query";
 import { modelRefKey, useModelCollectionsStore } from "../session/models/model-collections-store";
 import { buildModelCatalog, resolveRetainedSelection, runtimeModelOptions, withAutoActionState, withoutBlockedSelection } from "./catalog";
 import { isAutoModel, type ModelCatalogOption, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
@@ -18,7 +18,7 @@ export type UseModelCatalogInput = {
   directory?: string;
   /** Whether to load the engine's provider list at all. */
   enabled: boolean;
-  /** Refetch each time this becomes true, e.g. when a picker opens. */
+  /** Reuse a fresh catalog or load an expired one when this becomes true. */
   refreshWhen?: boolean;
   fallbackOptions?: readonly ModelOption[];
   /** Whether account-scoped providers may be listed; defaults to the Den sign-in state. */
@@ -80,19 +80,16 @@ export function useModelCatalog(input: UseModelCatalogInput): ModelCatalogView {
   const auth = useDenAuth();
   const signedIn = input.cloudProvidersEnabled ?? auth.isSignedIn;
   const checkRestriction = useCheckDesktopRestriction();
+  const queryClient = useQueryClient();
   // Pickers show the providers last seen for this folder while the engine starts.
   const providers = useProviderListQuery({ client: input.client, baseUrl: input.baseUrl, directory: input.directory || undefined, enabled: input.enabled && Boolean(input.client), showSavedWhileLoading: true });
   const refetch = providers.refetch;
   useEffect(() => {
-    if (input.refreshWhen && input.client) void refetch();
-  }, [input.refreshWhen, input.client, refetch]);
-  useEffect(() => {
-    if (!input.client) return;
-    const refresh = () => { void refetch(); };
-    window.addEventListener(newProvidersEvent, refresh);
-    return () => window.removeEventListener(newProvidersEvent, refresh);
-  }, [input.client, refetch]);
-
+    if (!input.refreshWhen || !input.enabled || !input.client) return;
+    void ensureProviderListQuery(queryClient, {
+      client: input.client, baseUrl: input.baseUrl, directory: input.directory,
+    }).catch(() => undefined); // The shared query exposes failures to the picker.
+  }, [input.refreshWhen, input.enabled, input.client, input.baseUrl, input.directory, queryClient]);
   const runtime = useMemo(() => providers.data?.all ? runtimeModelOptions(providers.data, input.isNewProvider) : null, [providers.data, input.isNewProvider]);
   const restrictToCloud = checkRestriction({ restriction: "allowCustomProviders" });
   const autoPresent = Boolean(runtime?.some(isAutoModel) || input.fallbackOptions?.some(isAutoModel) || (input.current && isAutoModel(input.current)));

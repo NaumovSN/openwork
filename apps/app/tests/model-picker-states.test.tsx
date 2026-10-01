@@ -17,6 +17,10 @@ const { autoAccessStatusQueryKey } = await import("../src/react-app/domains/clou
 const { unavailableDesktopFreeStatus } = await import("../src/app/lib/inference-access");
 const { AUTO_MODEL_ID, AUTO_PROVIDER_ID } = await import("../src/react-app/domains/models/model-catalog");
 const { useModelCollectionsStore } = await import("../src/react-app/domains/session/models/model-collections-store");
+const { useModelCatalog } = await import("../src/react-app/domains/models/use-model-catalog");
+const { createClientV2 } = await import("../src/app/lib/opencode-v2-adapter");
+const { ensureProviderListQuery, providerListQueryKey, PROVIDER_LIST_CACHE_MS } = await import("../src/react-app/infra/provider-list-query");
+const { dispatchNewProviders, dispatchProviderCatalogChanged } = await import("../src/app/lib/provider-events");
 const signedOut: ReturnType<typeof auth.useDenAuth> = { status: "signed_out", user: null, verifiedIdentity: null, isSignedIn: false, error: null, refresh: async () => {} };
 let restoreAuth = () => {};
 let restorePolicy = () => {};
@@ -50,6 +54,134 @@ async function fixture() {
   const finish = async () => { await act(async () => root.unmount()); host.remove(); client.clear(); };
   return { client, host, render, click, finish };
 }
+
+async function catalogFixture() {
+  const view = await fixture();
+  const requests: string[] = [];
+  const metadata = { modelName: "Local model", available: true };
+  const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const path = new URL(request.url).pathname;
+    requests.push(path);
+    const data = path.endsWith("/api/model") ? metadata.available ? [{ id: "local", providerID: "openai", name: metadata.modelName }] : []
+      : path.endsWith("/api/provider") ? [{ id: "openai", name: "Fixture provider" }] : {};
+    return new Response(JSON.stringify({ data }), { headers: { "content-type": "application/json" } });
+  });
+  const baseUrl = "https://engine.example.test/opencode2";
+  const client = createClientV2(baseUrl, "/workspace", {});
+  const queryInput = { client, baseUrl, directory: "/workspace" };
+  let refresh = async (): Promise<unknown> => undefined;
+  function CatalogProbe({ open, enabled }: { open: boolean; enabled: boolean }) {
+    const catalog = useModelCatalog({ ...queryInput, enabled, refreshWhen: open });
+    refresh = catalog.refetch;
+    return <div>{catalog.options.map((model) => model.title).join(", ")}</div>;
+  }
+  await ensureProviderListQuery(view.client, queryInput);
+  requests.length = 0;
+  return {
+    ...view, requests, metadata, queryInput,
+    refresh: () => refresh(),
+    renderPicker: (open: boolean, enabled = true) => view.render(<CatalogProbe open={open} enabled={enabled} />),
+    renderTwoPickers: () => view.render(<><CatalogProbe open={false} enabled /><CatalogProbe open={false} enabled /></>),
+    finish: async () => { await view.finish(); fetchSpy.mockRestore(); },
+  };
+}
+
+test("opening and reopening the model picker reuses fresh model names without catalog requests", async () => {
+  const view = await catalogFixture();
+  try {
+    await view.renderPicker(false);
+    await view.renderPicker(true);
+    await view.renderPicker(false);
+    await view.renderPicker(true);
+    expect(view.host.textContent).toContain("Local model");
+    expect(view.requests).toEqual([]);
+  } finally { await view.finish(); }
+});
+
+test("an expired picker cache refreshes model names once and catalog notifications do not fetch again", async () => {
+  const view = await catalogFixture();
+  try {
+    await view.renderPicker(false);
+    const key = providerListQueryKey(view.queryInput);
+    view.client.setQueryData(key, view.client.getQueryData(key), { updatedAt: Date.now() - PROVIDER_LIST_CACHE_MS - 1 });
+    view.metadata.modelName = "Renamed model";
+    await view.renderPicker(true);
+    expect(view.requests).toHaveLength(3);
+    await act(async () => {
+      await ensureProviderListQuery(view.client, view.queryInput);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(view.host.textContent).toContain("Renamed model");
+    await act(async () => dispatchNewProviders({ providers: [], source: "models_refresh" }));
+    expect(view.requests).toHaveLength(3);
+  } finally { await view.finish(); }
+});
+
+test("manual refresh and scoped catalog events update a fresh cache and remove unavailable models", async () => {
+  const view = await catalogFixture();
+  try {
+    await view.renderPicker(false);
+    view.metadata.modelName = "Updated model";
+    await act(async () => { await view.refresh(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(view.host.textContent).toContain("Updated model");
+    expect(view.requests).toHaveLength(3);
+    await act(async () => dispatchProviderCatalogChanged({ baseUrl: view.queryInput.baseUrl, directory: "/other" }));
+    expect(view.requests).toHaveLength(3);
+    view.metadata.available = false;
+    await act(async () => {
+      dispatchProviderCatalogChanged(view.queryInput);
+      await ensureProviderListQuery(view.client, view.queryInput);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(view.host.textContent).not.toContain("Updated model");
+    expect(view.requests).toHaveLength(6);
+  } finally { await view.finish(); }
+});
+
+test("inactive model pickers do not fetch in response to provider notifications", async () => {
+  const view = await catalogFixture();
+  try {
+    await view.renderPicker(false, false);
+    await act(async () => dispatchNewProviders({ providers: [], source: "local_config" }));
+    expect(view.requests).toEqual([]);
+  } finally { await view.finish(); }
+});
+
+test("two model pickers share one refresh for catalog and provider-change events", async () => {
+  const view = await catalogFixture();
+  try {
+    await view.renderTwoPickers();
+    await act(async () => {
+      dispatchProviderCatalogChanged(view.queryInput);
+      await ensureProviderListQuery(view.client, view.queryInput);
+    });
+    expect(view.requests).toHaveLength(3);
+    await act(async () => {
+      dispatchNewProviders({ providers: [], source: "local_config" });
+      await ensureProviderListQuery(view.client, view.queryInput);
+    });
+    expect(view.requests).toHaveLength(6);
+  } finally { await view.finish(); }
+});
+
+test("catalog listeners survive a picker unmount and are released after the last picker leaves", async () => {
+  const view = await catalogFixture();
+  try {
+    await view.renderTwoPickers();
+    await view.renderPicker(false);
+    await act(async () => {
+      dispatchProviderCatalogChanged(view.queryInput);
+      await ensureProviderListQuery(view.client, view.queryInput);
+    });
+    expect(view.requests).toHaveLength(3);
+    await view.render(<div>Closed</div>);
+    dispatchProviderCatalogChanged(view.queryInput);
+    dispatchNewProviders({ providers: [], source: "local_config" });
+    expect(view.client.getQueryState(providerListQueryKey(view.queryInput))?.isInvalidated).toBe(false);
+    expect(view.requests).toHaveLength(3);
+  } finally { await view.finish(); }
+});
 
 test("initial loading uses row skeletons, then empty search names the query and clears without selecting", async () => {
   const view = await fixture();

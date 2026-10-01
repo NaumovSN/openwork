@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import type { Client, ModelRef, ProviderListItem } from "../../app/types";
 import { unwrap } from "../../app/lib/opencode";
-import { dispatchNewProviders, subscribeProviderCatalogChanges } from "../../app/lib/provider-events";
+import { dispatchNewProviders, newProvidersEvent, subscribeProviderCatalogChanges } from "../../app/lib/provider-events";
 import type { ConfigProvidersResponse, ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 export const PROVIDER_LIST_CACHE_MS = 5 * 60 * 1000;
@@ -13,6 +13,46 @@ const PROVIDER_LIST_QUERY_ROOT = ["opencode-provider-list"] as const;
 // Every provider the engine knows (~6 MB on v1), for connecting a new one.
 const PROVIDER_CATALOG_QUERY_ROOT = ["opencode-provider-catalog"] as const;
 const SAVED_PROVIDER_LIST_PREFIX = "openwork.providerList.v1:";
+
+// Every picker observes the same cache. One event subscription per QueryClient
+// prevents a single catalog change from restarting its fetch once per picker.
+const providerListEventSubscriptions = new WeakMap<QueryClient, {
+  observers: number;
+  unsubscribe: () => void;
+}>();
+
+function subscribeProviderListEvents(queryClient: QueryClient) {
+  let subscription = providerListEventSubscriptions.get(queryClient);
+  if (!subscription) {
+    const unsubscribeCatalog = subscribeProviderCatalogChanges((scope) => {
+      void queryClient.invalidateQueries({ queryKey: providerListQueryKey(scope), exact: true });
+    });
+    const refresh = (event: Event) => {
+      // The read itself emits this notification; the cache already receives
+      // that result. Fetching again here creates a feedback fetch.
+      if (event instanceof CustomEvent && event.detail?.source === "models_refresh") return;
+      void refreshProviderListQueries(queryClient);
+    };
+    const windowTarget = typeof window === "undefined" ? null : window;
+    windowTarget?.addEventListener(newProvidersEvent, refresh);
+    subscription = {
+      observers: 0,
+      unsubscribe: () => {
+        unsubscribeCatalog();
+        windowTarget?.removeEventListener(newProvidersEvent, refresh);
+      },
+    };
+    providerListEventSubscriptions.set(queryClient, subscription);
+  }
+  const current = subscription;
+  current.observers += 1;
+  return () => {
+    current.observers -= 1;
+    if (current.observers > 0) return;
+    current.unsubscribe();
+    providerListEventSubscriptions.delete(queryClient);
+  };
+}
 
 export type ConnectedProviderSnapshot = Array<{
   id: string;
@@ -343,7 +383,9 @@ export function ensureProviderListQuery(
       staleTime: 0,
     });
   }
-  return queryClient.ensureQueryData({
+  // ensureQueryData returns existing data even after staleTime expires.
+  // fetchQuery reuses fresh metadata and actually refreshes expired catalogs.
+  return queryClient.fetchQuery({
     ...options,
     staleTime: PROVIDER_LIST_CACHE_MS,
   });
@@ -362,10 +404,7 @@ export function useProviderListQuery(input: {
   showSavedWhileLoading?: boolean;
 }) {
   const queryClient = useQueryClient();
-  useEffect(() => subscribeProviderCatalogChanges((scope) => {
-    if (scope.baseUrl !== input.baseUrl || (scope.directory ?? "") !== (input.directory ?? "")) return;
-    void queryClient.invalidateQueries({ queryKey: providerListQueryKey(scope) });
-  }), [input.baseUrl, input.directory, queryClient]);
+  useEffect(() => subscribeProviderListEvents(queryClient), [queryClient]);
   return useQuery({
     queryKey: providerListQueryKey(input),
     enabled: Boolean(input.client) && (input.enabled ?? true),
