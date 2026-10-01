@@ -84,8 +84,8 @@ test("a streaming answer renders as markdown block by block and settles to the s
     await user.notSee({ text: streamedMarkdownReasoning });
   });
 
-  await step("live reasoning can be inspected before any reload while the answer is still streaming", async () => {
-    const reasoningControl = { role: "button", label: /^(Thinking…|Thought)$/ } as const;
+  await step("before: live reasoning stays in its existing collapsed disclosure", async () => {
+    const reasoningControl = { role: "button", label: /^(Thinking…|Thought(?: for .+)?)$/ } as const;
     await user.see(reasoningControl);
     await user.click(reasoningControl);
     await user.see({ text: streamedMarkdownReasoning });
@@ -93,6 +93,7 @@ test("a streaming answer renders as markdown block by block and settles to the s
     await user.notSee({ text: closingText });
     await user.click(reasoningControl);
     await user.notSee({ text: streamedMarkdownReasoning });
+    await user.screenshot();
   });
 
   await step("sent text and finished blocks stay visible before reloading the active stream", async () => {
@@ -115,11 +116,12 @@ test("a streaming answer renders as markdown block by block and settles to the s
     await user.notSee({ text: streamedMarkdownReasoning });
   });
 
-  await step("the settled reasoning is collapsed and can be inspected separately", async () => {
-    await user.click({ role: "button", label: "Thought" });
+  await step("after: settled reasoning keeps its duration and separate disclosure", async () => {
+    await user.click({ role: "button", label: /^Thought(?: for .+)?$/ });
     await user.see({ text: streamedMarkdownReasoning });
     expect(occurrences(await probe.text(), streamedMarkdownReasoning)).toBe(1);
     expectSettledDocument(await probe.text());
+    await user.screenshot();
   });
 
   await step("sent text and streamed blocks never disappear or duplicate after reload", async () => {
@@ -159,7 +161,7 @@ test("a streaming answer renders as markdown block by block and settles to the s
   });
 
   await step("reloaded reasoning stays collapsed until inspected separately", async () => {
-    await user.click({ role: "button", label: "Thought" });
+    await user.click({ role: "button", label: /^Thought(?: for .+)?$/ });
     await user.see({ text: streamedMarkdownReasoning });
     expect(occurrences(await probe.text(), streamedMarkdownReasoning)).toBe(1);
     expectSettledDocument(await probe.text());
