@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenWork Cloud Drive · Local concept</title>
+  <style>
+    :root { color-scheme:light dark; --background:light-dark(#f7f8fa,#171b20); --foreground:light-dark(#202830,#e8ebef); --muted:light-dark(#eef0f3,#22282f); --muted-foreground:light-dark(#62707e,#a6b0bc); --surface:light-dark(#fcfdfe,#1d2229); --border:light-dark(#dfe4e9,#343c46); --primary:light-dark(#011627,#dbe7f0); --primary-foreground:light-dark(#f3f6f9,#16212b); --error:light-dark(#b42336,#ff8898); --radius:7px; --shell-radius:16px; --body:13px; --row:46px; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--background); color:var(--foreground); font:var(--body)/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    button,input,select { font:inherit; color:inherit; }
+    button { cursor:pointer; border:1px solid var(--border); background:var(--surface); border-radius:var(--radius); padding:7px 12px; display:inline-flex; align-items:center; justify-content:center; gap:8px; }
+    button:hover { background:var(--muted); }
+    button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible { outline:2px solid var(--primary); outline-offset:3px; }
+    button.primary { background:var(--primary); border-color:var(--primary); color:var(--primary-foreground); }
+    button[aria-disabled=true],button:disabled { color:var(--muted-foreground); cursor:default; }
+    input,select { border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); padding:8px 10px; min-width:0; }
+    input[readonly] { background:var(--muted); }
+    h1,h2,h3,p { margin:0; }
+    h1 { font-size:20px; line-height:1.3; font-weight:600; letter-spacing:-.3px; }
+    h2 { font-size:15px; font-weight:600; }
+    h3 { font-size:var(--body); font-weight:600; }
+    .muted { color:var(--muted-foreground); }
+    .mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+    .icon { width:16px; height:16px; flex:none; fill:none; stroke:currentColor; stroke-width:1.5; stroke-linecap:round; stroke-linejoin:round; }
+    .concept { min-height:43px; border-bottom:1px solid var(--border); display:flex; justify-content:space-between; gap:16px; align-items:center; padding:8px 20px; }
+    .concept label { display:flex; align-items:center; gap:10px; }
+    .concept select { padding:3px 8px; font-size:12px; }
+    .shell { display:grid; grid-template-columns:220px minmax(0,1fr); min-height:calc(100vh - 43px); }
+    .sidebar { border-right:1px solid var(--border); padding:22px 14px 16px; display:flex; flex-direction:column; gap:6px; background:var(--background); }
+    .brand { padding:0 10px 26px; display:flex; align-items:center; gap:10px; font-size:16px; font-weight:600; letter-spacing:-.3px; }
+    .brand-mark { display:grid; place-items:center; width:26px; height:26px; border-radius:8px; background:var(--primary); color:var(--primary-foreground); font-size:14px; }
+    .nav-group { color:var(--muted-foreground); padding:18px 10px 7px; font-size:12px; }
+    .nav { width:100%; border:none; background:transparent; justify-content:flex-start; text-align:left; padding:10px; }
+    .nav[aria-current=page] { background:var(--muted); font-weight:600; }
+    .account { margin-top:auto; padding:26px 10px 0; display:flex; align-items:center; gap:10px; }
+    .avatar { width:29px; height:29px; border-radius:50%; background:var(--muted); display:grid; place-items:center; font-weight:600; }
+    main { padding:36px 40px; min-width:0; max-width:1320px; width:100%; }
+    .heading { display:flex; gap:20px; justify-content:space-between; align-items:center; min-height:43px; margin-bottom:24px; }
+    .usage { text-align:right; font-variant-numeric:tabular-nums; }
+    .meter { height:4px; width:170px; background:var(--muted); border-radius:3px; margin:8px 0 0 auto; overflow:hidden; }
+    .meter > span { display:block; height:100%; background:var(--muted-foreground); }
+    .toolbar { display:flex; align-items:center; justify-content:space-between; gap:20px; padding-bottom:18px; }
+    .folders { display:flex; gap:4px; flex-wrap:wrap; }
+    .folder-filter { border:none; background:transparent; color:var(--muted-foreground); padding:6px 10px; }
+    .folder-filter[aria-pressed=true] { background:var(--muted); color:var(--foreground); }
+    .notice { display:flex; align-items:center; gap:9px; padding:12px 0; border-top:1px solid var(--border); color:var(--muted-foreground); }
+    .notice button { margin-left:auto; }
+    .files { width:100%; border-collapse:collapse; text-align:left; }
+    .files th { font-size:12px; font-weight:400; color:var(--muted-foreground); height:34px; border-top:1px solid var(--border); }
+    .files th,.files td { padding:8px 12px; }
+    .files th:first-child,.files td:first-child { padding-left:0; }
+    .files td { border-top:1px solid var(--border); height:62px; }
+    .file { display:flex; align-items:center; gap:12px; }
+    .file-button { border:none; background:transparent; padding:0; text-align:left; justify-content:flex-start; }
+    .file-button:hover { text-decoration:underline; background:transparent; }
+    .file-type { width:30px; height:34px; display:grid; place-items:center; background:var(--muted); border-radius:4px; }
+    .file-path { font-size:12px; color:var(--muted-foreground); }
+    .size { font-variant-numeric:tabular-nums; white-space:nowrap; }
+    .empty { padding:64px 16px; text-align:center; color:var(--muted-foreground); border-top:1px solid var(--border); }
+    .empty h2 { color:var(--foreground); margin-bottom:10px; }
+    .footnote { display:flex; justify-content:space-between; padding-top:18px; border-top:1px solid var(--border); color:var(--muted-foreground); font-size:12px; }
+    .settings { max-width:820px; }
+    .section { margin:30px 0 12px; }
+    .setting-row { border-bottom:1px solid var(--border); display:grid; grid-template-columns:230px minmax(0,1fr); align-items:center; min-height:var(--row); gap:20px; padding:10px 0; }
+    .setting-row:first-of-type { border-top:1px solid var(--border); }
+    .setting-row input,.setting-row select { width:100%; }
+    .setting-row .state { text-align:right; }
+    .settings-actions { display:flex; align-items:center; justify-content:flex-end; gap:12px; margin-top:20px; }
+    details { margin-top:12px; border-bottom:1px solid var(--border); }
+    summary { cursor:pointer; list-style:none; padding:12px 0; display:flex; align-items:center; gap:8px; }
+    summary::-webkit-details-marker { display:none; }
+    summary .icon { transition:transform 150ms ease-out; }
+    details[open] summary .icon { transform:rotate(90deg); }
+    .details-content { padding:4px 0 18px 24px; }
+    .grant-row { display:flex; gap:16px; align-items:center; justify-content:space-between; padding:10px 0; }
+    .automation { max-width:820px; }
+    .result { border-top:1px solid var(--border); padding:22px 0; margin-top:24px; }
+    .result-file { display:flex; align-items:center; gap:14px; margin-top:14px; }
+    .result button { margin-left:auto; }
+    .status { min-height:24px; color:var(--muted-foreground); }
+    .status.error { color:var(--error); }
+    dialog { padding:24px; border:1px solid var(--border); background:var(--surface); color:var(--foreground); border-radius:var(--shell-radius); width:min(440px,calc(100% - 32px)); }
+    dialog::backdrop { background:light-dark(#18212b66,#050a1088); }
+    .dialog-heading { display:flex; justify-content:space-between; align-items:center; margin-bottom:18px; }
+    .close { border:none; background:transparent; padding:5px; }
+    .field { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
+    .dialog-actions { display:flex; justify-content:flex-end; gap:8px; margin-top:20px; }
+    [hidden] { display:none !important; }
+    #toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--primary); color:var(--primary-foreground); border-radius:var(--radius); padding:12px 18px; max-width:calc(100% - 32px); z-index:3; }
+    @media(max-width:760px) { .shell { grid-template-columns:166px minmax(0,1fr); } main { padding:24px 20px; } .setting-row { grid-template-columns:1fr; gap:6px; } .setting-row .state { text-align:left; } .files th:nth-child(3),.files td:nth-child(3) { display:none; } .concept { padding:8px 12px; } .toolbar { align-items:flex-start; } }
+    @media(max-width:520px) { .shell { display:block; } .sidebar { border-right:none; border-bottom:1px solid var(--border); padding:12px; display:flex; flex-direction:row; flex-wrap:wrap; gap:3px; } .brand { padding:0 12px 0 0; width:100%; margin-bottom:6px; } .nav { width:auto; padding:7px; } .nav-group,.account { display:none; } .concept { flex-wrap:wrap; } .heading { align-items:flex-start; } .meter { width:100px; } .files td { padding-right:4px; } main { padding:22px 16px; } }
+    @media(prefers-reduced-motion:reduce) { summary .icon { transition:none; } }
+  </style>
+</head>
+<body>
+  <svg hidden aria-hidden="true">
+    <symbol id="folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v9H3Z"/></symbol>
+    <symbol id="cloud" viewBox="0 0 24 24"><path d="M7 18h11a4 4 0 0 0 1-8 7 7 0 0 0-13-1 4.5 4.5 0 0 0 1 9Z"/></symbol>
+    <symbol id="file" viewBox="0 0 24 24"><path d="M14 3H5v18h14V8Z M14 3v5h5 M8 13h8 M8 17h5"/></symbol>
+    <symbol id="settings" viewBox="0 0 24 24"><path d="M4 7h16 M4 17h16 M8 4v6 M16 14v6"/></symbol>
+    <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3 M12 14v3"/></symbol>
+    <symbol id="upload" viewBox="0 0 24 24"><path d="M12 16V3 M7 8l5-5 5 5 M4 16v5h16v-5"/></symbol>
+    <symbol id="chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12 M18 6 6 18"/></symbol>
+  </svg>
+  <div class="concept"><span class="muted">Local concept · Simulated files and settings</span><label class="muted">Preview state<select id="preview-state"><option value="ready">Ready</option><option value="empty">Empty</option><option value="offline">Couldn't verify</option><option value="blocked">Blocked by policy</option></select></label></div>
+  <div class="shell" id="drive-concept">
+    <aside class="sidebar" aria-label="OpenWork navigation">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">W</span>OpenWork</div>
+      <div class="nav-group">Drive</div>
+      <button class="nav" data-view="private" aria-current="page"><svg class="icon"><use href="#cloud"/></svg>My drive</button>
+      <button class="nav" data-view="shared"><svg class="icon"><use href="#folder"/></svg>Shared with me</button>
+      <div class="nav-group">Organization</div>
+      <button class="nav" data-view="settings"><svg class="icon"><use href="#settings"/></svg>Storage settings</button>
+      <button class="nav" data-view="automation"><svg class="icon"><use href="#clock"/></svg>Automation</button>
+      <div class="account"><span class="avatar">A</span><div>Avery<div class="muted" style="font-size:12px">Demo organization</div></div></div>
+    </aside>
+    <main>
+      <section id="files-view">
+        <div class="heading"><h1 id="drive-title">My drive</h1><div class="usage"><div id="usage-label"></div><div class="meter"><span id="usage-fill"></span></div></div></div>
+        <div class="toolbar"><div class="folders" id="folder-filters"></div><button id="upload-open" class="primary"><svg class="icon"><use href="#upload"/></svg>Upload file</button></div>
+        <div id="drive-notice" class="notice" hidden><svg class="icon"><use href="#lock"/></svg><span id="notice-copy"></span><button id="retry" hidden>Retry</button></div>
+        <table class="files" id="file-table"><thead><tr><th scope="col">Name</th><th scope="col">Size</th><th scope="col">Added by</th><th scope="col">Access</th></tr></thead><tbody id="file-rows"></tbody></table>
+        <div id="empty" class="empty" hidden><h2>No files yet</h2><p>Upload a file or save an agent result here.</p></div>
+        <div class="footnote"><span id="file-count"></span><span id="drive-access">Only you have access</span></div>
+      </section>
+
+      <section id="settings-view" class="settings" hidden>
+        <div class="heading"><h1>Storage settings</h1><span class="muted">Demo admin</span></div>
+        <div class="setting-row"><label for="storage-mode">Storage</label><select id="storage-mode"><option value="managed">OpenWork-managed</option><option value="self">Your S3-compatible storage</option></select></div>
+        <div class="setting-row"><span>Connection</span><div class="state muted" id="connection-state">Sample configuration · Not live verified</div></div>
+        <div id="managed-settings"><div class="setting-row"><span>Membership allowance</span><span class="state">1 GiB <span class="muted">· Illustrative</span></span></div><div class="setting-row"><span>Paid capacity</span><span class="state muted">Off · Price undecided</span></div></div>
+        <div id="self-settings" hidden>
+          <div class="setting-row"><label for="endpoint">Endpoint</label><input id="endpoint" value="https://storage.example.invalid" autocomplete="off"></div>
+          <div class="setting-row"><label for="region">Region</label><input id="region" value="auto" autocomplete="off"></div>
+          <div class="setting-row"><label for="bucket">Bucket</label><input id="bucket" value="openwork-demo" autocomplete="off"></div>
+          <div class="setting-row"><span>Credentials</span><span class="state muted">Server-held secret · Not configured</span></div>
+          <div class="setting-row"><label for="addressing">Addressing</label><select id="addressing"><option>Virtual host</option><option>Path style</option></select></div>
+          <div class="setting-row"><label for="root-template">Member root template</label><input id="root-template" class="mono" value="organizations/{organizationId}/members/{memberId}" autocomplete="off"></div>
+        </div>
+        <h2 class="section">Member limits</h2>
+        <div class="setting-row"><label for="member">Member</label><select id="member"><option value="drive_private">Avery</option><option value="drive_other">Jordan</option></select></div>
+        <div class="setting-row"><label for="assignment">Storage profile</label><select id="assignment"><option>Organization default</option><option>Dedicated profile (concept)</option></select></div>
+        <div class="setting-row"><label for="member-limit">Storage limit (GiB)</label><input id="member-limit" type="number" value="1" min="0.001" max="100" step="0.01"></div>
+        <div class="setting-row"><label for="file-limit">Maximum file (MiB)</label><input id="file-limit" type="number" value="250" min="1" max="1000" step="1"></div>
+        <div class="setting-row"><span>At the limit</span><span class="state">Block new uploads · Keep existing files</span></div>
+        <details><summary><svg class="icon"><use href="#chevron"/></svg>Folder access</summary><div class="details-content"><div class="grant-row"><span>My drive</span><span class="muted">Private to the member</span></div><div class="grant-row"><span class="mono">Documents/restricted/**</span><span class="muted">Blocked by admin</span></div><div class="grant-row"><label for="team-access">Team reports</label><select id="team-access"><option value="read">Operations · Can read</option><option value="edit">Operations · Can read and add files</option></select></div></div></details>
+        <details><summary><svg class="icon"><use href="#chevron"/></svg>Technical details</summary><div class="details-content muted">Demo settings affect this preview only. Credentials, connectivity, paid usage and external storage are not connected. Production profile changes use server secret references and a compatibility check.</div></details>
+        <div class="settings-actions"><span id="settings-status" class="status" role="status"></span><button id="apply-settings" class="primary">Apply demo settings</button></div>
+      </section>
+
+      <section id="automation-view" class="automation" hidden>
+        <div class="heading"><h1>Daily summary</h1><span class="muted">Sample automation</span></div>
+        <div class="setting-row"><span>Run as</span><span class="state">Avery</span></div>
+        <div class="setting-row"><span>Input folder</span><span class="state">My drive / Reports</span></div>
+        <div class="setting-row"><span>Output folder</span><span class="state">My drive / Reports / automations</span></div>
+        <div class="setting-row"><span>Output limit</span><span class="state">20 MiB per run</span></div>
+        <div class="setting-row"><span>Access</span><span class="state">Read inputs · Create results</span></div>
+        <details><summary><svg class="icon"><use href="#chevron"/></svg>Allowed folders</summary><div class="details-content"><div class="grant-row"><span class="mono">Reports/**</span><span class="muted">Read</span></div><div class="grant-row"><span class="mono">Reports/automations/**</span><span class="muted">Create</span></div></div></details>
+        <div class="result"><h2>Run result</h2><div id="automation-empty" class="muted" style="margin-top:12px">No result saved in this preview.</div><div id="automation-result" class="result-file" hidden><span class="file-type"><svg class="icon"><use href="#file"/></svg></span><div><strong>daily-summary.md</strong><div class="muted">Saved to My drive · 20 KiB</div></div><button id="open-result">Open folder</button></div></div>
+        <div class="settings-actions"><span id="automation-status" class="status" role="status"></span><button id="save-result" class="primary">Save sample result</button></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="upload-dialog" aria-labelledby="upload-title"><div class="dialog-heading"><h2 id="upload-title">Simulate upload</h2><button class="close" id="upload-close" aria-label="Close upload"><svg class="icon"><use href="#close"/></svg></button></div><form id="upload-form"><label class="field">File name<input id="upload-name" value="launch-notes.md" required maxlength="120"></label><label class="field">Folder<input id="upload-folder" value="Uploads" required maxlength="300"></label><label class="field">File size (MiB)<input id="upload-size" type="number" value="1" min="0.001" max="1000" step="0.001" required></label><div id="upload-status" class="status" role="status">No file data will be sent.</div><div class="dialog-actions"><button type="button" id="upload-cancel">Cancel</button><button class="primary" type="submit" id="reserve">Reserve space</button><button class="primary" type="button" id="complete" hidden>Finish sample upload</button></div></form></dialog>
+  <dialog id="file-dialog" aria-labelledby="file-title"><div class="dialog-heading"><h2 id="file-title"></h2><button class="close" id="file-close" aria-label="Close file preview"><svg class="icon"><use href="#close"/></svg></button></div><div id="file-info"></div><p class="muted" style="margin-top:18px">Preview only · This file has no stored content.</p></dialog>
+  <div id="toast" role="status" hidden></div>
+
+  <script type="module">
+    import { DriveDemo, MiB, GiB } from './model.mjs';
+    const model = new DriveDemo();
+    const actor = model.state.actor;
+    const byId = (id) => document.getElementById(id);
+    const ui = { view:'private', folder:'All files', preview:'ready', intent:null, serial:0, mode:'managed', saved:false };
+    const runScope = { id:'run_concept', organizationId:actor.organizationId, memberId:actor.memberId, driveIds:['drive_private'], readFolders:['Reports/**'], writeFolders:['Reports/automations/**'], maxWriteBytes:20*MiB, expiresAt:Date.now()+60*60*1000 };
+    const formatSize = (bytes) => bytes >= GiB ? `${(bytes/GiB).toFixed(2).replace(/\.00$/,'')} GiB` : bytes >= MiB ? `${(bytes/MiB).toFixed(1).replace(/\.0$/,'')} MiB` : `${Math.ceil(bytes/1024)} KiB`;
+    const icon = (name) => { const svg = document.createElementNS('http://www.w3.org/2000/svg','svg'); svg.classList.add('icon'); const use = document.createElementNS('http://www.w3.org/2000/svg','use'); use.setAttribute('href',`#${name}`); svg.append(use); return svg; };
+    const notify = (message) => { byId('toast').textContent=message; byId('toast').hidden=false; clearTimeout(ui.toastTimer); ui.toastTimer=setTimeout(()=>byId('toast').hidden=true,4500); };
+    const status = (id, message, error=false) => { byId(id).textContent=message; byId(id).classList.toggle('error',error); };
+    const selectedDrive = () => model.state.drives.find(d=>d.id === (ui.view==='shared'?'drive_team':'drive_private'));
+    function visibleFiles() { const drive=selectedDrive(); return drive.files.filter(file=>model.access(actor,drive.id,file.path,'read').ok && (ui.folder==='All files'||file.path.startsWith(`${ui.folder}/`))); }
+    function renderFiles() {
+      const drive=selectedDrive(); const usage=model.usage(drive.id); const files=ui.preview==='empty'?[]:visibleFiles();
+      byId('drive-title').textContent=drive.name;
+      const displayedUsed=ui.preview==='empty'?0:usage.used;
+      byId('usage-label').textContent=`${formatSize(displayedUsed)} of ${formatSize(usage.limit)}`;
+      byId('usage-fill').style.width=`${Math.min(100,displayedUsed/usage.limit*100)}%`;
+      byId('drive-access').textContent=ui.view==='shared'?'Shared with Operations':'Only you have access';
+      byId('file-count').textContent=`${files.length} ${files.length===1?'file':'files'}${usage.reserved?` · ${formatSize(usage.reserved)} reserved`:''}`;
+      const filters=ui.view==='shared'?['All files','Reports']:['All files','Reports','Documents','Uploads'];
+      byId('folder-filters').replaceChildren(...filters.map(folder=>{ const button=document.createElement('button'); button.className='folder-filter'; button.textContent=folder; button.setAttribute('aria-pressed',String(ui.folder===folder)); button.addEventListener('click',()=>{ui.folder=folder;renderFiles();}); return button; }));
+      const write=model.access(actor,drive.id,`${ui.folder==='All files'?'Uploads':ui.folder}/sample.md`,'create');
+      const disabled=ui.preview==='blocked'||ui.preview==='offline'||!write.ok;
+      byId('upload-open').setAttribute('aria-disabled',String(disabled));
+      byId('upload-open').classList.toggle('primary',!disabled);
+      let notice='';
+      if (ui.preview==='offline') notice="Couldn't verify storage · Last sample file list kept on screen";
+      else if (ui.preview==='blocked') notice='Cloud Drive is blocked by organization policy. Your team admin can enable it.';
+      else if (!write.ok) notice=write.message;
+      else if (usage.used>=usage.limit) notice='Your drive is at its limit. Existing files remain available; your team admin can raise the limit.';
+      byId('drive-notice').hidden=!notice; byId('notice-copy').textContent=notice; byId('retry').hidden=ui.preview!=='offline';
+      const rows=files.map(file=>{
+        const tr=document.createElement('tr'); const name=document.createElement('td'); const wrap=document.createElement('div'); wrap.className='file';
+        const mark=document.createElement('span'); mark.className='file-type'; mark.append(icon('file'));
+        const info=document.createElement('div'); const button=document.createElement('button'); button.className='file-button'; button.textContent=file.path.split('/').at(-1); button.addEventListener('click',()=>showFile(file));
+        const path=document.createElement('div'); path.className='file-path'; path.textContent=file.path.split('/').slice(0,-1).join(' / '); info.append(button,path); wrap.append(mark,info); name.append(wrap); tr.append(name);
+        for(const value of [formatSize(file.size),file.source,ui.view==='shared'?'Team':'Private']) { const td=document.createElement('td'); td.textContent=value; td.className='size muted'; tr.append(td); } return tr;
+      });
+      byId('file-rows').replaceChildren(...rows); byId('file-table').hidden=files.length===0; byId('empty').hidden=files.length!==0;
+    }
+    function navigate(view) {
+      ui.view=view; ui.folder='All files';
+      for(const button of document.querySelectorAll('[data-view]')) { if(button.dataset.view===view) button.setAttribute('aria-current','page'); else button.removeAttribute('aria-current'); }
+      byId('files-view').hidden=!['private','shared'].includes(view); byId('settings-view').hidden=view!=='settings'; byId('automation-view').hidden=view!=='automation';
+      if(view==='settings') loadMemberSettings(); if(['private','shared'].includes(view)) renderFiles();
+    }
+    function loadMemberSettings() { const drive=model.state.drives.find(d=>d.id===byId('member').value); byId('member-limit').value=(drive.limitBytes/GiB).toFixed(3).replace(/0+$/,'').replace(/\.$/,''); byId('file-limit').value=drive.maxFileBytes/MiB; }
+    function showFile(file) { byId('file-title').textContent=file.path.split('/').at(-1); byId('file-info').textContent=`${file.path} · ${formatSize(file.size)} · ${file.source}`; byId('file-dialog').showModal(); }
+    for(const button of document.querySelectorAll('[data-view]')) button.addEventListener('click',()=>navigate(button.dataset.view));
+    byId('preview-state').addEventListener('change',()=>{ui.preview=byId('preview-state').value; if(['private','shared'].includes(ui.view))renderFiles();});
+    byId('retry').addEventListener('click',()=>{ui.preview='ready';byId('preview-state').value='ready';renderFiles();notify('Sample file list restored · No live check performed');});
+    byId('upload-open').addEventListener('click',()=>{
+      if(byId('upload-open').getAttribute('aria-disabled')==='true'){notify(byId('notice-copy').textContent);return;}
+      ui.intent=null; byId('upload-folder').value=ui.folder==='All files'?'Uploads':ui.folder; byId('upload-name').value='launch-notes.md'; byId('upload-size').value='1';
+      for(const id of ['upload-name','upload-folder','upload-size'])byId(id).disabled=false;
+      byId('reserve').hidden=false;byId('complete').hidden=true;status('upload-status','No file data will be sent.');byId('upload-dialog').showModal();
+    });
+    byId('upload-form').addEventListener('submit',event=>{
+      event.preventDefault();
+      const result=model.reserveUpload(actor,{driveId:selectedDrive().id,path:`${byId('upload-folder').value}/${byId('upload-name').value}`,declaredBytes:Math.round(Number(byId('upload-size').value)*MiB),idempotencyKey:`sample_${++ui.serial}`});
+      if(!result.ok){status('upload-status',result.message,true);return;}
+      ui.intent=result.intent; status('upload-status',`${formatSize(result.intent.declaredBytes)} reserved · No data sent`);
+      for(const id of ['upload-name','upload-folder','upload-size'])byId(id).disabled=true;
+      byId('reserve').hidden=true;byId('complete').hidden=false;renderFiles();
+    });
+    byId('complete').addEventListener('click',()=>{
+      if(!ui.intent)return;
+      const result=model.completeUpload(actor,ui.intent.id,ui.intent.declaredBytes);
+      if(!result.ok){status('upload-status',result.message,true);return;}
+      ui.preview='ready';byId('preview-state').value='ready';byId('upload-dialog').close();renderFiles();notify(`${result.file.path.split('/').at(-1)} added to the preview`);ui.intent=null;
+    });
+    function cancelUpload() {
+      if(ui.intent){const intent=model.intents.get(ui.intent.id);if(intent?.status==='reserved')intent.status='cancelled';ui.intent=null;}
+      byId('upload-dialog').close();renderFiles();
+    }
+    byId('upload-close').addEventListener('click',cancelUpload);byId('upload-cancel').addEventListener('click',cancelUpload);
+    byId('upload-dialog').addEventListener('cancel',event=>{event.preventDefault();cancelUpload();});
+    byId('file-close').addEventListener('click',()=>byId('file-dialog').close());
+    byId('storage-mode').addEventListener('change',()=>{ui.mode=byId('storage-mode').value;byId('self-settings').hidden=ui.mode!=='self';byId('managed-settings').hidden=ui.mode!=='managed';status('settings-status','');});
+    byId('member').addEventListener('change',loadMemberSettings);
+    byId('apply-settings').addEventListener('click',()=>{
+      const limit=Number(byId('member-limit').value);const maxFile=Number(byId('file-limit').value);
+      if(!Number.isFinite(limit)||limit<=0||limit>100||!Number.isFinite(maxFile)||maxFile<1||maxFile>1000){status('settings-status','Choose a valid storage and file limit.',true);return;}
+      if(ui.mode==='self') {
+        let endpoint;try{endpoint=new URL(byId('endpoint').value);}catch{status('settings-status','Choose a valid HTTPS storage endpoint.',true);return;}
+        const root=byId('root-template').value;
+        if(endpoint.protocol!=='https:'||endpoint.username||endpoint.password||endpoint.search||endpoint.hash){status('settings-status','Choose an HTTPS endpoint without embedded credentials.',true);return;}
+        if(!byId('bucket').value.trim()||!byId('region').value.trim()||root!=='organizations/{organizationId}/members/{memberId}'){status('settings-status','This concept uses the identity-based root shown by default.',true);return;}
+      }
+      const drive=model.state.drives.find(d=>d.id===byId('member').value);drive.limitBytes=Math.round(limit*GiB);drive.maxFileBytes=Math.round(maxFile*MiB);
+      model.state.drives.find(d=>d.id==='drive_team').grants[0].operations=byId('team-access').value==='edit'?['read','create']:['read'];
+      status('settings-status','Applied to this preview');notify('Demo settings applied · No external storage changed');
+    });
+    byId('save-result').addEventListener('click',()=>{
+      if(ui.preview==='blocked'||ui.preview==='offline'){status('automation-status',ui.preview==='blocked'?'Drive is blocked by organization policy.':"Storage couldn't be verified. Try again when available.",true);return;}
+      const result=model.reserveUpload(actor,{driveId:'drive_private',path:'Reports/automations/daily-summary.md',declaredBytes:20*1024,idempotencyKey:'sample_automation_output'},runScope);
+      if(!result.ok){status('automation-status',result.message,true);return;}
+      const completed=model.completeUpload(actor,result.intent.id,20*1024);
+      if(!completed.ok){status('automation-status',completed.message,true);return;}
+      ui.saved=true;byId('automation-empty').hidden=true;byId('automation-result').hidden=false;status('automation-status','Saved in this preview');notify('daily-summary.md saved to the preview drive');
+    });
+    byId('open-result').addEventListener('click',()=>{navigate('private');ui.folder='Reports';ui.preview='ready';byId('preview-state').value='ready';renderFiles();});
+    renderFiles();
+  </script>
+</body>
+</html>
