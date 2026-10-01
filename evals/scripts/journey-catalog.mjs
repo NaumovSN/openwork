@@ -12,6 +12,9 @@ import { readdir, readFile } from 'node:fs/promises';
 // journey-ci.test.mjs checks these against what each spec and world guards.
 const PACKAGED_BINARY = { env: ['OPENWORK_EVAL_ELECTRON_BINARY'] };
 const definitions = {
+  'agent-child-messaging.e2e.test.ts': {
+    cases: [{ id: 'AGENT-CHILD-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
+  },
   'child-navigation-continuity.e2e.test.ts': {
     cases: [{ id: 'AGENT-CHILD-NAV', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
   },
