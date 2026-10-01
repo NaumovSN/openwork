@@ -94,6 +94,15 @@ export function autoAccessWallFromError(value: unknown, model?: ModelRef | null,
   }
   if (["anonymous_limit_exceeded", "free_allowance_exhausted"].includes(code)) return { state: "limit", ...known };
   if (["anonymous_capacity_exceeded", "anonymous_unavailable", "free_auto_busy"].includes(code)) return { state: "unavailable", ...known };
+  // These codes also come from other providers, so they are Auto's only when the send is known to be on Auto.
+  if (model && isAutoModel(model)) {
+    // Our capacity or an upstream hiccup, including a member key swapped mid-send when an organization's trial or
+    // subscription ends (the app fetches a new one on its own): Auto is busy, try again in a bit.
+    if (["free_member_unavailable", "free_inference_upstream_error", "free_inference_upstream_unavailable", "request_log_unavailable",
+      "managed_models_policy_unavailable", "invalid_api_key"].includes(code)) return { state: "unavailable", ...known };
+    // Turned off for this person after the send started: reads as the free limit, like any other switch-off.
+    if (["inference_disabled", "free_principal_rejected", "free_disabled"].includes(code)) return { state: "not_offered", ...known };
+  }
   if (code === "model_sync_pending") return { state: "sync", ...known };
   if (typeof code === "string" && autoNotOffered({ code })) return { state: "not_offered", ...known };
   for (const key of ["details", "error", "data", "responseBody", "message", "cause"]) {

@@ -52,3 +52,17 @@ test("refusals read calmly, as the free limit when we turned Auto off, and keep 
   }
   expect(autoQuietlyUnavailable({ code: "desktop_update_required" })).toBe(true);
 });
+
+test("Auto refusals that arrive mid-send, like a key swapped when a trial ends, never show a raw or API-key error", () => {
+  const auto = { providerID: "openwork-free", modelID: "openai/gpt-5.6-luna" };
+  for (const code of ["invalid_api_key", "free_member_unavailable", "free_inference_upstream_error", "free_inference_upstream_unavailable", "request_log_unavailable"]) {
+    const wall = autoAccessWallFromError({ error: { code, message: "raw" } }, auto);
+    expect(wall).toMatchObject({ state: "unavailable", code, message: "raw" });
+    expect(autoWallCopy(wall!, true).title).toBe("Auto is busy right now");
+  }
+  for (const code of ["inference_disabled", "free_principal_rejected", "free_disabled"]) {
+    expect(autoWallCopy(autoAccessWallFromError({ error: { code } }, auto)!, true).title).toBe("You’ve reached the free Auto limit");
+  }
+  expect(autoAccessWallFromError({ error: { code: "invalid_api_key" } }, { providerID: "openai", modelID: "gpt-5" })).toBeNull();
+  expect(autoAccessWallFromError({ error: { code: "invalid_api_key" } })).toBeNull();
+});

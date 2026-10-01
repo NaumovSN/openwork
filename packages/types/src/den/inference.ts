@@ -252,9 +252,9 @@ export function managedModelCatalog(): ManagedModelRecommendation[] {
 }
 
 /**
- * Stripe states in which an organization is still paying, or still being collected, for OpenWork Models.
- * Free Auto never serves such an organization, even when its metadata says Models are off: that mismatch is
- * an entitlement incident to surface, not a customer to downgrade silently.
+ * Stripe states in which an organization is still paying, or still being collected, for OpenWork Models
+ * (a trial counts). Reporting only, for the free Auto usage report's "subscribed" column: free Auto serves
+ * these organizations too, from each member's free allowance, and never bills them.
  */
 export const INFERENCE_LIVE_SUBSCRIPTION_STATUSES = ["active", "trialing", "past_due", "incomplete"] as const;
 export function inferenceSubscriptionLive(status: string | null | undefined): boolean {
