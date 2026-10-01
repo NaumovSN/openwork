@@ -56,7 +56,7 @@ function notOfferedCopy(code?: string | null) {
   switch (code) {
     case "free_not_enrolled": return { subtitle: "Free · not on for your organization yet", detail: "Your organization hasn’t turned on Auto yet. An admin can turn it on. Other models still work." };
     case "free_not_offered": case "admin_disabled": return { subtitle: "Free · turned off by your organization", detail: "Your organization has turned off Auto. Other models still work." };
-    case "desktop_build_unverified": return { subtitle: "Free · not available on this build", detail: "This build of OpenWork can’t use Auto. Install the latest release or alpha to use it. Other models still work." };
+    case "desktop_build_unverified": return { subtitle: "Free · currently unavailable", detail: "The OpenWork free model is currently unavailable. Other models still work." };
     case "managed_models_disabled_for_dpa": return { subtitle: "Free · not available for your organization", detail: "Auto isn’t available under your organization’s data agreement. Other models still work." };
     default: return { subtitle: "Free · not available for this account", detail: "Auto isn’t available for this account. Other models still work." };
   }

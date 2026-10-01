@@ -9,7 +9,7 @@ test("Auto that is running but not offered to this organization says why, and ne
     free_not_offered: "Free · turned off by your organization",
     managed_models_disabled_for_dpa: "Free · not available for your organization",
     not_eligible: "Free · not available for this account",
-    desktop_build_unverified: "Free · not available on this build",
+    desktop_build_unverified: "Free · currently unavailable",
   });
   for (const code of Object.keys(subtitles)) {
     expect(autoNotOffered({ code })).toBe(true);

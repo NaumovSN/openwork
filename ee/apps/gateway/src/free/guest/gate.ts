@@ -39,7 +39,7 @@ export async function checkDesktopFreeRequest(request: Request, bodyHash: string
     // help that build, so say it can't use Auto.
     if (!versionError && proof.version === 2 && !untaggedAutoEnabled(config)) {
       versionError = { code: "desktop_build_unverified", currentVersion: proof.appVersion, minimumVersion,
-        message: "This build of OpenWork can't use Auto. Install an official release to use it." }
+        message: "The OpenWork free model is currently unavailable." }
     }
     if (request.signal.aborted) return { error: desktopFreeGateError(503, "desktop_proof_unavailable") }
     return { proof, minimumVersion, versionError }
