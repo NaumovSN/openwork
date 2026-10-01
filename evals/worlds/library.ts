@@ -371,6 +371,7 @@ export async function connectorBranding(seed: Seed) {
   const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
   const workspace = await seed.workspace(app, seed.tmpPath("connector-tool-call-branding"));
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    ...(engine === "v1" ? { model: `${providerId}/${modelId}` } : {}),
     provider: { [providerId]: {
       npm: "@ai-sdk/openai-compatible", name: "Connector display model",
       options: { baseURL: `${den.mocks.connector.url}/v1`, apiKey: "sk-connector-display-fixture" },
