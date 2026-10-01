@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import type { AutomationClaimResult, AutomationListItem } from "@openwork/automations"
 import { AUTOMATION_MANUAL_CLAIM_WINDOW_MS, desktopRunnerConnected } from "@openwork/automations"
+import { isAutomationCloudDefaultModel } from "@openwork/types/automations"
 import type {
   AutomationDesktopRunnerCapability,
   AutomationDesktopRunnerPresence,
@@ -164,7 +165,7 @@ export class AutomationService {
       if (definition.action.kind === "agent") {
         // Action-based creation is Cloud placement. The legacy Zen exception
         // exists only for already-published Desktop clients.
-        await this.requireNewModel({ ...scope, modelAttentionCapable: true }, definition.action.model)
+        await this.requireNewModel({ ...scope, modelAttentionCapable: true }, definition.action.model, "cloud")
       }
       else {
         if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
@@ -174,7 +175,7 @@ export class AutomationService {
         throw new Error("automation_cloud_worker_required")
       }
     } else {
-      await this.requireNewModel(scope, definition.model)
+      await this.requireNewModel(scope, definition.model, "desktop")
     }
     const created = await automationRepository.create({ ...scope, definition, now: Date.now() })
     return this.reconcileModelAttention(created, scope)
@@ -209,6 +210,7 @@ export class AutomationService {
             ? { ...scope, modelAttentionCapable: true }
             : scope,
           requestedModel,
+          current.revision.executionTarget ?? "desktop",
         )
       }
     }
@@ -233,6 +235,7 @@ export class AutomationService {
           ? { ...scope, modelAttentionCapable: true }
           : scope,
         current.revision.model,
+        current.revision.executionTarget ?? "desktop",
       )
     }
     const activated = await automationRepository.setState({ ...scope, automationId, state: "active", now: Date.now() })
@@ -550,7 +553,14 @@ export class AutomationService {
    * continue submitting the exact legacy Zen selection until they advertise
    * support for the repairable attention state.
    */
-  private async requireNewModel(scope: OwnerScope, model: ModelSelection) {
+  private async requireNewModel(scope: OwnerScope, model: ModelSelection, target: "desktop" | "cloud") {
+    // The cloud default only means something where the runner picks the model.
+    if (isAutomationCloudDefaultModel(model)
+      && (target !== "cloud" || await this.cloudRuntime(scope.organizationId) !== "headless")) {
+      const error = new Error("The cloud default model runs only cloud Automations on the headless runtime.")
+      error.name = "model_access_lost"
+      throw error
+    }
     const result = await resolveAutomationModelAccess({ ...scope, ...model })
     if (!result.ok && shouldApplyAutomationModelAccessFailure({
       model,

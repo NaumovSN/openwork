@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import type { AutomationUsage } from "@openwork/types/automations"
+import { isAutomationCloudDefaultModel, type AutomationUsage } from "@openwork/types/automations"
 import { db } from "../db.js"
 import {
   ACTIVE_TURN_STATUSES,
@@ -172,7 +172,9 @@ function turnFailure(turn: RunnerTurn, messages: RunnerMessage[]): CloudAgentExe
  * The member's own selection when the runner can serve it, otherwise the
  * runner's default model. Either way the run records which model it used.
  */
-async function chooseModel(client: HeadlessRunnerClient, modelId: string) {
+async function chooseModel(client: HeadlessRunnerClient, model: { providerId: string; modelId: string }) {
+  if (isAutomationCloudDefaultModel(model)) return { model: undefined, warning: null }
+  const modelId = model.modelId
   const catalog = await client.listModels()
   if (!catalog) return { model: undefined, warning: null }
   if (catalog.models.some((model) => model.id === modelId)) return { model: modelId, warning: null }
@@ -223,7 +225,7 @@ export async function executeHeadlessAgent(
       await input.onAdmitted({ runtime: "headless", sessionId, messageId })
     }
 
-    const { model, warning } = await chooseModel(client, input.action.model.modelId)
+    const { model, warning } = await chooseModel(client, input.action.model)
     const ttlMs = Math.min(input.maximumRuntimeMs + TOKEN_GRACE_MS, DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS)
     const runSessionId = sessionId
     const sendTurn = () => client.sendTurn(actor, { sessionId: runSessionId, messageId, prompt: input.action.instructions, model, ttlMs })

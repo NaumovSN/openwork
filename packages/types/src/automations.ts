@@ -86,6 +86,22 @@ export const AUTOMATION_FREE_MODEL = {
   modelName: "Big Pickle",
 } as const
 
+/**
+ * "The model this organization's cloud runs on." Valid only for cloud agent
+ * Automations on the headless runtime, where the runner's configured model
+ * runs them, so neither a person nor an agent has to pick a provider.
+ */
+export const AUTOMATION_CLOUD_DEFAULT_MODEL = {
+  providerId: "openwork-cloud",
+  modelId: "default",
+  providerName: "OpenWork Cloud",
+  modelName: "Cloud default",
+} as const
+
+export function isAutomationCloudDefaultModel(model: { providerId: string; modelId: string }): boolean {
+  return model.providerId === AUTOMATION_CLOUD_DEFAULT_MODEL.providerId && model.modelId === AUTOMATION_CLOUD_DEFAULT_MODEL.modelId
+}
+
 export const automationNeedsAttentionReasonSchema = z.object({
   code: z.enum([
     "owner_membership_lost",

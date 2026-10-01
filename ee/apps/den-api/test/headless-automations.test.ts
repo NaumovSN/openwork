@@ -1,3 +1,4 @@
+import "./headless-test-env.js"
 import { describe, expect, test } from "bun:test"
 import type { CloudAgentExecutorInput } from "../src/automations/cloud-agent-executor.js"
 import {
@@ -8,6 +9,8 @@ import {
   type HeadlessAgentExecutorDeps,
 } from "../src/automations/headless-agent-executor.js"
 import { cloudAutomationRuntimeForOrganization } from "../src/automations/headless-runtime.js"
+import { resolveAutomationModelAccessWithStore, type AutomationModelAuthorityStore } from "../src/automations/authority.js"
+import { AUTOMATION_CLOUD_DEFAULT_MODEL } from "@openwork/types/automations"
 import { createHeadlessRunnerClient } from "../src/headless-runner/client.js"
 
 const TOKEN = "t".repeat(40)
@@ -178,6 +181,18 @@ describe("headless Automation runs", () => {
     if (result.ok) expect(result.events.some((event) => event.type === "warning")).toBe(false)
   })
 
+  test("the cloud default model leaves the choice to the runner, without a warning", async () => {
+    const runner = fakeRunner({ models: ["gwm_default", "gwm_picked"] })
+    const result = await executeHeadlessAgent(
+      runInput({ action: { kind: "agent", instructions: "Digest", model: { providerId: AUTOMATION_CLOUD_DEFAULT_MODEL.providerId, modelId: AUTOMATION_CLOUD_DEFAULT_MODEL.modelId } } }).input,
+      deps(runner.client),
+    )
+    expect(result.ok).toBe(true)
+    expect(runner.calls.some((call) => call.path === "/v1/models")).toBe(false)
+    expect(runner.calls.find((call) => call.path === "/v1/sessions/hs_1/turns")?.body).not.toHaveProperty("model")
+    if (result.ok) expect(result.events.some((event) => event.type === "warning")).toBe(false)
+  })
+
   test("a runner restart mid-turn resumes the same turn with a fresh token", async () => {
     const runner = fakeRunner({ reads: ["running", "interrupted", "running", "completed"] })
     const result = await executeHeadlessAgent(runInput().input, deps(runner.client))
@@ -252,5 +267,23 @@ describe("headless Automation runs", () => {
     expect(parseHeadlessReceipt({ sessionId: "hs_1", messageId: "auto_1" })).toBeNull()
     expect(parseHeadlessReceipt({ runtime: "headless", sessionId: "", messageId: "auto_1" })).toBeNull()
     expect(parseHeadlessReceipt(null)).toBeNull()
+  })
+})
+
+describe("the cloud default model", () => {
+  const store = (active: boolean): AutomationModelAuthorityStore => ({
+    findActiveMember: async () => (active ? { id: "member_1" } : null),
+    findOpenWorkProvider: async () => null,
+    findProvider: async () => null,
+    findModel: async () => null,
+    canAccessProvider: async () => false,
+    allowsZenModel: async () => false,
+  })
+
+  test("needs only an active owner; placement is checked where Automations are created", async () => {
+    const selection = { organizationId: "org_1", ownerMemberId: "member_1", providerId: AUTOMATION_CLOUD_DEFAULT_MODEL.providerId, modelId: AUTOMATION_CLOUD_DEFAULT_MODEL.modelId }
+    expect(await resolveAutomationModelAccessWithStore(selection, store(true))).toMatchObject({ ok: true, value: { accessKind: "cloud_default", providerRecordId: null } })
+    expect(await resolveAutomationModelAccessWithStore(selection, store(false))).toMatchObject({ ok: false, code: "owner_membership_lost" })
+    expect(await resolveAutomationModelAccessWithStore({ ...selection, modelId: "other" }, store(true))).toMatchObject({ ok: false, code: "model_access_lost" })
   })
 })
