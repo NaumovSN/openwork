@@ -3,7 +3,8 @@ import { DESKTOP_FREE_SESSION_POW_BITS, DESKTOP_FREE_SESSION_POW_MAX_BITS, DESKT
 import { DEFAULT_INSTALL_RAMP, parseInstallRamp } from "@openwork/free-auto/accounting"
 
 export const FREE_OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
-const DEFAULT_FREE_OPENAI_MODEL = "gpt-5.6-luna"
+export const FREE_OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+const DEFAULT_FREE_OPENAI_MODEL = "gpt-6-luna"
 
 export function readAutoConfig(environment: Record<string, string | undefined>) {
   const member = readFreeInferenceConfig(environment)
@@ -72,8 +73,8 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
     /** Charged when OpenAI never reports a request's usage (the stream broke or the client left); OpenAI has no usage webhook. */
     unreportedUsageAmount: integer("INFERENCE_FREE_UNREPORTED_USAGE_MICRO_USD", 40000, 0, 10000000) * 100,
     // OpenAI list prices for the free model, in USD per million tokens.
-    inputPrice: integer("INFERENCE_FREE_INPUT_PRICE_MICRO_USD_PER_MILLION", 250000, 1, 100000000) / 1000000,
-    outputPrice: integer("INFERENCE_FREE_OUTPUT_PRICE_MICRO_USD_PER_MILLION", 1200000, 1, 100000000) / 1000000,
+    inputPrice: integer("INFERENCE_FREE_INPUT_PRICE_MICRO_USD_PER_MILLION", 100000, 1, 100000000) / 1000000,
+    outputPrice: integer("INFERENCE_FREE_OUTPUT_PRICE_MICRO_USD_PER_MILLION", 500000, 1, 100000000) / 1000000,
     // Match the paid Gateway body ceiling; free requests do not get a smaller context limit.
     maxBodyBytes: integer("ANONYMOUS_MAX_BODY_BYTES", 32 * 1024 * 1024, 1024, 32 * 1024 * 1024),
     /** The largest single response frame the meter buffers; the answer as a whole is not capped. */

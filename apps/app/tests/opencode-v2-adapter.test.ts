@@ -129,7 +129,7 @@ describe("native conversation mutations", () => {
 test("native reply identity survives snapshot and live translation without resolving the requested alias", async () => {
   const { replyModelFromInfo, replyModelLabel, mergeReplyMetadata } = await import("../src/react-app/domains/session/sync/reply-model");
   const originalFetch = globalThis.fetch;
-  const requested = { id: "openai/gpt-5.6-luna", providerID: "openwork-free", variant: "default" };
+  const requested = { id: "openai/gpt-6-luna", providerID: "openwork-free", variant: "default" };
   const resolvedModel = { id: "served-witness", providerID: "actual-provider", name: "Served witness" };
   let resolved = false;
   globalThis.fetch = async () => Response.json({ data: [{ id: "reply", type: "assistant", model: requested,

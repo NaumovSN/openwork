@@ -1,4 +1,4 @@
-import type { ManagedModelRecommendation } from "@openwork/types/den/inference";
+import { INFERENCE_FREE_MODEL_ID, INFERENCE_FREE_LEGACY_MODEL_ID, type ManagedModelRecommendation } from "@openwork/types/den/inference";
 
 /**
  * The wire contract for free Auto. The desktop main process signs requests,
@@ -8,25 +8,28 @@ import type { ManagedModelRecommendation } from "@openwork/types/den/inference";
 export const DESKTOP_FREE_PROOF_HEADER = "x-openwork-desktop-proof";
 export const DESKTOP_FREE_TOKEN_HEADER = "x-openwork-desktop-token";
 export const DESKTOP_FREE_PROVIDER_ID = "openwork-free";
-export const DESKTOP_FREE_MODEL_ID = "openai/gpt-5.6-luna";
+export const DESKTOP_FREE_MODEL_ID = INFERENCE_FREE_MODEL_ID;
+export const DESKTOP_FREE_LEGACY_MODEL_ID = INFERENCE_FREE_LEGACY_MODEL_ID;
 
 // Signed-out desktop routes.
 export const DESKTOP_FREE_SESSION_PATH = "/api/anonymous/session";
 export const DESKTOP_FREE_STATUS_PATH = "/api/anonymous/status";
 export const DESKTOP_FREE_MODELS_PATH = "/api/anonymous/v1/models";
 export const DESKTOP_FREE_CHAT_PATH = "/api/anonymous/v1/chat/completions";
+export const DESKTOP_FREE_RESPONSES_PATH = "/api/anonymous/v1/responses";
 /** Like OpenCode Zen's: a client with no desktop proof sends this key (or none) and is limited by its IP. */
 export const DESKTOP_FREE_OPEN_API_KEY = "public";
 // Signed-in members use their OpenWork Models key on the regular inference routes.
 export const MEMBER_FREE_STATUS_PATH = "/api/v1/auto/status";
 export const MEMBER_FREE_MODELS_PATH = "/api/v1/models";
 export const MEMBER_FREE_CHAT_PATH = "/api/v1/chat/completions";
+export const MEMBER_FREE_RESPONSES_PATH = "/api/v1/responses";
 /** Den route that issues a signed-in member's free Auto credential. */
 export const MEMBER_FREE_CREDENTIAL_PATH = "/v1/inference/free/credential";
 
 /** The only method/path pairs a desktop proof may be signed for. */
 export const DESKTOP_FREE_SIGNABLE_ROUTES: Readonly<Record<"GET" | "POST", readonly string[]>> = Object.freeze({
-  POST: Object.freeze([DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_CHAT_PATH]),
+  POST: Object.freeze([DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, MEMBER_FREE_RESPONSES_PATH]),
   GET: Object.freeze([DESKTOP_FREE_STATUS_PATH, DESKTOP_FREE_MODELS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH]),
 });
 export function isDesktopFreeSignableRoute(method: string, path: string): boolean {
@@ -101,4 +104,4 @@ export type DesktopFreeVersionError = {
   minimumVersion: string | null;
   message: string;
 };
-export type DesktopFreeSession = { token: string; expiresAt: number; model: typeof DESKTOP_FREE_MODEL_ID };
+export type DesktopFreeSession = { token: string; expiresAt: number; model: typeof DESKTOP_FREE_MODEL_ID | typeof DESKTOP_FREE_LEGACY_MODEL_ID };

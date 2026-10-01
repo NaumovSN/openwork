@@ -1,6 +1,6 @@
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
-import { MEMBER_FREE_STATUS_PATH } from "@openwork/free-auto"
-import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
+import { MEMBER_FREE_STATUS_PATH, MEMBER_FREE_RESPONSES_PATH } from "@openwork/free-auto"
+import { INFERENCE_FREE_MODEL_ID, INFERENCE_FREE_LEGACY_MODEL_ID } from "@openwork/types/den/inference"
 import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import { Hono } from "hono"
 import type { Context } from "hono"
@@ -63,10 +63,10 @@ const modelsPath = "/api/v1/models"
 async function isFreeAutoRequest(request: Request): Promise<boolean> {
   const path = new URL(request.url).pathname
   if (request.method === "GET" && path === MEMBER_FREE_STATUS_PATH) return true
-  if (request.method !== "POST" || path !== chatCompletionsPath) return false
+  if (request.method !== "POST" || (path !== chatCompletionsPath && path !== MEMBER_FREE_RESPONSES_PATH)) return false
   try {
     const body: unknown = await request.clone().json()
-    return isJsonObject(body) && body.model === INFERENCE_FREE_MODEL_ID
+    return isJsonObject(body) && (body.model === INFERENCE_FREE_MODEL_ID || body.model === INFERENCE_FREE_LEGACY_MODEL_ID)
   } catch { return false }
 }
 const topLevelModelSelectorFields = ["models", "fallbacks", "preset", "route"]

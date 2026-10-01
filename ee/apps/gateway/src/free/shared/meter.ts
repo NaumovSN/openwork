@@ -1,24 +1,28 @@
 import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
 import type { FreeUsageReceipt } from "./allowance.js"
 import { freeUsageAmount } from "@openwork/free-auto/accounting"
+import type { FreeProtocol } from "./request.js"
 import type { AutoConfig } from "./config.js"
 
 export type FreeMeterConfig = Pick<AutoConfig, "upstreamModel" | "inputPrice" | "outputPrice">
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value) }
 function nonnegative(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 }
-/** OpenAI reports a dated snapshot (for example `gpt-5.6-luna-2026-08-01`) of the requested model. */
+/** OpenAI reports a dated snapshot (for example `gpt-6-luna-2026-09-22`) of the requested model. */
 export function isFreeUpstreamModel(value: unknown, config: FreeMeterConfig) {
   return typeof value === "string" && (value === config.upstreamModel || value.startsWith(`${config.upstreamModel}-`))
 }
-export function readFreeUsage(value: unknown, eventId: string, config: FreeMeterConfig): FreeUsageReceipt | null {
+export function readFreeUsage(value: unknown, eventId: string, config: FreeMeterConfig, protocol: FreeProtocol = "chat"): FreeUsageReceipt | null {
   if (!record(value) || !record(value.usage) || !isFreeUpstreamModel(value.model, config)) return null
   const usage = value.usage
-  if (!nonnegative(usage.prompt_tokens) || !nonnegative(usage.completion_tokens)) return null
-  if (record(usage.completion_tokens_details) && usage.completion_tokens_details.reasoning_tokens !== undefined
-    && (!nonnegative(usage.completion_tokens_details.reasoning_tokens) || usage.completion_tokens_details.reasoning_tokens > usage.completion_tokens)) return null
-  const amount = freeUsageAmount(config, usage.prompt_tokens, usage.completion_tokens)
+  const inputTokens = protocol === "responses" ? usage.input_tokens : usage.prompt_tokens
+  const outputTokens = protocol === "responses" ? usage.output_tokens : usage.completion_tokens
+  const details = protocol === "responses" ? usage.output_tokens_details : usage.completion_tokens_details
+  if (!nonnegative(inputTokens) || !nonnegative(outputTokens)) return null
+  if (record(details) && details.reasoning_tokens !== undefined
+    && (!nonnegative(details.reasoning_tokens) || details.reasoning_tokens > outputTokens)) return null
+  const amount = freeUsageAmount(config, inputTokens, outputTokens)
   if (!nonnegative(amount)) return null
-  return { amount, eventId, model: INFERENCE_FREE_MODEL_ID, inputTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens }
+  return { amount, eventId, model: INFERENCE_FREE_MODEL_ID, inputTokens, outputTokens }
 }
 function publicResponse(value: Record<string, unknown>) {
   const result: Record<string, unknown> = { ...value, model: INFERENCE_FREE_MODEL_ID }
@@ -71,14 +75,53 @@ export class FreeResponseReceipt {
   }
 }
 
+/** Responses finishes on a terminal response event, without Chat Completions' [DONE] sentinel. */
+export class FreeResponsesReceipt {
+  private id: string | null = null
+  private receipt: FreeUsageReceipt | null = null
+  terminal = false
+  done = false
+  constructor(private readonly config: FreeMeterConfig) {}
+  private response(value: unknown) {
+    if (!record(value) || value.error != null || typeof value.id !== "string" || !value.id || value.id.length > 255
+      || this.id !== null && this.id !== value.id || !isFreeUpstreamModel(value.model, this.config)) throw new Error("Mismatched Auto response")
+    this.id = value.id
+    return { ...value, model: INFERENCE_FREE_MODEL_ID }
+  }
+  accept(value: unknown): Record<string, unknown> {
+    if (this.done || this.terminal || !record(value)) throw new Error("Incomplete Auto response")
+    if (value.object === "response") {
+      const result = this.response(value)
+      if (value.status !== "completed" && value.status !== "incomplete") throw new Error("Incomplete Auto response")
+      this.receipt = readFreeUsage(value, this.id!, this.config, "responses")
+      this.terminal = true
+      return result
+    }
+    if (typeof value.type !== "string" || !value.type.startsWith("response.") || value.type === "response.failed") throw new Error("Auto upstream failed")
+    const result = { ...value }
+    if (value.response !== undefined) result.response = this.response(value.response)
+    if (value.type === "response.completed" || value.type === "response.incomplete") {
+      if (!record(value.response) || value.response.status !== value.type.slice("response.".length) || !this.id) throw new Error("Incomplete Auto response")
+      this.receipt = readFreeUsage(value.response, this.id, this.config, "responses")
+      this.terminal = true
+    }
+    return result
+  }
+  complete() {
+    if (!this.terminal || this.done) throw new Error("Incomplete Auto response")
+    this.done = true
+    return this.receipt
+  }
+}
+
 export function meterFreeResponse(body: ReadableStream<Uint8Array>, input: {
-  config: FreeMeterConfig; streaming: boolean; maxBytes: number; signal: AbortSignal; choices?: number;
+  config: FreeMeterConfig; protocol?: FreeProtocol; streaming: boolean; maxBytes: number; signal: AbortSignal; choices?: number;
   settle: (receipt: FreeUsageReceipt | null) => Promise<void>;
 }) {
   const reader = body.getReader()
   const decoder = new TextDecoder("utf-8", { fatal: true })
   const encoder = new TextEncoder()
-  const receipt = new FreeResponseReceipt(input.config, input.choices)
+  const receipt = input.protocol === "responses" ? new FreeResponsesReceipt(input.config) : new FreeResponseReceipt(input.config, input.choices)
   let pending = "", data: string[] = [], closed = false
   let settlement: Promise<void> | null = null
   const settle = (value: FreeUsageReceipt | null) => settlement ??= input.settle(value)
@@ -138,7 +181,15 @@ export function meterFreeResponse(body: ReadableStream<Uint8Array>, input: {
                 return
               }
               const value = receipt.accept(JSON.parse(text))
+              if (receipt instanceof FreeResponsesReceipt && receipt.terminal) await settle(receipt.complete())
+              if (closed) return
               controller.enqueue(encoder.encode(`data: ${JSON.stringify(value)}\n\n`))
+              if (receipt.done) {
+                closed = true
+                cleanup()
+                controller.close()
+                return
+              }
               emitted = true
             }
           }

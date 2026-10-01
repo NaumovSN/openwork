@@ -9,7 +9,9 @@ import { INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference
 export type FreePrices = { inputPrice: number; outputPrice: number };
 /** Cost of a completion from its token counts, rounded up. Prices are USD per million tokens. */
 export function freeUsageAmount(prices: FreePrices, inputTokens: number, outputTokens: number): number {
-  return Math.ceil((inputTokens * prices.inputPrice + outputTokens * prices.outputPrice) * INFERENCE_USAGE_CONVERSION_FACTOR / 1000000);
+  // Luna prices the entire request at long-context rates once input exceeds 272K tokens.
+  const longContext = inputTokens > 272_000;
+  return Math.ceil((inputTokens * prices.inputPrice * (longContext ? 2 : 1) + outputTokens * prices.outputPrice * (longContext ? 1.5 : 1)) * INFERENCE_USAGE_CONVERSION_FACTOR / 1000000);
 }
 
 /** Guest allowance tiers by minutes with the app open; ascending, first tier at 0. */

@@ -1,6 +1,6 @@
 import type { ManagedModelRecommendation } from "@openwork/types/den/inference";
 import {
-  DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_SESSION_POW_MAX_BITS, DESKTOP_FREE_SESSION_POW_MAX_ROUNDS, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH,
+  DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_LEGACY_MODEL_ID, DESKTOP_FREE_SESSION_POW_MAX_BITS, DESKTOP_FREE_SESSION_POW_MAX_ROUNDS, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH,
   type DesktopFreeAccessStatus, type DesktopFreeSession, type SessionPowParams,
 } from "@openwork/free-auto";
 import { isRecord } from "./http.js";
@@ -50,7 +50,7 @@ export function statusFromRejection(payload: Record<string, unknown>, base: Desk
 export function parseGuestSession(payload: unknown, now = Date.now()): DesktopFreeSession {
   if (!isRecord(payload) || typeof payload.token !== "string" || !payload.token.trim()
     || typeof payload.expiresAt !== "number" || !Number.isFinite(payload.expiresAt) || payload.expiresAt <= now
-    || payload.model !== DESKTOP_FREE_MODEL_ID) throw new Error("Invalid desktop free session response.");
+    || (payload.model !== DESKTOP_FREE_MODEL_ID && payload.model !== DESKTOP_FREE_LEGACY_MODEL_ID)) throw new Error("Invalid desktop free session response.");
   return { token: payload.token, expiresAt: payload.expiresAt, model: payload.model };
 }
 /** More proof of work the gateway asked for, if it is a valid request to do more than `current`. */
@@ -65,7 +65,7 @@ export function requestedSessionPow(payload: Record<string, unknown>, current: S
 export function parseMemberCredential(payload: unknown, origin: string): string {
   const credential = isRecord(payload) ? payload.credential : null;
   if (!isRecord(credential) || typeof credential.apiKey !== "string" || !/^ow_inf_[A-Za-z0-9_-]{43}$/.test(credential.apiKey)
-    || credential.modelID !== DESKTOP_FREE_MODEL_ID
+    || (credential.modelID !== DESKTOP_FREE_MODEL_ID && credential.modelID !== DESKTOP_FREE_LEGACY_MODEL_ID)
     || credential.baseURL !== `${origin}${MEMBER_FREE_MODELS_PATH.slice(0, -"/models".length)}`
     || credential.statusURL !== `${origin}${MEMBER_FREE_STATUS_PATH}`) throw new Error("Invalid member Auto credential.");
   return credential.apiKey;

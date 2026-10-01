@@ -1,5 +1,6 @@
 import type { UIMessage } from "ai";
 import { AUTO_MODEL_ID } from "@/react-app/domains/models/model-catalog";
+import { LEGACY_AUTO_MODEL_ID } from "@/app/lib/auto-model";
 
 function field(value: unknown, key: string): unknown {
   return value && typeof value === "object" ? Reflect.get(value, key) : undefined;
@@ -41,6 +42,7 @@ export function replyModelLabel(message: UIMessage) {
   const modelID = text(field(model, "modelID"));
   const providerID = text(field(model, "providerID")) ?? "";
   if (!modelID || field(model, "resolved") !== true || (providerID.startsWith("ipr_") && modelID.startsWith("gwm_"))) return null;
-  if (modelID === AUTO_MODEL_ID) return "GPT-5.6 Luna";
+  if (modelID === AUTO_MODEL_ID) return "GPT-6 Luna";
+  if (modelID === LEGACY_AUTO_MODEL_ID) return "GPT-5.6 Luna";
   return text(field(model, "name")) ?? modelID;
 }
