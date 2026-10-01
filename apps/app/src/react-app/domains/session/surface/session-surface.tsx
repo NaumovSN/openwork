@@ -84,6 +84,7 @@ import { SessionDebugPanel } from "./debug-panel";
 import { runSessionBranchAction, useSessionBranchAction } from "./session-branch-action";
 import { deriveComposerHistory, deriveRenderedSessionMessages, resolveRenderedSessionSnapshot } from "./session-render-state";
 import { pendingDraftTextParts, pendingMessageParts, useDisplayedMessages } from "./use-displayed-messages";
+import { orderMessageParents } from "../sync/message-merge";
 import {
   ADMISSION_OUTCOME_GRACE_MS,
   createSingleFlight,
@@ -1573,7 +1574,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
     // A server turn can acknowledge only one pending send, even when two
     // consecutive prompts have identical text and v2 assigns its own IDs.
     const acknowledgedIds = new Map([...messageIdReplacements].map(([serverId, pendingId]) => [pendingId, serverId]));
-    return { messages: mergeRejectedTurns(messages, rejectedTurns, rejectedOwner), messageIdReplacements, remaining: remaining.map((item) => {
+    return { messages: orderMessageParents(mergeRejectedTurns(messages, rejectedTurns, rejectedOwner)), messageIdReplacements, remaining: remaining.map((item) => {
       const claimed = [...matchedIds].filter((id) => id !== item.serverMessageId && !item.previousMessageIds.includes(id));
       const submissionMessageIds = item.submissionMessageIds.some((id) => acknowledgedIds.has(id))
         ? item.submissionMessageIds.map((id) => acknowledgedIds.get(id) ?? id)
