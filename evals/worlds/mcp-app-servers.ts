@@ -643,7 +643,8 @@ export async function mcpAppServersChat(seed: Seed, benchmark = false) {
         }
         await delay(250);
       }
-      throw new Error(`${title} did not open in the conversation`);
+      const statuses = await evaluate(app.client, () => Array.from(document.querySelectorAll('[data-dashboard-tile] [role="status"], [data-dashboard-tile] [role="alert"]')).map(node => node.textContent?.trim()).filter(Boolean)).catch(() => []);
+      throw new Error(`${title} did not open. Dashboard status: ${JSON.stringify(statuses)}`);
     },
   };
 }

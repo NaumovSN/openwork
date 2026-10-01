@@ -447,7 +447,8 @@ chatTest("an owner follows App creation progress and opens the finished App besi
     await user.type({ label: "Search apps" }, "qckordprcr", { replace: true });
     await user.click({ role: "option", label: `Add ${pricerTitle}` });
     expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(1);
-    pricer = await focus(pricerTitle);
+    try { pricer = await focus(pricerTitle); }
+    catch (error) { await user.screenshot(); throw error; }
     await pricer.see({ testId: "order-line" }, { text: pricedLine, timeoutMs: 90_000 });
     await user.screenshot();
     evidence.recordAssertionEvidence("An accessible built App can be added to a personal dashboard", "Fuzzy search finds Quick order pricer in the accessible App catalog. Choosing it adds one personal tile that opens the real App and loads its read-only data. Creation alone did not place it on the dashboard.", true);
