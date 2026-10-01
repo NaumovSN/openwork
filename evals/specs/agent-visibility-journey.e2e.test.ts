@@ -7,7 +7,7 @@ const test = spec.world(agentVisibility, {
   resources: { surfaces: ["appWeb"], services: ["mock"] },
 });
 
-type Sample = { at: number; working: string | null; liveHeight: number | null; helperRow: boolean; startupLeak: boolean; liveModels: number; shimmer: { text: string; position: string; weight: string; animation: string; reduced: boolean }[] };
+type Sample = { at: number; working: string | null; liveHeight: number | null; helperRow: boolean; startupLeak: boolean; liveModels: number; shimmer: { text: string; position: string; weight: string; color: string; gradient: string; statusColor: string; animation: string; reduced: boolean }[] };
 
 test(`AGENT-VIS-01 ${resolveEvalEngine()}: a person asks a research question and can always tell the agent is still working`, async ({ world, user, probe, step, evidence }) => {
   const samples: Sample[] = [];
@@ -31,7 +31,10 @@ test(`AGENT-VIS-01 ${resolveEvalEngine()}: a person asks a research question and
       shimmer: [...document.querySelectorAll<HTMLElement>('[data-live-steps] .ow-text-shimmer')]
         .filter(node => node.getBoundingClientRect().height > 0)
         .map(node => ({ text: node.innerText, position: getComputedStyle(node).backgroundPosition,
-          weight: getComputedStyle(node).fontWeight, animation: getComputedStyle(node).animationName,
+          weight: getComputedStyle(node).fontWeight, color: getComputedStyle(node).color,
+          gradient: getComputedStyle(node).backgroundImage,
+          statusColor: getComputedStyle(node.closest('[data-subagent-run]')?.querySelector('button > span:nth-child(2)') ?? node).color,
+          animation: getComputedStyle(node).animationName,
           reduced: matchMedia('(prefers-reduced-motion: reduce)').matches })),
       working,
       liveHeight: live ? Math.round(live.getBoundingClientRect().height) : null,
@@ -75,6 +78,9 @@ test(`AGENT-VIS-01 ${resolveEvalEngine()}: a person asks a research question and
     const weights = [...new Set(held.map(sample => sample.weight))];
     const positions = [...new Set(held.map(sample => sample.position))];
     expect(weights).toHaveLength(1);
+    expect(new Set(held.map(sample => sample.color)).size).toBe(1);
+    expect(new Set(held.map(sample => sample.gradient)).size).toBe(1);
+    expect(new Set(held.map(sample => sample.statusColor)).size).toBe(1);
     if (held[0]?.reduced) expect(held.every(sample => sample.animation === "none")).toBe(true);
     else { expect(positions.length).toBeGreaterThan(1); expect(held.every(sample => sample.animation === "ow-text-shimmer")).toBe(true); }
     expect(samples.every(sample => !sample.startupLeak && sample.liveModels === 0)).toBe(true);
@@ -129,6 +135,8 @@ test(`AGENT-VIS-01 ${resolveEvalEngine()}: a person asks a research question and
     await user.see({ text: world.reasoning });
     await user.notSee({ text: world.answer });
     await user.click({ role: "button", label: /^Thinking/ });
+    await probe.eventually(() => probe.text(), { within: 5_000, intervalMs: 50,
+      label: "reasoning disclosure finishes closing", until: text => !text.includes(world.reasoning) });
     await user.notSee({ text: world.reasoning });
     evidence.recordAssertionEvidence("Thinking stays separate from the answer",
       "The native reasoning stream shows Thinking with no answer; its text appears only after opening the disclosure and hides again when folded", true);
@@ -192,8 +200,9 @@ test(`AGENT-VIS-02 ${resolveEvalEngine()}: a person follows up while a helper wo
 
   await step("they stop just the helper, and the turn keeps going", async () => {
     await user.click({ role: "button", label: /Check the error log\. Stop sub-agent/ });
-    const helperStopped = await probe.eventually(async () => (await probe.dom('[data-subagent-activity="shimmer"]')).elements.length === 0,
-      { within: 30_000, intervalMs: 250, label: "helper no longer running", until: Boolean }).catch(() => false);
+    const helperStopped = await probe.eventually(async () =>
+      (await probe.dom('[data-subagent-run]')).elements.some(element => /Stopped/.test(element.text)),
+      { within: 30_000, intervalMs: 250, label: "helper Stop is acknowledged on its visible row", until: Boolean });
     const turnStillRunning = (await probe.dom('button[aria-label="Stop"]')).elements.length > 0;
     evidence.recordAssertionEvidence("Stopping one helper leaves the turn running", `helper stopped: ${helperStopped}; the turn's Stop is still offered: ${turnStillRunning}`, helperStopped && turnStillRunning);
     expect(helperStopped).toBe(true);
