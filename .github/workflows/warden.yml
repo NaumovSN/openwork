@@ -67,6 +67,8 @@ jobs:
         id: analyze
         uses: getsentry/warden@8759014a14130cd2b82e59d3fb450a7385721221 # v0 (CLI 0.43.0)
         env:
+          # Registers models newer than the pinned Warden's Pi catalog.
+          PI_CODING_AGENT_DIR: ${{ github.workspace }}/.warden-policy/.warden/pi
           WARDEN_OPENAI_API_KEY: ${{ secrets.WARDEN_OPENAI_API_KEY }}
         with:
           mode: analyze
