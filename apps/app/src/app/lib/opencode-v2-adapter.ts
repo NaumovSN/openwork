@@ -1,5 +1,6 @@
 import type {
   ApiError,
+  ConfigProvidersResponse,
   FilePart,
   Model,
   Part,
@@ -2307,6 +2308,53 @@ export function createClientV2(
     command: async (): Promise<FieldsResult<Record<string, never>>> => unsupportedResult(baseUrl, "session.command"),
   };
 
+  const listProviders = async (
+    _parameters: DirectoryParameters = {},
+    options?: RequestOptions,
+  ): Promise<FieldsResult<ProviderListResponse>> => {
+    const modelsResult = await request("GET", "/api/model", undefined, options?.signal);
+    if (!modelsResult.response.ok) return failedResult(modelsResult);
+    const [defaultsResult, providersResult] = await Promise.all([
+      request("GET", "/api/model/default", undefined, options?.signal),
+      request("GET", "/api/provider", undefined, options?.signal),
+    ]);
+    const providerNames = new Map<string, string>();
+    if (providersResult.response.ok) {
+      for (const provider of responseItems(providersResult.payload)) {
+        if (!isRecord(provider)) continue;
+        const id = readString(provider, "id");
+        const name = readString(provider, "name");
+        if (id && name) providerNames.set(id, name);
+      }
+    }
+    const models = responseItems(modelsResult.payload).flatMap((item) => {
+      const mapped = mapV2Model(item);
+      return mapped ? [mapped] : [];
+    });
+    const providersByID = new Map<string, Provider>();
+    for (const model of models) {
+      const current = providersByID.get(model.providerID);
+      if (current) {
+        current.models[model.id] = model;
+        continue;
+      }
+      providersByID.set(model.providerID, {
+        id: model.providerID,
+        name: providerNames.get(model.providerID) ?? model.providerID,
+        source: "config",
+        env: [],
+        options: {},
+        models: { [model.id]: model },
+      });
+    }
+    const all = [...providersByID.values()];
+    return successfulResult(modelsResult, {
+      all,
+      connected: all.map((provider) => provider.id),
+      default: defaultsResult.response.ok ? mapDefaultModels(defaultsResult.payload) : {},
+    });
+  };
+
   const adapter = {
     global: {
       health: async (options?: RequestOptions): Promise<FieldsResult<{ healthy: boolean; version: string }>> => {
@@ -2322,54 +2370,19 @@ export function createClientV2(
     session,
     config: {
       get: async (): Promise<FieldsResult<Record<string, never>>> => localResult(baseUrl, "/api/config", {}),
+      // v2 only lists usable providers, so the connected list and the full
+      // provider list are the same read.
+      providers: async (
+        parameters: DirectoryParameters = {},
+        options?: RequestOptions,
+      ): Promise<FieldsResult<ConfigProvidersResponse>> => {
+        const result = await listProviders(parameters, options);
+        if (!result.data) return { error: result.error, request: result.request, response: result.response };
+        return { data: { providers: result.data.all, default: result.data.default }, request: result.request, response: result.response };
+      },
     },
     provider: {
-      list: async (
-        _parameters: DirectoryParameters = {},
-        options?: RequestOptions,
-      ): Promise<FieldsResult<ProviderListResponse>> => {
-        const modelsResult = await request("GET", "/api/model", undefined, options?.signal);
-        if (!modelsResult.response.ok) return failedResult(modelsResult);
-        const [defaultsResult, providersResult] = await Promise.all([
-          request("GET", "/api/model/default", undefined, options?.signal),
-          request("GET", "/api/provider", undefined, options?.signal),
-        ]);
-        const providerNames = new Map<string, string>();
-        if (providersResult.response.ok) {
-          for (const provider of responseItems(providersResult.payload)) {
-            if (!isRecord(provider)) continue;
-            const id = readString(provider, "id");
-            const name = readString(provider, "name");
-            if (id && name) providerNames.set(id, name);
-          }
-        }
-        const models = responseItems(modelsResult.payload).flatMap((item) => {
-          const mapped = mapV2Model(item);
-          return mapped ? [mapped] : [];
-        });
-        const providersByID = new Map<string, Provider>();
-        for (const model of models) {
-          const current = providersByID.get(model.providerID);
-          if (current) {
-            current.models[model.id] = model;
-            continue;
-          }
-          providersByID.set(model.providerID, {
-            id: model.providerID,
-            name: providerNames.get(model.providerID) ?? model.providerID,
-            source: "config",
-            env: [],
-            options: {},
-            models: { [model.id]: model },
-          });
-        }
-        const all = [...providersByID.values()];
-        return successfulResult(modelsResult, {
-          all,
-          connected: all.map((provider) => provider.id),
-          default: defaultsResult.response.ok ? mapDefaultModels(defaultsResult.payload) : {},
-        });
-      },
+      list: (parameters?: DirectoryParameters, options?: RequestOptions) => listProviders(parameters, options),
     },
     app: {
       agents: async (): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/agent", []),

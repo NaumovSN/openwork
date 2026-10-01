@@ -43,6 +43,7 @@ test("status parsing keeps a complete ready status and rejects anything partial"
   expect(() => parseStatus({ state: "later" }, base)).toThrow();
   expect(statusFromRejection({ code: "desktop_update_required", minimumVersion: "2.0.0" }, base)).toMatchObject({ state: "update_required", minimumVersion: "2.0.0" });
   expect(statusFromRejection({ code: "free_allowance_exhausted" }, base).state).toBe("exhausted");
+  expect(statusFromRejection({ code: "anonymous_new_identity_capped" }, base).state).toBe("exhausted");
   expect(statusFromRejection({}, base)).toMatchObject({ state: "unavailable", code: "anonymous_unavailable" });
 });
 

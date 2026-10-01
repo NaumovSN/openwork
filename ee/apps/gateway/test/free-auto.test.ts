@@ -5,8 +5,8 @@ import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferenceWindow, managedModelCatalog, readFreeInferenceConfig } from "@openwork/types/den/inference"
 import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
-  MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeSessionPowMessage, leadingZeroBits, type DesktopFreeProofClaims } from "@openwork/free-auto"
-import { readAutoConfig, FREE_OPENAI_CHAT_URL } from "../src/free/shared/config.js"
+  MEMBER_FREE_STATUS_PATH, DESKTOP_FREE_MODEL_ID, desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeSessionPowMessage, leadingZeroBits, type DesktopFreeProofClaims } from "@openwork/free-auto"
+import { readAutoConfig, untaggedAutoEnabled, FREE_OPENAI_CHAT_URL } from "../src/free/shared/config.js"
 import { freeUsageAmount, rampedDeviceAmount } from "@openwork/free-auto/accounting"
 import { verifyDesktopFreeProof } from "../src/free/guest/proof.js"
 import { deriveReleaseSecret, releaseTag, sha256Hex as desktopFreeHash } from "@openwork/free-auto/node"
@@ -14,6 +14,7 @@ import { createAnonymousIdentities, issueAnonymousToken, verifyAnonymousToken, c
 import { prepareFreeRequest, readFreeRequest } from "../src/free/shared/request.js"
 import { FreeResponseReceipt, meterFreeResponse } from "../src/free/shared/meter.js"
 import type { FreePrincipal, MemberPrincipal } from "../src/free/shared/principal.js"
+import { freeInferenceDigest as freeIdentityHash } from "@openwork-ee/utils/free-inference-digest"
 import type { FreeAllowanceStore, FreeUsageReceipt } from "../src/free/shared/allowance.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
@@ -86,7 +87,7 @@ function fakeStore(principals: FreePrincipal[], receipts: Array<FreeUsageReceipt
   return {
     family: "anonymous",
     async consumeNonce(proof) { const key = `${proof.keyThumbprint}:${proof.nonce}`; if (nonces.has(key)) return "replay"; nonces.add(key); return "accepted" },
-    async consumeSession() { calls.session++; return "accepted" as const },
+    async consumeSession() { calls.session++ },
     async read(principal) { return { state: "ready", code: null, allowance: { limitUsd: principal.kind === "member" ? 5 : 1,
       usedUsd: 0, remainingUsd: principal.kind === "member" ? 5 : 1, resetsAt: freeInferenceWindow().end.toISOString() } } },
     async admit(principal) { principals.push(principal); return { ok: true, windows: [] } },
@@ -224,17 +225,19 @@ test("minting a guest session costs a proof of work bound to the proof's own non
   assert.equal(f.calls.session, 1)
   const free = fixture({ config: { ...config, sessionPowBits: 0 } })
   assert.equal((await free.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, "", "{}"))).status, 200)
-  const base = fixture()
-  const capped = fixture({ store: { ...base.store, consumeSession: async () => "new_identity_capped" as const } })
-  const response = await capped.app.fetch(session())
-  assert.equal(response.status, 429)
-  assert.equal((await response.json()).error.code, "anonymous_new_identity_capped")
+  // Machines are not counted per IP: many machines behind one office IP all start sessions.
+  const office = fixture()
+  for (let index = 0; index < 50; index++) {
+    const response = await office.app.fetch(session({ source: signer(`${index.toString(16).padStart(2, "0")}`.padEnd(64, "d")) }))
+    assert.equal(response.status, 200, `machine ${index} starts a session`)
+  }
+  assert.equal(office.calls.session, 50)
 })
 
 test("the guest allowance unlocks over the machine's first 30 active minutes and never exceeds the device budget", () => {
   const defaults = readAutoConfig({})
   assert.deepEqual(defaults.installRamp, [{ minutes: 0, amount: 10000000 }, { minutes: 10, amount: 20000000 }, { minutes: 20, amount: 50000000 }, { minutes: 30, amount: 100000000 }])
-  assert.equal(defaults.ipNewIdentitiesPerDay, 5)
+  assert.equal("ipNewIdentitiesPerDay" in defaults, false, "there is no new-machines-per-IP cap")
   assert.deepEqual([defaults.sessionPowBits, defaults.sessionPowRounds, defaults.activityMaxGapMs], [19, 8, 180000])
   const minute = 60000
   assert.equal(rampedDeviceAmount(defaults, 0) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
@@ -371,7 +374,8 @@ test("the version the desktop reports passes unless the server blocks it or sets
   const alpha = guestFor("1.2.4-alpha.3244+4d3cfbd")
   assert.equal((await (await blocked.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${alpha.token}`, undefined, { version: "1.2.4-alpha.3244+4d3cfbd", source: alpha.source }))).json()).state, "update_required", "blocking ignores build metadata")
   const untagged = guestFor("1.2.4-alpha.1+abc")
-  assert.equal((await (await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${untagged.token}`, undefined, { version: "1.2.4-alpha.1+abc", source: untagged.source, proofVersion: 2 }))).json()).code, "desktop_build_unverified")
+  const untaggedOff = fixture({ config: { ...config, untaggedGlobalDailyAmount: 0 } })
+  assert.equal((await (await untaggedOff.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${untagged.token}`, undefined, { version: "1.2.4-alpha.1+abc", source: untagged.source, proofVersion: 2 }))).json()).code, "desktop_build_unverified")
 })
 
 test("the release tag must come from the secret of the claimed version, the previous master key overlaps, dev secrets only count in dev mode", async () => {
@@ -402,8 +406,58 @@ test("switched-off guest Auto says free_disabled, not unavailable, on every gues
   assert.equal(f.requests.length, 0)
 })
 
-test("an untagged (v2) proof from a current build says the build can't use Auto, not that it needs an update", async () => {
+test("an untagged (v2) proof, like a build from source, uses Auto on the per-IP untagged budget", async () => {
   const f = fixture()
+  const status = await (await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`, undefined, { proofVersion: 2 }))).json()
+  assert.deepEqual([status.state, status.code], ["ready", null])
+  const minted = await f.app.fetch(session({ proofVersion: 2 }))
+  assert.equal(minted.status, 200, "an untagged build can start a guest session")
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))).status, 200)
+  const ipHash = createAnonymousIdentities(device.binding, "127.0.0.1", config).ipHash
+  assert.deepEqual(f.principals.at(-1), { kind: "installation", id: createAnonymousIdentities(device.binding, "127.0.0.1", config).installationHash, untaggedIpHash: ipHash })
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 200)
+  assert.equal(f.principals.at(-1)?.kind === "installation" && f.principals.at(-1)?.untaggedIpHash, undefined, "a tagged proof is not held to the IP budget")
+  const blocked = fixture({ config: { ...config, blockedReleases: ["1.2.3"] } })
+  assert.equal((await blocked.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))).status, 426, "blocked versions still apply")
+  const defaults = readAutoConfig({})
+  assert.deepEqual([defaults.untaggedIpDailyAmount, defaults.untaggedGlobalDailyAmount], [0.2 * INFERENCE_USAGE_CONVERSION_FACTOR, 10 * INFERENCE_USAGE_CONVERSION_FACTOR], "$0.20 per IP a day, $10 for all untagged builds a day")
+  assert.equal(untaggedAutoEnabled(defaults), true)
+  assert.equal(untaggedAutoEnabled(readAutoConfig({ ANONYMOUS_UNTAGGED_IP_DAILY_MICRO_USD: "0" })), false, "either budget at 0 turns untagged builds off")
+  assert.equal(untaggedAutoEnabled(readAutoConfig({ ANONYMOUS_UNTAGGED_GLOBAL_DAILY_MICRO_USD: "0" })), false)
+  assert.throws(() => readAutoConfig({ ANONYMOUS_UNTAGGED_IP_DAILY_MICRO_USD: "-1" }))
+})
+
+test("like OpenCode Zen, any client with no proof and no key (or the key \"public\") gets Auto, limited by its IP", async () => {
+  const f = fixture()
+  const open = (path: string, headers: Record<string, string> = {}, body?: string) => new Request(`https://free.test${path}`, {
+    method: body === undefined ? "GET" : "POST", body, headers: { ...headers, ...(body === undefined ? {} : { "content-type": "application/json" }) } })
+  const status = await (await f.app.fetch(open(DESKTOP_FREE_STATUS_PATH, { authorization: "Bearer public" }))).json()
+  assert.deepEqual([status.state, status.code, status.currentVersion, status.minimumVersion], ["ready", null, "", null])
+  const models = await (await f.app.fetch(open(DESKTOP_FREE_MODELS_PATH, { authorization: "Bearer public" }))).json()
+  assert.deepEqual(models.data.map((model: { id: string }) => model.id), [DESKTOP_FREE_MODEL_ID])
+  for (const headers of [{ authorization: "Bearer public" }, {}]) {
+    assert.equal((await f.app.fetch(open(DESKTOP_FREE_CHAT_PATH, headers, prompt))).status, 200)
+  }
+  const ipHash = createAnonymousIdentities(device.binding, "127.0.0.1", config).ipHash
+  assert.deepEqual(f.principals.at(-1), { kind: "installation", id: freeIdentityHash("open-ip", ipHash), untaggedIpHash: ipHash, deviceless: true },
+    "an open request is charged to its IP, not a machine")
+  assert.equal(f.requests.length, 2)
+  assert.equal(f.calls.session, 0, "no guest session is needed")
+  // Anything that is not the open key is still a desktop request and needs its proof.
+  assert.equal((await f.app.fetch(open(DESKTOP_FREE_CHAT_PATH, { authorization: "Bearer sk-someone-elses-key" }, prompt))).status, 401)
+  assert.equal((await f.app.fetch(open(DESKTOP_FREE_CHAT_PATH, { authorization: "Bearer public", "x-api-key": "public" }, prompt))).status, 401)
+  assert.equal((await f.app.fetch(open(DESKTOP_FREE_CHAT_PATH, { authorization: "Bearer public" }, prompt.replace(INFERENCE_FREE_MODEL_ID, "paid-model")))).status, 400, "only the free model")
+  const off = fixture({ config: { ...config, untaggedIpDailyAmount: 0 } })
+  const refused = await off.app.fetch(open(DESKTOP_FREE_CHAT_PATH, { authorization: "Bearer public" }, prompt))
+  assert.deepEqual([refused.status, (await refused.json()).error.code], [503, "desktop_build_unverified"], "with the untagged budgets off, open clients hear Auto is unavailable to them")
+  assert.equal((await (await off.app.fetch(open(DESKTOP_FREE_STATUS_PATH, {}))).json()).code, "desktop_build_unverified")
+  const disabled = fixture({ config: { ...config, anonymousEnabled: false } })
+  assert.equal((await (await disabled.app.fetch(open(DESKTOP_FREE_CHAT_PATH, {}, prompt))).json()).error.code, "free_disabled")
+  assert.equal(off.requests.length + disabled.requests.length, 0)
+})
+
+test("with the untagged budgets off, an untagged (v2) proof says the build can't use Auto, not that it needs an update", async () => {
+  const f = fixture({ config: { ...config, untaggedIpDailyAmount: 0 } })
   const response = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))
   assert.equal(response.status, 503)
   assert.equal((await response.json()).error.code, "desktop_build_unverified")

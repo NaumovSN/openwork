@@ -95,6 +95,10 @@ function createHarness(hooks: {
         else engine.engineConfig = input.config;
         return { data: input.config };
       },
+      // The provider list's read: connected providers only, as the engine's /config/providers.
+      providers: async () => ({
+        data: { providers: engine.all.filter((provider) => engine.connected.includes(provider.id)), default: {} },
+      }),
     },
     provider: {
       list: async () => ({

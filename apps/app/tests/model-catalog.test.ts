@@ -89,13 +89,12 @@ describe("Auto submission walls", () => {
   });
   test("typed failures supply four states without money, paid offers, or automatic retries", () => {
     const wall = autoAccessWallFromError({ error: { code: "anonymous_limit_exceeded" } }, auto);
-    expect(wall).toEqual({ state: "limit" });
-    expect(autoAccessWallFromError({ code: "model_sync_pending" }, auto)).toEqual({ state: "sync" });
+    expect(wall).toEqual({ state: "limit", code: "anonymous_limit_exceeded" });
+    expect(autoAccessWallFromError({ code: "model_sync_pending" }, auto)).toEqual({ state: "sync", code: "model_sync_pending" });
     expect(autoAccessWallFromError({ code: "anonymous_limit_exceeded" }, local)).toBeNull();
     const copy = autoWallCopy({ state: "limit" }, false);
-    expect(copy.title).toBe("This week’s free limit is used up");
-    expect(copy.detail).toContain("resets Monday");
-    expect(copy.detail).toContain("larger free limit");
+    expect(copy.title).toBe("You’ve reached the free Auto limit");
+    expect(copy.detail).toBe("Sign in for more free use, or pick another model.");
     expect(autoWallCopy({ state: "limit" }, true).detail).not.toContain("Sign in");
     expect(JSON.stringify(copy)).not.toMatch(/\$|USD|upgrade|paid|automatically/i);
   });

@@ -84,12 +84,17 @@ async function fixture(run: (input: {
   };
   const gateway = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
     const { path, headers, method, body } = await observe(request);
-    const proofIndex = Number(headers.get("x-openwork-desktop-proof")?.replace("proof-", "")) - 1;
-    const proof = signed[proofIndex];
-    expect(proof?.path).toBe(path);
-    expect(proof?.method).toBe(method);
-    expect(proof?.authorization).toBe(headers.get("authorization") ?? "");
-    expect(new TextDecoder().decode(proof?.body)).toBe(body);
+    const proofHeader = headers.get("x-openwork-desktop-proof");
+    // Without the desktop signer the relay is an open client: no proof, and the key "public".
+    const open = !proofHeader && ![MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH].includes(path);
+    if (open) expect(headers.get("authorization")).toBe("Bearer public");
+    const proof = proofHeader ? signed[Number(proofHeader.replace("proof-", "")) - 1] : undefined;
+    if (proofHeader) {
+      expect(proof?.path).toBe(path);
+      expect(proof?.method).toBe(method);
+      expect(proof?.authorization).toBe(headers.get("authorization") ?? "");
+      expect(new TextDecoder().decode(proof?.body)).toBe(body);
+    }
     expect(headers.get("x-openwork-desktop-token")).toBe(null);
     const failed = rejection(path);
     if (failed) return failed;
@@ -100,7 +105,7 @@ async function fixture(run: (input: {
     }
     const member = [MEMBER_FREE_STATUS_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_CHAT_PATH].includes(path);
     if (member) expect(keys.has(headers.get("authorization") ?? "")).toBe(true);
-    else expect(headers.get("authorization")).toBe("Bearer guest-fixture");
+    else if (!open) expect(headers.get("authorization")).toBe("Bearer guest-fixture");
     if (path === DESKTOP_FREE_STATUS_PATH || path === MEMBER_FREE_STATUS_PATH) return Response.json(member ? memberReady : ready);
     if (path === DESKTOP_FREE_MODELS_PATH || path === MEMBER_FREE_MODELS_PATH) return Response.json({ data: [{ id: DESKTOP_FREE_MODEL_ID }] });
     if (path === DESKTOP_FREE_CHAT_PATH || path === MEMBER_FREE_CHAT_PATH) return new Response("data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
@@ -182,17 +187,33 @@ async function fixture(run: (input: {
   }
 }
 
-test("standalone server cannot enroll using browser headers or a client token", async () => {
-  await fixture(async ({ service, config, requests, connectMember }) => {
-    expect(await service.initialize(9876)).toBe(false);
-    await connectMember();
-    expect((await service.status(true)).state).toBe("unavailable");
-    expect((await readGlobalRuntimeOpencodeConfig(config)).provider?.[DESKTOP_FREE_PROVIDER_ID]).toBeUndefined();
+test("without the desktop signer (web, headless) Auto works signed out as an open client, like OpenCode Zen", async () => {
+  await fixture(async ({ service, config, requests, signed, activate, localRequest }) => {
+    expect(await service.initialize(9876)).toBe(true);
+    expect((await readGlobalRuntimeOpencodeConfig(config)).provider?.[DESKTOP_FREE_PROVIDER_ID]).toBeDefined();
+    expect((await service.status(true)).state).toBe("ready");
+    await activate();
+    expect(await (await service.handle(await localRequest(), "chat/completions")).text()).toContain("[DONE]");
+    expect(requests.map((request) => request.path)).not.toContain(DESKTOP_FREE_SESSION_PATH);
+    expect(requests.every((request) => request.headers.get("x-openwork-desktop-proof") === null && request.headers.get("authorization") === "Bearer public")).toBe(true);
+    expect(signed).toHaveLength(0);
+    // The relay still only accepts its own local key, never the client's token or a browser.
     const response = await service.handle(new Request("http://localhost/anonymous-inference/v1/models", {
       headers: { authorization: "Bearer client-token", "user-agent": "OpenWork Desktop" },
     }), "models");
     expect(response.status).toBe(401);
-    expect(requests).toHaveLength(0);
+  }, false);
+});
+
+test("an open client signed in to Den uses the member's key, with no proof", async () => {
+  await fixture(async ({ service, requests, connectMember }) => {
+    await service.initialize(9876);
+    await connectMember();
+    expect((await service.status(true)).state).toBe("ready");
+    const status = requests.find((request) => request.path === MEMBER_FREE_STATUS_PATH);
+    expect(status?.headers.get("x-openwork-desktop-proof")).toBe(null);
+    expect(status?.headers.get("authorization")?.startsWith("Bearer ")).toBe(true);
+    expect(status?.headers.get("authorization")).not.toBe("Bearer public");
   }, false);
 });
 

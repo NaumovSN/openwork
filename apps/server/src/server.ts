@@ -18,6 +18,7 @@ import {
   isEngineConnectionFailure,
   setEnginePoolForConfig,
   type EnginePoolConnection,
+  type EnginePoolStandby,
   type EngineEventProxyLease,
   type EngineSpawnTemplate,
   rolloverOutcomeApplied,
@@ -35,6 +36,7 @@ import {
 import { shouldDeferInPlaceEngineReload } from "./engine-reload-defer.js";
 import { LatestTrailingWorkQueue } from "./latest-trailing-work-queue.js";
 import { buildEngineAuthProbeHeader } from "./engine-registry.js";
+import { warmEngineFolder, type EngineFolderWarmupResult } from "./engine-folder-warmup.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
@@ -1250,6 +1252,9 @@ export async function startServer(
         throw new Error("Managed engine primary changed during startup");
       }
       managedEngineReady = true;
+      // Set the active folder up now, while the desktop window is still
+      // loading, instead of on the window's first reads.
+      void warmActiveEngineFolder(config, logger, "startup");
     },
     stop: async () => {
       stopped = true;
@@ -5898,6 +5903,39 @@ export function registerTrustedOpencodeProcess(
 }
 
 /**
+ * Set the active workspace's folder up on the managed engine (or on a standby
+ * about to replace it). Logs how long the setup took, so slow folder setups
+ * are visible in the server log.
+ */
+export async function warmActiveEngineFolder(
+  config: ServerConfig,
+  logger: Pick<ServerLogger, "log">,
+  reason: "startup" | "rollover" | "reload",
+  standby?: Pick<EnginePoolStandby, "baseUrl" | "username" | "password" | "generationId">,
+): Promise<EngineFolderWarmupResult | null> {
+  const workspace = findManagedEngineWorkspace(config.workspaces);
+  const directory = workspace ? resolveOpencodeDirectory(workspace) : null;
+  if (!workspace || !directory) return null;
+  const connection = standby
+    ? { baseUrl: standby.baseUrl, authHeader: buildEngineAuthProbeHeader(standby.username, standby.password) }
+    : resolveWorkspaceOpencodeConnection(config, workspace);
+  if (!connection.baseUrl) return null;
+  const result = await warmEngineFolder({
+    target: { baseUrl: connection.baseUrl, ...(connection.authHeader ? { authHeader: connection.authHeader } : {}) },
+    directory,
+  });
+  logger.log(result.ok ? "info" : "warn", result.ok ? "Engine folder warmed." : "Engine folder warm-up failed.", {
+    "engine.warmup.reason": reason,
+    "engine.warmup.duration_ms": result.durationMs,
+    "workspace.id": workspace.id,
+    ...(standby ? { "engine.rollover.generation": standby.generationId } : {}),
+    ...(!result.ok && result.status ? { "http.status": result.status } : {}),
+    ...(!result.ok && result.error ? { "engine.warmup.error": result.error } : {}),
+  });
+  return result;
+}
+
+/**
  * Build the engine pool for a config and register it.
  *
  * Lives here so the pool can reuse server-private helpers (in-place reload,
@@ -5926,6 +5964,8 @@ export function createEnginePoolForConfig(input: {
         reloadOpencodeEngineInPlace(poolConfig, workspace, undefined, options),
       engineBusy: (poolConfig, workspace) => engineHasActiveSessions(poolConfig, workspace),
       postRefreshSync: async (poolConfig, workspace) => {
+        // An in-place reload drops every folder; set the active one up again.
+        void warmActiveEngineFolder(poolConfig, logger, "reload");
         await postEngineRefreshSync(poolConfig, workspace, activeEngineMcpServerState(poolConfig));
         await syncAllWorkspacesRuntimeMcpToEngine(poolConfig);
       },
@@ -5951,6 +5991,10 @@ export function createEnginePoolForConfig(input: {
             `Managed provider credential seed failed for ${result.failed.map((entry) => entry.providerId).join(", ")}`,
           );
         }
+        // Set the active folder up on the standby before it takes traffic, so
+        // a rollover never hands the picker a cold folder. Best effort: a
+        // failed warm-up never blocks the flip.
+        await warmActiveEngineFolder(poolConfig, logger, "rollover", standby);
       },
       writeRuntimeConfigFile: (poolConfig) => writeOpenworkRuntimeConfigFile(poolConfig),
       registerTrusted: (poolConfig, generation) => registerTrustedOpencodeProcess(poolConfig, generation),
