@@ -29,7 +29,7 @@ test("connector-backed tool calls show first-class branding and human-readable l
       const matching = rows.filter(row => row.textContent.includes('Listed channels'));
       const mark = matching[0]?.querySelector<HTMLElement>('[data-connector-name="Slack"]');
       const image = mark?.querySelector('img');
-      return { count: matching.length, connector: mark?.getAttribute('data-connector-name'),
+      return { resultText: matching[0]?.textContent ?? "", count: matching.length, connector: mark?.getAttribute('data-connector-name'),
         imageLoaded: image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0 };
     });
     const branded = await probe.eventually(inspect, { within: 15_000, label: "Slack tool icon and one completed row",
@@ -38,11 +38,9 @@ test("connector-backed tool calls show first-class branding and human-readable l
     await user.click({ role: "button", label: "Listed channels. Show technical details" });
     await user.see({ text: /mcp:.*:list_channels/ });
     await user.see({ text: /"limit":\s*3/ });
-    // Existing branding inspection has no primitive for the contents of one
-    // action's disclosure. Scope this observation to that row so the assistant
-    // repeating the same result cannot make missing tool capture pass.
-    const savedResult = () => probe.eval(() => [...document.querySelectorAll<HTMLElement>('[data-capability-call]')]
-      .find(row => row.textContent.includes('Listed channels'))?.textContent ?? '');
+    // Scope result inspection to this action so an assistant repeating the
+    // same text cannot make missing capture pass.
+    const savedResult = async () => (await inspect()).resultText;
     if (world.engine === "v2") {
       expect(await savedResult()).toContain(world.proof);
       expect(await savedResult()).not.toContain("The result was not recorded");
