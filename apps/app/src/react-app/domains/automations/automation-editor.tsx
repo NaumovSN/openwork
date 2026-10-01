@@ -1,6 +1,13 @@
 /** @jsxImportSource react */
 import { useEffect, useMemo, useRef, useState } from "react"
-import { AUTOMATION_FREE_MODEL, type AutomationExecutionTarget, type AutomationSchedule, type CreateAutomation } from "@openwork/types/automations"
+import {
+  AUTOMATION_CLOUD_DEFAULT_MODEL,
+  AUTOMATION_FREE_MODEL,
+  isAutomationCloudDefaultModel,
+  type AutomationExecutionTarget,
+  type AutomationSchedule,
+  type CreateAutomation,
+} from "@openwork/types/automations"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -79,13 +86,13 @@ export type AutomationEditorProps = {
   initialKey?: string
   /** Where the Automation runs unless the person picks the other of `placementChoices`. */
   placement: AutomationExecutionTarget
-  /** Offered as a choice of what the Automation can use only when it holds both targets. */
+  /** Where it can run; with more than one "what it can use" choice, the person picks. */
   placementChoices?: readonly AutomationExecutionTarget[]
-  /** What a cloud run can reach: connected accounts only (headless) or a cloud computer's files too (web). */
-  cloudRuntime?: "headless" | "web" | null
+  /** What a cloud run can reach: a cloud computer's files, only connected accounts (headless), or both choices. */
+  cloudOptions?: AutomationCloudOptions
   /** True in the desktop app, where the desktop choice means this very computer. */
   onThisComputer?: boolean
-  /** The person's connected accounts, shown on the choice that uses only them. */
+  /** The person's connected accounts, shown on every choice. */
   connectedAccounts?: readonly AutomationConnectedAccount[]
   pinnedWorkflow?: AutomationEditorPinnedWorkflow
   modelOptions: readonly AutomationModelOption[]
@@ -101,24 +108,58 @@ export type AutomationEditorProps = {
 
 export type AutomationConnectedAccount = { id: string; name: string; iconUrl: string | null }
 
-const PLACEMENT_OPTIONS: readonly AutomationExecutionTarget[] = ["desktop", "cloud"]
-
-/** The words for each choice say what the Automation can reach, not where it runs. */
-export function automationPlacementLabel(
-  placement: AutomationExecutionTarget,
-  context: { cloudRuntime?: "headless" | "web" | null; onThisComputer?: boolean },
-) {
-  if (placement === "desktop") {
-    return context.onThisComputer ? "Connected accounts and files on this computer" : "Connected accounts and files on your computer"
-  }
-  return context.cloudRuntime === "web" ? "Connected accounts and files on your cloud computer" : "Only connected accounts"
+export type AutomationCloudOptions = {
+  /** The person has an OpenWork Web computer, whose files a cloud run can use. */
+  cloudComputer: boolean
+  /** The headless runtime: runs that reach only connected accounts, on the organization's one model. */
+  accountsOnly: boolean
 }
 
-export function automationPlacementNote(placement: AutomationExecutionTarget, cloudRuntime?: "headless" | "web" | null) {
-  if (placement === "desktop") return "Needs OpenWork open on one of your computers at the scheduled time."
-  return cloudRuntime === "web"
-    ? "Runs on your cloud computer, even when your desktop is offline."
-    : "Runs in the cloud, even when your computer is off."
+/** What an Automation can use, which also decides where it runs. */
+export type AutomationCanUse = "computer" | "cloud-computer" | "accounts"
+
+const CAN_USE_ORDER: readonly AutomationCanUse[] = ["computer", "cloud-computer", "accounts"]
+
+export function automationCanUseChoices(
+  placementChoices: readonly AutomationExecutionTarget[],
+  cloud: AutomationCloudOptions | undefined,
+): AutomationCanUse[] {
+  return CAN_USE_ORDER.filter((choice) => {
+    if (choice === "computer") return placementChoices.includes("desktop")
+    if (!placementChoices.includes("cloud")) return false
+    // An older Den that cannot say which cloud it has still offers one cloud choice.
+    if (!cloud) return choice === "cloud-computer"
+    return choice === "cloud-computer" ? cloud.cloudComputer : cloud.accountsOnly
+  })
+}
+
+export function automationPlacementOf(choice: AutomationCanUse): AutomationExecutionTarget {
+  return choice === "computer" ? "desktop" : "cloud"
+}
+
+/** The words for each choice say what the Automation can reach, not where it runs. */
+export function automationCanUseLabel(choice: AutomationCanUse, onThisComputer?: boolean) {
+  if (choice === "computer") return onThisComputer ? "Connected accounts and files on this computer" : "Connected accounts and files on your computer"
+  if (choice === "cloud-computer") return "Connected accounts and files on your cloud computer"
+  return "Only connected accounts"
+}
+
+export function automationCanUseNote(choice: AutomationCanUse) {
+  if (choice === "computer") return "Needs OpenWork open on one of your computers at the scheduled time."
+  if (choice === "cloud-computer") return "Runs on your cloud computer, even when your desktop is offline."
+  return "Runs in the cloud, even when your computer is off."
+}
+
+/** Where an Automation starts: its placement, then the cloud it uses (the cloud default model means only accounts). */
+function initialCanUse(
+  placement: AutomationExecutionTarget,
+  model: CreateAutomation["model"] | undefined,
+  choices: readonly AutomationCanUse[],
+): AutomationCanUse {
+  if (placement === "desktop") return "computer"
+  if (model && isAutomationCloudDefaultModel(model) && choices.includes("accounts")) return "accounts"
+  if (choices.includes("cloud-computer")) return "cloud-computer"
+  return choices.includes("accounts") ? "accounts" : "cloud-computer"
 }
 
 const LOGO_TILE = "grid size-5 place-items-center overflow-hidden rounded-md border border-border bg-background"
@@ -161,12 +202,19 @@ function ConnectedAccountLogos({ accounts, files }: { accounts: readonly Automat
 }
 
 export function AutomationEditor(props: AutomationEditorProps) {
-  const [chosenPlacement, setChosenPlacement] = useState<AutomationExecutionTarget | null>(null)
-  const canChoosePlacement = props.placementChoices?.includes("desktop") === true
-    && props.placementChoices.includes("cloud")
-  const placement = canChoosePlacement && chosenPlacement ? chosenPlacement : props.placement
+  const choices = automationCanUseChoices(props.placementChoices ?? [], props.cloudOptions)
+  const canChoose = choices.length > 1
+  const [chosen, setChosen] = useState<AutomationCanUse | null>(null)
+  const fallbackChoice = initialCanUse(props.placement, props.initial?.model, choices)
+  const canUse = canChoose && chosen && choices.includes(chosen) ? chosen : fallbackChoice
+  const placement = canChoose ? automationPlacementOf(canUse) : props.placement
+  // "Only connected accounts" runs on the organization's one cloud model: there is nothing to pick.
+  const usesCloudDefault = canUse === "accounts"
   const modelOptions = props.modelOptionsByPlacement?.[placement] ?? props.modelOptions
-  const [input, setInput] = useState<CreateAutomation>(() => props.initial ?? defaultInput(modelOptions))
+  const [input, setInput] = useState<CreateAutomation>(() => {
+    const start = props.initial ?? defaultInput(modelOptions)
+    return usesCloudDefault ? { ...start, model: { ...AUTOMATION_CLOUD_DEFAULT_MODEL, variant: null } } : start
+  })
   const [pickerOpen, setPickerOpen] = useState(props.openModelPickerOnMount === true)
   const appliedInitialKey = useRef(props.initialKey)
 
@@ -178,9 +226,12 @@ export function AutomationEditor(props: AutomationEditorProps) {
       return
     }
     // Creating: keep what the person typed; move only off a model this
-    // placement cannot use (models load late, or the placement changed).
-    setInput((current) => withAvailableModel(current, modelOptions))
-  }, [modelOptions, props.initial, props.initialKey])
+    // choice cannot use (models and choices load late, or the choice changed).
+    setInput((current) => {
+      if (!usesCloudDefault) return withAvailableModel(current, modelOptions)
+      return isAutomationCloudDefaultModel(current.model) ? current : { ...current, model: { ...AUTOMATION_CLOUD_DEFAULT_MODEL, variant: null } }
+    })
+  }, [modelOptions, props.initial, props.initialKey, usesCloudDefault])
 
   useEffect(() => {
     if (props.openModelPickerOnMount) setPickerOpen(true)
@@ -188,7 +239,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
 
   const [modelQuery, setModelQuery] = useState("")
   const selectedModel = modelKey(input.model)
-  const currentModelAvailable = modelOptions.some((option) => modelKey(option) === selectedModel)
+  const currentModelAvailable = usesCloudDefault || modelOptions.some((option) => modelKey(option) === selectedModel)
   const modelLabel = describeAutomationModel(input.model, modelOptions)
   const pickerOptions = useMemo(
     () => automationPickerOptions({
@@ -201,11 +252,17 @@ export function AutomationEditor(props: AutomationEditorProps) {
   const pinnedWorkflow = props.pinnedWorkflow
   const cloud = placement === "cloud"
 
-  const choosePlacement = (next: AutomationExecutionTarget) => {
-    setChosenPlacement(next)
-    // The free starter model runs only on a desktop: keep the model when the
-    // new placement offers it, otherwise switch visibly to one it does.
-    setInput((current) => withAvailableModel(current, props.modelOptionsByPlacement?.[next] ?? props.modelOptions))
+  const chooseCanUse = (next: AutomationCanUse) => {
+    setChosen(next)
+    if (next === "accounts") {
+      setInput((current) => ({ ...current, model: { ...AUTOMATION_CLOUD_DEFAULT_MODEL, variant: null } }))
+      return
+    }
+    // The free starter model runs only on a desktop, and the cloud default only
+    // headless: keep the model when the new choice offers it, otherwise switch
+    // visibly to one it does.
+    const options = props.modelOptionsByPlacement?.[automationPlacementOf(next)] ?? props.modelOptions
+    setInput((current) => withAvailableModel(current, options))
   }
   const canSave = useMemo(
     () => input.name.trim().length > 0
@@ -296,7 +353,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
             }}
           />
           <p className="text-xs text-muted-foreground">{cloud
-            ? props.cloudRuntime === "web" ? "Each run starts a new task on your cloud computer." : "Each run starts fresh in the cloud."
+            ? canUse === "accounts" ? "Each run starts fresh in the cloud." : "Each run starts a new task on your cloud computer."
             : "Each run starts a new task on your desktop computer."}</p>
         </div>
       )}
@@ -378,7 +435,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
             }}
           />
         </div>
-        {pinnedWorkflow ? null : <div className="space-y-2">
+        {pinnedWorkflow || usesCloudDefault ? null : <div className="space-y-2">
           <Label htmlFor="automation-model">Model</Label>
           <Button
             id="automation-model"
@@ -397,9 +454,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
             options={pickerOptions}
             query={modelQuery}
             setQuery={setModelQuery}
-            subtitle={cloud
-              ? props.cloudRuntime === "web" ? "Your cloud computer uses this model and reasoning level." : "Cloud runs use this model and reasoning level."
-              : "Your desktop computer uses this model and reasoning level."}
+            subtitle={cloud ? "Your cloud computer uses this model and reasoning level." : "Your desktop computer uses this model and reasoning level."}
             target="default"
             current={{ providerID: input.model.providerId, modelID: input.model.modelId }}
             onSelect={(model) => {
@@ -425,28 +480,30 @@ export function AutomationEditor(props: AutomationEditorProps) {
         </div>}
       </div>
 
-      {canChoosePlacement ? (
+      {canChoose ? (
         <div className="space-y-2">
           <Label id="automation-can-use">What it can use</Label>
           <RadioGroup
             aria-labelledby="automation-can-use"
             data-automation-runs-on={placement}
-            value={placement}
+            data-automation-can-use={canUse}
+            value={canUse}
             onValueChange={(next) => {
-              if (next === "desktop" || next === "cloud") choosePlacement(next)
+              const match = choices.find((choice) => choice === next)
+              if (match) chooseCanUse(match)
             }}
             className="gap-0 overflow-hidden rounded-xl border border-border"
           >
-            {PLACEMENT_OPTIONS.map((option) => (
+            {choices.map((choice) => (
               <label
-                key={option}
+                key={choice}
                 className="flex min-h-11 cursor-pointer items-center gap-3 border-border px-3 py-2.5 text-sm transition-colors duration-150 hover:bg-muted/40 has-[[data-checked]]:bg-muted/50 [&:not(:first-child)]:border-t"
               >
-                <RadioGroupItem value={option} />
-                <span className="min-w-0 flex-1">{automationPlacementLabel(option, { cloudRuntime: props.cloudRuntime, onThisComputer: props.onThisComputer })}</span>
+                <RadioGroupItem value={choice} />
+                <span className="min-w-0 flex-1">{automationCanUseLabel(choice, props.onThisComputer)}</span>
                 <ConnectedAccountLogos
                   accounts={props.connectedAccounts ?? []}
-                  files={option === "desktop" ? "computer" : props.cloudRuntime === "web" ? "cloud-computer" : undefined}
+                  files={choice === "computer" ? "computer" : choice === "cloud-computer" ? "cloud-computer" : undefined}
                 />
               </label>
             ))}
@@ -455,7 +512,7 @@ export function AutomationEditor(props: AutomationEditorProps) {
       ) : null}
 
       <p className="text-sm text-muted-foreground" data-automation-placement={placement}>
-        {automationPlacementNote(placement, props.cloudRuntime)}
+        {automationCanUseNote(canChoose ? canUse : props.placement === "desktop" ? "computer" : fallbackChoice)}
       </p>
 
       <div className="flex justify-end gap-2">

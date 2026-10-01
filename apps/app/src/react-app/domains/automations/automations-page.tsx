@@ -51,7 +51,7 @@ import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider"
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
 import { automationCreationPlacement } from "./automation-availability"
-import { automationCloudRunAvailable, automationCloudRuntime, automationPlacementChoices, resolveAutomationPlacement } from "./automation-placement"
+import { automationCloudOptions, automationCloudRunAvailable, automationPlacementChoices, resolveAutomationPlacement } from "./automation-placement"
 import { useOrgMcpConnections } from "../connections/use-org-mcp-connections"
 import { buildConnectorToolIdentities } from "../connections/connector-tool-identity"
 import { isOrgMcpConnectionReady } from "../settings/extension-items"
@@ -215,7 +215,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
   })
   const placementChoices = automationPlacementChoices({ targets: targetsQuery.data, desktopRuntime: isDesktopRuntime() })
   const cloudRunAvailable = automationCloudRunAvailable(targetsQuery.data)
-  const cloudRuntime = automationCloudRuntime(targetsQuery.data)
+  const cloudOptions = automationCloudOptions(targetsQuery.data)
   // The accounts a cloud run can use, shown on the choice that uses only them.
   const orgConnections = useOrgMcpConnections()
   const connectedAccounts = useMemo((): AutomationConnectedAccount[] => buildConnectorToolIdentities({
@@ -373,7 +373,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
           onOpenProviderSettings={openProviderSettings}
           placement={createPlacement}
           placementChoices={createChoices}
-          cloudRuntime={cloudRuntime}
+          cloudOptions={cloudOptions}
           onThisComputer={isDesktopRuntime()}
           connectedAccounts={connectedAccounts}
           initial={workflow && workflowVersion ? { ...inputDefaults(modelsFor(createPlacement)), name: `${workflow.title} refresh` } : undefined}
@@ -463,7 +463,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
             onOpenProviderSettings={openProviderSettings}
             placement={detailPlacement}
             placementChoices={editChoices}
-            cloudRuntime={cloudRuntime}
+            cloudOptions={cloudOptions}
             onThisComputer={isDesktopRuntime()}
             connectedAccounts={connectedAccounts}
             initial={inputFromDetail(detail)}

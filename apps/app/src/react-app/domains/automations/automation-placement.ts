@@ -29,15 +29,18 @@ export function resolveAutomationPlacement(
 }
 
 /**
- * What a cloud run can reach: on the headless runtime only the person's
- * connected accounts; on an OpenWork Web computer, its files too. Null when
- * Cloud is unavailable or Den is too old to say.
+ * What a cloud run can reach: an OpenWork Web computer's files (when the
+ * person has one), and on the headless runtime only connected accounts. Both
+ * can be offered at once. Undefined when Den is too old to say.
  */
-export function automationCloudRuntime(targets: AutomationExecutionTargetList | null | undefined): "headless" | "web" | null {
-  for (const item of targets?.items ?? []) {
-    if (item.kind === "cloud" && item.available) return item.runtime
+export function automationCloudOptions(targets: AutomationExecutionTargetList | null | undefined): { cloudComputer: boolean; accountsOnly: boolean } | undefined {
+  if (!targets) return undefined
+  for (const item of targets.items) {
+    if (item.kind === "cloud" && item.available) {
+      return { cloudComputer: item.cloudComputer, accountsOnly: item.runtime === "headless" }
+    }
   }
-  return null
+  return { cloudComputer: false, accountsOnly: false }
 }
 
 /** Whether a Desktop Automation can also be run once in the cloud. */

@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
+import { AUTOMATION_CLOUD_DEFAULT_MODEL } from "@openwork/types/automations"
 import type {
   AutomationCloudTarget,
   AutomationDesktopTarget,
@@ -10,7 +11,7 @@ import type {
 } from "@openwork/types/automations"
 
 import {
-  automationCloudRunAvailable, automationCloudRuntime,
+  automationCloudOptions, automationCloudRunAvailable,
   automationPlacementChoices,
   resolveAutomationPlacement,
 } from "../src/react-app/domains/automations/automation-placement"
@@ -40,8 +41,8 @@ function targets(items: AutomationExecutionTargetList["items"]): AutomationExecu
   return { items }
 }
 const desktop: AutomationDesktopTarget = { kind: "desktop", id: "rnr_fixture", platform: "darwin", appVersion: "0.0.0", lastSeenAt: 1, connected: true }
-function cloud(available: boolean): AutomationCloudTarget {
-  return available ? { kind: "cloud", available: true, runtime: "headless" } : { kind: "cloud", available: false, runtime: null }
+function cloud(available: boolean, cloudComputer = false): AutomationCloudTarget {
+  return available ? { kind: "cloud", available: true, runtime: "headless", cloudComputer } : { kind: "cloud", available: false, runtime: null, cloudComputer: false }
 }
 
 describe("Automation placement choices", () => {
@@ -64,11 +65,12 @@ describe("Automation placement choices", () => {
     expect(resolveAutomationPlacement("cloud", ["desktop"])).toBe("desktop")
   })
 
-  test("a cloud run reaches connected accounts only on the headless runtime, files too on a cloud computer", () => {
-    expect(automationCloudRuntime(targets([desktop, { kind: "cloud", available: true, runtime: "headless" }]))).toBe("headless")
-    expect(automationCloudRuntime(targets([desktop, { kind: "cloud", available: true, runtime: "web" }]))).toBe("web")
-    expect(automationCloudRuntime(targets([desktop, cloud(false)]))).toBeNull()
-    expect(automationCloudRuntime(null)).toBeNull()
+  test("the cloud offers a computer's files, only connected accounts, or both", () => {
+    expect(automationCloudOptions(targets([desktop, cloud(true)]))).toEqual({ cloudComputer: false, accountsOnly: true })
+    expect(automationCloudOptions(targets([desktop, cloud(true, true)]))).toEqual({ cloudComputer: true, accountsOnly: true })
+    expect(automationCloudOptions(targets([desktop, { kind: "cloud", available: true, runtime: "web", cloudComputer: true }]))).toEqual({ cloudComputer: true, accountsOnly: false })
+    expect(automationCloudOptions(targets([desktop, cloud(false)]))).toEqual({ cloudComputer: false, accountsOnly: false })
+    expect(automationCloudOptions(null)).toBeUndefined()
   })
 
   test("running once in the cloud is offered only when Cloud can run it now", () => {
@@ -90,7 +92,7 @@ describe("Automation editor: what it can use", () => {
 
   async function renderEditor(
     placementChoices: readonly AutomationExecutionTarget[],
-    context: { cloudRuntime?: "headless" | "web" | null; onThisComputer?: boolean } = { cloudRuntime: "headless", onThisComputer: true },
+    context: { cloudOptions?: { cloudComputer: boolean; accountsOnly: boolean }; onThisComputer?: boolean } = { cloudOptions: { cloudComputer: false, accountsOnly: true }, onThisComputer: true },
   ) {
     const { AutomationEditor } = await import("../src/react-app/domains/automations/automation-editor")
     const saved: Array<{ input: CreateAutomation; placement: AutomationExecutionTarget }> = []
@@ -100,7 +102,7 @@ describe("Automation editor: what it can use", () => {
     await act(async () => root.render(createElement(PlatformProvider, { value: createDefaultPlatform(), children:
       createElement(AutomationEditor, {
         placement: "desktop", placementChoices, modelOptions: [starter, team],
-        cloudRuntime: context.cloudRuntime, onThisComputer: context.onThisComputer,
+        cloudOptions: context.cloudOptions, onThisComputer: context.onThisComputer,
         connectedAccounts: [{ id: "c1", name: "Slack", iconUrl: null }, { id: "c2", name: "Notion", iconUrl: null }],
         modelOptionsByPlacement: { desktop: [starter, team], cloud: [team] },
         busy: false, submitLabel: "Create and activate", onCancel: () => undefined,
@@ -159,11 +161,12 @@ describe("Automation editor: what it can use", () => {
     } finally {
       await editor.unmount()
     }
-    const web = await renderEditor(["desktop", "cloud"], { cloudRuntime: "web", onThisComputer: false })
+    const web = await renderEditor(["desktop", "cloud"], { cloudOptions: { cloudComputer: true, accountsOnly: false }, onThisComputer: false })
     try {
       const choices = document.querySelector("[data-automation-runs-on]")?.textContent ?? ""
       expect(choices).toContain("Connected accounts and files on your computer")
       expect(choices).toContain("Connected accounts and files on your cloud computer")
+      expect(choices).not.toContain("Only connected accounts")
       expect(document.querySelectorAll('[data-automation-files="computer"]')).toHaveLength(1)
       expect(document.querySelectorAll('[data-automation-files="cloud-computer"]')).toHaveLength(1)
     } finally {
@@ -171,7 +174,26 @@ describe("Automation editor: what it can use", () => {
     }
   })
 
-  test("choosing connected accounts only keeps what was typed, leaves the desktop-only starter model, and saves with the choice", async () => {
+  test("with a cloud computer and the headless runtime, all three choices are offered", async () => {
+    const editor = await renderEditor(["desktop", "cloud"], { cloudOptions: { cloudComputer: true, accountsOnly: true }, onThisComputer: true })
+    try {
+      const labels = [...document.querySelectorAll("[data-automation-runs-on] label")].map((row) => row.querySelector(".flex-1")?.textContent)
+      expect(labels).toEqual([
+        "Connected accounts and files on this computer",
+        "Connected accounts and files on your cloud computer",
+        "Only connected accounts",
+      ])
+      // A cloud computer run keeps a chosen model.
+      await editor.choose(1)
+      expect(document.querySelector("[data-automation-can-use]")?.getAttribute("data-automation-can-use")).toBe("cloud-computer")
+      expect(document.querySelector("#automation-model")?.textContent).toContain("Team model")
+      expect(document.querySelector("[data-automation-placement]")?.textContent).toBe("Runs on your cloud computer, even when your desktop is offline.")
+    } finally {
+      await editor.unmount()
+    }
+  })
+
+  test("choosing only connected accounts keeps what was typed and runs on the cloud's one model", async () => {
     const editor = await renderEditor(["desktop", "cloud"])
     try {
       await editor.type("#automation-name", "Morning brief")
@@ -181,7 +203,8 @@ describe("Automation editor: what it can use", () => {
       expect(document.querySelector("[data-automation-runs-on]")?.getAttribute("data-automation-runs-on")).toBe("cloud")
       expect(document.querySelector("[data-automation-placement]")?.textContent).toBe("Runs in the cloud, even when your computer is off.")
       expect(document.querySelector("[data-automation-placement]")?.getAttribute("data-automation-placement")).toBe("cloud")
-      expect(document.querySelector("#automation-model")?.textContent).toContain("Team model")
+      // Nothing to pick: it runs on the organization's cloud model.
+      expect(document.querySelector("#automation-model")).toBeNull()
       expect(document.querySelector<HTMLInputElement>("#automation-name")?.value).toBe("Morning brief")
       await act(async () => document.querySelector<HTMLButtonElement>('[data-automation-editor] button[type="submit"]')?.click())
       expect(editor.saved).toHaveLength(1)
@@ -189,8 +212,11 @@ describe("Automation editor: what it can use", () => {
       expect(editor.saved[0]?.input).toMatchObject({
         name: "Morning brief",
         instructions: "Summarize what changed overnight.",
-        model: { providerId: "lpr_fixture", modelId: "team-model", variant: null },
+        model: { providerId: AUTOMATION_CLOUD_DEFAULT_MODEL.providerId, modelId: AUTOMATION_CLOUD_DEFAULT_MODEL.modelId, variant: null },
       })
+      // Back to this computer: a model it can use again.
+      await editor.choose(0)
+      expect(document.querySelector("#automation-model")?.textContent).toContain("Big Pickle")
     } finally {
       await editor.unmount()
     }

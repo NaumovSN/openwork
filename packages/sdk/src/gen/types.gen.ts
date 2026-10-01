@@ -497,6 +497,7 @@ export type AutomationCloudTarget = {
   kind: "cloud";
   available: boolean;
   runtime: "headless" | "web" | null;
+  cloudComputer: boolean;
 };
 
 export type AutomationExecutionTargetList = {
