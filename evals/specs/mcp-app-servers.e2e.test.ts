@@ -270,7 +270,7 @@ test("an owner composes an App that is its own MCP server, and a teammate uses i
   });
 });
 
-chatTest("an owner builds an App beside the chat and uses an existing App inline", async ({ world, agent, user, probe, step, evidence }) => {
+chatTest("an owner follows App creation progress and opens the finished App beside the chat", async ({ world, agent, user, probe, step, evidence }) => {
   const modelTool = async (marker: string) => (await world.den.mocks.inventory.agentRequests({ promptMarker: marker })).find(request => request.kind === "tool");
   const lookups = async (sinceIso: string) => (await world.inventoryCalls({ sinceIso, atLeast: 1 })).map(call => call.args);
   const reservations = async (sinceIso: string) => (await world.reservations({ sinceIso, atLeast: 1 })).map(call => call.args);
@@ -292,13 +292,26 @@ chatTest("an owner builds an App beside the chat and uses an existing App inline
     await user.screenshot();
   });
 
-  await step("after: creating an App opens its usable preview beside the conversation", async () => {
+  await step("after: the owner sees the agent writing the App after finding its tools", async () => {
+    await world.holdCreation(true);
     builtAt = new Date().toISOString();
     await agent.send(buildPrompt);
+    await user.see({ text: "Writing the app" });
+    expect((await probe.dom('[data-app-creation-step="needs"][data-step-status="complete"]')).elements).toHaveLength(1);
+    expect((await probe.dom('[data-app-creation-step="writing"][data-step-status="running"]')).elements).toHaveLength(1);
+    expect((await probe.dom('[data-app-creation-step="ready"][data-step-status="pending"]')).elements).toHaveLength(1);
+    expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(0);
+    await user.screenshot();
+    evidence.recordAssertionEvidence("Creation progress follows the actual work", "The agent called prepare_app, which verified the four tools and returned a starter. While the agent was still writing, Found what it needs was complete, Writing the app was active, Ready to open was pending, and no preview opened.", true);
+    await world.holdCreation(false);
+  });
+
+  await step("after: a checked App opens as a tab beside the conversation", async () => {
     await user.see({ text: buildReply }, { timeoutMs: 120_000 });
-    expect((await modelTool(buildPrompt))?.toolName).toMatch(/create_app$/);
+    const calls = (await world.den.mocks.inventory.agentRequests({ promptMarker: buildPrompt })).filter(request => request.kind === "tool");
+    expect(calls.map(call => call.toolName)).toEqual([expect.stringMatching(/prepare_app$/), expect.stringMatching(/create_app$/)]);
+    expect((await probe.dom('[data-app-creation-step="ready"][data-step-status="complete"]')).elements).toHaveLength(1);
     await user.see({ role: "button", label: "Open preview" });
-    await user.see({ role: "button", label: "Share" });
     expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(1);
     pricer = await focus(pricerTitle);
     await pricer.see({ role: "heading", label: pricerTitle });
@@ -310,7 +323,7 @@ chatTest("an owner builds an App beside the chat and uses an existing App inline
     expect(await lookups(builtAt)).toEqual([{ sku: launchInput.sku }]);
     expect(await world.reservations({ sinceIso: builtAt })).toEqual([]);
     await user.screenshot();
-    evidence.recordAssertionEvidence("The chat builds the App, and opening it runs its read-only tools without a click", `For "${buildPrompt}", the model called create_app with ${pricerTitle}'s source and four declared tools. The App opened in the right preview and, with no click, loaded today's date from its live Workflow and the unit price from its Inventory lookup, which the provider marks read-only: the order line reads "${pricedLine}". The Inventory MCP recorded one lookup and no reservation.`, true);
+    evidence.recordAssertionEvidence("The chat builds the App, and opening it runs its read-only tools without a click", `For "${buildPrompt}", the model called prepare_app and then create_app with ${pricerTitle}'s source and four declared tools. The App opened in the right preview and, with no click, loaded today's date from its live Workflow and the unit price from its Inventory lookup, which the provider marks read-only: the order line reads "${pricedLine}". The Inventory MCP recorded one lookup and no reservation.`, true);
   });
 
   await step("a click on Reserve stock from the App's own script is refused, because it is not a person's click", async () => {

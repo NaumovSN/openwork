@@ -15,8 +15,6 @@ export type LibraryShareTarget = { kind: "team"; id: string } | { kind: "person"
 
 export type LibraryCloud = {
   ready: boolean;
-  sharingError: boolean;
-  grantsReadyFor: (pluginId: string) => boolean;
   items: DenLibraryItem[];
   directory: DenLibraryOrgDirectory | null;
   pluginById: Map<string, DenLibraryPluginItem>;
@@ -92,14 +90,11 @@ export function useLibraryCloud(input: {
       queryClient.invalidateQueries({ queryKey: ["library-cloud-items", ...scope] }),
       queryClient.invalidateQueries({ queryKey: ["library-cloud-access", ...scope] }),
       queryClient.invalidateQueries({ queryKey: ["library-cloud-grants", ...scope] }),
-      queryClient.invalidateQueries({ queryKey: ["library-cloud-directory", ...scope] }),
     ]);
   };
 
   return {
     ready: input.enabled && itemsQuery.isSuccess,
-    sharingError: itemsQuery.isError || directoryQuery.isError || grantQueries.some((query) => query.isError),
-    grantsReadyFor: (pluginId) => listedAccess?.has(pluginId) === true || grantQueries[unlisted.findIndex((plugin) => plugin.id === pluginId)]?.isSuccess === true,
     items,
     directory,
     pluginById: new Map(plugins.map((plugin) => [plugin.id, plugin])),

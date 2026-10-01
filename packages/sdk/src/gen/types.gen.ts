@@ -10610,7 +10610,7 @@ export type GetV1McpAppsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * The caller must be an organization member.
+   * Only workspace owners and admins can list Apps for dashboards.
    */
   403: ForbiddenError;
 };

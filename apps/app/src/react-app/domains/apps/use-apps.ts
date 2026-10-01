@@ -28,7 +28,6 @@ export function useAppsClient() {
     },
   });
   return {
-    identityVerified: Boolean(auth.isSignedIn && identity && identity.organizationId === settings.activeOrgId),
     canManage: auth.isSignedIn && identity?.organizationId === settings.activeOrgId && !role.isError && isDenOrgAdminRole(role.data),
     client: auth.isSignedIn ? client : null,
     orgId: settings.activeOrgId,

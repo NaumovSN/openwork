@@ -1,8 +1,9 @@
-import { BuiltAppChatPreview, BuiltAppPreviewSync } from "@/react-app/domains/apps/built-app-chat-preview"
-import { appBuilderResultFailed, builtAppSummary, isAppBuilderPart } from "@/react-app/domains/apps/built-mcp-app-model"
-import { AppBuilderStep } from "./app-builder-step"
 "use memo";
 
+import { appCreationRuns } from "@/react-app/domains/apps/app-creation-progress"
+import { BuiltAppChatPreview, BuiltAppPreviewSync } from "@/react-app/domains/apps/built-app-chat-preview"
+import { builtAppSummary } from "@/react-app/domains/apps/built-mcp-app-model"
+import { AppBuilderStep } from "./app-builder-step"
 import * as React from "react"
 import {
   AlertTriangle,
@@ -148,6 +149,7 @@ const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
 /** Above this many step rows a finished turn folds into one summary line. */
 const COLLAPSED_STEP_RUN_MIN_ROWS = 4
 
+const AppCreationPartsContext = React.createContext<ReadonlySet<string>>(new Set())
 const ParentRunActiveContext = React.createContext(true)
 
 function MessageTimestamp({ message, className }: { message: UIMessage; className?: string }) {
@@ -238,6 +240,8 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const resolveLifecycle = useCurrentToolLifecycleResolver()
   const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
   const connectionCardParts = React.useContext(ConnectionCardPartsContext)
+  const appCreationParts = React.useContext(AppCreationPartsContext)
+  if (appCreationParts.has(part.toolCallId)) return null
   if (part.toolCallId === connectionQuestionToolCallId || isReservedConnectionQuestionPart(part)) return null
 
   // Delegated work has its own lifecycle, even after a parent follow-up/error.
@@ -340,7 +344,6 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   // Failed calls use the same sentence line with the "failures are
   // instructions" treatment (inline Reconnect/Retry).
   if (part.type === "dynamic-tool") {
-    if (isAppBuilderPart(part) && !appBuilderResultFailed(part)) return <AppBuilderStep part={part} statusUnknown={statusUnknown} />
     return (
       <CapabilityCallLine
         part={part}
@@ -1361,6 +1364,9 @@ function MessageGroup({
   // client-side messages (e.g. session errors) don't exist on the server and
   // silently corrupt fork/revert boundaries.
   const lastRealItem = items.findLast((item) => !isSessionErrorMessage(item.message))
+  const parentActive = React.useContext(ParentRunActiveContext)
+  const creationRuns = React.useMemo(() => appCreationRuns(items.map(item => item.message)), [items])
+  const creationParts = React.useMemo(() => new Set(creationRuns.flatMap(run => [...(run.preparation ? [run.preparation.toolCallId] : []), ...run.builds.map(part => part.toolCallId)])), [creationRuns])
   const isLiveGroup = isStreaming && isLastGroup
 
   if (!lastItem || isMessageEmptyGroup(items)) {
@@ -1509,6 +1515,7 @@ function MessageGroup({
 
   return (
     <DevProfiler id={`MessageGroup:${lastItem.message.id}`}>
+      <AppCreationPartsContext.Provider value={creationParts}>
       <ConnectionCardPartsContext.Provider value={connectionCardParts}>
       <div className="flex flex-col gap-2 group/message-group">
       {/* The scroll area keeps the same 8px rhythm the parts inside a single
@@ -1531,6 +1538,7 @@ function MessageGroup({
           </LiveSteps>
         )
       ) : null}
+      {creationRuns.map(run => <Message key={`creation-${run.id}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10"><AppBuilderStep run={run} active={parentActive && isLastGroup && !readOnly && (run === creationRuns.at(-1) || Boolean(run.preparation && isToolPartInFlight(run.preparation)) || run.builds.some(isToolPartInFlight))} /></Message>)}
       {mcpAppParts.map(appFrame)}
       {renderItems(proseItems, stepItems.length, collapseSteps)}
       {lastTextMessage && !isStreaming && (
@@ -1572,6 +1580,7 @@ function MessageGroup({
       )}
       </div>
       </ConnectionCardPartsContext.Provider>
+      </AppCreationPartsContext.Provider>
     </DevProfiler>
   )
 }

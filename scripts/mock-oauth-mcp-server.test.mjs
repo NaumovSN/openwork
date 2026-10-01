@@ -251,6 +251,30 @@ test("mock OAuth HTML, Basic auth, and errors keep security boundaries", { timeo
   assert.equal(final.status, 200);
   assert.equal(final.frames.map(frame => frame.choices[0].delta.content ?? "").join(""), "unique text returned by the real tool");
 
+  assert.equal((await fetch(`${origin}/admin/agent-workloads`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workloads: [{ promptMarker: "Build a prepared App", finalReply: "Created", steps: [
+      { tool: "prepare_app", arguments: { title: "Dashboard" } },
+      { tool: "create_app", arguments: { title: "Dashboard" }, argumentsFrom: "app-preparation", holdUntilReleased: true },
+    ] }] }),
+  })).status, 200);
+  const preparationId = "00000000-0000-4000-8000-000000000001";
+  await fetch(`${origin}/admin/agent-hold`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ held: true }) });
+  const held = await fetch(`${origin}/v1/chat/completions`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "discovery-model", messages: [
+      { role: "user", content: "Build a prepared App" },
+      { role: "tool", content: JSON.stringify({ content: [{ type: "text", text: JSON.stringify({ preparationId }) }] }) },
+    ], tools: ["prepare_app", "create_app"].map(name => ({ type: "function", function: { name } })) }),
+  });
+  assert.equal(held.status, 200);
+  const heldBody = held.text();
+  const released = await fetch(`${origin}/admin/agent-hold`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ held: false }) });
+  assert.equal((await released.json()).pending, 0);
+  const heldFrames = (await heldBody).split("\n").filter(line => line.startsWith("data: {")).map(line => JSON.parse(line.slice(6)));
+  const preparedCall = heldFrames.flatMap(frame => frame.choices[0].delta.tool_calls ?? [])[0];
+  assert.deepEqual(JSON.parse(preparedCall.function.arguments), { title: "Dashboard", preparationId });
+
   // The direct skill tools hand off the same way: list_skills narrows to one
   // skill, and get_skill reads it by the capability that list returned.
   assert.equal((await fetch(`${origin}/admin/agent-workloads`, {

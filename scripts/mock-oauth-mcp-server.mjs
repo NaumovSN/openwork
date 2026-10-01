@@ -251,13 +251,14 @@ function validateAgentWorkloads(value) {
       if (!step.arguments || typeof step.arguments !== "object" || Array.isArray(step.arguments)) {
         throw new Error(`agent workload ${promptMarker} tool ${step.tool} needs object arguments`);
       }
-      if (step.argumentsFrom !== undefined && !["computer-mention", "skill-catalog", "capability-search", "skill-list"].includes(step.argumentsFrom)) {
+      if (step.argumentsFrom !== undefined && !["computer-mention", "skill-catalog", "capability-search", "skill-list", "app-preparation"].includes(step.argumentsFrom)) {
         throw new Error(`agent workload ${promptMarker} has an unknown argument source`);
       }
       if (step.allowUnadvertisedTool !== undefined && typeof step.allowUnadvertisedTool !== "boolean") {
         throw new Error(`agent workload ${promptMarker} allowUnadvertisedTool must be a boolean`);
       }
-      return { tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom,
+      if (step.holdUntilReleased !== undefined && typeof step.holdUntilReleased !== "boolean") throw new Error("holdUntilReleased must be a boolean");
+      return { holdUntilReleased: step.holdUntilReleased === true, tool: step.tool.trim(), arguments: structuredClone(step.arguments), argumentsFrom: step.argumentsFrom,
         allowUnadvertisedTool: step.allowUnadvertisedTool === true };
     });
     if (workload.matchAll !== undefined && typeof workload.matchAll !== "boolean")
@@ -503,6 +504,15 @@ function capabilitySearchArguments(messages) {
   return { name: matches[0].name };
 }
 
+// App creation must use the id actually returned by prepare_app, never a guessed one.
+function appPreparationArguments(messages) {
+  let payload = JSON.parse(lastToolText(messages));
+  if (Array.isArray(payload.content)) payload = JSON.parse(agentContentText(payload));
+  const preparationId = payload.preparationId ?? payload.structuredContent?.preparationId;
+  if (typeof preparationId !== "string" || !/^[0-9a-f-]{36}$/i.test(preparationId)) throw new Error("prepare_app did not return a preparation id");
+  return { preparationId };
+}
+
 // list_skills handoff: the next get_skill reads the one skill the catalog returned.
 function skillListArguments(messages) {
   let payload = JSON.parse(lastToolText(messages));
@@ -661,7 +671,8 @@ async function handleAgentCompletion(req, res, entry) {
   const toolArguments = step.argumentsFrom === "computer-mention" ? computerMentionArguments(messages)
     : step.argumentsFrom === "skill-catalog" ? skillCatalogArguments(messages, step.arguments.skill)
     : step.argumentsFrom === "capability-search" ? { ...step.arguments, ...capabilitySearchArguments(scopedMessages) }
-    : step.argumentsFrom === "skill-list" ? { ...step.arguments, ...skillListArguments(scopedMessages) } : step.arguments;
+    : step.argumentsFrom === "skill-list" ? { ...step.arguments, ...skillListArguments(scopedMessages) }
+    : step.argumentsFrom === "app-preparation" ? { ...step.arguments, ...appPreparationArguments(scopedMessages) } : step.arguments;
   if (step.argumentsFrom === "skill-catalog" && toolArguments === null) {
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     agentStream(res, model, [agentChunk(model, { role: "assistant" }),
@@ -687,7 +698,7 @@ async function handleAgentCompletion(req, res, entry) {
       }],
     }),
     agentChunk(model, {}, "tool_calls"),
-  ]);
+  ], step.holdUntilReleased && agentRepliesHeld);
 }
 
 async function readJson(req) {

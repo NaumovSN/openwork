@@ -553,7 +553,8 @@ export async function mcpAppServersChat(seed: Seed, benchmark = false) {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ workloads: [
       { promptMarker: buildPrompt, finalReply: buildReply, latestUserTurn: true, steps: [
-        { tool: "create_app", arguments: { ...appSource("revision one", { title: pricerTitle, sampleOrder: true }), tools } },
+        { tool: "prepare_app", arguments: { title: pricerTitle, tools } },
+        { tool: "create_app", argumentsFrom: "app-preparation", holdUntilReleased: true, arguments: { ...appSource("revision one", { title: pricerTitle, sampleOrder: true }), tools } },
       ] },
       { promptMarker: chatPrompt, finalReply: chatReply, latestUserTurn: true, steps: [
         { tool: "execute_capability", arguments: { name: `plugin:${created.pluginId}:${created.appId}`, body: launchInput } },
@@ -593,6 +594,13 @@ export async function mcpAppServersChat(seed: Seed, benchmark = false) {
   if (reconciled.status !== 200 || reconciled.phase !== "ready" || reconciled.diagnostic !== "ready") throw new Error(`Cloud reconcile failed: ${JSON.stringify(reconciled)}`);
   return {
     app, session, den, created, performanceApps, workspace,
+    /** Hold the model after preparation so the person can inspect real writing progress. */
+    async holdCreation(held: boolean) {
+      const response = await fetch(`${den.mocks.inventory.url}/admin/agent-hold`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ held }),
+      });
+      if (!response.ok) throw new Error("Could not change the creation fixture gate");
+    },
     async profileIndex() {
       const response = await fetch(`${den.ref.apiUrl}/mcp/agent`, {
         method: "POST", headers: { authorization: `Bearer ${field(minted.body, "appHostToken")}`, "content-type": "application/json",

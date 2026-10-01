@@ -7,6 +7,10 @@ import type { DynamicToolUIPart, UIMessage } from "ai";
 import { createOpenworkServerClient } from "../src/app/lib/openwork-server";
 import { MessageListProvider } from "../src/components/chat/message-list-provider";
 import { BuiltAppPreviewSync } from "../src/react-app/domains/apps/built-app-chat-preview";
+import {
+  appCreationProgress,
+  appCreationRuns,
+} from "../src/react-app/domains/apps/app-creation-progress";
 import { builtAppSummary } from "../src/react-app/domains/apps/built-mcp-app-model";
 import { usePanelTabStore } from "../src/react-app/domains/session/panel/panel-tab-store";
 
@@ -187,4 +191,16 @@ test("failed and mismatched MCP results cannot open an App", () => {
       },
     }),
   ).toBeNull();
+});
+
+test("only a successful matching launch completes the creation rail", () => {
+  const part = builder("create-ready", "1");
+  const [run] = appCreationRuns([
+    { id: "assistant", role: "assistant", parts: [part] },
+  ]);
+  expect(appCreationProgress(run, false)).toMatchObject({
+    stage: "ready",
+    running: false,
+    app: { appId },
+  });
 });
