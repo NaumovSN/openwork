@@ -25,6 +25,10 @@ export async function agentVisibility(seed: Seed) {
     "",
   ].join("\n"));
 
+  const casesPath = join(workspacePath, "activity-cases.md");
+  const reproductionPath = join(workspacePath, "reproduction.md");
+  await writeFile(casesPath, "Case: a slow command hands its result to a helper.\n");
+  await writeFile(reproductionPath, "Reproduce: keep the current work visible until its answer arrives.\n");
   const providerId = "visibility-mock";
   const modelId = "visibility-model";
   const prompt = "Why do people say they can't tell when agents are running? Read our support notes, check the logs, and get a helper to look at the error log.";
@@ -45,6 +49,8 @@ export async function agentVisibility(seed: Seed) {
       finalReplyInitiallyReleasedChunks: 0,
       steps: [
         { tool: "read", arguments: { filePath: notesPath, path: notesPath } },
+        { tool: "read", arguments: { filePath: casesPath, path: casesPath } },
+        { tool: "read", arguments: { filePath: reproductionPath, path: reproductionPath } },
         { tool: shell, arguments: {
           command: "sleep 4 && echo '3 sessions show the helper row disappearing'",
           description: "Check the app logs",

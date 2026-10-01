@@ -152,10 +152,14 @@ test(`AGENT-VIS-01 ${resolveEvalEngine()}: a person asks a research question and
       liveShimmers: [...document.querySelectorAll<HTMLElement>('.ow-text-shimmer')]
         .filter(node => node.getBoundingClientRect().height > 0).length,
     }));
-    expect(settled).toMatchObject({ visibleModels: ["Visibility model"], liveSteps: 0, liveShimmers: 0 });
+    expect(settled).toMatchObject({ visibleModels: [], liveSteps: 0, liveShimmers: 0 });
     evidence.recordJsonArtifact("Finished reply layout", settled);
-    evidence.recordAssertionEvidence("Finished work folds beside its answer model",
-      "One answer model label, no live rail or remaining shimmer after the answer settles", true);
+    await user.click({ role: "button", label: /Worked for.*Show steps/ });
+    await user.see({ role: "button", label: /^Thought/ });
+    await user.notSee({ text: world.reasoning });
+    await user.click({ role: "button", label: /Worked for.*Hide steps/ });
+    evidence.recordAssertionEvidence("Finished work folds without inventing a resolved model",
+      "Long work folds; this mock reports an unresolved requested model, so no model badge is invented. Trusted resolved-model placement has focused component coverage.", true);
     evidence.recordAssertionEvidence("The turn ends cleanly", "answer shown, composer back to Run task, no Working line left", true);
     await user.screenshot();
   });
@@ -163,7 +167,7 @@ test(`AGENT-VIS-01 ${resolveEvalEngine()}: a person asks a research question and
   await step("the agent really did what the person watched: read, command, helper", async () => {
     const tools = (await world.requests()).filter((request) => request.kind === "tool").map((request) => request.toolName);
     const helperTools = (await world.helperRequests()).filter((request) => request.kind === "tool").map((request) => request.toolName);
-    const expected = ["read", world.shell, world.engine === "v2" ? "subagent" : "task"];
+    const expected = ["read", "read", "read", world.shell, world.engine === "v2" ? "subagent" : "task"];
     evidence.recordAssertionEvidence("Model calls match the screen", `parent: ${tools.join(" → ")}; helper: ${helperTools.join(" → ")}`,
       JSON.stringify(tools) === JSON.stringify(expected) && helperTools.length === 1);
     expect(tools).toEqual(expected);

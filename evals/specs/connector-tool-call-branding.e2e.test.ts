@@ -12,12 +12,17 @@ test("connector-backed tool calls show first-class branding and human-readable l
   // TODO(primitive): observe the elapsed label on this individual connected action.
   const readRunning = () => probe.eval(() => {
     const row = [...document.querySelectorAll<HTMLElement>('[data-capability-call]')]
-      .find(node => node.innerText.includes('Listing channels'));
+      .find(node => node.getAttribute('data-capability-call')?.endsWith('execute_capability'));
     return { duration: row?.querySelector('.tabular-nums')?.textContent ?? null,
       rawVisible: Boolean(row?.querySelector('pre')), text: row?.innerText ?? "" };
   });
   const first = await probe.eventually(readRunning, { within: 90_000, intervalMs: 100,
-    label: "individual lookup has its own running duration", until: value => value.duration !== null });
+    label: "individual lookup has its own running duration", until: value => value.duration !== null }).catch(async error => {
+    evidence.recordJsonArtifact("Connected action startup diagnostics", { screen: await probe.text(),
+      calls: await world.den.mocks.connector.toolCalls({ name: "list_channels", sinceIso, atLeast: 0 }) });
+    await user.screenshot();
+    throw error;
+  });
   const advanced = await probe.eventually(readRunning, { within: 5_000, intervalMs: 100,
     label: "individual lookup elapsed time advances", until: value => value.duration !== null && value.duration !== first.duration });
   expect(first.rawVisible).toBe(false);
