@@ -1368,7 +1368,7 @@ function MessageGroup({
   const lastRealItem = items.findLast((item) => !isSessionErrorMessage(item.message))
   const parentActive = React.useContext(ParentRunActiveContext)
   const creationRuns = React.useMemo(() => appCreationRuns(items.map(item => item.message), creationRequested), [items, creationRequested])
-  const creationParts = React.useMemo(() => new Set(creationRuns.flatMap(run => [...(run.discoveries ?? []).map(part => part.toolCallId), ...(run.preparation ? [run.preparation.toolCallId] : []), ...run.builds.map(part => part.toolCallId)])), [creationRuns])
+  const creationParts = React.useMemo(() => new Set(creationRuns.flatMap(run => [...(run.executions ?? []).map(part => part.toolCallId), ...(run.discoveries ?? []).map(part => part.toolCallId), ...(run.preparation ? [run.preparation.toolCallId] : []), ...run.builds.map(part => part.toolCallId)])), [creationRuns])
   const isLiveGroup = isStreaming && isLastGroup
 
   if (!lastItem || isMessageEmptyGroup(items)) {

@@ -569,7 +569,7 @@ export function codeModeConnectionParts(part: ToolPart): ToolPart[] {
       occurrences.set(tool, index + 1);
       const callID = appCallId(tool, index);
       const base = { id: callID, callID, messageID: part.messageID, sessionID: part.sessionID, type: "tool" as const, tool };
-      if (call.status === "error" || (outerError && call.status === "running")) return [{ ...base, state: { status: "error", input: readRecord(call, "input") ?? {}, error: readString(call, "error") ?? outerError ?? "The MCP call failed. See the Code Mode result.", metadata: {}, time: { start: startedAt, end: part.state.status === "error" ? part.state.time.end : startedAt } } }];
+      if (outerError && (call.status === "error" || call.status === "running")) return [{ ...base, state: { status: "error", input: readRecord(call, "input") ?? {}, error: readString(call, "error") ?? outerError ?? "The MCP call failed. See the Code Mode result.", metadata: {}, time: { start: startedAt, end: part.state.status === "error" ? part.state.time.end : startedAt } } }];
       if (call.status !== "running") return [];
       // Running inner calls are real engine events; results arrive at execute completion.
       return [{ ...base, state: { status: "running", input: readRecord(call, "input") ?? {}, title: tool, metadata: {}, time: { start: startedAt } } }];

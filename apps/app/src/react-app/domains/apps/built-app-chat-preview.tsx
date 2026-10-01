@@ -60,7 +60,8 @@ export function BuiltAppPreviewSync({
   const pending = useRef(new Set<string>());
   useEffect(() => {
     const updating = new Set<string>();
-    if (active) for (const message of messages) for (const part of message.parts) {
+    const latestTurn = messages.slice(Math.max(0, messages.findLastIndex(message => message.role === "user")));
+    if (active) for (const message of latestTurn) for (const part of message.parts) {
       if (part.type !== "dynamic-tool" || !/(?:^|_)update_app$/.test(part.toolName) || (part.state !== "input-streaming" && part.state !== "input-available")) continue;
       const appId = part.input && typeof part.input === "object" ? Reflect.get(part.input, "appId") : null;
       if (typeof appId === "string") updating.add(appId);

@@ -569,11 +569,11 @@ for (const { name, test: lifecycleTest } of lifecycleTests) {
       await user.click({ role: "option", label: new RegExp(pricerTitle) });
       await revision("revision two");
       await closeFrame();
-      await user.click({ role: "button", label: `More options for ${pricerTitle}` });
+      await user.click({ role: "button", label: `App options for ${pricerTitle}` });
       await user.click({ role: "menuitem", label: `Refresh ${pricerTitle}` });
       await revision("revision two");
       await closeFrame();
-      await user.click({ role: "button", label: `More options for ${pricerTitle}` });
+      await user.click({ role: "button", label: `App options for ${pricerTitle}` });
       await user.click({ role: "menuitem", label: `Remove ${pricerTitle} from dashboard` });
       expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(0);
       await user.click({ role: "button", label: "Undo" });

@@ -10,6 +10,7 @@ export type AppCreationRun = {
   id: string;
   preparation?: DynamicToolUIPart;
   discoveries?: DynamicToolUIPart[];
+  executions?: DynamicToolUIPart[];
   builds: DynamicToolUIPart[];
 };
 export type AppCreationStage = "needs" | "writing" | "checking" | "ready";
@@ -95,6 +96,10 @@ export function appCreationRuns(messages: UIMessage[], creationRequested = false
       if (run) run.builds.push(part);
       else runs.push({ id: part.toolCallId, builds: [part] });
     }
+  }
+  for (const run of runs) {
+    const calls = [...(run.discoveries ?? []), ...(run.preparation ? [run.preparation] : []), ...run.builds];
+    run.executions = [...parts.values()].filter(part => part.callProviderMetadata?.openwork?.codeMode && calls.some(call => call.toolCallId.startsWith(`${part.toolCallId}:app:`)));
   }
   return runs;
 }

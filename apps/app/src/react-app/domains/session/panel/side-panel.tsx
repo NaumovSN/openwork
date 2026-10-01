@@ -712,7 +712,7 @@ export function SidePanel({
           event.stopPropagation();
         }}
       >
-        <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
+        {!(tabs.length === 1 && activeTab?.type === "mcp-app") ? <div className="shrink-0 border-b border-border bg-background mac:bg-background/80 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
           <div className="flex h-10 items-center gap-1 border-b border-border/60 px-2">
             <div className="no-scrollbar min-w-0 flex-1 overflow-x-auto">
               <PanelTabList
@@ -758,7 +758,7 @@ export function SidePanel({
               </Button>
             ) : null}
           </div>
-        </div>
+        </div> : null}
         {!activeTab ? (
           <PanelEmpty
             onOpenBrowser={isBrowserAvailable ? createTab : undefined}

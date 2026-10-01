@@ -39,7 +39,7 @@ export function AppBuilderStep({
       lifecycle !== "interrupted" &&
       lifecycle !== "waiting",
   );
-  const parts = [...(run.discoveries ?? []), ...(run.preparation ? [run.preparation] : []), ...run.builds];
+  const parts = [...(run.executions ?? []), ...(run.discoveries ?? []), ...(run.preparation ? [run.preparation] : []), ...run.builds];
   const starts = parts.flatMap((part) =>
     typeof part.callProviderMetadata?.openwork?.toolStartedAt === "number"
       ? [part.callProviderMetadata.openwork.toolStartedAt]
