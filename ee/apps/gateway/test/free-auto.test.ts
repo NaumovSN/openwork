@@ -4,9 +4,9 @@ import { test } from "node:test"
 import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferenceWindow, managedModelCatalog, readFreeInferenceConfig } from "@openwork/types/den/inference"
-import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
+import { DESKTOP_FREE_RESPONSES_PATH, MEMBER_FREE_RESPONSES_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
   MEMBER_FREE_STATUS_PATH, DESKTOP_FREE_MODEL_ID, desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeSessionPowMessage, leadingZeroBits, type DesktopFreeProofClaims } from "@openwork/free-auto"
-import { readAutoConfig, untaggedAutoEnabled, FREE_OPENAI_CHAT_URL } from "../src/free/shared/config.js"
+import { readAutoConfig, untaggedAutoEnabled, FREE_OPENAI_CHAT_URL, FREE_OPENAI_RESPONSES_URL } from "../src/free/shared/config.js"
 import { freeUsageAmount, rampedDeviceAmount } from "@openwork/free-auto/accounting"
 import { verifyDesktopFreeProof } from "../src/free/guest/proof.js"
 import { deriveReleaseSecret, releaseTag, sha256Hex as desktopFreeHash } from "@openwork/free-auto/node"
@@ -81,6 +81,12 @@ function openAiResponse(id = "chatcmpl-1") {
     usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, completion_tokens_details: { reasoning_tokens: 0 } } }
 }
 const expectedAmount = freeUsageAmount(config, 10, 2)
+function nativeResponse(status = "completed") {
+  return { id: "resp_fixture", object: "response", status, model: `${config.upstreamModel}-2026-09-22`, output: [
+    { id: "fc_fixture", type: "function_call", call_id: "call_fixture", name: "fixture_tool", arguments: "{}", status: "completed" },
+    { id: "rs_fixture", type: "reasoning", summary: [], encrypted_content: "fixture-encrypted-state" },
+  ], usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 1 } } }
+}
 type Upstream = { url: string; headers: Headers; body: Record<string, unknown> }
 function fakeStore(principals: FreePrincipal[], receipts: Array<FreeUsageReceipt | null>, calls: { session: number; charged: number }): FreeAllowanceStore {
   const nonces = new Set<string>()
@@ -141,7 +147,7 @@ test("free Auto stays off without the dedicated OpenAI key or release key and ne
   assert.equal(readAutoConfig({ DESKTOP_FREE_MIN_VERSION: "v1.2.0" }).minimumVersion, "1.2.0")
   assert.throws(() => readAutoConfig({ DESKTOP_FREE_MIN_VERSION: "latest" }), /DESKTOP_FREE_MIN_VERSION/)
   assert.throws(() => readAutoConfig({ INFERENCE_FREE_ENABLED: "true", INFERENCE_FREE_WEEKLY_BUDGET_USD: "1" }))
-  assert.throws(() => readAutoConfig({ INFERENCE_FREE_OPENAI_MODEL: "openai/gpt-5.6-luna" }))
+  assert.throws(() => readAutoConfig({ INFERENCE_FREE_OPENAI_MODEL: "openai/gpt-6-luna" }))
   assert.throws(() => readFreeInferenceConfig({ INFERENCE_FREE_MODEL_ID: "paid-model" }))
   assert.deepEqual(managedModelCatalog().map((model) => model.modelID), [INFERENCE_FREE_MODEL_ID])
 })
@@ -298,7 +304,7 @@ test("members use the regular OpenWork Models routes: Auto only, member allowanc
   assert.equal((await (await call(MEMBER_FREE_STATUS_PATH)).json()).allowance.limitUsd, 5)
   const paid = await call(MEMBER_FREE_CHAT_PATH, { method: "POST", body: prompt.replace(INFERENCE_FREE_MODEL_ID, "anthropic/claude-sonnet-4"), headers: { "content-type": "application/json" } })
   assert.equal(paid.status, 400)
-  assert.equal((await call("/api/v1/responses", { method: "POST", body: prompt, headers: { "content-type": "application/json" } })).status, 404)
+  assert.equal((await call("/api/v1/responses", { method: "POST", body: prompt, headers: { "content-type": "application/json" } })).status, 400)
   assert.equal(f.requests.length, 1)
 })
 
@@ -323,7 +329,8 @@ test("the proxy sends Auto to free Auto for every organization and keeps other m
   for (const metadata of [{}, { inference: { enabled: false } }, { inference: { enabled: true, tier: "tier1" } }]) {
     const route = routeFor(metadata)
     assert.equal((await route.call(MEMBER_FREE_CHAT_PATH, prompt)).status, 200, JSON.stringify(metadata))
-    assert.deepEqual(route.served, ["free"], JSON.stringify(metadata))
+    assert.equal((await route.call(MEMBER_FREE_RESPONSES_PATH, JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, input: "hello" }))).status, 200)
+    assert.deepEqual(route.served, ["free", "free"], JSON.stringify(metadata))
   }
   const paying = routeFor({ inference: { enabled: true, tier: "tier1" } })
   assert.equal((await paying.call(MEMBER_FREE_STATUS_PATH)).status, 200, "a paying organization's members can check their free Auto allowance")
@@ -511,7 +518,7 @@ test("like paid Models, the request is forwarded as sent, with only the model, u
   assert.deepEqual(forwarded.messages, engine.messages)
   assert.equal(JSON.parse(prepareFreeRequest(value, config).body).reasoning_effort, "none", "no effort requested: the cheapest")
   for (const refused of [{ ...value, model: "openai/gpt-6-sol" }, { ...value, messages: [] }, { ...value, messages: "hello" }, null]) {
-    assert.throws(() => prepareFreeRequest(refused, config), /Auto needs a chat completion request/)
+    assert.throws(() => prepareFreeRequest(refused, config), /Auto needs/)
   }
   const large = { ...value, messages: Array.from({ length: 300 }, () => ({ role: "user", content: "x".repeat(1024) })),
     tools: Array.from({ length: 70 }, (_, index) => ({ type: "function", function: { name: `tool_${index}`, description: "x".repeat(10000),
@@ -703,4 +710,104 @@ test("ordinary OpenAI sampling options and multiple choices preserve the provide
   const incomplete = new FreeResponseReceipt(config, 2)
   incomplete.accept(response)
   assert.throws(() => incomplete.complete(), /Incomplete/)
+})
+
+test("native Auto forwards over 128 function tools and stateless continuation items to GPT-6 Luna", async () => {
+  const tools = Array.from({ length: 142 }, (_, index) => ({ type: "function", name: `fixture_tool_${index}`, description: "A fixture tool",
+    parameters: { type: "object", properties: {}, additionalProperties: false }, strict: false }))
+  const input = [{ role: "user", content: "hello" }, { type: "function_call", call_id: "call_fixture", name: "fixture_tool_0", arguments: "{}" },
+    { type: "function_call_output", call_id: "call_fixture", output: "ok" }, { type: "reasoning", id: "rs_fixture", summary: [], encrypted_content: "fixture-encrypted-state" }]
+  const body = JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, input, tools, max_output_tokens: 128_000, reasoning: { effort: "none" },
+    include: ["reasoning.encrypted_content"], stream: false, store: true })
+  const f = fixture({}, () => Response.json(nativeResponse()))
+  for (const request of [signed(DESKTOP_FREE_RESPONSES_PATH, `Bearer ${guest()}`, body),
+    new Request(`https://free.test${MEMBER_FREE_RESPONSES_PATH}`, { method: "POST", body, headers: { "content-type": "application/json" } })]) {
+    const response = await (new URL(request.url).pathname === DESKTOP_FREE_RESPONSES_PATH ? f.app : f.memberApp).fetch(request)
+    assert.equal(response.status, 200)
+    const value = await response.json()
+    assert.equal(value.model, INFERENCE_FREE_MODEL_ID)
+    assert.deepEqual(value.output, nativeResponse().output, "native tool calls and encrypted continuation state reach the SDK unchanged")
+  }
+  assert.equal(config.upstreamModel, "gpt-6-luna")
+  assert.deepEqual([config.inputPrice, config.outputPrice], [0.1, 0.5])
+  for (const request of f.requests) {
+    assert.equal(request.url, FREE_OPENAI_RESPONSES_URL)
+    assert.equal(request.headers.get("authorization"), "Bearer sk-fixture-dedicated-free-key")
+    assert.deepEqual(request.body.tools, tools)
+    assert.deepEqual(request.body.input, input)
+    assert.deepEqual(request.body.reasoning, { effort: "none" })
+    assert.equal(request.body.store, false)
+    assert.equal(request.body.model, "gpt-6-luna")
+    assert.equal(request.body.max_output_tokens, 128_000)
+    assert.equal(request.body.stream_options, undefined)
+  }
+  assert.deepEqual(f.receipts.map((receipt) => receipt?.amount), [expectedAmount, expectedAmount])
+  assert.deepEqual(f.principals.map((principal) => principal.kind), ["installation", "member"])
+})
+
+test("native Auto accepts public clients but rejects unapproved models and unmetered Responses features before admission", async () => {
+  const body = { model: INFERENCE_FREE_MODEL_ID, input: "hello" }
+  const f = fixture({}, () => Response.json(nativeResponse()))
+  const call = (payload: unknown) => f.app.fetch(new Request(`https://free.test${DESKTOP_FREE_RESPONSES_PATH}`, {
+    method: "POST", body: JSON.stringify(payload), headers: { "content-type": "application/json", authorization: "Bearer public" },
+  }))
+  assert.equal((await call(body)).status, 200)
+  for (const blocked of [{ background: true }, { previous_response_id: "resp_previous" }, { conversation: "conv_previous" },
+    { tools: [{ type: "web_search" }] }, { input: [] }, { model: "paid-model" }]) assert.equal((await call({ ...body, ...blocked })).status, 400)
+  assert.equal(f.requests.length, 1)
+  assert.equal(f.principals.length, 1)
+  const mint = await (await f.app.fetch(session())).json()
+  assert.equal(mint.model, INFERENCE_FREE_MODEL_ID)
+  assert.throws(() => readFreeInferenceConfig({ INFERENCE_FREE_MODEL_ID: "unapproved-model" }), /Unapproved free model/)
+})
+
+test("native SSE forwards tool deltas and settles completed or incomplete usage without a DONE marker", async () => {
+  for (const status of ["completed", "incomplete"]) {
+    const events = [{ type: "response.created", response: { ...nativeResponse(), status: "in_progress", output: [], usage: null } },
+      { type: "response.function_call_arguments.delta", item_id: "fc_fixture", output_index: 0, delta: '{"text":"hé"}' },
+      { type: `response.${status}`, response: nativeResponse(status) }]
+    const bytes = new TextEncoder().encode(events.map((event) => `event: ${event.type}\r\ndata: ${JSON.stringify(event)}\r\n\r\n`).join(""))
+    let cancelled = false
+    const f = fixture({}, () => new Response(new ReadableStream({ start(controller) {
+      for (let i = 0; i < bytes.length; i += 7) controller.enqueue(bytes.slice(i, i + 7))
+    }, cancel() { cancelled = true } }), { headers: { "content-type": "text/event-stream" } }))
+    const response = await f.app.fetch(signed(DESKTOP_FREE_RESPONSES_PATH, `Bearer ${guest()}`,
+      JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, input: "hello", stream: true })))
+    const text = await response.text()
+    assert.ok(text.includes("response.function_call_arguments.delta"))
+    assert.ok(text.includes("hé"))
+    assert.ok(text.includes("fixture-encrypted-state"))
+    assert.ok(!text.includes("[DONE]"))
+    assert.ok(!text.includes(`${config.upstreamModel}-2026-09-22`))
+    assert.equal(cancelled, true)
+    assert.deepEqual(f.receipts, [{ amount: expectedAmount, eventId: "resp_fixture", model: INFERENCE_FREE_MODEL_ID, inputTokens: 10, outputTokens: 2 }])
+    assert.equal(f.calls.charged, 1)
+  }
+})
+
+test("native error, mismatched identity, missing usage, truncated stream and cancellation settle once conservatively", async () => {
+  const created = { type: "response.created", response: { ...nativeResponse(), status: "in_progress", usage: null } }
+  for (const events of [[created], [created, { type: "response.failed", response: { ...nativeResponse(), status: "failed" } }],
+    [created, { type: "response.completed", response: { ...nativeResponse(), id: "resp_other" } }]]) {
+    const receipts: Array<FreeUsageReceipt | null> = []
+    const stream = meterFreeResponse(new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")).body!, {
+      config, protocol: "responses", streaming: true, maxBytes: 100_000, signal: new AbortController().signal,
+      settle: async (receipt) => { receipts.push(receipt) },
+    })
+    await assert.rejects(new Response(stream).text())
+    assert.deepEqual(receipts, [null])
+  }
+  const receipts: Array<FreeUsageReceipt | null> = []
+  const missingUsage = meterFreeResponse(Response.json({ ...nativeResponse(), usage: null }).body!, {
+    config, protocol: "responses", streaming: false, maxBytes: 100_000, signal: new AbortController().signal, settle: async (receipt) => { receipts.push(receipt) },
+  })
+  assert.equal((await new Response(missingUsage).json()).status, "completed")
+  assert.deepEqual(receipts, [null])
+  const cancelled: Array<FreeUsageReceipt | null> = []
+  const source = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(created)}\n\n`)) } })
+  const reader = meterFreeResponse(source, { config, protocol: "responses", streaming: true, maxBytes: 100_000,
+    signal: new AbortController().signal, settle: async (receipt) => { cancelled.push(receipt) } }).getReader()
+  await reader.read()
+  await reader.cancel()
+  assert.deepEqual(cancelled, [null])
 })

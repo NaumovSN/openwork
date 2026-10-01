@@ -26,7 +26,7 @@ export function nonDefaultModelSummary(model: ModelRef, value: string | null, la
   return !isAutoModel(model) && value !== null ? label : null;
 }
 
-export const AUTO_MODEL_ID = "openai/gpt-5.6-luna";
+export const AUTO_MODEL_ID = "openai/gpt-6-luna";
 export const AUTO_PROVIDER_ID = "openwork-free";
 export const EXPLICIT_MODEL_CHOICE_KEY = "openwork.modelChoice.explicit";
 export function shouldSelectInitialAuto(input: { available: readonly ModelRef[]; current: ModelRef | null; empty: boolean; explicit: boolean }) {

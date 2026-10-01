@@ -106,9 +106,9 @@ describe("Auto submission walls", () => {
     expect(replyModelLabel({ id: "reply", role: "assistant", parts: [], metadata: { opencode: { replyModel: { providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID } } } })).toBeNull();
     expect(replyModelFromInfo({ role: "assistant" })).toBeUndefined();
     const resolved = replyModelFromInfo({ role: "assistant", providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID, resolvedModel: { id: AUTO_MODEL_ID } });
-    expect(replyModelLabel({ id: "resolved", role: "assistant", parts: [], metadata: { opencode: { replyModel: resolved } } })).toBe("GPT-5.6 Luna");
+    expect(replyModelLabel({ id: "resolved", role: "assistant", parts: [], metadata: { opencode: { replyModel: resolved } } })).toBe("GPT-6 Luna");
     const completed = mergeReplyMetadata({ opencode: { replyModel: resolved } }, { opencode: { replyModel: replyModelFromInfo({ role: "assistant", providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID }) } });
-    expect(replyModelLabel({ id: "resolved", role: "assistant", parts: [], metadata: completed })).toBe("GPT-5.6 Luna");
+    expect(replyModelLabel({ id: "resolved", role: "assistant", parts: [], metadata: completed })).toBe("GPT-6 Luna");
     expect(replyModelLabel({ id: "alias", role: "assistant", parts: [], metadata: { opencode: { replyModel: replyModelFromInfo({ role: "assistant", providerID: "ipr_fixture", modelID: "gwm_alias" }) } } })).toBeNull();
     const metadata = mergeReplyMetadata({ opencode: { replyModel: reply, created: 1 } }, { opencode: { completed: 2 } });
     expect(replyModelLabel({ id: "reply", role: "assistant", parts: [], metadata })).toBe("actual-witness");

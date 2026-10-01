@@ -54,7 +54,7 @@ test("refusals read calmly, as the free limit when we turned Auto off, and keep 
 });
 
 test("Auto refusals that arrive mid-send, like a key swapped when a trial ends, never show a raw or API-key error", () => {
-  const auto = { providerID: "openwork-free", modelID: "openai/gpt-5.6-luna" };
+  const auto = { providerID: "openwork-free", modelID: "openai/gpt-6-luna" };
   for (const code of ["invalid_api_key", "free_member_unavailable", "free_inference_upstream_error", "free_inference_upstream_unavailable", "request_log_unavailable"]) {
     const wall = autoAccessWallFromError({ error: { code, message: "raw" } }, auto);
     expect(wall).toMatchObject({ state: "unavailable", code, message: "raw" });
@@ -68,7 +68,7 @@ test("Auto refusals that arrive mid-send, like a key swapped when a trial ends, 
 });
 
 test("an older gateway's new-machine cap reads as the free limit, not as Auto being busy", () => {
-  const wall = autoAccessWallFromError({ error: { code: "anonymous_new_identity_capped" } }, { providerID: "openwork-free", modelID: "openai/gpt-5.6-luna" });
+  const wall = autoAccessWallFromError({ error: { code: "anonymous_new_identity_capped" } }, { providerID: "openwork-free", modelID: "openai/gpt-6-luna" });
   expect(wall).toMatchObject({ state: "limit", code: "anonymous_new_identity_capped" });
   expect(autoWallCopy(wall!, false).title).toBe("You’ve reached the free Auto limit");
 });

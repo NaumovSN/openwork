@@ -128,7 +128,7 @@ export type InferenceOrganizationMetadata = {
   tier: InferenceTier;
 };
 
-export const INFERENCE_FREE_MODEL_ID = "openai/gpt-5.6-luna";
+export const INFERENCE_FREE_MODEL_ID = "openai/gpt-6-luna";
 export const INFERENCE_FREE_ENV = {
   enabled: "INFERENCE_FREE_ENABLED",
   weeklyBudgetUsd: "INFERENCE_FREE_WEEKLY_BUDGET_USD",
@@ -156,7 +156,7 @@ export function readFreeInferenceConfig(environment: Record<string, string | und
     || !Number.isSafeInteger(weeklyLimitAmount)) throw new Error("Invalid INFERENCE_FREE_WEEKLY_BUDGET_USD");
   const modelID = environment[INFERENCE_FREE_ENV.modelID] ?? INFERENCE_FREE_MODEL_ID;
   if (modelID !== INFERENCE_FREE_MODEL_ID) throw new Error("Unapproved free model");
-  return { enabled: enabled === "true" || enabled === "1", rolloutAllOrganizations: rollout === "true" || rollout === "1", weeklyBudgetUsd: weeklyLimitAmount / INFERENCE_USAGE_CONVERSION_FACTOR, weeklyLimitAmount, modelID };
+  return { enabled: enabled === "true" || enabled === "1", rolloutAllOrganizations: rollout === "true" || rollout === "1", weeklyBudgetUsd: weeklyLimitAmount / INFERENCE_USAGE_CONVERSION_FACTOR, weeklyLimitAmount, modelID: INFERENCE_FREE_MODEL_ID };
 }
 
 export function freeInferenceWindow(now = new Date()) {

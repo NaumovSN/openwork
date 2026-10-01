@@ -2582,6 +2582,8 @@ function createRoutes(
     anonymousInference.handle(ctx.request, "models"));
   addRoute(routes, "POST", "/anonymous-inference/v1/chat/completions", "none", (ctx) =>
     anonymousInference.handle(ctx.request, "chat/completions"));
+  addRoute(routes, "POST", "/anonymous-inference/v1/responses", "none", (ctx) =>
+    anonymousInference.handle(ctx.request, "responses"));
   // A rollover-capable pool can apply this immediately without disposing
   // the generation that owns live sessions. Legacy/external engines keep
   // the established busy deferral.

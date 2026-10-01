@@ -9,6 +9,7 @@ const test = spec.world(modelPicker, {
 const searchPlaceholder = "Search models…";
 
 test("a signed-in member keeps Auto and BYOK accessible while organizing pins without losing a draft", async ({ world, user, probe, step }) => {
+  expect(world.auto.modelID).toBe("openai/gpt-6-luna");
   const draft = "Keep this draft while choosing a model.";
   const picker = '[data-testid="composer-model-picker"]';
   const key = (model: { providerID: string; modelID: string }) => `${model.providerID}:${model.modelID}`;
@@ -57,7 +58,7 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
     }
     await selected(world.auto);
     await user.see({ role: "button", label: "All models" });
-    await user.notSee({ text: "GPT-5.6 Luna" });
+    await user.notSee({ text: "GPT-6 Luna" });
     await noPurchase();
     await user.hover(option(world.organization));
     await user.screenshot();
