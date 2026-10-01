@@ -1,11 +1,11 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
-  DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_PROVIDER_ID,
+  DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_OPEN_API_KEY, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_PROVIDER_ID,
   DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_CREDENTIAL_PATH, MEMBER_FREE_MODELS_PATH,
   MEMBER_FREE_STATUS_PATH, type DesktopFreeAccessStatus, type DesktopFreeSession, type SessionPowParams,
 } from "@openwork/free-auto";
 import type { CloudProviderDenSession } from "../cloud-provider-sync.js";
-import type { ServerConfig } from "../types.js";
+import type { DesktopFreeSigner, ServerConfig } from "../types.js";
 import { ApiError } from "../errors.js";
 import { externalFetch } from "../server-fetch.js";
 import { managedDesktopPolicy } from "../managed-desktop-policy.js";
@@ -42,6 +42,7 @@ const statusHttpCode = (state: DesktopFreeAccessStatus["state"]) => state === "u
 export class AnonymousInferenceService {
   private readonly settings: RelaySettings;
   private readonly enabled: boolean;
+  private readonly desktop: DesktopFreeSigner | null;
   private localAccessToken = freshLocalToken();
   // The member credential the engine's relay token is bound to. Held only in memory, like the credential itself,
   // and compared directly: it is an identity, not something to derive a digest from.
@@ -76,7 +77,10 @@ export class AnonymousInferenceService {
     this.settings = readRelaySettings(environment);
     this.sessionPow = this.settings.pow;
     this.activation = new TaskActivation(now);
-    this.enabled = Boolean(config.anonymousInference?.desktop) && !config.readOnly && !this.settings.disabledByEnvironment;
+    // Without the desktop's signer (OpenWork web, headless), Auto still works signed out as an open client, like
+    // OpenCode Zen's "public" key: no proof and no guest session; the gateway limits it by IP.
+    this.desktop = config.anonymousInference?.desktop ?? null;
+    this.enabled = !config.readOnly && !this.settings.disabledByEnvironment;
   }
 
   // ── Identity ───────────────────────────────────────────────────────────
@@ -188,9 +192,9 @@ export class AnonymousInferenceService {
     const runtime = await readGlobalRuntimeOpencodeConfig(this.config);
     let permitted = this.enabled && runtime.managedPolicy?.allowCustomProviders !== false;
     let reason = !this.enabled ? "disabled by environment" : !permitted ? "custom providers blocked by policy" : null;
-    if (permitted) {
+    if (permitted && this.desktop) {
       try {
-        const { machineId } = await this.config.anonymousInference!.desktop.identity();
+        const { machineId } = await this.desktop.identity();
         // Start paying for the first guest session while the app is still loading.
         this.warmSessionPow(machineId);
       } catch (error) { permitted = false; reason = error instanceof Error ? error.message : "identity unavailable"; }
@@ -207,7 +211,8 @@ export class AnonymousInferenceService {
         return { ...snapshot, provider: mergeRuntimeProviderUpdate(snapshot.provider, { [ANONYMOUS_INFERENCE_PROVIDER_ID]: null }) };
       }
       this.available = true;
-      this.startHeartbeat();
+      // The heartbeat credits a machine's active time; an open client has no machine.
+      if (this.desktop) this.startHeartbeat();
       const provider = ownedProvider(this.localAccessToken, boundPort);
       changed = JSON.stringify(current) !== JSON.stringify(provider);
       return changed ? { ...snapshot, provider: mergeRuntimeProviderUpdate(snapshot.provider, { [ANONYMOUS_INFERENCE_PROVIDER_ID]: provider }) } : snapshot;
@@ -254,7 +259,7 @@ export class AnonymousInferenceService {
 
   private unavailable(code = "anonymous_unavailable"): DesktopFreeAccessStatus {
     return {
-      state: "unavailable", code, currentVersion: this.config.anonymousInference?.desktop.currentVersion ?? "",
+      state: "unavailable", code, currentVersion: this.desktop?.currentVersion ?? "",
       minimumVersion: null, providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID, allowance: null,
     };
   }
@@ -278,7 +283,7 @@ export class AnonymousInferenceService {
       this.disable();
       throw new ApiError(403, "organization_policy_denied", "Desktop free inference is disabled by local policy or configuration.");
     }
-    await this.config.anonymousInference!.desktop.identity();
+    await this.desktop?.identity();
   }
 
   // ── Status and task activation ─────────────────────────────────────────
@@ -347,17 +352,17 @@ export class AnonymousInferenceService {
     if (relayToken) this.assertRelayIdentity(relayToken);
     const member = authenticated ? await this.memberAuthorization() : null;
     if (relayToken) this.assertRelayIdentity(relayToken);
-    const session = authenticated && !member ? await this.guestSession() : null;
+    const session = authenticated && !member && this.desktop ? await this.guestSession() : null;
     await this.assertDispatchAllowed();
     signal.throwIfAborted();
-    const authorization = member ?? (session ? `Bearer ${session.token}` : "");
+    const authorization = member ?? (session ? `Bearer ${session.token}` : this.desktop ? "" : `Bearer ${DESKTOP_FREE_OPEN_API_KEY}`);
     const actualPath = member ? memberPath(path) : path;
-    const proof = await this.config.anonymousInference!.desktop.sign({ method, path: actualPath, body, authorization, ...(nonce ? { nonce } : {}) });
+    const proof = this.desktop ? await this.desktop.sign({ method, path: actualPath, body, authorization, ...(nonce ? { nonce } : {}) }) : null;
     signal.throwIfAborted();
     if (relayToken) this.assertRelayIdentity(relayToken);
     const response = await externalFetch(`${this.settings.origin}${actualPath}`, {
       method, body: method === "GET" ? undefined : body,
-      headers: { [DESKTOP_FREE_PROOF_HEADER]: proof, ...(authorization ? { authorization } : {}),
+      headers: { ...(proof ? { [DESKTOP_FREE_PROOF_HEADER]: proof } : {}), ...(authorization ? { authorization } : {}),
         ...(method === "POST" ? { "content-type": "application/json" } : {}) },
       signal, redirect: "error", credentials: "omit", cache: "no-store",
     });
@@ -408,7 +413,8 @@ export class AnonymousInferenceService {
 
   private async mintGuestSession(signal: AbortSignal, params: SessionPowParams, retry: boolean): Promise<DesktopFreeSession> {
     // The signed proof carries the machine identity; the body carries the proof of work for the proof's own nonce.
-    const { machineId } = await this.config.anonymousInference!.desktop.identity();
+    if (!this.desktop) throw new Error("Guest sessions need the desktop signer.");
+    const { machineId } = await this.desktop.identity();
     const job = this.powPool.take(machineId, params);
     const pow = await job.promise;
     const body = new TextEncoder().encode(JSON.stringify({ pow }));

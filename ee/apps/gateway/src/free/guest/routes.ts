@@ -3,7 +3,7 @@ import { FreeAutoBusyError } from "../shared/capacity.js"
 import { z } from "zod"
 import {
   DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH,
-  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_POW_PATTERN, DESKTOP_FREE_PROOF_HEADER,
+  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_POW_PATTERN, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_OPEN_API_KEY,
   type DesktopFreeAccessStatus, type DesktopFreeVersionError,
 } from "@openwork/free-auto"
 import { managedModelCatalog } from "@openwork/types/den/inference"
@@ -19,8 +19,6 @@ import { FreeRequestError } from "../shared/errors.js"
 import { prepareFreeRequest, readFreeRequest } from "../shared/request.js"
 import { env } from "../../env.js"
 
-/** The key an open client sends, like OpenCode Zen's: it identifies nothing. */
-export const OPEN_API_KEY = "public"
 // The signed proof carries the machine id; the body carries the proof-of-work for this proof's nonce.
 const sessionSchema = z.strictObject({ pow: z.string().regex(DESKTOP_FREE_SESSION_POW_PATTERN).optional() })
 export type FreeRouteDependencies = {
@@ -85,9 +83,9 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
    * "public") is served to any client, limited only by its IP's untagged budget and the shared caps.
    */
   function openRequest(request: Request) {
-    if (request.headers.has(DESKTOP_FREE_PROOF_HEADER) || !untaggedAutoEnabled(config)) return false
+    if (request.headers.has(DESKTOP_FREE_PROOF_HEADER)) return false
     if (["x-api-key", "x-goog-api-key", "api-key"].some((name) => request.headers.has(name))) return false
-    return !request.headers.has("authorization") || bearer(request) === OPEN_API_KEY
+    return !request.headers.has("authorization") || bearer(request) === DESKTOP_FREE_OPEN_API_KEY
   }
 
   // A desktop request needs a guest token bound to this IP, plus a fresh signed proof from the same key and
@@ -98,6 +96,9 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     const token = bearer(c.req.raw)
     const address = dependencies.clientAddress(c)
     if (openRequest(c.req.raw)) {
+      // With the untagged budgets off, an open client is told Auto is unavailable to it, like an untagged build.
+      if (!untaggedAutoEnabled(config)) return { principal: { kind: "installation", id: "", deviceless: true }, minimumVersion: null, currentVersion: "",
+        versionError: { code: "desktop_build_unverified", currentVersion: "", minimumVersion: null, message: "The OpenWork free model is currently unavailable." } }
       if (!address) return { error: desktopFreeGateError(503, "anonymous_unavailable") }
       const ipHash = anonymousIpHash(address, config)
       return { principal: { kind: "installation", id: freeIdentityHash("open-ip", ipHash), untaggedIpHash: ipHash, deviceless: true },

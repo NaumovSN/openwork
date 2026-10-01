@@ -15,6 +15,8 @@ export const DESKTOP_FREE_SESSION_PATH = "/api/anonymous/session";
 export const DESKTOP_FREE_STATUS_PATH = "/api/anonymous/status";
 export const DESKTOP_FREE_MODELS_PATH = "/api/anonymous/v1/models";
 export const DESKTOP_FREE_CHAT_PATH = "/api/anonymous/v1/chat/completions";
+/** Like OpenCode Zen's: a client with no desktop proof sends this key (or none) and is limited by its IP. */
+export const DESKTOP_FREE_OPEN_API_KEY = "public";
 // Signed-in members use their OpenWork Models key on the regular inference routes.
 export const MEMBER_FREE_STATUS_PATH = "/api/v1/auto/status";
 export const MEMBER_FREE_MODELS_PATH = "/api/v1/models";
