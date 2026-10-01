@@ -1169,7 +1169,8 @@ export async function startServer(
   try {
     if (config.resumeInterruptedTasks && !config.readOnly) {
       taskRecovery = await createTaskRecovery(config, async (request) => serverOptions.fetch(request),
-        () => managedDesktopPolicy(config).assert("sync"));
+        () => managedDesktopPolicy(config).assert("sync"),
+        { engineAvailable: (engine) => engine === "v1" || engineV2Preview.connection() !== undefined });
       setTaskRecovery(config, taskRecovery);
     }
     server = await serve({
@@ -1539,7 +1540,15 @@ export async function proxyOpencodeV2Request(input: {
       }
       for (const value of page.data) {
         const session = nativeSession(value);
-        if (typeof session?.id !== "string" || await homes.resolve(value) !== expectedHome) continue;
+        if (typeof session?.id !== "string") continue;
+        let home: string | null;
+        try { home = await homes.resolve(value); }
+        catch (error) {
+          // One unreadable conversation must not hide every other pending request.
+          if (signal?.aborted) throw error;
+          continue;
+        }
+        if (home !== expectedHome) continue;
         owned.add(session.id);
         const directory = nativeSessionDirectory(value);
         if (directory && await homes.canonical(directory) !== expectedHome) moved.add(session.id);
@@ -1565,7 +1574,11 @@ export async function proxyOpencodeV2Request(input: {
       let result: unknown;
       try { result = await readNative(`/api/session/${encodeURIComponent(id)}/${pendingKind}`); }
       catch (error) {
-        if (error instanceof ApiError && error.status === 404) continue; // Deleted while listing.
+        // Deleted while listing, or moved into a folder that no longer exists
+        // (the engine answers 500 for it). Either way it has nothing to answer,
+        // and failing here returned 500 for the whole workspace on every poll.
+        if (signal?.aborted) throw error;
+        if (error instanceof ApiError) continue;
         throw error;
       }
       if (!isRecord(result) || !Array.isArray(result.data)) {
@@ -3326,10 +3339,32 @@ function createRoutes(
     return jsonResponse(engineV2Preview.status());
   });
 
+  // Counts only. The app checks this before a switch or migration so it can
+  // say what is still running instead of orphaning or copying it mid-turn.
+  addRoute(routes, "GET", "/experimental/engine-v2-preview/activity", "client", async () => {
+    const response = jsonResponse(await describeEngineActivity(config, engineV2Preview));
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  });
+
   addRoute(routes, "POST", "/experimental/engine-v2-preview/migrate", "host-token", async (ctx) => {
     ensureWritable(config);
     const body = await readJsonBody(ctx.request);
     if (!isRecord(body) || body.confirm !== true) throw new ApiError(400, "invalid_payload", "Confirm history migration first");
+    if (body.allowActiveSessions !== undefined && typeof body.allowActiveSessions !== "boolean") {
+      throw new ApiError(400, "invalid_payload", "allowActiveSessions must be a boolean");
+    }
+    // A chat copied while its turn is still running lands in v2 half-finished
+    // while v1 keeps running it. Make that an explicit choice.
+    if (body.allowActiveSessions !== true && engineV2Preview.status().migration.state !== "running") {
+      const v1 = await describeV1EngineActivity(config);
+      if (v1.verdict === "busy") {
+        throw new ApiError(409, "engine_migration_active_sessions", "Wait for running tasks to finish before migrating chats.", {
+          busySessions: v1.busySessions,
+          waitingRequests: v1.waitingRequests,
+        });
+      }
+    }
     return jsonResponse(engineV2Preview.migrateHistory());
   });
 
@@ -4925,6 +4960,78 @@ export async function describeRuntimeActivity(config: ServerConfig): Promise<{
     workspaces: probes.length,
     checkedAt: new Date().toISOString(),
   };
+}
+
+export type EngineActivityCount = {
+  verdict: "idle" | "busy" | "unknown";
+  busySessions: number;
+  waitingRequests: number;
+};
+
+/** Running work on the v1 engine across this server's local workspaces. */
+async function describeV1EngineActivity(config: ServerConfig): Promise<EngineActivityCount> {
+  const local = config.workspaces.filter((workspace) => workspace.workspaceType === "local");
+  const probes = await Promise.all(local.map((workspace) => probeWorkspaceActivity(config, workspace)));
+  const busySessions = probes.reduce((total, probe) => total + probe.busySessions, 0);
+  const waitingRequests = probes.reduce((total, probe) => total + probe.waitingRequests, 0);
+  const verdict = busySessions > 0 || waitingRequests > 0
+    ? "busy"
+    : probes.some((probe) => probe.verdict === "unknown") ? "unknown" : "idle";
+  return { verdict, busySessions, waitingRequests };
+}
+
+/** Running conversations on the v2 sidecar, or null while it is not running. */
+async function describeV2EngineActivity(
+  config: ServerConfig,
+  connection: { url: string; username: string; password: string } | undefined,
+): Promise<EngineActivityCount | null> {
+  if (!connection) return null;
+  const authorization = buildEngineAuthProbeHeader(connection.username, connection.password);
+  const running = new Set<string>();
+  let unknown = false;
+  const local = config.workspaces.filter((workspace) => workspace.workspaceType === "local");
+  await Promise.all(local.map(async (workspace) => {
+    try {
+      const url = new URL("/api/session/active", connection.url);
+      url.searchParams.set("location[directory]", workspace.path);
+      const response = await loopbackFetch(url.toString(), {
+        headers: { Authorization: authorization },
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!response.ok) throw new Error(`Activity probe failed with status ${response.status}`);
+      const payload: unknown = await response.json();
+      const data = isRecord(payload) && isRecord(payload.data) ? payload.data : null;
+      if (!data) {
+        unknown = true;
+        return;
+      }
+      for (const [id, status] of Object.entries(data)) {
+        if (isRecord(status) && ["running", "busy", "retry"].includes(String(status.type))) running.add(id);
+      }
+    } catch {
+      unknown = true;
+    }
+  }));
+  return {
+    verdict: running.size > 0 ? "busy" : unknown ? "unknown" : "idle",
+    busySessions: running.size,
+    waitingRequests: 0,
+  };
+}
+
+/**
+ * What switching or migrating would interrupt: v1 work keeps running unseen
+ * after chats move to v2, and switching back to v1 stops the v2 sidecar.
+ */
+export async function describeEngineActivity(
+  config: ServerConfig,
+  engineV2Preview: Pick<EngineV2Preview, "connection">,
+): Promise<{ v1: EngineActivityCount; v2: EngineActivityCount | null; checkedAt: string }> {
+  const [v1, v2] = await Promise.all([
+    describeV1EngineActivity(config),
+    describeV2EngineActivity(config, engineV2Preview.connection()),
+  ]);
+  return { v1, v2, checkedAt: new Date().toISOString() };
 }
 
 /**

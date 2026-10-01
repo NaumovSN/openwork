@@ -348,6 +348,39 @@ describe("workspace OpenCode proxy", () => {
     expect((await post(host, { confirm: true })).status).toBe(200);
   });
 
+  test.serial("history migration waits for running v1 tasks unless the person chooses to continue", async () => {
+    const v1 = startMockOpencode();
+    const workspaceRoot = await createWorkspaceRoot();
+    let migrations = 0;
+    const status = (): engineV2Preview.EngineV2PreviewStatus => ({ migration: { state: "idle", imported: 0, skipped: 0, total: 0 },
+      enabled: false, chatRouting: false, running: false, mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [] });
+    const preview = spyOn(engineV2Preview, "createEngineV2Preview").mockReturnValue({
+      start() {}, migrateHistory: () => { migrations++; return status(); }, status,
+      setEnabled: async () => status(), setChatRouting: async () => status(), connection: () => undefined,
+      ensureWorkspaceReady: async () => {}, refreshProviders: async () => {}, syncWorkspaceMcp: async () => {},
+      warmWorkspace: () => {}, settleWorkspaceSkills: async () => {}, stop: async () => {},
+    });
+    try {
+      const openwork = await startOpenworkServer({ workspaceRoot, opencodeBaseUrl: `http://127.0.0.1:${v1.server.port}`, readOnly: false });
+      const base = `http://127.0.0.1:${openwork.server.port}`;
+      const activity = await fetch(`${base}/experimental/engine-v2-preview/activity`, { headers: auth(openwork.token) });
+      expect(activity.status).toBe(200);
+      expect(await activity.json()).toMatchObject({ v1: { verdict: "busy", busySessions: 1 }, v2: null });
+      const migrate = (body: unknown) => fetch(`${base}/experimental/engine-v2-preview/migrate`, {
+        method: "POST", headers: { "x-openwork-host-token": openwork.config.hostToken, "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const blocked = await migrate({ confirm: true });
+      expect(blocked.status).toBe(409);
+      expect(await blocked.json()).toMatchObject({ code: "engine_migration_active_sessions", details: { busySessions: 1 } });
+      expect(migrations).toBe(0);
+      expect((await migrate({ confirm: true, allowActiveSessions: "yes" })).status).toBe(400);
+      expect((await migrate({ confirm: true, allowActiveSessions: true })).status).toBe(200);
+      expect(migrations).toBe(1);
+    } finally {
+      preview.mockRestore();
+    }
+  });
+
   test.serial("prompt admission bypasses held same-directory maintenance", async () => {
     const workspaceRoot = await createWorkspaceRoot();
     const engine = startMockOpencode();

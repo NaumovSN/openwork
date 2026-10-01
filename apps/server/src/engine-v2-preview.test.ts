@@ -552,3 +552,31 @@ test("warming a folder starts its upkeep in the background without waiting", asy
     expect(calls.filter((call) => call === "PUT /api/mcp/good")).toHaveLength(1);
   });
 });
+
+test("switching engines during chat migration is a conflict, and the migration reports when it started", async () => {
+  // Point migration at a missing v1 database so it ends quickly and never
+  // reads the developer's real history.
+  const historyRoot = await mkdtemp(join(tmpdir(), "openwork-v1-history-"));
+  const previousDb = process.env.OPENCODE_DB;
+  process.env.OPENCODE_DB = join(historyRoot, "missing.db");
+  try {
+    await withFakeSidecar({ reply: () => ({ status: 200, json: { data: [] } }) }, async (preview) => {
+      const started = preview.migrateHistory().migration;
+      expect(started).toMatchObject({ state: "running", phase: "starting" });
+      expect(typeof started.startedAt).toBe("string");
+      await expect(preview.setEnabled(false)).rejects.toMatchObject({ status: 409, code: "engine_migration_running" });
+      await expect(preview.setChatRouting(true)).rejects.toMatchObject({ status: 409, code: "engine_migration_running" });
+      for (let attempt = 0; attempt < 400 && preview.status().migration.state === "running"; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      const finished = preview.status().migration;
+      expect(finished).toMatchObject({ state: "error", startedAt: started.startedAt });
+      expect(finished.error).toContain("No v1 chat history found");
+      expect(finished.phase).toBeUndefined();
+    });
+  } finally {
+    if (previousDb === undefined) delete process.env.OPENCODE_DB;
+    else process.env.OPENCODE_DB = previousDb;
+    await rm(historyRoot, { recursive: true, force: true });
+  }
+});

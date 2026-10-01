@@ -554,8 +554,13 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
       await fill(app, 'input[data-command-palette-input]', "Migrate chats to OpenCode v2");
       await clickText(app, "Migrate chats to OpenCode v2", { selector: "[data-slot=command-item]" });
       await clickButton(app, "Migrate chats");
+      await waitFor(app, () => Boolean(document.querySelector('[data-testid="engine-migration-progress"]')), { label: "migration progress blocks the app" });
       await waitFor(app, () => document.body.innerText.includes("Migrated "), { timeoutMs: 120_000, label: "history migration completes through the desktop server" });
+      await screenshot(app, { caption: "Migration finishes in place and offers the engine switch" });
       expect((await readStatus(app)).chatRouting).toBe(false);
+      // Keep v1 for now; the palette switch below is the path under test.
+      await clickButton(app, "Not now");
+      await waitFor(app, () => !document.querySelector('[data-testid="engine-migration-progress"]'), { label: "migration result dismissed" });
       await go(app, `/workspace/${workspaceId}/settings/advanced`);
       await waitFor(app, () => document.body.innerText.includes("already in v2"), { label: "migration result in Advanced settings" });
       await revealText(app, "V1 chat history");

@@ -108,6 +108,8 @@ type SyncEntry = {
   liveSessionIds: Set<string>;
   statusReconcileTimer: ReturnType<typeof setTimeout> | null;
   statusReconcileAbort: AbortController | null;
+  // Consecutive failed status reads; paces the active poll (see activeSessionStatusReconcileDelayMs).
+  statusReconcileFailures: number;
   runActiveObservedAt: Map<string, number>;
   assistantMessageCompletedAt: Map<string, number>;
   gatewayUsageRuns: Map<string, { scope: number; key: string; providerId: string | null; completed: boolean }>;
@@ -148,8 +150,31 @@ const backgroundDeltaFlushMs = 100;
 // terminal status edge. This is a reconciliation cadence, not a completion
 // timeout: elapsed time never marks a task done.
 const activeSessionStatusReconcileIntervalMs = 250;
+// A failed read leaves the run state untouched (it is not evidence that work
+// stopped), so without backoff an unreachable engine — for example the one
+// the user just switched away from — would be polled at 4 Hz indefinitely.
+const activeSessionStatusReconcileMaxBackoffMs = 15_000;
 
 type SessionStatusSource = "stream" | "connect-reconcile" | "active-reconcile" | "snapshot";
+
+/** Which OpenCode engine a sync entry (or a status read) belongs to. */
+export type SessionSyncEngine = "v1" | "v2";
+
+function syncEngine(baseUrl: string): SessionSyncEngine {
+  return isOpencodeV2BaseUrl(baseUrl) ? "v2" : "v1";
+}
+
+/**
+ * Keep the fast cadence until the read is flagged degraded (a transient blip
+ * still settles within a second), then back off exponentially.
+ */
+export function activeSessionStatusReconcileDelayMs(consecutiveFailures: number): number {
+  if (consecutiveFailures < reconcileFailureDegradedThreshold) return activeSessionStatusReconcileIntervalMs;
+  return Math.min(
+    activeSessionStatusReconcileMaxBackoffMs,
+    1_000 * 2 ** (consecutiveFailures - reconcileFailureDegradedThreshold),
+  );
+}
 
 function developerDiagnosticsEnabled() {
   if (typeof window === "undefined") return false;
@@ -1690,9 +1715,15 @@ async function reconcileSessionRunStatuses(
   // Capture one revision instead of copying every historical sequence on each
   // poll. A same-clock native edge still invalidates this read for its session.
   const sequenceRevision = entry.nativeSequenceRevision;
+  // Activity records are keyed by workspace and session, not by engine. While
+  // another engine's sync is in use for this workspace (chats were switched to
+  // it), the rest of the workspace's records belong to that engine: this
+  // engine's status read cannot settle them. It still settles what it tracks.
+  const workspaceRecordsOwned = !hasActiveOtherEngineSync(entry);
   if (source === "connect-reconcile") {
     const records = useSessionActivityStore.getState().recordsByWorkspaceId[input.workspaceId] ?? {};
-    for (const sessionId of new Set([...Object.keys(records), ...entry.trackedSessionRefs.keys()])) {
+    const candidates = workspaceRecordsOwned ? Object.keys(records) : [];
+    for (const sessionId of new Set([...candidates, ...entry.trackedSessionRefs.keys()])) {
       void reconcileSessionPermissions(entry, sessionId);
       void refreshSessionTodos(input.workspaceId, sessionId);
     }
@@ -1707,11 +1738,13 @@ async function reconcileSessionRunStatuses(
     // presenting a confident ticking "Working" row. Aborted fetches are
     // lifecycle noise (dispose, generation rotation), not failures.
     if (!signal.aborted) {
+      entry.statusReconcileFailures += 1;
       useWorkspaceSyncStreamStore.getState().publishReconcileFailure(key);
     }
     return;
   }
   if (signal.aborted) return;
+  entry.statusReconcileFailures = 0;
   const streamStore = useWorkspaceSyncStreamStore.getState();
   const recovered = (streamStore.reconcileHealthByKey[key]?.consecutiveFailures ?? 0) > 0;
   streamStore.publishReconcileSuccess(key, startedAt);
@@ -1728,7 +1761,7 @@ async function reconcileSessionRunStatuses(
   for (const [sessionId, status] of Object.entries(statuses)) {
     if (source === "connect-reconcile" || isLiveStatus(status)) sessionIds.add(sessionId);
   }
-  const knownSessionIds = source === "connect-reconcile"
+  const knownSessionIds = source === "connect-reconcile" && workspaceRecordsOwned
     ? Object.keys(records)
     : [...entry.trackedSessionRefs.keys(), ...entry.retainedSessionTimers.keys()];
   for (const sessionId of knownSessionIds) {
@@ -1779,7 +1812,33 @@ function scheduleActiveSessionStatusReconciliation(entry: SyncEntry) {
       if (entry.statusReconcileAbort === controller) entry.statusReconcileAbort = null;
       scheduleActiveSessionStatusReconciliation(entry);
     });
-  }, activeSessionStatusReconcileIntervalMs);
+  }, activeSessionStatusReconcileDelayMs(entry.statusReconcileFailures));
+}
+
+/** Another engine's sync for the same workspace is referenced by a live owner. */
+function hasActiveOtherEngineSync(entry: SyncEntry) {
+  const engine = syncEngine(entry.input.baseUrl);
+  for (const other of syncs.values()) {
+    if (other === entry || other.refs <= 0 || other.input.workspaceId !== entry.input.workspaceId) continue;
+    if (syncEngine(other.input.baseUrl) !== engine) return true;
+  }
+  return false;
+}
+
+/**
+ * Chat routing moved this workspace to another engine. A released entry that
+ * only retained sessions would keep polling the engine the app no longer
+ * shows, and its idle reads would settle conversations (including migrated
+ * ones, which keep their ids) that now run on the other engine. Switching
+ * back reconnects and reconciles a fresh entry.
+ */
+function retireOtherEngineSyncs(input: SyncOptions) {
+  const engine = syncEngine(input.baseUrl);
+  for (const [key, entry] of syncs) {
+    if (entry.refs > 0 || entry.input.workspaceId !== input.workspaceId) continue;
+    if (syncEngine(entry.input.baseUrl) === engine) continue;
+    disposeWorkspaceSync(key, entry);
+  }
 }
 
 /**
@@ -1829,6 +1888,7 @@ export function __resetWorkspaceSyncReconcileHealthForTest() {
 
 export function ensureWorkspaceSessionSync(input: SyncOptions) {
   const key = syncKey(input);
+  retireOtherEngineSyncs(input);
   const existing = syncs.get(key);
   if (existing) {
     existing.input = input;
@@ -1872,6 +1932,7 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     liveSessionIds: new Set(),
     statusReconcileTimer: null,
     statusReconcileAbort: null,
+    statusReconcileFailures: 0,
     runActiveObservedAt: new Map(),
     assistantMessageCompletedAt: new Map(),
     gatewayUsageRuns: new Map(),
@@ -1951,7 +2012,8 @@ export function seedSessionStatus(
   workspaceId: string,
   sessionId: string,
   incomingStatus: SessionStatus,
-  options: { snapshotStartedAt: number },
+  /** `engine` is the engine the status was read from; only its syncs adopt the run. */
+  options: { snapshotStartedAt: number; engine?: SessionSyncEngine },
 ) {
   const queryClient = getReactQueryClient();
   const { snapshotStartedAt } = options;
@@ -1982,9 +2044,12 @@ export function seedSessionStatus(
   queryClient.setQueryData(statusKey(workspaceId, sessionId), status);
   if (isLiveStatus(status)) {
     for (const entry of syncs.values()) {
-      if (entry.input.workspaceId === workspaceId) {
-        trackLiveSession(entry, sessionId, status, "snapshot");
-      }
+      if (entry.input.workspaceId !== workspaceId) continue;
+      // Another engine's sync cannot validate this run: its status read does
+      // not list it, so it would settle a live run as idle, invalidate the
+      // transcript, and adopt it again from the refetch on every poll.
+      if (options.engine && syncEngine(entry.input.baseUrl) !== options.engine) continue;
+      trackLiveSession(entry, sessionId, status, "snapshot");
     }
   }
 }
@@ -2011,7 +2076,11 @@ async function refreshSessionTodos(workspaceId: string, sessionId: string) {
   await queryClient.invalidateQueries({ queryKey });
 }
 
-export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionHistory, options: { preview?: boolean } = {}) {
+export function seedSessionState(
+  workspaceId: string,
+  snapshot: OpenworkSessionHistory,
+  options: { preview?: boolean; engine?: SessionSyncEngine } = {},
+) {
   // A reverted window cannot establish which messages are still visible.
   if (options.preview && snapshot.session.revert?.messageID) return;
   const queryClient = getReactQueryClient();
@@ -2063,6 +2132,7 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionH
   if (snapshot.status !== undefined && typeof snapshotStartedAt === "number") {
     seedSessionStatus(workspaceId, snapshot.session.id, snapshot.status, {
       snapshotStartedAt,
+      engine: options.engine,
     });
   }
 
@@ -2218,6 +2288,7 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
     liveSessionIds: new Set(),
     statusReconcileTimer: null,
     statusReconcileAbort: null,
+    statusReconcileFailures: 0,
     runActiveObservedAt: new Map(),
     assistantMessageCompletedAt: new Map(),
     gatewayUsageRuns: new Map(),
