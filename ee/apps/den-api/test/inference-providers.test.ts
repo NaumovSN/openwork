@@ -396,11 +396,13 @@ test("provider lists overlap bounded loading, preserve ordering and recheck team
     // Delete both initial providers so failure does not depend on which worker reaches the catalog first.
     let reads = 0
     let active = 0
+    let deleted: Promise<void> | undefined
     beforeCatalogRead = async () => {
       const call = ++reads
       active += 1
       try {
-        if (call === 1) await db.delete(schema.GatewayProviderTable).where(drizzle.inArray(schema.GatewayProviderTable.id, ids.slice(-2)))
+        if (call === 1) deleted = db.delete(schema.GatewayProviderTable).where(drizzle.inArray(schema.GatewayProviderTable.id, ids.slice(-2))).then(() => undefined)
+        await deleted
         await new Promise((resolve) => setTimeout(resolve, call === 1 ? 10 : 80))
       } finally { active -= 1 }
     }
@@ -1807,6 +1809,95 @@ test("Free provider summaries isolate organization usage and Auto pin writes pre
     await db.delete(schema.OrganizationRoleTable).where(drizzle.inArray(schema.OrganizationRoleTable.organizationId, [orgA, orgB]))
     await db.delete(schema.MemberTable).where(drizzle.inArray(schema.MemberTable.id, members))
     await db.delete(schema.OrganizationTable).where(drizzle.inArray(schema.OrganizationTable.id, [orgA, orgB]))
+  }
+})
+
+test("large provider sync payloads preserve aliases, model updates and live access", async () => {
+  const savedModels = catalog.anthropic.models
+  const fakeSecret = "fake-large-sync-upstream-key"
+  try {
+    const created = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({
+      name: "Large sync fixture", providerId: "anthropic", modelIds: [],
+      credential: { kind: "api_key", secret: fakeSecret }, memberIds: [memberId],
+    }) })
+    expect(created.status).toBe(201)
+    const provider = readProvider(await created.json())
+    const id = normalizeDenTypeId("inferenceProvider", readString(provider, "id"))
+    const groupId = normalizeDenTypeId("gatewayModelGroup", readString(firstRow(provider, "modelGroups"), "id"))
+    const setId = normalizeDenTypeId("gatewayCredentialSet", readString(firstRow(provider, "credentialSets"), "id"))
+    const models = [...savedModels, ...Array.from({ length: 998 }, (_, index) => ({
+      id: `sync-model-${String(index).padStart(4, "0")}`, name: `Sync model ${String(index).padStart(4, "0")}`,
+      config: { id: `sync-model-${String(index).padStart(4, "0")}`, name: `Sync model ${String(index).padStart(4, "0")}` },
+    }))]
+    catalog.anthropic.models = models
+    await db.insert(schema.GatewayProviderModelTable).values(models.slice(savedModels.length).map((model) => ({
+      id: createDenTypeId("inferenceProviderModel"), gateway_provider_id: id,
+      model_id: model.id, name: model.name, model_config: model.config,
+    })))
+    const groupIds = [groupId, ...Array.from({ length: 9 }, () => createDenTypeId("gatewayModelGroup"))]
+    await db.insert(schema.GatewayModelGroupTable).values(groupIds.slice(1).map((idOfGroup, index) => ({
+      id: idOfGroup, gateway_provider_id: id, name: `Sync group ${index + 1}`,
+    })))
+    await db.insert(schema.GatewayProviderAccessTable).values(groupIds.slice(1).map((idOfGroup) => ({
+      id: createDenTypeId("inferenceProviderAccess"), gateway_provider_id: id, model_group_id: idOfGroup,
+      credential_set_id: setId, org_membership_id: memberId, audience_key: `member:${memberId}`,
+    })))
+    const rows = await db.select().from(schema.GatewayProviderModelTable).where(drizzle.eq(schema.GatewayProviderModelTable.gateway_provider_id, id))
+    await db.delete(schema.GatewayModelGroupModelTable).where(drizzle.eq(schema.GatewayModelGroupModelTable.model_group_id, groupId))
+    await db.insert(schema.GatewayModelGroupModelTable).values(rows.flatMap((row, index) => [
+      { id: createDenTypeId("gatewayModelGroupModel"), model_group_id: groupIds[Math.floor(index / 100) % 10], gateway_provider_model_id: row.id },
+      { id: createDenTypeId("gatewayModelGroupModel"), model_group_id: groupIds[(Math.floor(index / 100) + 1) % 10], gateway_provider_model_id: row.id },
+    ]))
+    const connect = async () => {
+      const response = await request(memberCookie, `/v1/inference-providers/${id}/connect`)
+      expect(response.status).toBe(200)
+      const text = await response.text()
+      expect(text).not.toContain(fakeSecret)
+      const payload = readProvider(JSON.parse(text))
+      expect(readString(payload, "apiKey")).toStartWith("ow_gw_")
+      return payload
+    }
+    const initial = await connect()
+    const initialModels = readRows(initial, "models")
+    expect(initialModels).toHaveLength(2_000)
+    expect(new Set(initialModels.map((model) => model.id)).size).toBe(2_000)
+    const durations: number[] = []
+    const queryCounts: number[] = []
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      listQueries = 0
+      countListQueries = true
+      const started = performance.now()
+      const next = await connect()
+      durations.push(Math.round(performance.now() - started))
+      countListQueries = false
+      queryCounts.push(listQueries)
+      expect(readRows(next, "models")).toEqual(initialModels)
+    }
+    console.info("provider_sync_connect_latency", { catalogModels: models.length, groups: groupIds.length,
+      links: 2_000, samplesMs: durations, medianMs: [...durations].sort((a, b) => a - b)[2], queries: queryCounts })
+
+    // An unchanged refresh keeps row IDs and timestamps. A changed model keeps
+    // its wire aliases; removing a catalog model removes only its own links.
+    expect(await db.select().from(schema.GatewayProviderModelTable).where(drizzle.eq(schema.GatewayProviderModelTable.gateway_provider_id, id))).toEqual(rows)
+    const changedModel = models[0]
+    const removedModel = models[1]
+    catalog.anthropic.models = models.filter((model) => model.id !== removedModel.id).map((model) => model.id === changedModel.id
+      ? { ...model, name: "Updated sync model", config: { ...model.config, name: "Updated sync model" } } : model)
+    const changed = readRows(await connect(), "models")
+    expect(changed).toHaveLength(1_998)
+    expect(changed.filter((model) => model.upstreamModelId === changedModel.id).map((model) => model.id))
+      .toEqual(initialModels.filter((model) => model.upstreamModelId === changedModel.id).map((model) => model.id))
+    expect(changed.filter((model) => model.upstreamModelId === changedModel.id).every((model) => model.name === "Updated sync model")).toBe(true)
+    expect(changed.some((model) => model.upstreamModelId === removedModel.id)).toBe(false)
+    const remainingLinks = await db.select().from(schema.GatewayModelGroupModelTable).where(drizzle.inArray(schema.GatewayModelGroupModelTable.model_group_id, groupIds))
+    expect(remainingLinks).toHaveLength(1_998)
+    await db.update(schema.GatewayModelGroupTable).set({ status: "disabled" }).where(drizzle.eq(schema.GatewayModelGroupTable.id, groupIds[0]))
+    expect(readRows(await connect(), "models").some((model) => model.modelGroupId === groupIds[0])).toBe(false)
+    await db.delete(schema.GatewayProviderAccessTable).where(drizzle.eq(schema.GatewayProviderAccessTable.gateway_provider_id, id))
+    expect((await request(memberCookie, `/v1/inference-providers/${id}/connect`)).status).toBe(403)
+  } finally {
+    countListQueries = false
+    catalog.anthropic.models = savedModels
   }
 })
 
