@@ -76,6 +76,10 @@ test(`a member stops one helper from its parent chat (AGENT-CHILD-STOP ${resolve
     await user.click("Run task");
     await user.see({ role: "button", label: "Review fixture. Open sub-agent chat" }, { timeoutMs: 60_000 });
     await user.click({ role: "button", label: "Review fixture. Open sub-agent chat" });
+    // Opening a split pane leaves keyboard focus on the parent's opener.
+    // Interact with the helper's own brief before observing its focused scope.
+    await user.click({ role: "button", label: "Original task" });
+    await user.see({ text: world.childPrompt });
     childId = await world.selectedSessionId();
     expect(childId).not.toBe("");
     expect(childId).not.toBe(world.session.sessionId);
@@ -108,6 +112,8 @@ test(`a member stops one helper from its parent chat (AGENT-CHILD-STOP ${resolve
   });
   await step("returning to the helper keeps navigation usable after Stop", async () => {
     await user.click({ role: "button", label: "Review fixture. Open sub-agent chat" });
+    await user.click({ role: "button", label: "Original task" });
+    expect(await world.selectedSessionId()).toBe(childId);
     await user.see("composer", { editable: true });
     await user.click("composer");
     await user.press("Escape");
