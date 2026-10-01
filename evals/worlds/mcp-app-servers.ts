@@ -571,6 +571,7 @@ export async function mcpAppServersChat(seed: Seed, benchmark = false) {
   const app = await seed.appWeb({ name: "mcp-app-servers-chat", workspacePath, headless: true,
     ...(benchmark ? { env: { OPENWORK_MCP_APP_TIMINGS: "1" } } : {}),
     ...(denOrigin.protocol === "https:" ? { syntheticPreactivatedDenOrigin: denOrigin.origin } : {}) });
+  await seed.signIn(app, den.admin, "App owner");
   const workspace = await seed.workspace(app, workspacePath);
   await configureProvider(seed, app, workspace.workspaceId, "app-chat-model", "app-chat-model", {
     provider: { "app-chat-model": {

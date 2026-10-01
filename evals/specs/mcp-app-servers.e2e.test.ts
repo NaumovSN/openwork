@@ -312,6 +312,7 @@ chatTest("an owner follows App creation progress and opens the finished App besi
     expect(calls.map(call => call.toolName)).toEqual([expect.stringMatching(/prepare_app$/), expect.stringMatching(/create_app$/)]);
     expect((await probe.dom('[data-app-creation-step="ready"][data-step-status="complete"]')).elements).toHaveLength(1);
     await user.see({ role: "button", label: "Open preview" });
+    await user.see({ role: "button", label: "Share" });
     expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(1);
     pricer = await focus(pricerTitle);
     await pricer.see({ role: "heading", label: pricerTitle });
@@ -324,6 +325,22 @@ chatTest("an owner follows App creation progress and opens the finished App besi
     expect(await world.reservations({ sinceIso: builtAt })).toEqual([]);
     await user.screenshot();
     evidence.recordAssertionEvidence("The chat builds the App, and opening it runs its read-only tools without a click", `For "${buildPrompt}", the model called prepare_app and then create_app with ${pricerTitle}'s source and four declared tools. The App opened in the right preview and, with no click, loaded today's date from its live Workflow and the unit price from its Inventory lookup, which the provider marks read-only: the order line reads "${pricedLine}". The Inventory MCP recorded one lookup and no reservation.`, true);
+  });
+
+  await step("before: the owner’s finished App has a Share action beside the preview", async () => {
+    await user.see({ role: "button", label: "Share" });
+    await user.notSee({ text: "Who can use it" });
+    await user.screenshot();
+  });
+
+  await step("after: Share opens the App’s current audience and people and team controls", async () => {
+    await user.click({ role: "button", label: "Share" });
+    await user.see({ text: "Who can use it" });
+    await user.see({ role: "button", label: "Add person" });
+    await user.see({ role: "button", label: "Add team" });
+    await user.screenshot();
+    evidence.recordAssertionEvidence("The owner can manage the App’s audience from its preview", "Share opens the normal audience screen for this App’s owning Plugin, with its existing grants and controls for people and teams. Merely opening the screen does not change access.", true);
+    await user.click({ role: "button", label: "Cancel" });
   });
 
   await step("a click on Reserve stock from the App's own script is refused, because it is not a person's click", async () => {
