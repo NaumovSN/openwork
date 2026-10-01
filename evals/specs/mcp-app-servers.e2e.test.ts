@@ -455,7 +455,7 @@ chatTest("an owner follows App creation progress and opens the finished App besi
   });
 
   await step("removing a dashboard tile keeps the App available to add again", async () => {
-    await user.hover({ label: pricerTitle });
+    await user.hover({ role: "button", label: `Remove ${pricerTitle} from dashboard` });
     await user.click({ role: "button", label: `Remove ${pricerTitle} from dashboard` });
     expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(0);
     await user.click({ role: "button", label: "Add" });
