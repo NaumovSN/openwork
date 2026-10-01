@@ -55,29 +55,28 @@ export function DashboardApps({ onCreateApp, fallbackEndpoints }: { onCreateApp:
   const personal = apps.filter((app) => app.onDashboard);
   const matching = apps.filter((app) => app.view.title.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
   return <>
-    <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
-      <h1 className="text-xl font-medium">Dashboard</h1>
-      {(available && canManage) || built.ready ? <div className="flex items-center gap-2">{canManage && query.data?.sharingEnabled ? <ShareDashboardButton key={JSON.stringify(scope)} apps={personal} /> : null}<Button onClick={() => { setChooser(built.ready ? "existing" : "add"); setError(null); placement.reset(); }}><Plus className="size-4" />Add</Button></div> : null}
+    <header className="mb-8 flex flex-wrap items-center justify-between gap-3 border-b pb-6">
+      <div><h1 className="text-2xl font-semibold">Your dashboard</h1>{!personal.length ? <p className="mt-2 text-sm text-muted-foreground">Apps you pick, with live data. Only you see this layout.</p> : null}</div>
+      {(available && canManage) || built.ready ? <div className="flex items-center gap-2">{canManage && query.data?.sharingEnabled && personal.length > 0 ? <ShareDashboardButton key={JSON.stringify(scope)} apps={personal} /> : null}<Button variant="outline" onClick={() => { setChooser(built.ready ? "existing" : "add"); setError(null); placement.reset(); }}><Plus className="size-4" />Add</Button></div> : null}
     </header>
     {query.isError ? <div className="mb-5 flex items-center gap-3"><p role="alert" className="text-sm">Your apps could not be loaded.</p><Button variant="outline" onClick={() => void query.refetch()}>Try again</Button></div> : null}
     {placement.error && !chooser ? <p role="alert" className="mb-4 text-sm text-destructive">{placement.error.message}</p> : null}
-    <BuiltDashboardTiles built={built} fallbackEndpoints={fallbackEndpoints} />
+    <BuiltDashboardTiles built={built} fallbackEndpoints={fallbackEndpoints} onAdd={() => setChooser("existing")} />
     {available && personal.length ? <section className="mb-8" aria-label="Your apps">
       <h2 className="mb-3 text-sm font-medium">Added by you</h2>
       <DashboardMasonry>{personal.map((app) => <SavedDashboardApp key={JSON.stringify([...scope, app.view.id])} app={app} fallbackEndpoints={fallbackEndpoints} onCreateApp={onCreateApp}
         removing={placement.isPending && placement.variables?.appId === app.view.id}
         onRemove={(geometry) => placement.mutate({ appId: app.view.id, added: false, geometry })} />)}</DashboardMasonry>
-    </section> : (available && canManage) || built.ready ? (built.apps.some((app) => built.ids.includes(app.connectionId)) ? null : <section className="mb-8 rounded-xl border border-dashed p-6">
-      <div className="flex items-start gap-3"><Blocks className="mt-0.5 size-5 text-muted-foreground" /><div>
-        <h2 className="text-sm font-medium">Make this dashboard yours</h2>
-        <Button className="mt-4" variant="outline" onClick={() => setChooser(built.ready ? "existing" : "add")}>Add your first app</Button>
-      </div></div>
+    </section> : (available && canManage) || built.ready ? (built.apps.some((app) => built.ids.includes(app.connectionId)) ? null : <section className="mb-8 flex min-h-96 flex-col items-center justify-center text-center">
+      <div aria-hidden="true" className="mb-7 flex gap-3">{[0, 1, 2].map((index) => <div key={index} className="flex h-24 w-20 items-center justify-center rounded-lg border border-dashed text-muted-foreground/40"><Blocks className="size-5" /></div>)}</div>
+      <h2 className="text-lg font-semibold">Pin the apps you check every day</h2>
+      <Button className="mt-5" onClick={() => setChooser(built.ready ? "existing" : "add")}><Plus className="size-4" />Add an app</Button>
     </section>) : available ? <p className="mb-8 text-xs text-muted-foreground">This dashboard has no apps yet.</p> : null}
     <Dialog open={(canManage || built.ready) && chooser !== null} onOpenChange={(open) => { if (!open && !creating && !placement.isPending) setChooser(null); }}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>{chooser === "existing" || chooser === "saved" ? "Choose an existing app" : "Add to your dashboard"}</DialogTitle>
+      <DialogContent className={chooser === "existing" && built.ready ? "gap-0 overflow-hidden p-0 lg:top-[12vh] lg:max-w-xl lg:translate-y-0 lg:rounded-xl" : undefined}>
+        <DialogHeader className={chooser === "existing" && built.ready ? "sr-only" : undefined}><DialogTitle>{chooser === "existing" || chooser === "saved" ? "Choose an existing app" : "Add to your dashboard"}</DialogTitle>
           {chooser === "add" ? <DialogDescription>Create something useful or choose an app already available to you.</DialogDescription> : null}</DialogHeader>
-        {chooser === "existing" && built.ready ? <div className="space-y-3"><BuiltAppPicker key={JSON.stringify(scope)} built={built} onAdded={() => setChooser(null)} />{canManage && available ? <div className="flex gap-2"><Button variant="ghost" size="sm" onClick={() => setChooser("add")}><Sparkles className="size-4" />Create with OpenWork</Button>{apps.length ? <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setChooser("saved"); }}>Other saved apps</Button> : null}</div> : null}</div> : chooser === "existing" || chooser === "saved" ? <div className="space-y-4">
+        {chooser === "existing" && built.ready ? <div><BuiltAppPicker key={JSON.stringify(scope)} built={built} onAdded={() => setChooser(null)} />{canManage && available ? <div className="flex gap-2 border-t p-2"><Button variant="ghost" size="sm" onClick={() => setChooser("add")}><Sparkles className="size-4" />Create with OpenWork</Button>{apps.length ? <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setChooser("saved"); }}>Other saved apps</Button> : null}</div> : null}</div> : chooser === "existing" || chooser === "saved" ? <div className="space-y-4">
           <Button size="sm" variant="ghost" onClick={() => setChooser(built.ready ? "existing" : "add")}><ArrowLeft className="size-4" />Back</Button>
           <Input aria-label="Search apps" placeholder="Search apps" value={search} onChange={(event) => setSearch(event.target.value)} />
           <div className="max-h-80 space-y-2 overflow-auto">{matching.map((app) => <div key={app.view.id} className="flex items-center gap-3 rounded-lg border p-3">

@@ -75,7 +75,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
   if (denAuth.status === "checking" || (grantedReady && grantedQuery.isPending && !grantedQuery.isFetched)
     || (Boolean(personal.client && personal.orgId) && personal.query.isPending && !personal.query.isFetched)) {
     return (
-      <div className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4" data-dashboard-page>
+      <div className="mx-auto w-full max-w-5xl px-6 py-10 sm:px-8" data-dashboard-page>
         <div className="space-y-2 pt-3" role="status" aria-label="Loading dashboard">
           <Skeleton className="h-8 w-1/3" />
           <Skeleton className="h-40 w-full" />
@@ -119,7 +119,7 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
 
   return (
     <div
-      className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4"
+      className="mx-auto w-full max-w-5xl px-6 py-10 sm:px-8"
       data-dashboard-page
       data-dashboard-cache-scope={cacheScopeKey}
       data-dashboard-consent-scope={consentScopeKey}

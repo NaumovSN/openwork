@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Circle, CircleAlert } from "lucide-react";
+import { CheckCircle2, ChevronRight, Circle, CircleAlert } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { formatToolCallDuration } from "@/lib/tool-call-duration";
 import { isToolPartInFlight } from "@/lib/tool-activity";
 import { useOptionalMessageList } from "./message-list-provider";
@@ -49,6 +50,7 @@ export function AppBuilderStep({
       : [],
   );
   const [now, setNow] = useState(Date.now);
+  const [expanded, setExpanded] = useState(false);
   useEffect(() => {
     if (!progress.running) return;
     setNow(Date.now());
@@ -80,7 +82,15 @@ export function AppBuilderStep({
       data-app-creation-stage={progress.stage}
       aria-label={`${label} ${progress.title}`}
     >
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      {progress.app ? (
+        <Button variant="ghost" className="h-auto justify-start gap-2 px-0 py-1 text-sm" aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}>
+          <img src="/openwork-mark.svg" alt="" className="size-5 dark:invert" />
+          <span>{label} “{progress.title}”</span>
+          <span className="font-normal text-muted-foreground">{stages.length} steps{elapsed !== null ? ` · ${formatToolCallDuration(elapsed)}` : ""}</span>
+          <ChevronRight className={`size-4 text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`} />
+        </Button>
+      ) : <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <img src="/openwork-mark.svg" alt="" className="size-5 dark:invert" />
         <span className="font-medium">
           {label} “{progress.title}”
@@ -90,6 +100,7 @@ export function AppBuilderStep({
             {formatToolCallDuration(elapsed)}
           </span>
         ) : null}
+        {progress.running ? <span className="text-xs text-muted-foreground">usually a few minutes</span> : null}
         {!progress.running && !progress.app ? (
           <span className="text-muted-foreground">
             {progress.failed
@@ -103,7 +114,8 @@ export function AppBuilderStep({
                     : "Paused"}
           </span>
         ) : null}
-      </div>
+      </div>}
+      <div hidden={Boolean(progress.app) && !expanded}>
       <ol
         className="ml-2.5 mt-3 space-y-4 border-l border-border pb-1 pl-7"
         aria-live="polite"
@@ -181,6 +193,7 @@ export function AppBuilderStep({
           <TechnicalDetailsPanel key={part.toolCallId} part={part} />
         ))}
       </details>
+      </div>
     </section>
   );
 }

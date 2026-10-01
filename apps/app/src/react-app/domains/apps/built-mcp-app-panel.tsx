@@ -20,7 +20,10 @@ export function BuiltMcpAppPanel({
       data-built-app-preview={tab.appId}
     >
       <header className="flex h-10 items-center justify-between border-b px-3">
-        <span className="truncate text-sm font-medium">{tab.label}</span>
+        <div className="flex min-w-0 items-center gap-2">
+          <img src="/openwork-mark.svg" alt="" className="size-4 dark:invert" />
+          <span className="truncate text-sm font-medium">{tab.label}</span>
+        </div>
         <div className="flex items-center gap-1">
           {!tab.origin.readOnly && summary ? (
             <BuiltAppShareButton

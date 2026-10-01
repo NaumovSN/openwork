@@ -69,8 +69,8 @@ const { DashboardTileShell } = await import("../src/react-app/domains/dashboard/
 const { dashboardTileRunsAutomatically } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache");
 const refresh = mock(() => {});
 mock.module("../src/react-app/domains/dashboard/mcp-app-tile", () => ({
-  McpAppTile: ({ entry, cacheScopeKey, renderActions }: { entry: DashboardMcpAppEntry; cacheScopeKey: string; renderActions?: DashboardTileActions }) =>
-    <DashboardTileShell title={entry.title} compact renderActions={renderActions} onRefresh={refresh} badge={<span>Updated just now</span>}>
+  McpAppTile: ({ entry, cacheScopeKey, renderActions, actionsPlacement }: { entry: DashboardMcpAppEntry; cacheScopeKey: string; renderActions?: DashboardTileActions; actionsPlacement?: "header" }) =>
+    <DashboardTileShell title={entry.title} compact actionsPlacement={actionsPlacement} renderActions={renderActions} onRefresh={refresh} badge={<span>Updated just now</span>}>
       <div data-live-tool={entry.toolName} data-live-scope={cacheScopeKey}
         data-auto-launch={dashboardTileRunsAutomatically(entry.requiresApproval === true, entry.autoLaunch === true, entry.launchApproved === true, entry.organizationAutoLaunch === true)}
         style={{ height: 720 }}>{JSON.stringify(entry.launchArguments)}</div>
@@ -532,8 +532,8 @@ test.each(["admin", "member", "unknown"])("%s empty dashboard only invites app c
   organizationRole = role;
   detail.onDashboard = false;
   await render("dashboard");
-  expect(findButton("Add your first app") !== undefined).toBe(role === "admin");
-  expect(container.textContent?.includes("Make this dashboard yours")).toBe(role === "admin");
+  expect(findButton("Add an app") !== undefined).toBe(role === "admin");
+  expect(container.textContent?.includes("Pin the apps you check every day")).toBe(role === "admin");
   expect(container.textContent?.includes("This dashboard has no apps yet.")).toBe(role !== "admin");
   expect(document.body.textContent).not.toContain("Only organization owners and admins");
 });
@@ -797,7 +797,7 @@ test("a member adds a shared built App with fuzzy search, refreshes it and remov
   detail.onDashboard = false;
   client.listBuiltMcpApps.mockImplementation(async () => [builtFixture, { ...builtFixture, connectionId: `cob_0${"c".repeat(25)}`, title: "Sales report" }]);
   await render("dashboard");
-  expect(container.textContent).toContain("Make this dashboard yours");
+  expect(container.textContent).toContain("Pin the apps you check every day");
   await act(async () => button("Add").click());
   const input = document.querySelector<HTMLInputElement>('[aria-label="Search apps"]');
   if (!input) throw new Error("App search missing");
@@ -811,13 +811,16 @@ test("a member adds a shared built App with fuzzy search, refreshes it and remov
   await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
   expect(container.querySelector('[aria-label="Bug dashboard"]')).not.toBeNull();
   expect(container.querySelector('[data-live-tool="open_app"]')?.getAttribute("data-auto-launch")).toBe("true");
-  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Refresh Bug dashboard"]')?.click());
+  expect(container.querySelector('[aria-label="App options for Bug dashboard"]')?.closest("header")).not.toBeNull();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="App options for Bug dashboard"]')?.click());
+  await act(async () => document.querySelector<HTMLElement>('[aria-label="Refresh Bug dashboard"]')?.click());
   expect(refresh).toHaveBeenCalledTimes(1);
   expect(client.setAppOnDashboard).not.toHaveBeenCalled();
   const storage = Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index)).find(key => key?.startsWith("openwork:personal-mcp-apps"));
   expect(storage).toBeDefined();
   expect(JSON.parse(window.localStorage.getItem(storage ?? "") ?? "[]")).toEqual([builtFixture.connectionId]);
-  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Remove Bug dashboard from dashboard"]')?.click());
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="App options for Bug dashboard"]')?.click());
+  await act(async () => document.querySelector<HTMLElement>('[aria-label="Remove Bug dashboard from dashboard"]')?.click());
   expect(container.querySelector('[aria-label="Bug dashboard"]')).toBeNull();
   expect(client.setAppOnDashboard).not.toHaveBeenCalled();
 });

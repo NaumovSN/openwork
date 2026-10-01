@@ -315,6 +315,7 @@ chatTest("an owner follows App creation progress and opens the finished App besi
     expect(await probe.eventually(async () => (await probe.dom('[data-app-creation-step="ready"][data-step-status="complete"]')).elements, {
       within: 30_000, intervalMs: 200, label: "the checked App is ready to open", until: elements => elements.length === 1,
     })).toHaveLength(1);
+    expect((await probe.dom('[data-app-builder-step] button[aria-expanded="false"]')).elements).toHaveLength(1);
     await user.see({ role: "button", label: "Open preview" });
     await user.see({ role: "button", label: "Share" });
     expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(1);
@@ -436,15 +437,16 @@ chatTest("an owner follows App creation progress and opens the finished App besi
     await frame?.[Symbol.asyncDispose]();
     frame = undefined;
     await user.click({ role: "button", label: "Dashboard" });
-    await user.see({ role: "heading", label: "Dashboard" });
+    await user.see({ role: "heading", label: "Your dashboard" });
     expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(0);
     await user.screenshot();
   });
 
   await step("after: the owner chooses an existing App and uses it on their dashboard", async () => {
     await user.click({ role: "button", label: "Add" });
-    await user.see({ role: "heading", label: "Choose an existing app" });
+    await user.see({ role: "textbox", label: "Search apps" });
     await user.type({ label: "Search apps" }, "qckordprcr", { replace: true });
+    await user.screenshot();
     await user.click({ role: "option", label: `Add ${pricerTitle}` });
     expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(1);
     try { pricer = await focus(pricerTitle); }
@@ -455,8 +457,13 @@ chatTest("an owner follows App creation progress and opens the finished App besi
   });
 
   await step("removing a dashboard tile keeps the App available to add again", async () => {
-    await user.hover({ role: "button", label: `Remove ${pricerTitle} from dashboard` });
-    await user.click({ role: "button", label: `Remove ${pricerTitle} from dashboard` });
+    await user.click({ role: "button", label: `App options for ${pricerTitle}` });
+    await user.click({ role: "menuitem", label: `Remove ${pricerTitle} from dashboard` });
+    expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(0);
+    await user.click({ role: "button", label: "Undo" });
+    expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(1);
+    await user.click({ role: "button", label: `App options for ${pricerTitle}` });
+    await user.click({ role: "menuitem", label: `Remove ${pricerTitle} from dashboard` });
     expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(0);
     await user.click({ role: "button", label: "Add" });
     await user.type({ label: "Search apps" }, "qckordprcr", { replace: true });
