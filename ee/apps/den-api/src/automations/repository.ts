@@ -24,7 +24,7 @@ import type {
   AutomationRunEventType,
   AutomationUsage,
 } from "@openwork/types/automations"
-import { and, asc, desc, eq, gt, inArray, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AutomationRevisionTable,
   AutomationRunnerTable,
@@ -587,14 +587,50 @@ export class DenAutomationRepository implements AutomationRepository {
     })
   }
 
-  async claimCloud(input: { runId: string; leaseOwner: string; leaseMs: number; maxConcurrency: number; now: number }): Promise<DesktopClaim | null> {
+  /** What a queued cloud run needs before it is claimed: whose it is, and which engine already owns it. */
+  async cloudRunTarget(runId: string): Promise<{ organizationId: string; actionKind: "agent" | "saved_script" | null; engineKind: string | null } | null> {
+    const rows = await db.select({
+      organizationId: AutomationTable.organization_id,
+      engineKind: AutomationRunTable.engine_kind,
+      action: AutomationRevisionTable.action,
+    }).from(AutomationRunTable)
+      .innerJoin(AutomationTable, eq(AutomationTable.id, AutomationRunTable.automation_id))
+      .innerJoin(AutomationRevisionTable, eq(AutomationRevisionTable.id, AutomationRunTable.revision_id))
+      .where(and(eq(AutomationRunTable.id, normalizeRunId(runId)), eq(AutomationRunTable.execution_target, "cloud")))
+      .limit(1)
+    const row = rows[0]
+    if (!row) return null
+    return { organizationId: row.organizationId, actionKind: row.action?.kind ?? null, engineKind: row.engineKind ?? null }
+  }
+
+  /**
+   * `engineKind` selects the concurrency pool: headless runs only count
+   * against other headless runs, so they never wait on OpenWork Web slots
+   * and never take them.
+   */
+  async claimCloud(input: {
+    runId: string
+    leaseOwner: string
+    leaseMs: number
+    maxConcurrency: number
+    engineKind?: string
+    headlessEngineKind?: string
+    now: number
+  }): Promise<DesktopClaim | null> {
     return db.transaction(async (tx) => {
       // Admission and the queued -> running transition share one transaction.
       // Locking the active status ranges serializes competing replicas even
       // when there are currently no active rows (InnoDB next-key locking).
+      const headless = input.headlessEngineKind ?? null
+      const pool = headless === null
+        ? undefined
+        : input.engineKind === headless
+          ? eq(AutomationRunTable.engine_kind, headless)
+          : or(isNull(AutomationRunTable.engine_kind), ne(AutomationRunTable.engine_kind, headless))
       const active = await tx.select({ id: AutomationRunTable.id }).from(AutomationRunTable).where(and(
         eq(AutomationRunTable.execution_target, "cloud"),
         inArray(AutomationRunTable.status, ["claimed", "running"]),
+        pool,
       )).limit(input.maxConcurrency).for("update")
       if (active.length >= input.maxConcurrency) return null
       const rows = await tx.select({ run: AutomationRunTable, automation: AutomationTable })
@@ -613,7 +649,7 @@ export class DenAutomationRepository implements AutomationRepository {
       if (!revision) return null
       const engineKind = revision.action?.kind === "saved_script"
         ? "openwork-cloud-codemode-v1"
-        : "openwork-cloud-agent-v1"
+        : input.engineKind ?? "openwork-cloud-agent-v1"
       await tx.update(AutomationRunTable).set({
         status: "running",
         lease_owner: input.leaseOwner,

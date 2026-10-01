@@ -1,7 +1,14 @@
-import { z } from "zod"
 import type { RemoteSessionAction } from "../mcp/remote-session-capabilities.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
 import { organizationHasCapability } from "../organization-capabilities.js"
+import {
+  createHeadlessRunnerClient,
+  defaultHeadlessRunnerDeps,
+  headlessRunnerConfig,
+  TERMINAL_TURN_STATUSES,
+  type HeadlessRunnerActor,
+  type HeadlessRunnerDeps,
+} from "../headless-runner/client.js"
 
 /**
  * Slack runs for organizations with `slackAssistantHeadless` go to the shared
@@ -11,25 +18,8 @@ import { organizationHasCapability } from "../organization-capabilities.js"
  */
 export const HEADLESS_RUN_MAX_MS = DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS
 
-type HeadlessConfig = { url: string; token: string }
-
-function isSafeRunnerUrl(value: string) {
-  try {
-    const url = new URL(value)
-    if (url.protocol === "https:") return true
-    // Render private services and local development use plain http on an internal network.
-    return url.protocol === "http:" && (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) || !url.hostname.includes("."))
-  } catch {
-    return false
-  }
-}
-
-export function headlessRunnerConfig(env: Record<string, string | undefined> = process.env): HeadlessConfig | null {
-  const url = env.DEN_HEADLESS_RUNNER_URL?.trim()
-  const token = env.DEN_HEADLESS_RUNNER_TOKEN?.trim()
-  if (!url || !token || token.length < 32 || !isSafeRunnerUrl(url)) return null
-  return { url: url.replace(/\/+$/, ""), token }
-}
+export { headlessRunnerConfig }
+export type HeadlessDeps = HeadlessRunnerDeps
 
 export type SlackRuntime = "headless" | "web"
 
@@ -41,22 +31,6 @@ export function slackRuntimeForOrganization(
   const enabled = organizationHasCapability(metadata, "slackAssistantHeadless")
   return enabled && headlessRunnerConfig(env) !== null ? "headless" : "web"
 }
-
-const turnSchema = z.object({ messageId: z.string(), status: z.string(), error: z.string().nullable() })
-const messageSchema = z.discriminatedUnion("role", [
-  z.object({ role: z.literal("user"), text: z.string() }),
-  z.object({
-    role: z.literal("assistant"),
-    text: z.string(),
-    toolCalls: z.array(z.object({ id: z.string(), name: z.string(), input: z.record(z.string(), z.unknown()) })),
-  }),
-  z.object({ role: z.literal("tool"), callId: z.string(), name: z.string(), isError: z.boolean() }),
-])
-const snapshotSchema = z.object({
-  turns: z.array(turnSchema),
-  messages: z.array(z.unknown()),
-  finalAssistantText: z.string(),
-})
 
 /** A short, human label for one tool step in Slack's task timeline. */
 export function stepLabel(name: string, input: Record<string, unknown> = {}) {
@@ -83,97 +57,50 @@ export function stepLabel(name: string, input: Record<string, unknown> = {}) {
   }
 }
 
-export type HeadlessDeps = {
-  config: HeadlessConfig
-  fetch: typeof fetch
-  mintToken: (input: { userId: string; organizationId: string }) => Promise<{ token: string }>
-}
-
-function defaultDeps(): HeadlessDeps | null {
-  const config = headlessRunnerConfig()
-  // Loaded lazily: the minter pulls in the auth and database modules.
-  const mintToken: HeadlessDeps["mintToken"] = async (input) =>
-    (await import("../mcp/headless-run-token-mint.js")).mintHeadlessRunMcpToken(input)
-  return config ? { config, fetch, mintToken } : null
-}
-
-type Actor = { userId: string; organizationId: string }
-
-async function call(deps: HeadlessDeps, method: string, path: string, body?: unknown) {
-  const response = await deps.fetch(`${deps.config.url}${path}`, {
-    method,
-    headers: { authorization: `Bearer ${deps.config.token}`, "content-type": "application/json" },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    signal: AbortSignal.timeout(15_000),
-  })
-  const payload: unknown = await response.json().catch(() => ({}))
-  return { status: response.status, payload }
-}
-
 /** Runner unavailable or overloaded: the Slack run loop retries these. */
 const retryable = (error: string) => ({ error, retryable: true, retryAfterMs: 5_000 })
 
-const catalogSchema = z.object({
-  defaultModel: z.string(),
-  models: z.array(z.object({ id: z.string(), name: z.string() })),
-})
-
 /** The models the runner's Gateway route can serve, for the admin's model picker. Null when unavailable. */
-export async function listHeadlessModels(suppliedDeps: HeadlessDeps | null = defaultDeps()) {
+export async function listHeadlessModels(suppliedDeps: HeadlessDeps | null = defaultHeadlessRunnerDeps()) {
   if (!suppliedDeps) return null
-  try {
-    const { status, payload } = await call(suppliedDeps, "GET", "/v1/models")
-    const parsed = catalogSchema.safeParse(payload)
-    return status === 200 && parsed.success ? parsed.data : null
-  } catch {
-    return null
-  }
+  return createHeadlessRunnerClient(suppliedDeps).listModels()
 }
 
 async function send(
-  deps: HeadlessDeps,
-  actor: Actor,
+  client: ReturnType<typeof createHeadlessRunnerClient>,
+  actor: HeadlessRunnerActor,
   sessionId: string,
   messageId: string,
   prompt: string,
   model?: string,
 ) {
   // One fresh, member-scoped MCP token per admitted run; the runner holds it in memory only.
-  const { token } = await deps.mintToken(actor)
-  const { status, payload } = await call(deps, "POST", `/v1/sessions/${encodeURIComponent(sessionId)}/turns`, {
-    messageId,
-    prompt,
-    ...(model ? { model } : {}),
-    credentials: { mcpToken: token },
-  })
-  if (status === 202) return {}
-  if (status === 404) return { error: "unknown_session", retryable: false }
-  return retryable(`headless_send_${status}`)
+  const sent = await client.sendTurn(actor, { sessionId, messageId, prompt, ...(model ? { model } : {}) })
+  if (sent.ok) return {}
+  if (sent.status === 404) return { error: "unknown_session", retryable: false }
+  return retryable(`headless_send_${sent.status}`)
 }
 
 export async function headlessRemoteCall(
-  actor: Actor,
+  actor: HeadlessRunnerActor,
   action: RemoteSessionAction,
   body: Record<string, unknown>,
-  suppliedDeps: HeadlessDeps | null = defaultDeps(),
+  suppliedDeps: HeadlessDeps | null = defaultHeadlessRunnerDeps(),
 ): Promise<Record<string, unknown>> {
   if (!suppliedDeps) return { error: "headless_runner_not_configured", retryable: false }
-  const deps = suppliedDeps
+  const client = createHeadlessRunnerClient(suppliedDeps)
   const sessionId = typeof body.sessionId === "string" ? body.sessionId : ""
   const messageId = typeof body.messageId === "string" ? body.messageId : ""
 
   if (action === "create") {
-    const { status, payload } = await call(deps, "POST", "/v1/sessions", {
-      title: typeof body.title === "string" ? body.title.slice(0, 200) : undefined,
-    })
-    const created = z.object({ id: z.string() }).safeParse(payload)
-    if (status !== 201 || !created.success) return retryable(`headless_create_${status}`)
-    return { sessionId: created.data.id, workspaceId: "headless" }
+    const created = await client.createSession({ title: typeof body.title === "string" ? body.title : undefined })
+    if (!created.ok) return retryable(`headless_create_${created.status}`)
+    return { sessionId: created.value.id, workspaceId: "headless" }
   }
 
   if (action === "send") {
     return send(
-      deps,
+      client,
       actor,
       sessionId,
       messageId,
@@ -183,37 +110,30 @@ export async function headlessRemoteCall(
   }
 
   if (action === "stop") {
-    const { status } = await call(deps, "POST", `/v1/sessions/${encodeURIComponent(sessionId)}/abort`, { messageId })
-    return status === 200 ? { accepted: true } : { stopped: false }
+    const stopped = await client.abort(sessionId, messageId || undefined)
+    return stopped.reached ? { accepted: true } : { stopped: false }
   }
 
   // read: map the runner transcript onto the snapshot shape run.ts consumes.
-  const { status, payload } = await call(
-    deps,
-    "GET",
-    `/v1/sessions/${encodeURIComponent(sessionId)}?messageId=${encodeURIComponent(messageId)}&limit=500`,
-  )
-  if (status === 404) return { error: "unknown_session", retryable: false }
-  const snapshot = snapshotSchema.safeParse(payload)
-  if (status !== 200 || !snapshot.success) return retryable(`headless_read_${status}`)
-  const turn = snapshot.data.turns.find((entry) => entry.messageId === messageId)
+  const read = await client.readSession(sessionId, { messageId, limit: 500 })
+  if (!read.ok && read.status === 404) return { error: "unknown_session", retryable: false }
+  if (!read.ok) return retryable(`headless_read_${read.status}`)
+  const snapshot = read.value
+  const turn = snapshot.turns.find((entry) => entry.messageId === messageId)
 
   // A runner restart interrupts in-flight turns; re-sending the same messageId resumes them.
   if (turn?.status === "interrupted") {
-    const resumed = await send(deps, actor, sessionId, messageId, "resume")
+    const resumed = await send(client, actor, sessionId, messageId, "resume")
     if ("error" in resumed) return resumed
   }
 
-  const messages = snapshot.data.messages.flatMap((entry) => {
-    const parsed = messageSchema.safeParse(entry)
-    return parsed.success ? [parsed.data] : []
-  })
+  const messages = snapshot.messages
   const results = new Map(
     messages.flatMap((message) => (message.role === "tool" ? [[message.callId, message.isError] as const] : [])),
   )
-  const terminal = turn !== undefined && ["completed", "failed", "aborted"].includes(turn.status)
+  const terminal = turn !== undefined && TERMINAL_TURN_STATUSES.has(turn.status)
   const failed = turn?.status === "failed"
-  let finalAssistantText = snapshot.data.finalAssistantText
+  let finalAssistantText = snapshot.finalAssistantText
   if (terminal && !failed && !finalAssistantText) finalAssistantText = "Done."
   return {
     status: terminal ? "idle" : "busy",

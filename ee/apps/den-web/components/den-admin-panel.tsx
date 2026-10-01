@@ -136,6 +136,7 @@ type AdminOrganizationCapabilities = {
   appMcpServers: boolean;
   slackAssistant: boolean;
   slackAssistantHeadless: boolean;
+  headlessAutomations: boolean;
   modelsAnalytics: boolean;
   installLinks: boolean;
   mcpConnections: boolean;
@@ -469,6 +470,7 @@ function parseAdminPayload(payload: unknown): AdminPayload | null {
             appMcpServers: capabilities.appMcpServers === true,
             slackAssistant: capabilities.slackAssistant === true,
             slackAssistantHeadless: capabilities.slackAssistantHeadless === true,
+            headlessAutomations: capabilities.headlessAutomations === true,
             modelsAnalytics: capabilities.modelsAnalytics === true,
             installLinks: capabilities.installLinks === true,
             mcpConnections: capabilities.mcpConnections === true
@@ -843,7 +845,7 @@ function buildFixtureOrganization(index: number): AdminOrganization {
     freeSeatCount: target ? 25 : DEFAULT_FREE_SEAT_COUNT,
     seatsFreeAdditional: target ? 20 : 0,
     billableSeatCount: target ? 103 : 0,
-    capabilities: { auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, slackAssistantHeadless: false, installLinks: target, mcpConnections: target, modelsAnalytics: false },
+    capabilities: { auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, slackAssistantHeadless: false, headlessAutomations: false, installLinks: target, mcpConnections: target, modelsAnalytics: false },
     freeAuto: { enabled: false, globallyEnabled: false, rolloutAllOrganizations: false },
     openworkWebAccess: {
       hasAccess: target,
@@ -2827,6 +2829,19 @@ export function DenAdminPanel() {
                           className="h-4 w-4 rounded-sm border-slate-300"
                         />
                         Slack Assistant: headless runtime
+                      </label>
+                      <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          data-testid="admin-capability-headlessAutomations"
+                          checked={org.capabilities.headlessAutomations}
+                          disabled={savingCapabilityOrgId === org.id}
+                          onChange={(event) => {
+                            void saveOrganizationCapability(org, "headlessAutomations", event.target.checked);
+                          }}
+                          className="h-4 w-4 rounded-sm border-slate-300"
+                        />
+                        Cloud Automations: headless runtime
                       </label>
                     </div>
                     <label className="mt-3 inline-flex items-center gap-2 text-sm text-slate-700">
