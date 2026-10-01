@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { useState } from "react";
 import { useSessionActivityStore } from "../session/status/session-activity-store";
 import { useCheckDesktopRestriction } from "./desktop-config-provider";
-import { autoAccessRefreshEvent, autoNotOffered, autoPickerCopy, autoWallCopy, freeAutoSwitchedOff, openAlternativeModelPicker, type AutoPickerState, type AutoAccessWall, type DesktopFreeAccessStatus } from "@/app/lib/inference-access";
+import { autoAccessRefreshEvent, autoNotOffered, autoPickerCopy, autoQuietlyUnavailable, autoWallCopy, freeAutoSwitchedOff, openAlternativeModelPicker, type AutoPickerState, type AutoAccessWall, type DesktopFreeAccessStatus } from "@/app/lib/inference-access";
 import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider";
 import { useDenAuth, type DenAuthStore } from "./den-auth-provider";
 import { isDesktopRuntime } from "@/app/utils";
@@ -132,7 +132,7 @@ export function useAutoAccess(available: boolean, override?: AutoAccessWorkspace
 
 export function AutoFirstUseStatus({ onConnect }: { onConnect?: () => void }) {
   const { query } = useAutoAccess(true);
-  if ((query.isPending && query.fetchStatus !== "idle") || (query.isSuccess && freeAutoSwitchedOff(query.data))) return null;
+  if ((query.isPending && query.fetchStatus !== "idle") || (query.isSuccess && (freeAutoSwitchedOff(query.data) || autoQuietlyUnavailable(query.data)))) return null;
   const ready = query.isSuccess && query.data.state === "ready";
   return <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs text-muted-foreground" data-testid="auto-first-use">
     {ready ? <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-green-9" /> : null}
@@ -143,7 +143,7 @@ export function AutoFirstUseStatus({ onConnect }: { onConnect?: () => void }) {
 
 function AutoAccessFooterContent({ available, syncing = false }: { available: boolean; syncing?: boolean }) {
   const { query, auth } = useAutoAccess(available);
-  if ((!available && !syncing) || freeAutoSwitchedOff(query.data)) return null;
+  if ((!available && !syncing) || freeAutoSwitchedOff(query.data) || autoQuietlyUnavailable(query.data)) return null;
   const status = syncing || query.isFetching ? "Syncing Auto…"
     : autoNotOffered(query.data) ? autoPickerCopy("not_offered", auth.isSignedIn, null, query.data?.code).subtitle.replace(/^Free · /, "Auto: ")
     : query.isError || query.data?.state === "unavailable" ? "Auto status unavailable"

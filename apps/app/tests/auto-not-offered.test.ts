@@ -1,15 +1,14 @@
 import { expect, test } from "bun:test";
-import { autoAccessWall, autoNotOffered, autoPickerCopy, autoWallCopy, freeAutoSwitchedOff, unavailableDesktopFreeStatus } from "../src/app/lib/inference-access";
+import { autoAccessWall, autoNotOffered, autoPickerCopy, autoQuietlyUnavailable, autoWallCopy, freeAutoSwitchedOff, unavailableDesktopFreeStatus } from "../src/app/lib/inference-access";
 
 test("Auto that is running but not offered to this organization says why, and never looks like an outage", () => {
-  const subtitles = Object.fromEntries(["free_not_enrolled", "free_not_offered", "managed_models_disabled_for_dpa", "not_eligible", "desktop_build_unverified"]
+  const subtitles = Object.fromEntries(["free_not_enrolled", "free_not_offered", "managed_models_disabled_for_dpa", "not_eligible"]
     .map((code) => [code, autoPickerCopy("not_offered", true, null, code).subtitle]));
   expect(subtitles).toEqual({
     free_not_enrolled: "Free · not on for your organization yet",
     free_not_offered: "Free · turned off by your organization",
     managed_models_disabled_for_dpa: "Free · not available for your organization",
     not_eligible: "Free · not available for this account",
-    desktop_build_unverified: "Free · currently unavailable",
   });
   for (const code of Object.keys(subtitles)) {
     expect(autoNotOffered({ code })).toBe(true);
@@ -21,4 +20,14 @@ test("Auto that is running but not offered to this organization says why, and ne
   }
   expect(autoPickerCopy("unavailable", true).subtitle).toBe("Free · temporarily unavailable");
   expect(freeAutoSwitchedOff({ code: "free_disabled" })).toBe(true);
+});
+
+test("a client the free model is not served to changes nothing in the picker; a send says so in the chat", () => {
+  const status = { ...unavailableDesktopFreeStatus(), code: "desktop_build_unverified" };
+  expect(autoQuietlyUnavailable(status)).toBe(true);
+  expect(autoQuietlyUnavailable({ code: "free_not_enrolled" })).toBe(false);
+  expect(freeAutoSwitchedOff(status)).toBe(false);
+  const wall = autoAccessWall(status);
+  expect(wall).toMatchObject({ state: "not_offered", code: "desktop_build_unverified" });
+  expect(autoWallCopy(wall!, false)).toEqual({ title: "The OpenWork free model is currently unavailable", detail: "Your message was not processed. Switch to another model and send again." });
 });

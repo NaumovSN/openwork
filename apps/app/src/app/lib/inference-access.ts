@@ -52,11 +52,18 @@ const NOT_OFFERED_CODES = ["free_not_enrolled", "free_not_offered", "admin_disab
 export function autoNotOffered(status: { code?: string | null } | null | undefined): boolean {
   return typeof status?.code === "string" && NOT_OFFERED_CODES.includes(status.code);
 }
+const QUIET_CODES = ["desktop_build_unverified"];
+/**
+ * Auto is not served to this client, but there is nothing the person can do about it. The picker, footer and
+ * first-use caption stay as if Auto were fine; only a send says so, in the chat.
+ */
+export function autoQuietlyUnavailable(status: { code?: string | null } | null | undefined): boolean {
+  return typeof status?.code === "string" && QUIET_CODES.includes(status.code);
+}
 function notOfferedCopy(code?: string | null) {
   switch (code) {
     case "free_not_enrolled": return { subtitle: "Free · not on for your organization yet", detail: "Your organization hasn’t turned on Auto yet. An admin can turn it on. Other models still work." };
     case "free_not_offered": case "admin_disabled": return { subtitle: "Free · turned off by your organization", detail: "Your organization has turned off Auto. Other models still work." };
-    case "desktop_build_unverified": return { subtitle: "Free · currently unavailable", detail: "The OpenWork free model is currently unavailable. Other models still work." };
     case "managed_models_disabled_for_dpa": return { subtitle: "Free · not available for your organization", detail: "Auto isn’t available under your organization’s data agreement. Other models still work." };
     default: return { subtitle: "Free · not available for this account", detail: "Auto isn’t available for this account. Other models still work." };
   }
@@ -127,7 +134,9 @@ export function autoWallCopy(wall: AutoAccessWall, signedIn: boolean) {
     case "update": return { title: "Update OpenWork to use Auto", detail: `Your message was not processed. Update to ${autoUpdateTarget(wall.minimumVersion)} or switch to another model.` };
     case "sync": return { title: "Auto is still syncing", detail: "Your message was not processed. Wait for sync or switch to another model." };
     case "unavailable": return { title: "Auto is temporarily unavailable", detail: "Your message was not processed. Switch to another model or try again later." };
-    case "not_offered": return { title: "Auto isn’t available here", detail: `Your message was not processed. ${notOfferedCopy(wall.code).detail}` };
+    case "not_offered": return autoQuietlyUnavailable(wall)
+      ? { title: "The OpenWork free model is currently unavailable", detail: "Your message was not processed. Switch to another model and send again." }
+      : { title: "Auto isn’t available here", detail: `Your message was not processed. ${notOfferedCopy(wall.code).detail}` };
   }
 }
 
