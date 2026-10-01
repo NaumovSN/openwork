@@ -24,7 +24,8 @@ an index containing this document.
   keep it answerable after reload and leave another task's question unanswered.
 - **Helper controls:** the journey requires a prompt POST to the selected busy
   helper while its grandchild is held, checks draft restoration and return,
-  finishes delegated work, and separately stops the selected helper.
+  finishes delegated work, and separately stops the selected helper and its verified descendants without
+  stopping the parent.
 
 CI executes these journeys on both engines. The linked evidence comments
 track the exact current PR head and lead to its report. A red, incomplete or
