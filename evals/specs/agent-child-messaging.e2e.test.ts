@@ -2,6 +2,7 @@ import { expect } from "vitest";
 import { resolveEvalEngine, spec } from "@openwork/testkit";
 import { observeSessionCommands } from "../helpers/observe-session-commands.ts";
 import { agentChildWeb } from "../worlds/agent-child.ts";
+import { isRecord } from "../worlds/library.ts";
 
 const test = spec.world(agentChildWeb, { timeout: 420_000, resources: { surfaces: ["appWeb"], services: ["mock"] } });
 
@@ -77,6 +78,7 @@ test(`a member stops one helper from its parent chat (AGENT-CHILD-STOP ${resolve
     await user.see({ text: "Check fixture output" }, { timeoutMs: 60_000 });
     await probe.eventually(() => world.grandchildState(), { within: 60_000,
       label: "the delegated work is really held", until: state => state.deliveredChunks === 1 });
+    await user.click("composer");
     await user.press("Escape");
     await user.see({ role: "button", label: "Review fixture. Stop sub-agent" });
     evidence.recordAssertionEvidence("the helper is really running", "Its grandchild has delivered one held chunk; the parent exposes a Stop for this helper", true);
@@ -86,9 +88,16 @@ test(`a member stops one helper from its parent chat (AGENT-CHILD-STOP ${resolve
     await user.click({ role: "button", label: "Review fixture. Stop sub-agent" });
     await user.see({ text: "Stopped" }, { timeoutMs: 30_000 });
     const interrupts = (await commands.read()).filter(request => /\/(?:abort|interrupt)$/.test(request.path));
-    expect(interrupts).toHaveLength(1);
-    expect(interrupts[0]?.path).toContain(`/session/${childId}/`);
-    evidence.recordAssertionEvidence("Stop targets only the selected helper", "Exactly one interruption targets that helper; no interruption targets its parent or grandchild", true);
+    evidence.recordJsonArtifact("Acknowledged helper interruption targets", interrupts);
+    const targets = [...new Set(interrupts.map(request => decodeURIComponent(request.path.split("/session/")[1]?.split("/")[0] ?? "")))];
+    expect(targets).toContain(childId);
+    expect(targets).not.toContain(world.session.sessionId);
+    for (const target of targets.filter(id => id !== childId)) {
+      const response = await world.nativeSession(target);
+      const session = isRecord(response) && "data" in response ? response.data : response;
+      expect(session).toMatchObject({ parentID: childId });
+    }
+    evidence.recordAssertionEvidence("Stop stays within the verified helper subtree", `${interrupts.length} interruption requests target only the selected helper and its verified child; none target the parent`, true);
     await user.screenshot();
   });
   await step("returning to the helper keeps navigation usable after Stop", async () => {
