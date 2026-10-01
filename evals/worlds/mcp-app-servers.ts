@@ -571,6 +571,7 @@ export async function mcpAppServersChat(seed: Seed, benchmark = false) {
   const app = await seed.appWeb({ name: "mcp-app-servers-chat", workspacePath, headless: true,
     env: {
       OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "1", OPENWORK_DEV_DEN_PROXY_TARGET: den.ref.webUrl,
+      OPENWORK_DEV_HEADLESS_DEN_API_TARGET: den.ref.apiUrl,
       VITE_DEN_BASE_URL: den.ref.webUrl, VITE_DEN_API_BASE_URL: "/api/den",
       ...(benchmark ? { OPENWORK_MCP_APP_TIMINGS: "1" } : {}),
     },
