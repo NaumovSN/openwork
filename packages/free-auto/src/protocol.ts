@@ -1,4 +1,4 @@
-import { INFERENCE_FREE_MODEL_ID, INFERENCE_FREE_LEGACY_MODEL_ID, type ManagedModelRecommendation } from "@openwork/types/den/inference";
+import { INFERENCE_FREE_MODEL_ID, type ManagedModelRecommendation } from "@openwork/types/den/inference";
 
 /**
  * The wire contract for free Auto. The desktop main process signs requests,
@@ -9,7 +9,6 @@ export const DESKTOP_FREE_PROOF_HEADER = "x-openwork-desktop-proof";
 export const DESKTOP_FREE_TOKEN_HEADER = "x-openwork-desktop-token";
 export const DESKTOP_FREE_PROVIDER_ID = "openwork-free";
 export const DESKTOP_FREE_MODEL_ID = INFERENCE_FREE_MODEL_ID;
-export const DESKTOP_FREE_LEGACY_MODEL_ID = INFERENCE_FREE_LEGACY_MODEL_ID;
 
 // Signed-out desktop routes.
 export const DESKTOP_FREE_SESSION_PATH = "/api/anonymous/session";
@@ -104,4 +103,4 @@ export type DesktopFreeVersionError = {
   minimumVersion: string | null;
   message: string;
 };
-export type DesktopFreeSession = { token: string; expiresAt: number; model: typeof DESKTOP_FREE_MODEL_ID | typeof DESKTOP_FREE_LEGACY_MODEL_ID };
+export type DesktopFreeSession = { token: string; expiresAt: number; model: typeof DESKTOP_FREE_MODEL_ID };

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_LEGACY_MODEL_ID, MEMBER_FREE_STATUS_PATH, type DesktopFreeAccessStatus } from "@openwork/free-auto";
+import { DESKTOP_FREE_MODEL_ID, MEMBER_FREE_STATUS_PATH, type DesktopFreeAccessStatus } from "@openwork/free-auto";
 import { ACTIVATION_IDLE_MS, ACTIVATION_MAX_MS, TaskActivation, taskRoute } from "./activation.js";
 import { memberCredentialFailure, parseGuestSession, parseMemberCredential, parseStatus, requestedSessionPow, statusFromRejection } from "./responses.js";
 import { isOwnedProvider, ownedProvider } from "./provider-config.js";
@@ -51,7 +51,7 @@ test("status parsing keeps a complete ready status and rejects anything partial"
 
 test("guest sessions, extra work requests, and member credentials are validated before use", () => {
   expect(parseGuestSession({ token: "t", expiresAt: 2, model: DESKTOP_FREE_MODEL_ID }, 1)).toEqual({ token: "t", expiresAt: 2, model: DESKTOP_FREE_MODEL_ID });
-  expect(parseGuestSession({ token: "t", expiresAt: 2, model: DESKTOP_FREE_LEGACY_MODEL_ID }, 1).model).toBe(DESKTOP_FREE_LEGACY_MODEL_ID);
+  expect(() => parseGuestSession({ token: "t", expiresAt: 2, model: "unapproved-model" }, 1)).toThrow();
   expect(() => parseGuestSession({ token: "t", expiresAt: 1, model: DESKTOP_FREE_MODEL_ID }, 1)).toThrow();
   const current = { bits: 19, rounds: 8 };
   expect(requestedSessionPow({ code: "session_pow_required", bits: 20 }, current)).toEqual({ bits: 20, rounds: 8 });
@@ -80,12 +80,12 @@ test("the relay owns only the provider entry it wrote, and settings fall back on
   expect(model.limit).toEqual({ context: 1_050_000, input: 922_000, output: 128_000 });
   const earlierBuild = { ...current, models: { [model.id]: { ...model, limit: { context: 135_168, input: 131_072, output: 4_096 } } } };
   expect(isOwnedProvider(earlierBuild)).toBe(true);
-  const legacy = { ...current, npm: "@ai-sdk/openai-compatible", models: { [DESKTOP_FREE_LEGACY_MODEL_ID]: {
-    ...model, id: DESKTOP_FREE_LEGACY_MODEL_ID, name: "GPT-5.6 Luna", options: { reasoningEffort: "none" },
+  const previousAdapter = { ...current, npm: "@ai-sdk/openai-compatible", models: { ["openai/gpt-5.6-luna"]: {
+    ...model, id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna", options: { reasoningEffort: "none" },
   } } };
-  expect(isOwnedProvider(legacy)).toBe(true);
-  expect(isOwnedProvider({ ...legacy, models: { [DESKTOP_FREE_LEGACY_MODEL_ID]: {
-    ...legacy.models[DESKTOP_FREE_LEGACY_MODEL_ID], name: "My edited model",
+  expect(isOwnedProvider(previousAdapter)).toBe(true);
+  expect(isOwnedProvider({ ...previousAdapter, models: { ["openai/gpt-5.6-luna"]: {
+    ...previousAdapter.models["openai/gpt-5.6-luna"], name: "My edited model",
   } } })).toBe(false);
   expect(isOwnedProvider({ ...current, models: { [model.id]: { ...model, limit: { context: 8_000, input: 8_000, output: 1_000 } } } })).toBe(false);
   const settings = readRelaySettings({ OPENWORK_FREE_SESSION_POW_BITS: "40", OPENWORK_FREE_HEARTBEAT_MS: "-1", OPENWORK_DISABLE_FREE_INFERENCE: "yes" });

@@ -3,7 +3,7 @@ import { FreeAutoBusyError } from "../shared/capacity.js"
 import { z } from "zod"
 import {
   DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH,
-  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, DESKTOP_FREE_LEGACY_MODEL_ID, DESKTOP_FREE_SESSION_POW_PATTERN, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_OPEN_API_KEY,
+  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, DESKTOP_FREE_SESSION_POW_PATTERN, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_OPEN_API_KEY,
   type DesktopFreeAccessStatus, type DesktopFreeVersionError,
 } from "@openwork/free-auto"
 import { managedModelCatalog } from "@openwork/types/den/inference"
@@ -74,8 +74,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     }
     const identities = createAnonymousIdentities(gate.proof, address, config)
     await store.consumeSession(identities.installationHash)
-    // Older desktops validate this mint alias; both model IDs dispatch to the current free model.
-    return c.json({ ...issueAnonymousToken(identities, gate.proof, config), model: DESKTOP_FREE_LEGACY_MODEL_ID }, 200, { "cache-control": "no-store" })
+    return c.json({ ...issueAnonymousToken(identities, gate.proof, config), model: DESKTOP_FREE_MODEL_ID }, 200, { "cache-control": "no-store" })
   }))
 
   /**

@@ -1,4 +1,3 @@
-import { DESKTOP_FREE_LEGACY_MODEL_ID } from "@openwork/free-auto";
 import { ANONYMOUS_INFERENCE_MODEL_ID, ANONYMOUS_INFERENCE_PROVIDER_NAME, LOCAL_ROUTE_PREFIX } from "./settings.js";
 import { isRecord } from "./http.js";
 
@@ -7,10 +6,10 @@ import { isRecord } from "./http.js";
 const AUTO_LIMIT = { context: 1_050_000, input: 922_000, output: 128_000 };
 /** Written by earlier builds; still ours, and rewritten to the current shape on the next start. */
 const PREVIOUS_AUTO_LIMIT = { context: 135_168, input: 131_072, output: 4_096 };
-function generatedModel(id = ANONYMOUS_INFERENCE_MODEL_ID, limit = AUTO_LIMIT, legacy = false) {
+function generatedModel(id = ANONYMOUS_INFERENCE_MODEL_ID, limit = AUTO_LIMIT) {
   return {
-    id, name: legacy ? "GPT-5.6 Luna" : "GPT-6 Luna", attachment: false, reasoning: false, temperature: false, tool_call: true,
-    options: legacy ? { reasoningEffort: "none" } : { reasoningEffort: "none", store: false },
+    id, name: "GPT-6 Luna", attachment: false, reasoning: false, temperature: false, tool_call: true,
+    options: { reasoningEffort: "none", store: false },
     limit,
     modalities: { input: ["text"], output: ["text"] },
   };
@@ -33,10 +32,14 @@ export function isOwnedProvider(value: unknown): boolean {
     || typeof value.options.apiKey !== "string" || !/^owf_local_[A-Za-z0-9_-]{43}$/.test(value.options.apiKey)
     || typeof value.options.baseURL !== "string" || !/^http:\/\/127\.0\.0\.1:\d+\/anonymous-inference\/v1$/.test(value.options.baseURL)
     || !isRecord(value.models) || Object.keys(value.models).length !== 1) return false;
-  const legacy = value.npm === "@ai-sdk/openai-compatible";
-  const id = legacy ? DESKTOP_FREE_LEGACY_MODEL_ID : ANONYMOUS_INFERENCE_MODEL_ID;
+  // Recognize our previous generated config only so startup can replace its adapter and model.
+  const previousAdapter = value.npm === "@ai-sdk/openai-compatible";
+  const id = previousAdapter ? "openai/gpt-5.6-luna" : ANONYMOUS_INFERENCE_MODEL_ID;
   const model = value.models[id];
   if (!isRecord(model) || !hasExactKeys(model, Object.keys(generatedModel()))) return false;
-  return [generatedModel(id, AUTO_LIMIT, legacy), generatedModel(id, PREVIOUS_AUTO_LIMIT, legacy)]
-    .some((generated) => Object.entries(generated).every(([key, expected]) => JSON.stringify(model[key]) === JSON.stringify(expected)));
+  return [AUTO_LIMIT, PREVIOUS_AUTO_LIMIT].some((limit) => {
+    const generated = generatedModel(id, limit);
+    const expected = previousAdapter ? { ...generated, name: "GPT-5.6 Luna", options: { reasoningEffort: "none" } } : generated;
+    return Object.entries(expected).every(([key, value]) => JSON.stringify(model[key]) === JSON.stringify(value));
+  });
 }

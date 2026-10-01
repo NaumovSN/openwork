@@ -8,7 +8,6 @@ import { create } from "zustand";
 
 import { getModelBehaviorSummary } from "@/app/lib/model-behavior";
 import type { ModelRef } from "@/app/types";
-import { currentAutoModel } from "@/app/lib/auto-model";
 
 type BehaviorOption = { value: string | null; label: string };
 import { resolveModelDisplayName } from "@/app/utils";
@@ -39,7 +38,7 @@ function readStoredSelections(): Record<string, SessionModelSelection> {
       const modelID: unknown = Reflect.get(model, "modelID");
       if (typeof providerID !== "string" || typeof modelID !== "string" || !providerID || !modelID) continue;
       entries[sessionId] = {
-        model: currentAutoModel({ providerID, modelID }),
+        model: { providerID, modelID },
         variant: typeof variant === "string" ? variant : null,
       };
     }
@@ -148,7 +147,7 @@ export function useSessionModelSelection(input: UseSessionModelSelectionInput): 
       useSessionModelStore.getState().setModel(sessionId, model, variant);
     if (!selection) {
       return {
-        selectedModel: currentAutoModel(fallbackModel),
+        selectedModel: fallbackModel,
         modelLabel: fallbackModelLabel,
         modelVariant: fallbackVariant,
         modelVariantLabel: fallbackVariantLabel,

@@ -39,7 +39,7 @@ import { assertOrganizationManagedModelsAllowed, updateOrganizationMetadata } fr
 import { ensureMemberGatewayKey } from "./gateway-keys.js"
 import { revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js"
 import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
-import { DESKTOP_FREE_LEGACY_MODEL_ID, MEMBER_FREE_STATUS_PATH } from "@openwork/free-auto"
+import { MEMBER_FREE_STATUS_PATH } from "@openwork/free-auto"
 import { calculateDesktopPolicyForOrgMember } from "./desktop-policies.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
@@ -170,8 +170,7 @@ export async function issueMemberFreeInferenceCredential(input: FreeMemberInput)
   })
   if ("refusal" in result) return result
   const base = env.modelsPublicBaseUrl.replace(/\/+$/, "")
-  // Preserve the credential mint alias for already-released desktops; inference accepts both aliases.
-  return { credential: { apiKey: result.apiKey, baseURL: `${base}/api/v1`, statusURL: `${base}${MEMBER_FREE_STATUS_PATH}`, modelID: DESKTOP_FREE_LEGACY_MODEL_ID } }
+  return { credential: { apiKey: result.apiKey, baseURL: `${base}/api/v1`, statusURL: `${base}${MEMBER_FREE_STATUS_PATH}`, modelID: env.inferenceFree.modelID } }
 }
 
 export async function ensureMemberFreeInferenceCredential(input: FreeMemberInput) {

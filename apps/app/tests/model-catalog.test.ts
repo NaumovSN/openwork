@@ -5,7 +5,6 @@ import { mergeModelOptions } from "../src/react-app/domains/connections/provider
 import { AUTO_MODEL_ID, AUTO_PROVIDER_ID, immutableModelPin, publicModelTitle, isCycleModelSourceShortcut, isPinModelShortcut, modelGroups, modelSource, modelTitle, modelSubtitle, nextModelSource, nextPinnedModel, orderedModelPins, shouldSelectInitialAuto, withImportedModelMetadata } from "../src/react-app/domains/models/model-catalog";
 import { autoAccessWallFromError, autoWallCopy, preflightAutoSubmission, unavailableDesktopFreeStatus } from "../src/app/lib/inference-access";
 import { mergeReplyMetadata, replyModelFromInfo, replyModelLabel } from "../src/react-app/domains/session/sync/reply-model";
-import { currentAutoModel, LEGACY_AUTO_MODEL_ID } from "../src/app/lib/auto-model";
 
 const option = (providerID: string, modelID: string): ModelOption => ({ providerID, modelID, title: modelID, description: providerID, behaviorTitle: "Effort", behaviorLabel: "Default", behaviorDescription: "", behaviorValue: null, isFree: false });
 const auto = option(AUTO_PROVIDER_ID, AUTO_MODEL_ID);
@@ -14,17 +13,6 @@ const orgA = { ...option("ipr_team", "gwm_a"), organizationPinOrder: 1 };
 const orgB = { ...option("ipr_team", "gwm_b"), organizationPinOrder: 0 };
 const pinnedAuto = { ...auto, defaultPinned: true };
 const catalog = [local, orgA, auto, orgB];
-
-test("saved Auto selections upgrade to Luna 6 while explicit BYOK choices and historical replies keep their model", () => {
-  for (const providerID of [AUTO_PROVIDER_ID, "openwork"]) {
-    expect(currentAutoModel({ providerID, modelID: LEGACY_AUTO_MODEL_ID })).toEqual({ providerID, modelID: AUTO_MODEL_ID });
-  }
-  const byok = { providerID: "ipr_fixture", modelID: LEGACY_AUTO_MODEL_ID };
-  expect(currentAutoModel(byok)).toBe(byok);
-  expect(replyModelLabel({ id: "old", role: "assistant", parts: [], metadata: { opencode: {
-    replyModel: { providerID: AUTO_PROVIDER_ID, modelID: LEGACY_AUTO_MODEL_ID, resolved: true },
-  } } })).toBe("GPT-5.6 Luna");
-});
 
 describe("model sources and pins", () => {
   test("organization pins precede personal pins, preserve order, and Auto is pinned only when an admin pins it", () => {

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
-  DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_LEGACY_MODEL_ID, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_OPEN_API_KEY, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_PROVIDER_ID,
+  DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_OPEN_API_KEY, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_PROVIDER_ID,
   DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_RESPONSES_PATH, MEMBER_FREE_CREDENTIAL_PATH, MEMBER_FREE_MODELS_PATH,
   MEMBER_FREE_STATUS_PATH, type DesktopFreeAccessStatus, type DesktopFreeSession, type SessionPowParams,
 } from "@openwork/free-auto";
@@ -474,7 +474,7 @@ export class AnonymousInferenceService {
         let payload: unknown;
         try { payload = JSON.parse(new TextDecoder().decode(body)); }
         catch { return jsonError(400, "invalid_request", "Expected a JSON request body."); }
-        if (!isRecord(payload) || (payload.model !== DESKTOP_FREE_MODEL_ID && payload.model !== DESKTOP_FREE_LEGACY_MODEL_ID) || "models" in payload || "route" in payload) {
+        if (!isRecord(payload) || payload.model !== DESKTOP_FREE_MODEL_ID || "models" in payload || "route" in payload) {
           return jsonError(400, "anonymous_model_not_allowed", "Auto only supports the configured free model.");
         }
       }

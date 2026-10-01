@@ -4,7 +4,7 @@ import { test } from "node:test"
 import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferenceWindow, managedModelCatalog, readFreeInferenceConfig } from "@openwork/types/den/inference"
-import { DESKTOP_FREE_RESPONSES_PATH, MEMBER_FREE_RESPONSES_PATH, DESKTOP_FREE_LEGACY_MODEL_ID, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
+import { DESKTOP_FREE_RESPONSES_PATH, MEMBER_FREE_RESPONSES_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
   MEMBER_FREE_STATUS_PATH, DESKTOP_FREE_MODEL_ID, desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeSessionPowMessage, leadingZeroBits, type DesktopFreeProofClaims } from "@openwork/free-auto"
 import { readAutoConfig, untaggedAutoEnabled, FREE_OPENAI_CHAT_URL, FREE_OPENAI_RESPONSES_URL } from "../src/free/shared/config.js"
 import { freeUsageAmount, rampedDeviceAmount } from "@openwork/free-auto/accounting"
@@ -147,7 +147,7 @@ test("free Auto stays off without the dedicated OpenAI key or release key and ne
   assert.equal(readAutoConfig({ DESKTOP_FREE_MIN_VERSION: "v1.2.0" }).minimumVersion, "1.2.0")
   assert.throws(() => readAutoConfig({ DESKTOP_FREE_MIN_VERSION: "latest" }), /DESKTOP_FREE_MIN_VERSION/)
   assert.throws(() => readAutoConfig({ INFERENCE_FREE_ENABLED: "true", INFERENCE_FREE_WEEKLY_BUDGET_USD: "1" }))
-  assert.throws(() => readAutoConfig({ INFERENCE_FREE_OPENAI_MODEL: "openai/gpt-5.6-luna" }))
+  assert.throws(() => readAutoConfig({ INFERENCE_FREE_OPENAI_MODEL: "openai/gpt-6-luna" }))
   assert.throws(() => readFreeInferenceConfig({ INFERENCE_FREE_MODEL_ID: "paid-model" }))
   assert.deepEqual(managedModelCatalog().map((model) => model.modelID), [INFERENCE_FREE_MODEL_ID])
 })
@@ -330,8 +330,7 @@ test("the proxy sends Auto to free Auto for every organization and keeps other m
     const route = routeFor(metadata)
     assert.equal((await route.call(MEMBER_FREE_CHAT_PATH, prompt)).status, 200, JSON.stringify(metadata))
     assert.equal((await route.call(MEMBER_FREE_RESPONSES_PATH, JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, input: "hello" }))).status, 200)
-    assert.equal((await route.call(MEMBER_FREE_RESPONSES_PATH, JSON.stringify({ model: DESKTOP_FREE_LEGACY_MODEL_ID, input: "hello" }))).status, 200)
-    assert.deepEqual(route.served, ["free", "free", "free"], JSON.stringify(metadata))
+    assert.deepEqual(route.served, ["free", "free"], JSON.stringify(metadata))
   }
   const paying = routeFor({ inference: { enabled: true, tier: "tier1" } })
   assert.equal((await paying.call(MEMBER_FREE_STATUS_PATH)).status, 200, "a paying organization's members can check their free Auto allowance")
@@ -746,8 +745,8 @@ test("native Auto forwards over 128 function tools and stateless continuation it
   assert.deepEqual(f.principals.map((principal) => principal.kind), ["installation", "member"])
 })
 
-test("native Auto accepts public clients and legacy model aliases but rejects unmetered Responses features before admission", async () => {
-  const body = { model: DESKTOP_FREE_LEGACY_MODEL_ID, input: "hello" }
+test("native Auto accepts public clients but rejects unapproved models and unmetered Responses features before admission", async () => {
+  const body = { model: INFERENCE_FREE_MODEL_ID, input: "hello" }
   const f = fixture({}, () => Response.json(nativeResponse()))
   const call = (payload: unknown) => f.app.fetch(new Request(`https://free.test${DESKTOP_FREE_RESPONSES_PATH}`, {
     method: "POST", body: JSON.stringify(payload), headers: { "content-type": "application/json", authorization: "Bearer public" },
@@ -758,8 +757,8 @@ test("native Auto accepts public clients and legacy model aliases but rejects un
   assert.equal(f.requests.length, 1)
   assert.equal(f.principals.length, 1)
   const mint = await (await f.app.fetch(session())).json()
-  assert.equal(mint.model, DESKTOP_FREE_LEGACY_MODEL_ID, "already-released desktops can still mint their guest credential")
-  assert.equal(readFreeInferenceConfig({ INFERENCE_FREE_MODEL_ID: DESKTOP_FREE_LEGACY_MODEL_ID }).modelID, INFERENCE_FREE_MODEL_ID)
+  assert.equal(mint.model, INFERENCE_FREE_MODEL_ID)
+  assert.throws(() => readFreeInferenceConfig({ INFERENCE_FREE_MODEL_ID: "unapproved-model" }), /Unapproved free model/)
 })
 
 test("native SSE forwards tool deltas and settles completed or incomplete usage without a DONE marker", async () => {

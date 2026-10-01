@@ -1,4 +1,4 @@
-import { INFERENCE_FREE_MODEL_ID, INFERENCE_FREE_LEGACY_MODEL_ID } from "@openwork/types/den/inference"
+import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
 import { sha256Hex } from "@openwork/free-auto/node"
 import type { AutoConfig } from "./config.js"
 import { FreeRequestError } from "./errors.js"
@@ -15,7 +15,7 @@ function record(value: unknown): value is Record<string, unknown> { return typeo
 export type FreeProtocol = "chat" | "responses"
 
 export function prepareFreeRequest(value: unknown, config: AutoConfig, protocol: FreeProtocol = "chat") {
-  if (!record(value) || (value.model !== INFERENCE_FREE_MODEL_ID && value.model !== INFERENCE_FREE_LEGACY_MODEL_ID)) {
+  if (!record(value) || value.model !== INFERENCE_FREE_MODEL_ID) {
     throw new FreeRequestError(400, "unsupported_free_inference_input", "Auto needs a request for the Auto model. This input was not sent.")
   }
   if (protocol === "responses") {

@@ -1,7 +1,6 @@
 import { create } from "zustand";
 
 import type { ModelOption, ModelRef } from "@/app/types";
-import { currentAutoModel } from "@/app/lib/auto-model";
 
 export const useModelPickerCatalogStore = create<{
   bySession: Record<string, { owner: symbol; options: readonly ModelOption[] }>;
@@ -67,8 +66,8 @@ function readStoredCollections(): StoredCollections {
     const favorites = Reflect.get(parsed, "favorites");
     const recent = Reflect.get(parsed, "recent");
     return {
-      favorites: uniqueModels(Array.isArray(favorites) ? favorites.filter(isModelRef).map(currentAutoModel) : []),
-      recent: uniqueModels(Array.isArray(recent) ? recent.filter(isModelRef).map(currentAutoModel) : []).slice(0, MAX_RECENT_MODELS),
+      favorites: uniqueModels(Array.isArray(favorites) ? favorites.filter(isModelRef) : []),
+      recent: uniqueModels(Array.isArray(recent) ? recent.filter(isModelRef) : []).slice(0, MAX_RECENT_MODELS),
     };
   } catch {
     return { favorites: [], recent: [] };
