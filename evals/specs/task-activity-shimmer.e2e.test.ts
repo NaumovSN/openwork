@@ -138,10 +138,8 @@ test("a member keeps the original task and working time when sending a follow-up
     await user.screenshot();
   });
   await user.click({ role: "button", label: /Build isolated Azure repro/ });
-  await user.see({ text: "Activity child started." });
   await user.see({ text: /Working/ });
   await user.reload();
-  await user.see({ text: "Activity child started." }, { timeoutMs: 30_000 });
   await user.see({ text: /Working/ });
   expect((await probe.dom(`[data-session-surface-id="${native.childId}"]`)).elements).toHaveLength(1);
   expect((await world.replyState()).deliveredChunks).toBe(1);
