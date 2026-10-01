@@ -140,7 +140,7 @@ test("member status reports this week's usage against the allowance and never of
   results = [[{ metadata: {}, nowMs: now.getTime() }], [{ used_amount: 0 }]]
   const access = await getMemberInferenceAccess(input)
   expect(access).toMatchObject({ kind: "free", reason: null, canUpgrade: false, weeklyLimitUsd: 5, usedUsd: 0, remainingUsd: 5 })
-  expect(access.catalog?.map((model) => model.modelID)).toEqual(["openai/gpt-5.6-luna"])
+  expect(access.catalog?.map((model) => model.modelID)).toEqual(["openai/gpt-6-luna"])
   results = [[{ metadata: {}, nowMs: now.getTime() }], [{ used_amount: Number.MAX_SAFE_INTEGER }]]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "exhausted", reason: "free_allowance_exhausted", remainingUsd: 0 })
   expect(writes).toEqual([])
@@ -165,7 +165,7 @@ test("Auto is unpinned by default, an admin pin is explicit, and updates touch o
 
 test("member pin policy is authoritative without changing model availability", async () => {
   results = [[{ metadata: { inferenceFree: { defaultPinned: false } }, nowMs: now.getTime() }], []]
-  expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: false, kind: "free", modelID: "openai/gpt-5.6-luna" })
+  expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: false, kind: "free", modelID: "openai/gpt-6-luna" })
   results = [[{ metadata: { dpaSigned: true, inferenceFree: { defaultPinned: true } }, nowMs: now.getTime() }]]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: true, kind: "unavailable", reason: "admin_disabled" })
   expect(writes).toEqual([])

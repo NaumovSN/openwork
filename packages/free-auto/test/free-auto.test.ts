@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
+import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference";
 import {
-  DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, MEMBER_FREE_RESPONSES_PATH, DESKTOP_FREE_SESSION_PATH, MEMBER_FREE_STATUS_PATH, clampSessionPowParams, compareDesktopVersions,
+  DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, MEMBER_FREE_RESPONSES_PATH, DESKTOP_FREE_SESSION_PATH, MEMBER_FREE_STATUS_PATH, clampSessionPowParams, compareDesktopVersions,
   desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeVersionError, isDesktopFreeSignableRoute, leadingZeroBits,
 } from "../src/index.js";
 import { freeUsageAmount, parseInstallRamp, rampedDeviceAmount, DEFAULT_INSTALL_RAMP } from "../src/accounting.js";
@@ -11,6 +12,9 @@ const base = { publicKey: "k".repeat(59) + "=", machineId: "c".repeat(64), appVe
 const request = { method: "post", path: DESKTOP_FREE_CHAT_PATH, bodyHash: sha256Hex("{}"), authorizationHash: sha256Hex("") };
 
 describe("protocol", () => {
+  test("the desktop and gateway advertise the same Auto model", () => {
+    expect(DESKTOP_FREE_MODEL_ID).toBe(INFERENCE_FREE_MODEL_ID);
+  });
   test("a v3 signature covers the release tag; the tag message never includes it", () => {
     const tag = "a".repeat(64);
     expect(JSON.parse(desktopFreeProofMessage({ version: 3, ...base, releaseTag: tag, ...request })).at(-1)).toBe(tag);

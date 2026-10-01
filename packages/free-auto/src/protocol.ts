@@ -1,4 +1,4 @@
-import { INFERENCE_FREE_MODEL_ID, type ManagedModelRecommendation } from "@openwork/types/den/inference";
+import type { ManagedModelRecommendation } from "@openwork/types/den/inference";
 
 /**
  * The wire contract for free Auto. The desktop main process signs requests,
@@ -8,7 +8,7 @@ import { INFERENCE_FREE_MODEL_ID, type ManagedModelRecommendation } from "@openw
 export const DESKTOP_FREE_PROOF_HEADER = "x-openwork-desktop-proof";
 export const DESKTOP_FREE_TOKEN_HEADER = "x-openwork-desktop-token";
 export const DESKTOP_FREE_PROVIDER_ID = "openwork-free";
-export const DESKTOP_FREE_MODEL_ID = INFERENCE_FREE_MODEL_ID;
+export const DESKTOP_FREE_MODEL_ID = "openai/gpt-6-luna";
 
 // Signed-out desktop routes.
 export const DESKTOP_FREE_SESSION_PATH = "/api/anonymous/session";
