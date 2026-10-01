@@ -569,7 +569,11 @@ export async function mcpAppServersChat(seed: Seed, benchmark = false) {
   const workspacePath = seed.tmpPath("mcp-app-servers-chat");
   const denOrigin = new URL(den.ref.apiUrl);
   const app = await seed.appWeb({ name: "mcp-app-servers-chat", workspacePath, headless: true,
-    ...(benchmark ? { env: { OPENWORK_MCP_APP_TIMINGS: "1" } } : {}),
+    env: {
+      OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "1", OPENWORK_DEV_DEN_PROXY_TARGET: den.ref.webUrl,
+      VITE_DEN_BASE_URL: den.ref.webUrl, VITE_DEN_API_BASE_URL: "/api/den",
+      ...(benchmark ? { OPENWORK_MCP_APP_TIMINGS: "1" } : {}),
+    },
     ...(denOrigin.protocol === "https:" ? { syntheticPreactivatedDenOrigin: denOrigin.origin } : {}) });
   await seed.signIn(app, den.admin, "App owner");
   const workspace = await seed.workspace(app, workspacePath);
