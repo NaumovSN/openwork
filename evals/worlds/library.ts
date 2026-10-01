@@ -378,6 +378,25 @@ export async function connectorBranding(seed: Seed) {
       models: { [modelId]: { name: "Connector display model" } },
     } },
   });
+  const connected = await seed.evalIn(app, browserScript(async (workspaceId, engine) => {
+    const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + "/workspace/" + encodeURIComponent(workspaceId)
+      + (engine === "v2" ? "/opencode2/api" : "/opencode");
+    const headers = { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") };
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(base + "/mcp", { headers, signal: AbortSignal.timeout(5_000) });
+        const raw = await response.json();
+        const data = raw.data ?? raw;
+        const cloud = Array.isArray(data) ? data.find((entry: { name: string }) => entry.name === "openwork-cloud") : data["openwork-cloud"];
+        const status = typeof cloud?.status === "object" ? cloud.status.status : cloud?.status;
+        if (status === "connected") return true;
+      } catch {}
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    return false;
+  }, [workspace.workspaceId, engine]), { awaitPromise: true, timeoutMs: 70_000 });
+  if (!connected) throw new Error("Native connected tools did not become ready before the fixture prompt");
   await seed.session(app);
   return { app, den, engine, prompt, failurePrompt, mutationPrompt, mutationProof, proof,
     nativeToolHistory: () => seed.evalIn(app, browserScript(async (workspaceId, engine) => {
