@@ -1,6 +1,6 @@
 import { spec } from "@openwork/testkit";
 import { expect } from "vitest";
-import { modelPickerDisabledAuto } from "../worlds/chat.ts";
+import { modelPickerDeploymentDisabledAuto, modelPickerDisabledAuto } from "../worlds/chat.ts";
 
 const test = spec.world(modelPickerDisabledAuto, {
   timeout: 420_000,
@@ -8,6 +8,40 @@ const test = spec.world(modelPickerDisabledAuto, {
     surfaces: ["desktop"], services: ["den", "mock"],
     nativeReason: "The Auto status query and initial model choice run only in Electron against the native local relay.",
   },
+});
+
+const deploymentTest = spec.world(modelPickerDeploymentDisabledAuto, {
+  timeout: 420_000,
+  resources: {
+    surfaces: ["desktop"], services: ["den", "mock"],
+    nativeReason: "The deployment opt-out is applied by the native relay and consumed by the desktop Settings and model picker.",
+  },
+});
+
+deploymentTest("a deployment-disabled Auto stays out of Settings and new tasks while other models remain available", async ({ world, user, probe, step }) => {
+  const option = (model: { providerID: string; modelID: string }) => ({ testId: `model-option-${model.providerID}-${model.modelID}` });
+  await step("before: a saved Auto preference does not interrupt a new task on a deployment with Auto disabled", async () => {
+    expect(await probe.desktopApi("/anonymous-inference/status")).toMatchObject({ status: 200, body: { state: "unavailable", code: "free_disabled" } });
+    expect(await probe.storage("openwork.defaultModel")).toBe(`${world.auto.providerID}/${world.auto.modelID}`);
+    await user.see({ role: "button", label: "Change model" }, { text: "Organization witness" });
+    await user.click({ role: "button", label: "Change model" });
+    await user.see(option(world.byok));
+    await user.see(option(world.organization));
+    await user.notSee(option(world.auto));
+    await user.click(option(world.byok));
+    await user.screenshot();
+  });
+  await step("after: Settings hides the disabled Auto offer and keeps the person's other providers", async () => {
+    await user.click({ role: "button", label: "Account menu" });
+    await user.click({ role: "menuitem", label: "Settings" });
+    await user.click({ role: "button", label: /^AI Providers$/ });
+    await user.see({ role: "heading", label: /^AI Providers$/, nth: 0 });
+    await user.see({ text: /^BYOK provider$/ });
+    expect(await probe.desktopApi("/anonymous-inference/status")).toMatchObject({ status: 200, body: { code: "free_disabled" } });
+    await user.notSee({ testId: "settings-auto-provider" });
+    await user.notSee({ text: "Auto is unavailable on this device or blocked by your organization administrator." });
+    await user.screenshot();
+  });
 });
 
 test("a member with a saved Auto default can choose a working model while free access is switched off", async ({ world, user, probe, step }) => {

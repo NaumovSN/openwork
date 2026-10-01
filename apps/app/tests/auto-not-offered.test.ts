@@ -1,5 +1,14 @@
 import { expect, test } from "bun:test";
-import { autoAccessWall, autoAccessWallFromError, autoNotOffered, autoPickerCopy, autoQuietlyUnavailable, autoWallCopy, freeAutoSwitchedOff, unavailableDesktopFreeStatus } from "../src/app/lib/inference-access";
+import { autoAccessWall, autoAccessWallFromError, autoNotOffered, autoPickerCopy, autoQuietlyUnavailable, autoWallCopy, freeAutoSwitchedOff, modelForNewTask, unavailableDesktopFreeStatus } from "../src/app/lib/inference-access";
+
+test("a deployment opt-out clears a saved Auto default for new tasks while retaining a personal model", () => {
+  const status = { ...unavailableDesktopFreeStatus(), code: "free_disabled" };
+  const auto = { providerID: status.providerID, modelID: status.modelID };
+  const personal = { providerID: "personal", modelID: "working-model" };
+  expect(freeAutoSwitchedOff(status)).toBe(true);
+  expect(modelForNewTask(auto, status)).toBeNull();
+  expect(modelForNewTask(personal, status)).toBe(personal);
+});
 
 test("Auto that is running but not offered to this organization says why, and never looks like an outage", () => {
   const subtitles = Object.fromEntries(["free_not_enrolled", "free_not_offered", "managed_models_disabled_for_dpa", "not_eligible"]

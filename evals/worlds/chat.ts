@@ -636,7 +636,7 @@ export async function focusContinuity(seed: Seed) {
   return { app, workspace, session };
 }
 
-async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: boolean } = {}) {
+async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: boolean; disableAutoByEnvironment?: boolean } = {}) {
   const [webPort] = await allocateFreePorts(1);
   if (!webPort) throw new Error("No app-web port available for the picker fixture");
   const den = await seed.den({
@@ -670,6 +670,7 @@ async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: bool
       OPENWORK_DEV_FREE_RELEASE_SECRET: "fixture-free-release-secret-000000000000000000",
       OPENWORK_FREE_INFERENCE_ORIGIN: new URL(witness.url).origin,
       OPENWORK_DEV_FREE_CONTROL_PLANE: den.ref.apiUrl,
+      ...(options.disableAutoByEnvironment ? { OPENWORK_DISABLE_FREE_INFERENCE: "1" } : {}),
     } })
     : await seed.appWeb({ name: "model-picker", workspacePath, webPort, den: den.ref });
   await addInitScript(app.client, browserScript((providerId) => {
@@ -733,9 +734,8 @@ export function modelPicker(seed: Seed) {
   return seedModelPicker(seed);
 }
 
-/** A saved Auto default on the native renderer, with Den's free switch explicitly off. */
-export async function modelPickerDisabledAuto(seed: Seed) {
-  const world = await seedModelPicker(seed, { disabledAutoDesktop: true });
+async function seedDisabledAutoPicker(seed: Seed, disableAutoByEnvironment: boolean) {
+  const world = await seedModelPicker(seed, { disabledAutoDesktop: true, disableAutoByEnvironment });
   // No first-class seed primitive initializes model preferences on a sessionless route.
   await seed.evalIn(world.app, browserScript((auto, workspaceId) => {
     localStorage.setItem("openwork.defaultModel", `${auto.providerID}/${auto.modelID}`);
@@ -744,6 +744,16 @@ export async function modelPickerDisabledAuto(seed: Seed) {
     return true;
   }, [world.auto, world.workspace.workspaceId]));
   return world;
+}
+
+/** A saved Auto default on the native renderer, with Den's free switch explicitly off. */
+export function modelPickerDisabledAuto(seed: Seed) {
+  return seedDisabledAutoPicker(seed, false);
+}
+
+/** The same saved model choices with the desktop deployment's local opt-out. */
+export function modelPickerDeploymentDisabledAuto(seed: Seed) {
+  return seedDisabledAutoPicker(seed, true);
 }
 
 /**

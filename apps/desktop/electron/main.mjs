@@ -82,7 +82,7 @@ import {
 import { resetMacDockIcon } from "./brand-icon-darwin.mjs";
 import { createDesktopVaultKeyProvider } from "./secure-vault-key.mjs";
 import { createDesktopFreeSigner, desktopFreeBootstrapEligible } from "./desktop-free-signer.mjs";
-import { loadDesktopFreeReleaseSecret } from "./desktop-free-release.mjs";
+import { applyDesktopFreeBuildSettings, loadDesktopFreeReleaseSecret } from "./desktop-free-release.mjs";
 import {
   clearOpenworkSentrySession,
   initOpenworkSentry,
@@ -1332,6 +1332,8 @@ function validateSkillName(raw) {
   return trimmed;
 }
 
+// Apply the build opt-out before the runtime captures inherited environment values.
+await applyDesktopFreeBuildSettings({ appVersion: resolveAppVersion(app) });
 let desktopFreeReleaseSecret = null;
 const runtimeManager = createRuntimeManager({
   app,
