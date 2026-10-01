@@ -148,7 +148,11 @@ test("the supported transform enriches live progress and history without changin
   const hooks = new Map<string, (event: AfterEvent) => void>();
   const progress: Record<string, unknown>[] = [];
   const returned = { output: { rows: [{ version: 3 }] }, metadata: { existing: "retained" } };
-  const tool = { execute: async (_input: unknown, _context: BeforeEvent & { progress(metadata: Record<string, unknown>): Promise<void> }) => returned };
+  const tool = { execute: async (_input: unknown, _context: BeforeEvent & { progress(metadata: Record<string, unknown>): Promise<void> }) => {
+    expect(progress).toMatchObject([{ openworkToolDetails: [{ invocationId: "call_1:0", ordinal: 0,
+      startedAt: expect.any(Number), status: "running" }] }]);
+    return returned;
+  } };
   let transformed = "";
   const close = await plugin.setup({ tool: {
     async hook(name, callback) { hooks.set(name, event => callback(event)); return { async dispose() {} }; },
@@ -164,7 +168,10 @@ test("the supported transform enriches live progress and history without changin
   const result = await tool.execute(input, { ...call, tool: "service_search", async progress(metadata) { progress.push(metadata); } });
   expect(transformed).toBe("service_search");
   expect(result).toBe(returned);
-  expect(progress).toMatchObject([{ openworkToolDetails: [{ invocationId: "call_1:0", ordinal: 0, output: returned.output, status: "completed" }] }]);
+  expect(progress).toMatchObject([
+    { openworkToolDetails: [{ invocationId: "call_1:0", ordinal: 0, status: "running" }] },
+    { openworkToolDetails: [{ invocationId: "call_1:0", ordinal: 0, output: returned.output, status: "completed" }] },
+  ]);
   hooks.get("execute.after")!(outer);
   expect(outer.result.metadata).toMatchObject({ openworkToolDetails: [{ output: returned.output }] });
   await close();

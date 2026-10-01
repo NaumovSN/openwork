@@ -207,6 +207,10 @@ export default {
           tool.execute = async (input, call) => {
             const start = { ...call, tool: info.id, input };
             const event = { ...start, invocationId: collector.claim(start) };
+            // Publish the native start while the connected call is still held.
+            // Waiting until completion loses its live clock on history reload.
+            const started = collector.details(event);
+            if (started.length) await call.progress({ openworkToolDetails: started }).catch(() => {});
             try {
               const result = await execute(input, call);
               collector.after({ ...event, status: "completed", result: { output: result.output ?? result.content } });
