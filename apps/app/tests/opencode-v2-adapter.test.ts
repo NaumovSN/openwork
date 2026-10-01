@@ -2621,6 +2621,44 @@ test.each(["/api/provider", "/api/model/default", "/api/model"])("v2 provider ca
   }
 });
 
+test.each(["held", "rejected"])("v2 provider catalog returns a model HTTP failure without waiting for %s metadata", async (metadata) => {
+  const originalFetch = globalThis.fetch;
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (request.url.endsWith("/api/model")) return jsonResponse({ error: "models unavailable" }, 503);
+    if (metadata === "rejected") throw new Error("metadata transport failed");
+    await held;
+    return jsonResponse({ data: [] });
+  };
+  const loading = createClientV2("http://opencode.test/opencode2", "/workspace", {}).provider.list();
+  try {
+    const result = await Promise.race([
+      loading,
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("model failure waited for metadata")), 100)),
+    ]);
+    expect(result.response.status).toBe(503);
+    expect(result.data).toBeUndefined();
+  } finally {
+    release();
+    await loading.catch(() => undefined);
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test.each(["/api/provider", "/api/model/default"])("v2 provider catalog still surfaces metadata transport failures for %s", async (failedPath) => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (request.url.endsWith(failedPath)) throw new Error("metadata transport failed");
+    return jsonResponse({ data: [] });
+  };
+  try {
+    await expect(createClientV2("http://opencode.test/opencode2", "/workspace", {}).provider.list()).rejects.toThrow("metadata transport failed");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("v2 provider catalog retains display names and advertised effort without exposing provider credentials", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {

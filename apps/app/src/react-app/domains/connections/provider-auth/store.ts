@@ -2343,7 +2343,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     }
 
     const refreshedCatalog = await refreshProvidersAfterCloudSync(
-      configChanged ? { dispose: true } : { force: true },
+      configChanged ? { dispose: true } : { force: reason !== "model_picker_open" },
     ).catch(() => null);
     if (refreshedCatalog && failures.length === 0 && usageScope === readGatewayUsageScope()
       && usageContext === getCloudProviderSyncContextKey()
@@ -2488,11 +2488,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           publishSettingsCloudProviderSyncError(reason, message);
           return;
         }
-        // The server may already be synchronized while this route still holds
-        // a removed managed-model default. Always reread the live catalog and
-        // reconcile that preference so Settings diagnostics recover in place,
-        // including after a noop server sync.
-        await refreshProvidersAfterCloudSync({ force: true }, isCurrent);
+        // Applied changes and recovery must reread the live catalog, including
+        // Settings recovery after a noop. A picker opening after a noop may
+        // reuse fresh metadata; invalidation and expiry still trigger a read.
+        await refreshProvidersAfterCloudSync({
+          force: reason !== "model_picker_open" || result.status === "applied",
+        }, isCurrent);
         if (!isCurrent()) return;
         return { outcome: "handled_server_side" };
       } catch (error) {

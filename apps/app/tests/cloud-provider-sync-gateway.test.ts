@@ -3,6 +3,7 @@ import { QueryObserver } from "@tanstack/react-query";
 import { createDenClient } from "../src/app/lib/den";
 import { getReactQueryClient } from "../src/react-app/infra/query-client";
 import { gatewayUsageQueryPrefix } from "../src/react-app/domains/cloud/gateway-usage-state";
+import { PROVIDER_LIST_CACHE_MS, providerListQueryKey } from "../src/react-app/infra/provider-list-query";
 import { usageStatus } from "./gateway-usage-fixture";
 
 import { createOpenworkServerClient } from "../src/app/lib/openwork-server";
@@ -732,6 +733,44 @@ describe("cloud provider sync in server-capability mode", () => {
     const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
 
     expect(await store.runCloudProviderSync("settings_cloud_opened")).toEqual({ outcome: "handled_server_side" });
+  });
+
+  test.each(["noop", "applied"] as const)("a warm picker reuses its catalog only when server sync is %s", async (status) => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests, { runStatuses: [{ status }] });
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+    try {
+      expect(await store.refreshProviders()).not.toBeNull();
+      requests.length = 0;
+      expect(await store.runCloudProviderSync("model_picker_open")).toEqual({ outcome: "handled_server_side" });
+      expect(requests.filter((request) => new URL(request.url).pathname === "/cloud-provider-sync/run")).toHaveLength(1);
+      expect(requests.filter((request) => new URL(request.url).pathname === "/cloud-provider-sync/status")).toHaveLength(1);
+      expect(requests.filter((request) => new URL(request.url).pathname === "/provider")).toHaveLength(status === "noop" ? 0 : 1);
+      requests.length = 0;
+      await store.runCloudProviderSync("manual");
+      expect(requests.filter((request) => new URL(request.url).pathname === "/provider")).toHaveLength(1);
+    } finally { store.dispose(); }
+  });
+
+  test.each(["expired", "invalidated"])("a noop picker sync refreshes a %s catalog", async (state) => {
+    const storage = installWindow({ origin: "https://self-hosted.example" });
+    installCloudSession(storage);
+    const requests: RecordedRequest[] = [];
+    installProviderSyncFetch(requests, { runStatuses: [{ status: "noop" }] });
+    const { store } = createProviderAuthTestStore({ read: true, write: true, providerSync: true });
+    try {
+      const catalog = await store.refreshProviders();
+      expect(catalog).not.toBeNull();
+      const queryClient = getReactQueryClient();
+      const queryKey = providerListQueryKey({ baseUrl: "https://engine.example", directory: "/tmp/workspace_test" });
+      if (state === "expired") queryClient.setQueryData(queryKey, catalog, { updatedAt: Date.now() - PROVIDER_LIST_CACHE_MS - 1 });
+      else await queryClient.invalidateQueries({ queryKey, exact: true, refetchType: "none" });
+      requests.length = 0;
+      await store.runCloudProviderSync("model_picker_open");
+      expect(requests.filter((request) => new URL(request.url).pathname === "/provider")).toHaveLength(1);
+    } finally { store.dispose(); }
   });
 
   test("exposes server failure in settings", async () => {

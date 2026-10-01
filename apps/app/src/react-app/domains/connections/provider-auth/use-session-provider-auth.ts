@@ -188,7 +188,9 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
   const loadCloudProviderSync = useCallback((reason: OrganizationModelsRefreshReason) => (
     refreshOrganizationModels({
       runCloudProviderSync: store.runCloudProviderSync,
-      refreshProviders: () => store.refreshProviders({ force: true }),
+      // Opening a picker can reuse the catalog after sync. Actual provider
+      // changes invalidate it; manual and lifecycle recovery stay fresh.
+      refreshProviders: () => store.refreshProviders({ force: reason !== "model_picker_open" }),
     }, reason)
   ), [store]);
   const refreshCloudProviderSync = useCallback(async (reason: OrganizationModelsRefreshReason) => {
