@@ -1,4 +1,5 @@
-import { expect, spec } from "@openwork/testkit";
+import { expect } from "vitest";
+import { spec } from "@openwork/testkit";
 import { isRecord } from "../worlds/library.ts";
 import { childDecisionsWeb } from "../worlds/child-decisions.ts";
 
@@ -17,7 +18,8 @@ test("a member recovers a helper's unanswered question after losing its live not
   await step("before: another task has its own unanswered question", async () => {
     await user.reload();
     await user.type("composer", world.unrelated.prompt, { verify: true });
-    await user.press("Enter");
+    await probe.eventually(() => probe.composer(), { within: 30_000, label: "the configured engine admits the request", until: state => state.runTaskEnabled });
+    await user.click("Run task");
     await user.see({ text: world.unrelated.question }, { timeoutMs: 60_000 });
     expect(await pending()).toEqual([expect.objectContaining({ sessionID: world.unrelated.sessionId })]);
     evidence.recordAssertionEvidence("another task owns its own decision", "The unrelated question is pending in its original conversation", true);
@@ -27,14 +29,14 @@ test("a member recovers a helper's unanswered question after losing its live not
   await step("the member delegates work while live question notifications are lost", async () => {
     await user.click({ text: "Delegated question parent" });
     await user.see("composer", { editable: true });
+    await world.armNotificationFault();
     await user.type("composer", world.root.prompt, { verify: true });
-    await user.press("Enter");
-    // There is no probe primitive for a fixture's transport-drop counter. This
-    // observation is a witness, not a write to the app's cache or UI state.
-    const dropped = await probe.eventually(() => probe.eval(() => Number(Reflect.get(window, "__childDecisionNotificationsDropped"))), {
-      within: 60_000, label: "both real question notifications were dropped", until: count => count >= 2,
+    await probe.eventually(() => probe.composer(), { within: 30_000, label: "the parent can admit delegated work", until: state => state.runTaskEnabled });
+    await user.click("Run task");
+    const dropped = await probe.eventually(() => world.notificationDrops(), {
+      within: 60_000, label: "the real helper question notification was dropped", until: count => count >= 1,
     });
-    expect(dropped).toBeGreaterThanOrEqual(2);
+    expect(dropped).toBeGreaterThanOrEqual(1);
     evidence.recordAssertionEvidence("live notifications really were lost", `${dropped} native question notifications were dropped; real decision endpoints remain available`, true);
   });
   await step("after: the parent recovers only its helper's question", async () => {
