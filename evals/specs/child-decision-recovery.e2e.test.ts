@@ -45,7 +45,7 @@ test("a member recovers a helper's unanswered question after losing its live not
     const requests = await pending();
     expect(requests).toHaveLength(2);
     expect(requests).toEqual(expect.arrayContaining(unrelated));
-    expect(await probe.hash()).toContain(`/session/${world.root.sessionId}`);
+    expect((await probe.dom(`[data-session-surface-id="${world.root.sessionId}"]`)).elements).toHaveLength(1);
     evidence.recordAssertionEvidence("recover the related question without mixing tasks", "The parent displays its child's question; the unrelated question remains pending and absent from this chat", true);
     await user.screenshot();
   });
