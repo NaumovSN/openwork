@@ -23,6 +23,11 @@ export const checkpointSchema = z.object({
   titleSynced: z.boolean().default(false),
   startedAt: z.number().optional(),
   stillWorkingShown: z.boolean().default(false),
+  /** A long task stopped streaming progress; it posts hourly check-ins and its final answer instead. */
+  quiet: z.boolean().default(false),
+  lastCheckInAt: z.number().optional(),
+  /** A message sent while an earlier task ran was acknowledged once. */
+  queuedNoticeShown: z.boolean().default(false),
 })
 type Checkpoint = z.infer<typeof checkpointSchema>
 const readSchema = z.object({
@@ -30,6 +35,8 @@ const readSchema = z.object({
   title: z.string().nullable().optional(),
   messageCount: z.number(),
   finalAssistantText: z.string(),
+  /** The last assistant message alone; runtimes without it fall back to finalAssistantText. */
+  lastAssistantText: z.string().optional(),
   terminalError: z.unknown().optional(),
   messages: z.array(
     z.object({
@@ -55,6 +62,34 @@ export const DONE_PING_AFTER_MS = 60_000
 /** With no answer text by then, say the work continues and the reply will land in this thread. */
 export const STILL_WORKING_AFTER_MS = 20_000
 export const STILL_WORKING_LINE = "Still working on it. I'll reply here when it's done.\n\n"
+
+/**
+ * A long task streams live progress for its first few minutes, then goes quiet: one line saying so, an hourly
+ * check-in, and its final answer as a new reply that mentions the person. This is before Slack's stream
+ * lifetime, so the live reply never has to continue in another message.
+ */
+export const LONG_TASK_QUIET_AFTER_MS = 4 * 60_000
+export const LONG_TASK_LINE =
+  "This one will take a while. I'll keep working and post the result here when I'm done. Press Stop to cancel."
+export const CHECK_IN_EVERY_MS = 60 * 60_000
+/** A quiet task is read less often; nothing is shown until the next check-in or the answer. */
+const QUIET_POLL_MS = 5_000
+/** The reply to a message sent while an earlier task is still running in the thread. */
+export const QUEUED_LINE = "Got it. I'll do this right after the current task. Press Stop to end that task and start this now."
+
+export function formatElapsed(ms: number) {
+  const minutes = Math.max(0, Math.floor(ms / 60_000))
+  const hours = Math.floor(minutes / 60)
+  return hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`
+}
+
+/** What the thread is told when a headless task ends without an answer. */
+function headlessFailureText(terminalError: unknown) {
+  const code = z.object({ code: z.string() }).catch({ code: "" }).parse(terminalError).code
+  return code === "stuck_repeating"
+    ? "I got stuck repeating the same step, so I stopped. Try again, or ask in a different way."
+    : "This task couldn't finish. Try again, or ask in a different way."
+}
 
 /** First meaningful line of the answer, for the "done" reply. */
 export function doneSummary(text: string) {
@@ -140,6 +175,16 @@ async function sendChunks(slack: SlackCall, checkpoint: Checkpoint, chunks: Chun
 }
 
 export async function stopSlackStream(slack: SlackCall, checkpoint: Checkpoint, extra: Record<string, unknown> = {}) {
+  await closeStream(slack, checkpoint, checkpoint.finalStatus, extra)
+}
+
+/** Ends the reply message and leaves the Slack session in `status` ("processing" keeps Stop available). */
+async function closeStream(
+  slack: SlackCall,
+  checkpoint: Checkpoint,
+  status: "active" | "suspended" | "processing",
+  extra: Record<string, unknown> = {},
+) {
   // Closing text (a final link, "Stopped.") goes out as a plain reply when there is no open stream to carry it.
   const postClosingText = async () => {
     const text = chunkText(extra.chunks).trim()
@@ -149,7 +194,7 @@ export async function stopSlackStream(slack: SlackCall, checkpoint: Checkpoint, 
     slack("agents.sessions.setStatus", {
       channel_id: checkpoint.channel,
       thread_ts: checkpoint.threadTs,
-      status: checkpoint.finalStatus,
+      status,
     })
   if (!checkpoint.streamTs) {
     // Nothing was streamed yet: deliver any closing text as a plain reply and clear the thinking status.
@@ -161,7 +206,7 @@ export async function stopSlackStream(slack: SlackCall, checkpoint: Checkpoint, 
     await slack("chat.stopStream", {
       channel: checkpoint.channel,
       ts: checkpoint.streamTs,
-      session_status: checkpoint.finalStatus,
+      session_status: status,
       ...extra,
     })
   } catch (error) {
@@ -202,6 +247,8 @@ export async function advanceSlackRun(input: {
   webHandoff?: boolean
   /** Gateway model alias for the headless runner, chosen by the workspace admin. */
   model?: string
+  /** Long tasks stop streaming progress after this long (the headless runtime); unset streams the whole run. */
+  quietAfterMs?: number
   now?: () => number
 }): Promise<{ checkpoint: Checkpoint; delayMs: number; done?: boolean }> {
   const cp = input.checkpoint
@@ -256,6 +303,49 @@ export async function advanceSlackRun(input: {
       cp.titleSynced = true
       await input.persist?.(cp)
     }
+    const finished = snapshot.status === "idle" && Boolean(snapshot.finalAssistantText)
+    if (cp.quiet) {
+      if (snapshot.terminalError) {
+        await appendText(input.slack, cp, headlessFailureText(snapshot.terminalError), now)
+        cp.finalStatus = "suspended"
+        cp.phase = "finish"
+      } else if (finished) {
+        // Only the final answer: the person did not see the progress notes before it.
+        await appendText(input.slack, cp, snapshot.lastAssistantText || snapshot.finalAssistantText, now, async (part) => {
+          cp.sentText += part
+          await input.persist?.(cp)
+        })
+        cp.phase = "finish"
+      } else if (now() - (cp.lastCheckInAt ?? now()) >= CHECK_IN_EVERY_MS) {
+        await input.slack("chat.postMessage", {
+          channel: cp.channel,
+          thread_ts: cp.threadTs,
+          text: `Still working on it (${formatElapsed(now() - (cp.startedAt ?? now()))} so far).`,
+        })
+        cp.lastCheckInAt = now()
+        await input.persist?.(cp)
+      }
+      return { checkpoint: cp, delayMs: cp.phase === "finish" ? 0 : QUIET_POLL_MS }
+    }
+    if (
+      !snapshot.terminalError &&
+      !finished &&
+      input.quietAfterMs !== undefined &&
+      cp.startedAt !== undefined &&
+      now() - cp.startedAt >= input.quietAfterMs
+    ) {
+      // Before sending anything else, so the live reply never needs a second message. The Slack session stays in
+      // progress so Stop stays available; the answer comes later as a new reply.
+      await closeStream(input.slack, cp, "processing", { chunks: [{ type: "markdown_text", text: `\n\n${LONG_TASK_LINE}` }] })
+      cp.streamTs = undefined
+      cp.streamStartedAt = undefined
+      cp.streamCharacters = 0
+      cp.sentText = ""
+      cp.quiet = true
+      cp.lastCheckInAt = now()
+      await input.persist?.(cp)
+      return { checkpoint: cp, delayMs: QUIET_POLL_MS }
+    }
     const delta = currentReplyDelta(cp.sentText, snapshot.finalAssistantText)
     if (delta)
       await appendText(input.slack, cp, delta, now, async (part) => {
@@ -306,12 +396,12 @@ export async function advanceSlackRun(input: {
         cp,
         webHandoff
           ? `\n\nThis task needs attention. [Open in OpenWork Web](${webLink(cp.sessionId ?? "")}).`
-          : "\n\nThis task couldn't finish. Try again, or ask in a different way.",
+          : `\n\n${headlessFailureText(snapshot.terminalError)}`,
         now,
       )
       cp.finalStatus = "suspended"
       cp.phase = "finish"
-    } else if (snapshot.status === "idle" && Boolean(snapshot.finalAssistantText)) cp.phase = "finish"
+    } else if (finished) cp.phase = "finish"
     return { checkpoint: cp, delayMs: 1_000 }
   }
   cp.completedAt ??= now()
@@ -338,7 +428,10 @@ export async function advanceSlackRun(input: {
       await input.slack("chat.postMessage", {
         channel: cp.channel,
         thread_ts: cp.threadTs,
-        text: `<@${cp.recipientUserId}> Done: ${doneSummary(cp.sentText)}`,
+        text:
+          cp.finalStatus === "suspended"
+            ? `<@${cp.recipientUserId}> This task needs your attention. Details are above.`
+            : `<@${cp.recipientUserId}> Done: ${doneSummary(cp.sentText)}`,
       })
     } catch {
       // The answer is already delivered; a missed ping must not fail the run.

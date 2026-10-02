@@ -47,7 +47,7 @@ export function makeRunner(input: { store?: Store; model: ModelClient; mcp?: Mcp
   const runner = new Runner({
     store,
     defaultModel: "gwm_test",
-    limits: { maxConcurrentTurns: 4, maxSteps: 8, turnTimeoutMs: 60_000, contextCharBudget: 100_000 },
+    limits: { maxConcurrentTurns: 4, maxSteps: 8, turnTimeoutMs: 60_000, credentialRefreshMs: 3_600_000, contextCharBudget: 100_000 },
     ...input,
   })
   return { store, runner }

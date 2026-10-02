@@ -5,7 +5,9 @@
  * liveness is bounded by time: the row must still exist (deleting it revokes
  * the token), the whole lifetime must fit DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS,
  * and verifyMcpRequest still checks active organization membership on every
- * request. They are never refreshed.
+ * request. A token is never extended: a run longer than its lifetime gets a
+ * freshly minted one each time the headless runner pauses it between steps
+ * (`credentials_refresh`) and the Slack worker resumes it.
  */
 export const DEN_MCP_HEADLESS_RUN_CLIENT_ID = "openwork-headless-run"
 export const DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS = 60 * 60 * 1000
