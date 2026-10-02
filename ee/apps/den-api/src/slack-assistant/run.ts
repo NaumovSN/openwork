@@ -102,14 +102,22 @@ function headlessFailureText(terminalError: unknown) {
     : "This task couldn't finish. Try again, or ask in a different way."
 }
 
-/** First meaningful line of the answer, for the "done" reply. */
+/** A line that only titles what follows: a markdown heading, a bold-only line, or a short "Label:" line. */
+function isHeadingLine(raw: string, cleaned: string) {
+  if (/^\s*#{1,6}\s/.test(raw)) return true
+  if (/^[>*\-\s]*(\*\*|__)[^*_]+(\*\*|__)\W*$/.test(raw)) return true
+  return cleaned.endsWith(":") && cleaned.length <= 60
+}
+
+/** First sentence of the first real paragraph of the answer, for the "done" reply. */
 export function doneSummary(text: string) {
   const line = text
     .split("\n")
-    .map((entry) => entry.replace(/\*\*|__/g, "").replace(/^[#>*\-\s]+/, "").trim())
-    .find((entry) => entry.length > 0)
+    .map((raw) => ({ raw, cleaned: raw.replace(/\*\*|__/g, "").replace(/^[#>*\-\s]+/, "").trim() }))
+    .find((entry) => entry.cleaned.length > 0 && !isHeadingLine(entry.raw, entry.cleaned))?.cleaned
   if (!line) return "your answer is above."
-  return line.length > 140 ? `${line.slice(0, 139)}…` : line
+  const sentence = /^.*?[.!?](?=\s|$)/.exec(line)?.[0] ?? line
+  return sentence.length > 140 ? `${sentence.slice(0, 139)}…` : sentence
 }
 
 export function currentReplyDelta(previous: string, current: string) {

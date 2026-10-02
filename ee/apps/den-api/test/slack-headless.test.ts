@@ -232,7 +232,7 @@ describe("Slack run loop on the headless runtime", () => {
     })
     await advanceSlackRun({ checkpoint, remote, slack, messageId: "msg_1", saveSession: async () => {}, title: "t", webHandoff: false, now: () => 200_000 })
     expect(JSON.stringify(calls)).not.toContain("OpenWork Web")
-    expect(calls.at(-1)).toEqual({ method: "chat.postMessage", body: { channel: "C1", thread_ts: "1.0", text: "<@U1> Done: Digest" } })
+    expect(calls.at(-1)).toEqual({ method: "chat.postMessage", body: { channel: "C1", thread_ts: "1.0", text: "<@U1> Done: Launch moved to Tuesday" } })
   })
 
   test("the reply stream opens with the first step, not a placeholder", async () => {
@@ -591,6 +591,15 @@ test("labels and summaries are short and readable", () => {
   expect(doneSummary("\n\n> **Summary** of the week\nmore")).toBe("Summary of the week")
   expect(doneSummary("")).toBe("your answer is above.")
   expect(doneSummary("x".repeat(300)).length).toBe(140)
+})
+
+test("the done reply skips headings and labels and quotes the first sentence", () => {
+  expect(doneSummary("## Result\n\nAll three reports are ready. Details below.")).toBe("All three reports are ready.")
+  expect(doneSummary("Status check:\nEvery service is healthy. Nothing to do.")).toBe("Every service is healthy.")
+  expect(doneSummary("**Summary**\n\nThe draft was sent for review.")).toBe("The draft was sent for review.")
+  const long = `${"word ".repeat(60)}end. Second sentence.`
+  expect(doneSummary(`# Title\n${long}`)).toBe(`${long.slice(0, 139)}…`)
+  expect(doneSummary("# Title\n## Subtitle\n**Notes**\nNext steps:")).toBe("your answer is above.")
 })
 
 test("the runner-path prompt says Slack files and images can be opened", () => {
