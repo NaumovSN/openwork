@@ -339,9 +339,30 @@ export async function lockSlackThread(event: EventRow, actor: SlackActor) {
       })
       .onDuplicateKeyUpdate({ set: { id } })
     const thread = (await tx.select().from(Thread).where(eq(Thread.id, id)).for("update"))[0]
-    if (!thread || (thread.activeEventId && thread.activeEventId !== event.id)) return null
+    if (!thread) return { thread: null, busy: false }
+    // `busy`: another of this member's tasks is running here, so this message waits its turn.
+    if (thread.activeEventId && thread.activeEventId !== event.id) return { thread: null, busy: true }
+    if (thread.activeEventId !== event.id) {
+      // Messages in a thread run in the order they were sent: an older one still waiting goes first.
+      const older = await tx
+        .select({ id: Event.id })
+        .from(Event)
+        .where(
+          and(
+            eq(Event.connectionId, event.connectionId),
+            eq(Event.slackUserId, event.slackUserId),
+            eq(Event.channelId, event.channelId),
+            eq(Event.threadTs, event.threadTs),
+            inArray(Event.status, ["pending", "running"]),
+            eq(Event.cancelled, false),
+            or(lt(Event.createdAt, event.createdAt), and(eq(Event.createdAt, event.createdAt), lt(Event.id, event.id))),
+          ),
+        )
+        .limit(1)
+      if (older.length) return { thread: null, busy: false }
+    }
     await tx.update(Thread).set({ activeEventId: event.id }).where(eq(Thread.id, id))
-    return thread
+    return { thread, busy: false }
   })
 }
 export async function releaseSlackThread(event: EventRow) {
@@ -365,16 +386,20 @@ export async function cancelSlackThread(installation: InstallationRow, event: Sl
         inArray(Event.status, ["pending", "running"]),
       ),
     )
-  for (const candidate of candidates) {
+  const matches = candidates.filter((candidate) => {
     const output = z
       .object({ channel: z.string().optional(), threadTs: z.string().optional() })
       .safeParse(candidate.checkpoint ? JSON.parse(candidate.checkpoint) : {})
     const matchesSource = candidate.channelId === event.channel && candidate.threadTs === event.thread_ts
     const matchesOutput =
       output.success && output.data.channel === event.channel && output.data.threadTs === event.thread_ts
-    if (matchesSource || matchesOutput)
-      await db.update(Event).set({ cancelled: true, availableAt: new Date() }).where(eq(Event.id, candidate.id))
-  }
+    return matchesSource || matchesOutput
+  })
+  // Stop ends the task that is running; messages the member sent while it ran start next. With nothing
+  // running yet, Stop cancels the request itself.
+  const running = matches.filter((candidate) => candidate.status === "running")
+  for (const candidate of running.length ? running : matches)
+    await db.update(Event).set({ cancelled: true, availableAt: new Date() }).where(eq(Event.id, candidate.id))
 }
 export async function revokeSlackInstallation(connectionId: DenTypeId<"externalMcpConnection">) {
   await db
