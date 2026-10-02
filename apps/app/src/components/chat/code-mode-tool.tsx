@@ -119,6 +119,18 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
     );
   }
 
+  // Rows inside a group named for one service drop that name, and identical
+  // consecutive finished calls fold into one row ("2 times").
+  const services = [...new Set(calls.map(serviceName).filter((name): name is string => Boolean(name)))];
+  const groupService = services.length === 1 ? services[0] ?? null : null;
+  const rowLabel = (call: DynamicToolUIPart) => `${call.state}:${getCapabilityCallSentence(call, { connectionName: serviceName(call) }).past}`;
+  const rows: Array<{ call: DynamicToolUIPart; repeat: number }> = [];
+  for (const call of calls) {
+    const previous = rows.at(-1);
+    if (previous && !isToolPartInFlight(call) && rowLabel(previous.call) === rowLabel(call)) previous.repeat += 1;
+    else rows.push({ call, repeat: 1 });
+  }
+
   return (
     <Collapsible open={open} onOpenChange={setUserOpen} data-code-mode-call={part.toolCallId}>
       <div className="group/step flex min-w-0 items-center gap-2">
@@ -138,7 +150,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
       {detailsOpen ? <TechnicalDetailsPanel part={part} /> : null}
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-180 ease-out data-starting-style:h-0 data-ending-style:h-0 motion-reduce:transition-none [&[hidden]:not([hidden='until-found'])]:hidden">
         <div className="mt-2 flex flex-col gap-1 border-s border-border ps-3">
-          {calls.map(call => (
+          {rows.map(({ call, repeat }) => (
             <CapabilityCallLine
               key={call.toolCallId}
               part={call}
@@ -146,6 +158,8 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
               statusUnknown={isToolPartInFlight(call) && (!running || !inFlight)}
               quietFailure
               hideDuration
+              groupService={groupService}
+              repeat={repeat}
               shimmer={running && call.toolCallId === current?.toolCallId}
             />
           ))}

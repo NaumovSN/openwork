@@ -30,6 +30,10 @@ type CapabilityCallLineProps = ChatToolReconnectCallbacks & {
   quietFailure?: boolean
   /** Calls inside a script have no recorded timing; don't invent one. */
   hideDuration?: boolean
+  /** Inside a group already named for this service: drop the repeated name. */
+  groupService?: string | null
+  /** Identical consecutive calls folded into this row. */
+  repeat?: number
   shimmer?: boolean
 }
 
@@ -155,6 +159,8 @@ export function CapabilityCallLine({
   statusUnknown = false,
   quietFailure = false,
   hideDuration = false,
+  groupService = null,
+  repeat = 1,
   shimmer = false,
   onReconnect,
   onReopenAuthorization,
@@ -283,7 +289,10 @@ export function CapabilityCallLine({
   }
 
   const sentence = getCapabilityCallSentence(part, { connectionName: connector?.name })
-  const line = statusUnknown ? `${sentence.present}, status unavailable` : inFlight ? sentence.present : sentence.past
+  const withoutService = (text: string) => groupService
+    ? text.replace(` · ${groupService}`, "").replace(new RegExp(`^(Search(?:ed|ing)) ${groupService.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} for`), "$1 for")
+    : text
+  const line = withoutService(statusUnknown ? `${sentence.present}, status unavailable` : inFlight ? sentence.present : sentence.past)
   return (
     <div data-capability-call={part.toolName} className={cn("group/step min-w-0", className)}>
       <div className="flex min-h-6 min-w-0 items-center gap-2 text-sm text-muted-foreground">
@@ -296,6 +305,7 @@ export function CapabilityCallLine({
           </span>
         ) : null}
         <span className={cn("min-w-0 truncate", shimmer && inFlight && "ow-text-shimmer motion-reduce:animate-none")}>{line}</span>
+        {repeat > 1 ? <span className="shrink-0 text-xs text-muted-foreground">{repeat} times</span> : null}
         {duration ? (
           <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span>
         ) : null}
