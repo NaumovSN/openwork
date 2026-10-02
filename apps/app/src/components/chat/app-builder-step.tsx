@@ -91,7 +91,7 @@ export function AppBuilderStep({
   const index = stages.findIndex((stage) => stage.id === progress.stage);
   const editing =
     progress.build && /(?:^|_)update_app$/.test(progress.build.toolName);
-  const label = progress.app
+  const label = progress.app || progress.builtUnrecorded
     ? editing
       ? "Updated"
       : "Created"
@@ -130,7 +130,9 @@ export function AppBuilderStep({
         {progress.running ? <span className="text-xs text-muted-foreground">usually a few minutes</span> : null}
         {!progress.running && !progress.app ? (
           <span className="text-muted-foreground">
-            {progress.failed
+            {progress.builtUnrecorded
+              ? "Open it from your Library"
+              : progress.failed
               ? "Needs a fix"
               : progress.unavailable
                 ? "Preview unavailable"
@@ -144,7 +146,7 @@ export function AppBuilderStep({
         <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)}
           label={`${label} “${progress.title}”`} alwaysVisible={progress.failed} />
       </div>}
-      <div hidden={Boolean(progress.app) && !expanded}>
+      <div hidden={(Boolean(progress.app) && !expanded) || progress.builtUnrecorded}>
       <ol
         className="ml-2.5 mt-3 space-y-4 border-l border-border pb-1 pl-7"
         aria-live="polite"
@@ -152,9 +154,9 @@ export function AppBuilderStep({
         {stages.map((stage, i) => {
           // A direct legacy call cannot prove a preparation stage happened.
           const done = Boolean(
-            progress.app || (i === 0 ? progress.prepared : i < index),
+            progress.app || progress.builtUnrecorded || (i === 0 ? progress.prepared : i < index),
           );
-          const current = i === index && !progress.app;
+          const current = i === index && !progress.app && !progress.builtUnrecorded;
           const status = done
             ? "complete"
             : current && progress.failed

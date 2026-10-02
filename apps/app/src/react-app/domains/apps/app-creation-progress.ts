@@ -52,6 +52,13 @@ export function appPreparation(part: DynamicToolUIPart | undefined) {
   return parsed.success ? parsed.data : null;
 }
 
+/** A step that succeeded but whose result an older engine did not record. */
+export function appStepUnrecorded(part: DynamicToolUIPart | undefined): boolean {
+  if (!part || part.state !== "output-available") return false;
+  const result = field(part.callProviderMetadata?.openwork, "mcpResult");
+  return field(field(result, "structuredContent"), "unrecorded") === true;
+}
+
 /** Correlate by the server-issued preparation id, keeping separate Apps and retries separate. */
 export function appCreationRuns(messages: UIMessage[], creationRequested = false): AppCreationRun[] {
   const runs: AppCreationRun[] = [];
@@ -95,6 +102,15 @@ export function appCreationRuns(messages: UIMessage[], creationRequested = false
         )
           run = latest;
       }
+      // Without a usable id (unrecorded results), a build belongs to the
+      // latest App still being made, not to a new card.
+      if (!run && (typeof id !== "string" || !byPreparation.has(id))) {
+        const latest = runs.at(-1);
+        // Only when the latest preparation's id is unknown (not recorded);
+        // a known, different id is a different App.
+        if (latest?.preparation && !appPreparation(latest.preparation) && appStepUnrecorded(latest.preparation)
+          && !latest.builds.some((build) => builtAppSummary(build) || appStepUnrecorded(build))) run = latest;
+      }
       if (run) run.builds.push(part);
       else runs.push({ id: part.toolCallId, builds: [part] });
     }
@@ -125,8 +141,10 @@ export function appCreationProgress(run: AppCreationRun, active: boolean) {
       (!build && run.preparation && appBuilderResultFailed(run.preparation)),
   );
   const checking = build?.state === "input-available";
-  const prepared = Boolean(preparation);
-  const stage: AppCreationStage = app
+  // Built, but the launch was not recorded: done, just not previewable here.
+  const builtUnrecorded = appStepUnrecorded(build);
+  const prepared = Boolean(preparation) || appStepUnrecorded(run.preparation) || builtUnrecorded;
+  const stage: AppCreationStage = app || builtUnrecorded
     ? "ready"
     : checking || (build && failed)
       ? "checking"
@@ -142,10 +160,11 @@ export function appCreationProgress(run: AppCreationRun, active: boolean) {
   // Completion without a verified launch is not success (e.g. catalog capacity).
   const unavailable = Boolean(
     !failed &&
+      !builtUnrecorded &&
       ((build?.state === "output-available" && !app) ||
         (!build && run.preparation?.state === "output-available" && !prepared)),
   );
-  const running = active && !failed && !unavailable && !app;
+  const running = active && !failed && !unavailable && !app && !builtUnrecorded;
   return {
     stage,
     title: typeof title === "string" ? title : "App",
@@ -156,6 +175,7 @@ export function appCreationProgress(run: AppCreationRun, active: boolean) {
     app,
     failed,
     unavailable,
+    builtUnrecorded,
     running,
   };
 }

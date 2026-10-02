@@ -566,9 +566,11 @@ function scriptErrorMessage(text: string, depth = 0): string | null {
 }
 
 /**
- * App-builder steps reconstructed from a finished script: its recorded
- * `{ tool, status, input }` calls plus, when the script made exactly one App
- * call, the script's own result as that call's output or error.
+ * App-builder steps reconstructed from a finished script's recorded
+ * `{ tool, status, input }` calls. A rejected call carries the script's error
+ * (Den's reason). A successful call's real result was not recorded, and the
+ * script's return value is whatever the model chose to return, so it is
+ * marked `unrecorded` rather than guessed.
  */
 function appEntriesFromScript(calls: unknown, output: unknown): Record<string, unknown>[] {
   if (!Array.isArray(calls)) return [];
@@ -576,22 +578,12 @@ function appEntriesFromScript(calls: unknown, output: unknown): Record<string, u
     && /[._](?:prepare_app|create_app|update_app)$/.test(readString(call, "tool") ?? ""));
   if (appCalls.length === 0) return [];
   const text = typeof output === "string" ? output : "";
-  const single = appCalls.length === 1;
+  const failures = appCalls.filter((call) => readString(call, "status") === "error").length;
   return appCalls.map((call) => {
     const tool = (readString(call, "tool") ?? "").replace(/\.([^.]*)$/, "_$1");
     const input = readRecord(call, "input") ?? {};
-    if (readString(call, "status") === "completed") {
-      let result: unknown = null;
-      if (single) {
-        try {
-          result = JSON.parse(text.slice(Math.max(0, text.indexOf("{"))));
-        } catch {
-          result = null;
-        }
-      }
-      return { tool, input, status: "completed", output: isRecord(result) ? result : {} };
-    }
-    return { tool, input, status: "error", error: (single ? scriptErrorMessage(text) : null) ?? "The App step failed. See the script result." };
+    if (readString(call, "status") === "completed") return { tool, input, status: "completed", output: { unrecorded: true } };
+    return { tool, input, status: "error", error: (failures === 1 ? scriptErrorMessage(text) : null) ?? "The App step failed. See the script result." };
   });
 }
 
