@@ -26,6 +26,10 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
       expect(lefts.length).toBeGreaterThan(3);
       expect(new Set(lefts).size, `${slot} column: ${lefts.join(", ")}`).toBe(1);
     }
+    // Pin keeps its place whether or not it is showing, so a hovered row's name never shifts.
+    const pinLefts = (await probe.dom(`${picker} [data-model-key] button[aria-label^="Pin to top:"], ${picker} [data-model-key] button[aria-label^="Unpin:"]`)).elements.map((element) => Math.round(element.rect.left));
+    expect(pinLefts.length).toBeGreaterThan(1);
+    expect(new Set(pinLefts).size, `pin column: ${pinLefts.join(", ")}`).toBe(1);
   };
   const rememberedSelection = async (model: { providerID: string; modelID: string }) => {
     expect(await probe.storage("openwork.sessionModels.v1")).toMatchObject({
