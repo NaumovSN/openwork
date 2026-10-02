@@ -494,7 +494,7 @@ async function creationJourney({ world, agent, user, probe, step, evidence }: Sp
       expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(0);
       await agent.send(buildPrompt);
       await user.see({ text: "Writing the app" }, { timeoutMs: 120_000 });
-      expect((await probe.dom('[data-app-creation-step="needs"][data-step-status="complete"]')).elements).toHaveLength(1);
+      expect(await probe.eventually(async () => (await probe.dom('[data-app-creation-step="needs"][data-step-status="complete"]')).elements, { within: 30_000, intervalMs: 200, label: "the actual preparation completes before checking the held writing stage", until: elements => elements.length === 1 })).toHaveLength(1);
       expect((await probe.dom('[data-app-creation-step="writing"][data-step-status="running"]')).elements).toHaveLength(1);
       expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(0);
       const calls = (await world.den.mocks.inventory.agentRequests({ promptMarker: buildPrompt })).filter(request => request.kind === "tool");
