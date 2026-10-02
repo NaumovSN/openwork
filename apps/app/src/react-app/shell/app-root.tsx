@@ -39,6 +39,7 @@ import { useVisualViewportInset } from "../../hooks/use-visual-viewport-inset";
 import { DevProfiler, DevProfilerOverlay } from "./dev-profiler";
 import { ReactRenderWatchdogOverlay } from "./react-render-watchdog-overlay";
 import { CloudWorkspaceOverlay, CloudWorkspaceStatusProvider } from "./cloud-workspace-overlay";
+import { EngineMigrationOverlay } from "./engine-migration";
 import { AppMenuProvider } from "./app-menu";
 import {
   OpenworkControlProvider,
@@ -570,6 +571,7 @@ export function AppRoot() {
                   </Routes>
                   <LoadingOverlay />
                   <CloudWorkspaceOverlay />
+                  <EngineMigrationOverlay />
                 </CloudWorkspaceStatusProvider>
               </OpenWorkWebAccessGate>
             </DenSigninGate>

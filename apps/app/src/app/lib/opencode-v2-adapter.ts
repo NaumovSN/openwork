@@ -1,5 +1,6 @@
 import type {
   ApiError,
+  ConfigProvidersResponse,
   FilePart,
   Model,
   Part,
@@ -550,22 +551,49 @@ function toolOutput(value: unknown, result?: unknown): string {
  * a direct call, so the chat's existing connection card finds it.
  */
 export function codeModeConnectionParts(part: ToolPart): ToolPart[] {
-  if (part.metadata?.openworkV2CodeMode !== true || part.state.status !== "completed") return [];
-  const { metadata, time } = part.state;
+  if (part.metadata?.openworkV2CodeMode !== true || !("metadata" in part.state) || !("time" in part.state)) return [];
+  const { metadata } = part.state;
+  const appTool = (tool: string) => /_(?:search_capabilities|prepare_app|create_app|update_app)$/.test(tool);
+  const appCallId = (tool: string, index: number) => `${part.callID}:app:${tool}:${index}`;
+  if (part.state.status === "running" || part.state.status === "error") {
+    const outerError = part.state.status === "error" ? part.state.error : null;
+    const startedAt = part.state.time.start;
+    const calls = metadata?.toolCalls;
+    if (!Array.isArray(calls)) return [];
+    const occurrences = new Map<string, number>();
+    return calls.flatMap((call): ToolPart[] => {
+      if (!isRecord(call)) return [];
+      const tool = readString(call, "tool")?.replace(/\.([^.]*)$/, "_$1");
+      if (!tool || !appTool(tool)) return [];
+      const index = occurrences.get(tool) ?? 0;
+      occurrences.set(tool, index + 1);
+      const callID = appCallId(tool, index);
+      const base = { id: callID, callID, messageID: part.messageID, sessionID: part.sessionID, type: "tool" as const, tool };
+      if (outerError && (call.status === "error" || call.status === "running")) return [{ ...base, state: { status: "error", input: readRecord(call, "input") ?? {}, error: readString(call, "error") ?? outerError ?? "The MCP call failed. See the Code Mode result.", metadata: {}, time: { start: startedAt, end: part.state.status === "error" ? part.state.time.end : startedAt } } }];
+      if (call.status !== "running") return [];
+      // Running inner calls are real engine events; results arrive at execute completion.
+      return [{ ...base, state: { status: "running", input: readRecord(call, "input") ?? {}, title: tool, metadata: {}, time: { start: startedAt } } }];
+    });
+  }
+  if (part.state.status !== "completed") return [];
+  const time = part.state.time;
   const entries = metadata?.openworkMcpResults;
   if (!Array.isArray(entries)) return [];
+  const occurrences = new Map<string, number>();
   return entries.flatMap((entry, index): ToolPart[] => {
     if (!isRecord(entry)) return [];
     const tool = readString(entry, "tool");
     if (!tool) return [];
-    const callID = `${part.callID}:mcp:${index}`;
+    const occurrence = occurrences.get(tool) ?? 0;
+    occurrences.set(tool, occurrence + 1);
+    const callID = appTool(tool) ? appCallId(tool, occurrence) : `${part.callID}:mcp:${index}`;
     const base = { id: callID, messageID: part.messageID, sessionID: part.sessionID, type: "tool" as const, callID, tool };
     const input = readRecord(entry, "input") ?? {};
     const status = readString(entry, "status");
     if (status === "completed") {
       const output = toolOutput(undefined, entry.output);
       return [{ ...base, state: { status, input, output, title: tool, time,
-        metadata: { openworkMcpResult: { content: [{ type: "text", text: output }], structuredContent: entry.output } } } }];
+        metadata: { openworkMcpResult: isRecord(entry.output) && Array.isArray(entry.output.content) ? entry.output : { content: [{ type: "text", text: output }], structuredContent: entry.output, ...(isRecord(entry.output) && isRecord(entry.output.launch) ? { _meta: { "openwork/mcpApp": entry.output.launch } } : {}) } } } }];
     }
     const error = readString(entry, "error");
     return status === "error" && error ? [{ ...base, state: { status, input, error, metadata: {}, time } }] : [];
@@ -1458,10 +1486,8 @@ export function translateV2Event(
     const start = stream.start ?? toolEventTimestamp(value, properties);
     stream.start = start;
     stream.raw = "";
-    return [{
-      type: "message.part.updated",
-      properties: { part: runningToolPart(stream, start, state.taskSessions) },
-    }];
+    const part = runningToolPart(stream, start, state.taskSessions);
+    return [part, ...codeModeConnectionParts(part)].map(next => ({ type: "message.part.updated", properties: { part: next } }));
   }
 
   if (type === "session.tool.success" || type === "session.next.tool.success") {
@@ -1481,7 +1507,7 @@ export function translateV2Event(
     const part = failedToolPart(stream, properties, toolEventTimestamp(value, properties), state.taskSessions);
     state.tools.set(toolStreamKey(stream.sessionID, stream.callID), null);
     clearV2SessionTranslation(state, stream.sessionID);
-    return [{ type: "message.part.updated", properties: { part } }];
+    return [part, ...codeModeConnectionParts(part)].map(next => ({ type: "message.part.updated", properties: { part: next } }));
   }
 
   if (type === "permission.asked" || type === "permission.v2.asked") {
@@ -2307,6 +2333,53 @@ export function createClientV2(
     command: async (): Promise<FieldsResult<Record<string, never>>> => unsupportedResult(baseUrl, "session.command"),
   };
 
+  const listProviders = async (
+    _parameters: DirectoryParameters = {},
+    options?: RequestOptions,
+  ): Promise<FieldsResult<ProviderListResponse>> => {
+    const modelsResult = await request("GET", "/api/model", undefined, options?.signal);
+    if (!modelsResult.response.ok) return failedResult(modelsResult);
+    const [defaultsResult, providersResult] = await Promise.all([
+      request("GET", "/api/model/default", undefined, options?.signal),
+      request("GET", "/api/provider", undefined, options?.signal),
+    ]);
+    const providerNames = new Map<string, string>();
+    if (providersResult.response.ok) {
+      for (const provider of responseItems(providersResult.payload)) {
+        if (!isRecord(provider)) continue;
+        const id = readString(provider, "id");
+        const name = readString(provider, "name");
+        if (id && name) providerNames.set(id, name);
+      }
+    }
+    const models = responseItems(modelsResult.payload).flatMap((item) => {
+      const mapped = mapV2Model(item);
+      return mapped ? [mapped] : [];
+    });
+    const providersByID = new Map<string, Provider>();
+    for (const model of models) {
+      const current = providersByID.get(model.providerID);
+      if (current) {
+        current.models[model.id] = model;
+        continue;
+      }
+      providersByID.set(model.providerID, {
+        id: model.providerID,
+        name: providerNames.get(model.providerID) ?? model.providerID,
+        source: "config",
+        env: [],
+        options: {},
+        models: { [model.id]: model },
+      });
+    }
+    const all = [...providersByID.values()];
+    return successfulResult(modelsResult, {
+      all,
+      connected: all.map((provider) => provider.id),
+      default: defaultsResult.response.ok ? mapDefaultModels(defaultsResult.payload) : {},
+    });
+  };
+
   const adapter = {
     global: {
       health: async (options?: RequestOptions): Promise<FieldsResult<{ healthy: boolean; version: string }>> => {
@@ -2322,54 +2395,19 @@ export function createClientV2(
     session,
     config: {
       get: async (): Promise<FieldsResult<Record<string, never>>> => localResult(baseUrl, "/api/config", {}),
+      // v2 only lists usable providers, so the connected list and the full
+      // provider list are the same read.
+      providers: async (
+        parameters: DirectoryParameters = {},
+        options?: RequestOptions,
+      ): Promise<FieldsResult<ConfigProvidersResponse>> => {
+        const result = await listProviders(parameters, options);
+        if (!result.data) return { error: result.error, request: result.request, response: result.response };
+        return { data: { providers: result.data.all, default: result.data.default }, request: result.request, response: result.response };
+      },
     },
     provider: {
-      list: async (
-        _parameters: DirectoryParameters = {},
-        options?: RequestOptions,
-      ): Promise<FieldsResult<ProviderListResponse>> => {
-        const modelsResult = await request("GET", "/api/model", undefined, options?.signal);
-        if (!modelsResult.response.ok) return failedResult(modelsResult);
-        const [defaultsResult, providersResult] = await Promise.all([
-          request("GET", "/api/model/default", undefined, options?.signal),
-          request("GET", "/api/provider", undefined, options?.signal),
-        ]);
-        const providerNames = new Map<string, string>();
-        if (providersResult.response.ok) {
-          for (const provider of responseItems(providersResult.payload)) {
-            if (!isRecord(provider)) continue;
-            const id = readString(provider, "id");
-            const name = readString(provider, "name");
-            if (id && name) providerNames.set(id, name);
-          }
-        }
-        const models = responseItems(modelsResult.payload).flatMap((item) => {
-          const mapped = mapV2Model(item);
-          return mapped ? [mapped] : [];
-        });
-        const providersByID = new Map<string, Provider>();
-        for (const model of models) {
-          const current = providersByID.get(model.providerID);
-          if (current) {
-            current.models[model.id] = model;
-            continue;
-          }
-          providersByID.set(model.providerID, {
-            id: model.providerID,
-            name: providerNames.get(model.providerID) ?? model.providerID,
-            source: "config",
-            env: [],
-            options: {},
-            models: { [model.id]: model },
-          });
-        }
-        const all = [...providersByID.values()];
-        return successfulResult(modelsResult, {
-          all,
-          connected: all.map((provider) => provider.id),
-          default: defaultsResult.response.ok ? mapDefaultModels(defaultsResult.payload) : {},
-        });
-      },
+      list: (parameters?: DirectoryParameters, options?: RequestOptions) => listProviders(parameters, options),
     },
     app: {
       agents: async (): Promise<FieldsResult<never[]>> => localResult(baseUrl, "/api/agent", []),

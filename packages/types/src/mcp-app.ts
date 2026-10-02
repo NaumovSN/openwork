@@ -70,7 +70,23 @@ export const mcpAppAuthoringSchema = mcpAppSourceSchema.extend({
   tools: toolDeclarationsSchema.optional(),
 })
 
-export const createMcpAppInputSchema = mcpAppAuthoringSchema.extend({ pluginId: pluginIdSchema.optional() })
+/** Correlates preparation and publication in chat; it grants no access or validation. */
+export const prepareMcpAppInputSchema = z.object({
+  title: titleSchema,
+  description: descriptionSchema.optional(),
+  tools: toolDeclarationsSchema.optional(),
+}).strict()
+export const prepareMcpAppOutputSchema = z.object({
+  preparationId: z.uuid(),
+  title: titleSchema,
+  tools: z.array(mcpAppToolBindingSchema).max(MCP_APP_MAX_TOOLS),
+  starter: mcpAppSourceSchema,
+  nextSteps: z.array(z.string()).max(6),
+}).strict()
+export const createMcpAppInputSchema = mcpAppAuthoringSchema.extend({
+  pluginId: pluginIdSchema.optional(),
+  preparationId: z.uuid().optional(),
+})
 export const updateMcpAppInputSchema = mcpAppAuthoringSchema.extend({
   appId: mcpAppIdSchema,
   expectedRevisionId: mcpAppRevisionIdSchema,
@@ -142,6 +158,8 @@ export type McpAppCompiledRevision = z.infer<typeof mcpAppCompiledRevisionSchema
 export type McpAppSource = z.infer<typeof mcpAppSourceSchema>
 export type McpAppCsp = z.infer<typeof mcpAppCspSchema>
 export type CreateMcpAppInput = z.infer<typeof createMcpAppInputSchema>
+export type PrepareMcpAppInput = z.infer<typeof prepareMcpAppInputSchema>
+export type PrepareMcpAppOutput = z.infer<typeof prepareMcpAppOutputSchema>
 export type UpdateMcpAppInput = z.infer<typeof updateMcpAppInputSchema>
 export type ReadMcpAppInput = z.infer<typeof readMcpAppInputSchema>
 export type ReadMcpAppOutput = z.infer<typeof readMcpAppOutputSchema>

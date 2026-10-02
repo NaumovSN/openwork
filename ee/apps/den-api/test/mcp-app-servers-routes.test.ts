@@ -2,6 +2,7 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { ConfigObjectTable, ConfigObjectVersionTable, MemberTable, OrganizationTable, PluginAccessGrantTable } from "@openwork-ee/den-db/schema"
 import {
+  prepareMcpAppOutputSchema,
   MCP_APP_CONFIG_SCHEMA_VERSION,
   MCP_APP_LAUNCH_TOOL_NAME,
   mcpAppResourceUri,
@@ -263,11 +264,44 @@ async function withClient(path: string, run: (client: Client) => Promise<void>, 
   try { await run(client) } finally { await client.close() }
 }
 
+test("prepare_app verifies tools and returns a starter without publishing or executing", async () => {
+  await withClient("/mcp/agent", async (client) => {
+    const result = await client.callTool({ name: "prepare_app", arguments: { title: source.title, tools: declarations } })
+    const parsed = prepareMcpAppOutputSchema.parse(result.structuredContent)
+    expect(parsed.tools).toEqual(bindings)
+    expect(parsed.starter.reactSource).toContain('app.callServerTool')
+    expect(parsed.nextSteps.join(" ")).toContain('preparationId')
+    expect(client.getInstructions()).toContain('start with prepare_app directly')
+    expect(created).toEqual([])
+    expect(normalExecutions).toEqual([])
+    expect(workflowCreations).toBe(0)
+    expect(resolverCalls).toHaveLength(1)
+    // Correlation never skips the independent publication checks.
+    await client.callTool({ name: "create_app", arguments: { ...source, preparationId: parsed.preparationId } })
+    expect(resolverCalls).toHaveLength(2)
+    expect(created).toHaveLength(1)
+  })
+})
+
+test("preparation honors write scope and revoked membership", async () => {
+  scopes = new Set(["mcp:read"])
+  await withClient("/mcp/agent", async (client) => {
+    expect(JSON.stringify(await client.callTool({ name: "prepare_app", arguments: { title: source.title } }))).toContain("insufficient_mcp_scope")
+  })
+  scopes = new Set(["mcp:read", "mcp:write"])
+  memberPresent = false
+  await withClient("/mcp/agent", async (client) => {
+    expect(JSON.stringify(await client.callTool({ name: "prepare_app", arguments: { title: source.title } }))).toContain("mcp_membership_revoked")
+  })
+  expect(resolverCalls).toEqual([])
+  expect(created).toEqual([])
+})
+
 test("create_app builds an App that opens in OpenWork and names its own MCP server", async () => {
   await withClient("/mcp/agent", async (client) => {
     const tools = (await client.listTools()).tools
     const names = tools.map((tool) => tool.name)
-    expect(names).toEqual(expect.arrayContaining(["create_app", "update_app", "read_app", "search_capabilities", "execute_capability"]))
+    expect(names).toEqual(expect.arrayContaining(["prepare_app", "create_app", "update_app", "read_app", "search_capabilities", "execute_capability"]))
     expect(names.some((name) => name.startsWith(MCP_APP_LAUNCH_TOOL_NAME))).toBe(false)
     // The authoring rules reach the model once, in create_app, not again in update_app or the instructions.
     const description = (name: string) => tools.find((tool) => tool.name === name)?.description ?? ""
@@ -280,12 +314,12 @@ test("create_app builds an App that opens in OpenWork and names its own MCP serv
     for (const text of [description("update_app"), client.getInstructions() ?? ""]) expect(text).not.toContain("app.callServerTool")
 
     const createdResult = await client.callTool({ name: "create_app", arguments: source })
-    expect(createdResult.structuredContent).toEqual({ app: appSummary, input: {}, mcpUrl: appUrl })
+    expect(createdResult.structuredContent).toEqual({ app: appSummary, input: {}, mcpUrl: appUrl, launch: launchMeta(appSummary)["openwork/mcpApp"] })
     expect(createdResult._meta).toEqual(launchMeta(appSummary))
     expect(JSON.stringify(createdResult.content)).toContain(appUrl)
-    // The model learns the person already sees the App above its reply; other clients still get its text.
+    // Creation opens a sidebar tab; other clients still receive the text and MCP URL.
     const createdText = JSON.stringify(createdResult.content)
-    expect(createdText).toContain(MCP_APP_SHOWN_NOTE)
+    expect(createdText).toContain("tab in the right sidebar")
     expect(createdText).toContain(source.textFallback)
     expect(created).toEqual([{ ...source, context: context, resolved: bindings }])
     expect(resolverCalls).toEqual([{ scopes: ["mcp:read", "mcp:write"], member, tools: declarations }])
@@ -297,7 +331,7 @@ test("create_app builds an App that opens in OpenWork and names its own MCP serv
     // Hosts that forward only text still get the source update_app replaces.
     expect(JSON.stringify(read.content)).toContain("source-marker")
     const updated = await client.callTool({ name: "update_app", arguments: { ...source, appId, expectedRevisionId: revisionId } })
-    expect(updated.structuredContent).toEqual({ app: nextSummary, input: {}, mcpUrl: appUrl })
+    expect(updated.structuredContent).toEqual({ app: nextSummary, input: {}, mcpUrl: appUrl, launch: launchMeta(nextSummary)["openwork/mcpApp"] })
     expect(updated._meta).toEqual(launchMeta(nextSummary))
     expect(normalExecutions).toEqual([])
   })
@@ -364,11 +398,11 @@ test("search and execute open a built App through its own server instead of its 
       expect(matches.some((match) => match.name === `plugin:${pluginId}:${otherAppId}`)).toBe(true)
     }
     const opened = await client.callTool({ name: "execute_capability", arguments: { name: `plugin:${pluginId}:${appId}` } })
-    expect(opened.structuredContent).toEqual({ app: appSummary, input: {}, mcpUrl: appUrl })
+    expect(opened.structuredContent).toEqual({ app: appSummary, input: {}, mcpUrl: appUrl, launch: launchMeta(appSummary)["openwork/mcpApp"] })
     expect(opened._meta).toEqual(launchMeta(appSummary))
     // A body object is the App's launch input, as a connection App gets its call arguments.
     const withInput = await client.callTool({ name: "execute_capability", arguments: { name: `plugin:${pluginId}:${appId}`, body: { project: "Apollo" } } })
-    expect(withInput.structuredContent).toEqual({ app: appSummary, input: { project: "Apollo" }, mcpUrl: appUrl })
+    expect(withInput.structuredContent).toEqual({ app: appSummary, input: { project: "Apollo" }, mcpUrl: appUrl, launch: { ...launchMeta(appSummary)["openwork/mcpApp"], arguments: { input: { project: "Apollo" } } } })
     expect(withInput._meta).toEqual({ "openwork/mcpApp": { ...launchMeta(appSummary)["openwork/mcpApp"], arguments: { input: { project: "Apollo" } } } })
     for (const body of ["Apollo", ["Apollo"], null]) {
       const ignored = await client.callTool({ name: "execute_capability", arguments: { name: `plugin:${pluginId}:${appId}`, body } })
@@ -490,7 +524,7 @@ test("builder errors keep scope, editor, fresh-session, and membership boundarie
   memberPresent = true
   enabled = false
   await withClient("/mcp/agent", async (client) => {
-    expect((await client.listTools()).tools.some((tool) => ["create_app", "update_app", "read_app"].includes(tool.name))).toBe(false)
+    expect((await client.listTools()).tools.some((tool) => ["prepare_app", "create_app", "update_app", "read_app"].includes(tool.name))).toBe(false)
     expect(JSON.stringify(await client.callTool({ name: "search_capabilities", arguments: { query: "project" } }))).not.toContain('"kind":"mcp_app"')
   })
 })
@@ -550,7 +584,7 @@ test("with building Apps off for the deployment or the organization, Connect kee
       version = authoredVersion
       await withClient("/mcp/agent", async (client) => {
         const names = (await client.listTools()).tools.map((tool) => tool.name)
-        for (const builder of ["create_app", "update_app", "read_app"]) expect(names).not.toContain(builder)
+        for (const builder of ["prepare_app", "create_app", "update_app", "read_app"]) expect(names).not.toContain(builder)
         expect(client.getInstructions()).toContain("save_artifact_view and follow its prerequisites")
         expect(client.getInstructions()).not.toContain("create_app")
         expect(client.getInstructions()).not.toContain(MCP_APP_SHOWN_NOTE)

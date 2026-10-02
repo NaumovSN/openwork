@@ -698,7 +698,7 @@ async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: bool
   await seed.evalIn(app, () => { location.reload(); return true; });
   await seed.signIn(app, den.admin, "picker member");
   const workspace = await seed.workspace(app, workspacePath);
-  const auto = { providerID: "openwork-free", modelID: "openai/gpt-5.6-luna" };
+  const auto = { providerID: "openwork-free", modelID: "openai/gpt-6-luna" };
   const byok = { providerID: "picker-byok", modelID: "byok-model" };
   const favorite = { providerID: "picker-byok", modelID: "pinned-model" };
   const recent = { providerID: "picker-byok", modelID: "recent-model" };
@@ -709,7 +709,7 @@ async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: bool
     provider: {
       // Native Auto belongs to the local relay; do not replace it with a mock BYOK provider.
       ...(options.disabledAutoDesktop ? {} : { [auto.providerID]: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Free", options: providerOptions,
-        models: { [auto.modelID]: { name: "GPT-5.6 Luna" } } } }),
+        models: { [auto.modelID]: { name: "GPT-6 Luna" } } } }),
       openwork: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Models", options: providerOptions,
         models: { "hosted-model": { name: "Hosted witness" } } },
       [byok.providerID]: { npm: "@ai-sdk/openai-compatible", name: "BYOK provider", options: providerOptions,

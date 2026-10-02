@@ -245,6 +245,11 @@ async function withFakeSidecar(
     onSetProviders?: (specs: managedV2.OpencodeV2ProviderSpec[], disabled: string[] | undefined) => void;
     mcp?: Record<string, Record<string, unknown>>;
     waits?: Parameters<typeof createEngineV2Preview>[0]["waits"];
+    /** Workspaces to register; the first is the active one. Paths are relative to the fixture root. */
+    workspaces?: Array<{ id: string; path: string }>;
+    /** Persisted before start, as if the person had already switched chats to v2. */
+    chatRouting?: boolean;
+    onRequest?: (path: string, init: { method?: string; directory?: string }) => void;
   },
   run: (preview: ReturnType<typeof createEngineV2Preview>, root: string, calls: string[]) => Promise<void>,
 ) {
@@ -256,9 +261,10 @@ async function withFakeSidecar(
     injectProvider: async () => {},
     setProviders: async (specs: managedV2.OpencodeV2ProviderSpec[], disabled?: string[]) => { input.onSetProviders?.(specs, disabled); },
     setSkills: async () => {}, close: async () => {},
-    async fetchJson(path: string, init: { method?: string; body?: unknown } = {}) {
+    async fetchJson(path: string, init: { method?: string; body?: unknown; directory?: string } = {}) {
       const method = init.method ?? "GET";
       calls.push(`${method} ${path}`);
+      input.onRequest?.(path, init);
       return await input.reply(path, method, init.body);
     },
   } satisfies managedV2.ManagedOpencodeV2Server;
@@ -273,7 +279,12 @@ async function withFakeSidecar(
   ];
   const previousBin = process.env.OPENWORK_OPENCODE2_BIN;
   process.env.OPENWORK_OPENCODE2_BIN = "opencode2-fixture";
-  const preview = createEngineV2Preview({ config: testConfig(root), deferStart: true, waits: input.waits });
+  const config = testConfig(root);
+  config.workspaces = (input.workspaces ?? []).map((workspace) => ({
+    id: workspace.id, name: workspace.id, path: join(root, workspace.path), preset: "default", workspaceType: "local",
+  }));
+  if (input.chatRouting !== undefined) await writeEngineV2PreviewState(config, { enabled: false, chatRouting: input.chatRouting });
+  const preview = createEngineV2Preview({ config, deferStart: true, waits: input.waits });
   try {
     await preview.setEnabled(true);
     for (let attempt = 0; attempt < 200 && !preview.status().running; attempt++) await new Promise((resolve) => setTimeout(resolve, 5));
@@ -551,4 +562,70 @@ test("warming a folder starts its upkeep in the background without waiting", asy
     await preview.syncWorkspaceMcp("ws_1", root);
     expect(calls.filter((call) => call === "PUT /api/mcp/good")).toHaveLength(1);
   });
+});
+
+// A sidecar whose catalog already lists the mirrored org provider.
+function v2CatalogReply(path: string): FakeSidecarReply {
+  if (path === "/api/provider") return { status: 200, json: { data: [{ id: "orga", settings: { apiKey: "fixture-key" } }] } };
+  if (path === "/api/model") return { status: 200, json: { data: [{ id: "m1", providerID: "orga" }] } };
+  return { status: 200, json: { data: [] } };
+}
+
+test("with chats on v2, the sidecar opens the active workspace as soon as it starts", async () => {
+  const opened: string[] = [];
+  await withFakeSidecar({
+    providers: orgProvider,
+    chatRouting: true,
+    workspaces: [{ id: "ws_active", path: "active" }, { id: "ws_other", path: "other" }],
+    onRequest: (path, init) => { if (path === "/api/provider" && init.directory) opened.push(init.directory); },
+    reply: v2CatalogReply,
+  }, async (_preview, root) => {
+    for (let attempt = 0; attempt < 200 && opened.length === 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(opened).toEqual([join(root, "active")]);
+  });
+});
+
+test("with chats still on v1, the v2 sidecar opens no workspace until chats switch to it", async () => {
+  const opened: string[] = [];
+  await withFakeSidecar({
+    providers: orgProvider,
+    chatRouting: false,
+    workspaces: [{ id: "ws_active", path: "active" }],
+    onRequest: (path, init) => { if (path === "/api/provider" && init.directory) opened.push(init.directory); },
+    reply: v2CatalogReply,
+  }, async (preview, root) => {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(opened).toEqual([]);
+    await preview.setChatRouting(true);
+    for (let attempt = 0; attempt < 200 && opened.length === 0; attempt++) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(opened).toEqual([join(root, "active")]);
+  });
+});
+
+test("switching engines during chat migration is a conflict, and the migration reports when it started", async () => {
+  // Point migration at a missing v1 database so it ends quickly and never
+  // reads the developer's real history.
+  const historyRoot = await mkdtemp(join(tmpdir(), "openwork-v1-history-"));
+  const previousDb = process.env.OPENCODE_DB;
+  process.env.OPENCODE_DB = join(historyRoot, "missing.db");
+  try {
+    await withFakeSidecar({ reply: () => ({ status: 200, json: { data: [] } }) }, async (preview) => {
+      const started = preview.migrateHistory().migration;
+      expect(started).toMatchObject({ state: "running", phase: "starting" });
+      expect(typeof started.startedAt).toBe("string");
+      await expect(preview.setEnabled(false)).rejects.toMatchObject({ status: 409, code: "engine_migration_running" });
+      await expect(preview.setChatRouting(true)).rejects.toMatchObject({ status: 409, code: "engine_migration_running" });
+      for (let attempt = 0; attempt < 400 && preview.status().migration.state === "running"; attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      const finished = preview.status().migration;
+      expect(finished).toMatchObject({ state: "error", startedAt: started.startedAt });
+      expect(finished.error).toContain("No v1 chat history found");
+      expect(finished.phase).toBeUndefined();
+    });
+  } finally {
+    if (previousDb === undefined) delete process.env.OPENCODE_DB;
+    else process.env.OPENCODE_DB = previousDb;
+    await rm(historyRoot, { recursive: true, force: true });
+  }
 });

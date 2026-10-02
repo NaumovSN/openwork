@@ -1,11 +1,11 @@
 import type { Context } from "hono"
-import { DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH,
+import { DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_RESPONSES_PATH, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH,
   type DesktopFreeAccessStatus } from "@openwork/free-auto"
 import { INFERENCE_FREE_MODEL_ID, managedModelCatalog } from "@openwork/types/den/inference"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
 import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/allowance.js"
-import { FREE_OPENAI_CHAT_URL, type AutoConfig } from "../shared/config.js"
+import { FREE_OPENAI_CHAT_URL, FREE_OPENAI_RESPONSES_URL, type AutoConfig } from "../shared/config.js"
 import { dispatchFreeCompletion } from "../shared/dispatch.js"
 import { freeError, FreeRequestError } from "../shared/errors.js"
 import { findMemberFreePrincipal, readFreePrincipalDefaultPinned } from "../shared/principal.js"
@@ -56,19 +56,19 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
           modelID: DESKTOP_FREE_MODEL_ID, catalog: managedModelCatalog(), defaultPinned: await dependencies.defaultPinned(principal), ...await store.read(principal) }
         return c.json(status, 200, { "cache-control": "no-store" })
       }
-      if (method !== "POST" || path !== MEMBER_FREE_CHAT_PATH) return freeError(404, "not_found", "Only Auto is available without an OpenWork Models subscription.")
+      if (method !== "POST" || (path !== MEMBER_FREE_CHAT_PATH && path !== MEMBER_FREE_RESPONSES_PATH)) return freeError(404, "not_found", "Only Auto is available without an OpenWork Models subscription.")
       const controller = new AbortController()
       const signal = AbortSignal.any([controller.signal, c.req.raw.signal])
       const parsed = await readFreeRequest(c.req.raw, config.maxBodyBytes, AbortSignal.any([signal, AbortSignal.timeout(config.requestTimeoutMs)]))
-      const prepared = prepareFreeRequest(parsed.value, config)
+      const prepared = prepareFreeRequest(parsed.value, config, path === MEMBER_FREE_RESPONSES_PATH ? "responses" : "chat")
       const usageLog = dependencies.usageLog
-      const upstream = new URL(FREE_OPENAI_CHAT_URL)
+      const upstream = new URL(prepared.protocol === "responses" ? FREE_OPENAI_RESPONSES_URL : FREE_OPENAI_CHAT_URL)
       return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal, prepared, signal, controller,
         startUsageLog: usageLog ? (requestId, stream) => {
           const recorder = createRequestLogRecorder({ insertRequestLog: usageLog.insert, updateRequestLog: usageLog.update,
             reporter: safeInferenceReporter(usageLog.reporter ?? sentryInferenceReporter) })
           recorder.start({ identity: { kind: "models", organizationId: key.organization_id, orgMembershipId: key.org_membership_id, inferenceKeyId: key.id },
-            openworkRequestId: requestId, route: "openwork_free", protocol: "openai_chat", upstreamProviderId: "openai",
+            openworkRequestId: requestId, route: "openwork_free", protocol: prepared.protocol === "responses" ? "openai_responses" : "openai_chat", upstreamProviderId: "openai",
             upstreamHost: upstream.hostname, upstreamPath: upstream.pathname, method: "POST",
             requestedModel: INFERENCE_FREE_MODEL_ID, upstreamModel: INFERENCE_FREE_MODEL_ID, stream, signal })
           return recorder

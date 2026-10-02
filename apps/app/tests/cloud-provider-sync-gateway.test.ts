@@ -272,9 +272,9 @@ function installProviderSyncFetch(
       if (url.origin === "https://engine.example" && url.pathname === "/global/health") {
         return jsonResponse({ healthy: true, version: "1.17.11" });
       }
-      if (url.origin === "https://engine.example" && url.pathname === "/provider") {
+      if (url.origin === "https://engine.example" && url.pathname === "/config/providers") {
         return jsonResponse({
-          all: [
+          providers: [
             {
               id: "lpr_test",
               name: "Team OpenAI",
@@ -283,7 +283,6 @@ function installProviderSyncFetch(
               models: { "gpt-test": { id: "gpt-test", name: "GPT Test" } },
             },
           ],
-          connected: ["lpr_test"],
           default: {},
         });
       }
@@ -470,7 +469,7 @@ describe("cloud provider sync usage refresh", () => {
       const outcome = await store.runCloudProviderSync("settings_cloud_opened");
       expect(outcome).toEqual(providerSync ? { outcome: "handled_server_side" } : undefined);
       expect(observer.getCurrentResult().isFetching).toBe(true);
-      expect(requests.some((request) => new URL(request.url).pathname === "/provider")).toBe(true);
+      expect(requests.some((request) => new URL(request.url).pathname === "/config/providers")).toBe(true);
       expect(store.getSnapshot().providerLoadState.status).toBe("ready");
       if (!providerSync) expect(requests.some((request) => request.url.endsWith("/engine/reload"))).toBe(true);
       await store.runCloudProviderSync("app_resume");
@@ -517,7 +516,7 @@ describe("cloud provider sync in gateway mode", () => {
     const outcome = await store.runCloudProviderSync(reason);
 
     expect(outcome).toEqual({ outcome: "handled_server_side" });
-    expect(requests.some((request) => new URL(request.url).pathname === "/provider")).toBe(true);
+    expect(requests.some((request) => new URL(request.url).pathname === "/config/providers")).toBe(true);
     expect(requests.every((request) => request.method === "GET")).toBe(true);
     expect(requests.some((request) => request.url.includes("/cloud-provider-sync/run"))).toBe(false);
     expect(store.getSnapshot().providerAuthError).toBeNull();

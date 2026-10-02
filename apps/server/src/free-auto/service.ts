@@ -1,11 +1,11 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
-  DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_PROVIDER_ID,
-  DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_CREDENTIAL_PATH, MEMBER_FREE_MODELS_PATH,
+  DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_OPEN_API_KEY, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_PROVIDER_ID,
+  DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_RESPONSES_PATH, MEMBER_FREE_CREDENTIAL_PATH, MEMBER_FREE_MODELS_PATH,
   MEMBER_FREE_STATUS_PATH, type DesktopFreeAccessStatus, type DesktopFreeSession, type SessionPowParams,
 } from "@openwork/free-auto";
 import type { CloudProviderDenSession } from "../cloud-provider-sync.js";
-import type { ServerConfig } from "../types.js";
+import type { DesktopFreeSigner, ServerConfig } from "../types.js";
 import { ApiError } from "../errors.js";
 import { externalFetch } from "../server-fetch.js";
 import { managedDesktopPolicy } from "../managed-desktop-policy.js";
@@ -29,7 +29,7 @@ type Logger = { log: (level: "info" | "warn" | "error", message: string, attribu
 const IDENTITY_CHANGED = "Auto's account changed. Retry after reloading the engine.";
 const freshLocalToken = () => `owf_local_${randomBytes(32).toString("base64url")}`;
 const memberPath = (path: string) => path === DESKTOP_FREE_STATUS_PATH ? MEMBER_FREE_STATUS_PATH
-  : path === DESKTOP_FREE_MODELS_PATH ? MEMBER_FREE_MODELS_PATH : path === DESKTOP_FREE_CHAT_PATH ? MEMBER_FREE_CHAT_PATH : path;
+  : path === DESKTOP_FREE_MODELS_PATH ? MEMBER_FREE_MODELS_PATH : path === DESKTOP_FREE_CHAT_PATH ? MEMBER_FREE_CHAT_PATH : path === DESKTOP_FREE_RESPONSES_PATH ? MEMBER_FREE_RESPONSES_PATH : path;
 const statusHttpCode = (state: DesktopFreeAccessStatus["state"]) => state === "update_required" ? 426 : state === "exhausted" ? 429 : 503;
 
 /**
@@ -42,6 +42,7 @@ const statusHttpCode = (state: DesktopFreeAccessStatus["state"]) => state === "u
 export class AnonymousInferenceService {
   private readonly settings: RelaySettings;
   private readonly enabled: boolean;
+  private readonly desktop: DesktopFreeSigner | null;
   private localAccessToken = freshLocalToken();
   // The member credential the engine's relay token is bound to. Held only in memory, like the credential itself,
   // and compared directly: it is an identity, not something to derive a digest from.
@@ -62,6 +63,7 @@ export class AnonymousInferenceService {
   private failures = new Map<string, { expiresAt: number; failure: RemoteFailure }>();
   private cachedStatus: { key: string; expiresAt: number; value: DesktopFreeAccessStatus } | null = null;
   private readonly activation: TaskActivation;
+  private readonly selectedAutoSessions = new Set<string>();
   private sessionPow: SessionPowParams;
   private readonly powPool = new SessionPowPool();
   private heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -76,7 +78,10 @@ export class AnonymousInferenceService {
     this.settings = readRelaySettings(environment);
     this.sessionPow = this.settings.pow;
     this.activation = new TaskActivation(now);
-    this.enabled = Boolean(config.anonymousInference?.desktop) && !config.readOnly && !this.settings.disabledByEnvironment;
+    // Without the desktop's signer (OpenWork web, headless), Auto still works signed out as an open client, like
+    // OpenCode Zen's "public" key: no proof and no guest session; the gateway limits it by IP.
+    this.desktop = config.anonymousInference?.desktop ?? null;
+    this.enabled = !config.readOnly && !this.settings.disabledByEnvironment;
   }
 
   // ── Identity ───────────────────────────────────────────────────────────
@@ -111,6 +116,7 @@ export class AnonymousInferenceService {
   private rotateRelayCredential(): void {
     // A new engine credential means a new identity: tasks the previous identity started are over.
     this.activation.close();
+    this.selectedAutoSessions.clear();
     this.localAccessToken = freshLocalToken();
     this.cachedStatus = null;
     this.failures.clear();
@@ -188,9 +194,9 @@ export class AnonymousInferenceService {
     const runtime = await readGlobalRuntimeOpencodeConfig(this.config);
     let permitted = this.enabled && runtime.managedPolicy?.allowCustomProviders !== false;
     let reason = !this.enabled ? "disabled by environment" : !permitted ? "custom providers blocked by policy" : null;
-    if (permitted) {
+    if (permitted && this.desktop) {
       try {
-        const { machineId } = await this.config.anonymousInference!.desktop.identity();
+        const { machineId } = await this.desktop.identity();
         // Start paying for the first guest session while the app is still loading.
         this.warmSessionPow(machineId);
       } catch (error) { permitted = false; reason = error instanceof Error ? error.message : "identity unavailable"; }
@@ -207,7 +213,8 @@ export class AnonymousInferenceService {
         return { ...snapshot, provider: mergeRuntimeProviderUpdate(snapshot.provider, { [ANONYMOUS_INFERENCE_PROVIDER_ID]: null }) };
       }
       this.available = true;
-      this.startHeartbeat();
+      // The heartbeat credits a machine's active time; an open client has no machine.
+      if (this.desktop) this.startHeartbeat();
       const provider = ownedProvider(this.localAccessToken, boundPort);
       changed = JSON.stringify(current) !== JSON.stringify(provider);
       return changed ? { ...snapshot, provider: mergeRuntimeProviderUpdate(snapshot.provider, { [ANONYMOUS_INFERENCE_PROVIDER_ID]: provider }) } : snapshot;
@@ -254,7 +261,7 @@ export class AnonymousInferenceService {
 
   private unavailable(code = "anonymous_unavailable"): DesktopFreeAccessStatus {
     return {
-      state: "unavailable", code, currentVersion: this.config.anonymousInference?.desktop.currentVersion ?? "",
+      state: "unavailable", code, currentVersion: this.desktop?.currentVersion ?? "",
       minimumVersion: null, providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID, allowance: null,
     };
   }
@@ -278,7 +285,7 @@ export class AnonymousInferenceService {
       this.disable();
       throw new ApiError(403, "organization_policy_denied", "Desktop free inference is disabled by local policy or configuration.");
     }
-    await this.config.anonymousInference!.desktop.identity();
+    await this.desktop?.identity();
   }
 
   // ── Status and task activation ─────────────────────────────────────────
@@ -323,13 +330,20 @@ export class AnonymousInferenceService {
   async assertTaskAccess(request: Request, path: string): Promise<void> {
     const route = taskRoute(request.method, path);
     if (!route) return;
-    if (route.kind === "end") { this.activation.end(route.sessionID); return; }
+    if (route.kind === "end") { this.activation.end(route.sessionID); this.selectedAutoSessions.delete(route.sessionID); return; }
     const payload: unknown = await request.clone().json().catch(() => null);
     if (!isRecord(payload)) return;
     const model = payload.model;
     const free = isRecord(model) ? model.providerID === DESKTOP_FREE_PROVIDER_ID
       : typeof model === "string" && model.startsWith(`${DESKTOP_FREE_PROVIDER_ID}/`);
-    if (!free) return;
+    if (route.kind === "model") {
+      // Bound memory even when sessions are abandoned. A fresh picker selection will re-register an evicted session.
+      if (this.selectedAutoSessions.size >= 1000) this.selectedAutoSessions.clear();
+      if (free) this.selectedAutoSessions.add(route.sessionID); else this.selectedAutoSessions.delete(route.sessionID);
+      if (!free) this.activation.end(route.sessionID);
+      return;
+    }
+    if (!free && !(model === undefined && this.selectedAutoSessions.has(route.sessionID))) return;
     // A person asking for Auto is worth one fresh attempt even while a refusal is held.
     this.guestRefusal = null;
     const status = await this.status(true);
@@ -347,17 +361,17 @@ export class AnonymousInferenceService {
     if (relayToken) this.assertRelayIdentity(relayToken);
     const member = authenticated ? await this.memberAuthorization() : null;
     if (relayToken) this.assertRelayIdentity(relayToken);
-    const session = authenticated && !member ? await this.guestSession() : null;
+    const session = authenticated && !member && this.desktop ? await this.guestSession() : null;
     await this.assertDispatchAllowed();
     signal.throwIfAborted();
-    const authorization = member ?? (session ? `Bearer ${session.token}` : "");
+    const authorization = member ?? (session ? `Bearer ${session.token}` : this.desktop ? "" : `Bearer ${DESKTOP_FREE_OPEN_API_KEY}`);
     const actualPath = member ? memberPath(path) : path;
-    const proof = await this.config.anonymousInference!.desktop.sign({ method, path: actualPath, body, authorization, ...(nonce ? { nonce } : {}) });
+    const proof = this.desktop ? await this.desktop.sign({ method, path: actualPath, body, authorization, ...(nonce ? { nonce } : {}) }) : null;
     signal.throwIfAborted();
     if (relayToken) this.assertRelayIdentity(relayToken);
     const response = await externalFetch(`${this.settings.origin}${actualPath}`, {
       method, body: method === "GET" ? undefined : body,
-      headers: { [DESKTOP_FREE_PROOF_HEADER]: proof, ...(authorization ? { authorization } : {}),
+      headers: { ...(proof ? { [DESKTOP_FREE_PROOF_HEADER]: proof } : {}), ...(authorization ? { authorization } : {}),
         ...(method === "POST" ? { "content-type": "application/json" } : {}) },
       signal, redirect: "error", credentials: "omit", cache: "no-store",
     });
@@ -408,7 +422,8 @@ export class AnonymousInferenceService {
 
   private async mintGuestSession(signal: AbortSignal, params: SessionPowParams, retry: boolean): Promise<DesktopFreeSession> {
     // The signed proof carries the machine identity; the body carries the proof of work for the proof's own nonce.
-    const { machineId } = await this.config.anonymousInference!.desktop.identity();
+    if (!this.desktop) throw new Error("Guest sessions need the desktop signer.");
+    const { machineId } = await this.desktop.identity();
     const job = this.powPool.take(machineId, params);
     const pow = await job.promise;
     const body = new TextEncoder().encode(JSON.stringify({ pow }));
@@ -431,7 +446,7 @@ export class AnonymousInferenceService {
 
   // ── Engine-facing relay ────────────────────────────────────────────────
 
-  async handle(request: Request, endpoint: "models" | "chat/completions"): Promise<Response> {
+  async handle(request: Request, endpoint: "models" | "chat/completions" | "responses"): Promise<Response> {
     const supplied = Buffer.from(request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1] ?? "");
     const relayToken = this.localAccessToken;
     const expected = Buffer.from(relayToken);
@@ -449,13 +464,13 @@ export class AnonymousInferenceService {
       await this.assertDispatchAllowed();
       this.assertRelayIdentity(relayToken);
       // Only the engine working on a task the user started from the app may spend the allowance.
-      if (endpoint === "chat/completions" && !this.activation.allows(request.headers.get("x-openwork-session-id"))) {
+      if (endpoint !== "models" && !this.activation.allows(request.headers.get("x-openwork-session-id"))) {
         return jsonError(403, "auto_not_activated", "Auto only runs for tasks started from OpenWork. Send a message with Auto selected to continue.");
       }
       const declaredLength = Number(request.headers.get("content-length") ?? "0");
       if (declaredLength > REQUEST_BODY_LIMIT) return jsonError(413, "anonymous_request_too_large", "The OpenWork Models request is too large.");
       const body = await readBoundedBody(request.body, REQUEST_BODY_LIMIT, AbortSignal.any([signal, AbortSignal.timeout(REQUEST_BODY_TIMEOUT_MS)]));
-      if (endpoint === "chat/completions") {
+      if (endpoint !== "models") {
         let payload: unknown;
         try { payload = JSON.parse(new TextDecoder().decode(body)); }
         catch { return jsonError(400, "invalid_request", "Expected a JSON request body."); }
@@ -479,10 +494,10 @@ export class AnonymousInferenceService {
       }
       const headerTimeout = setTimeout(() => controller.abort(new Error("Desktop free inference response headers timed out.")), HEADER_TIMEOUT_MS);
       let response: Response;
-      try { response = await this.remote(endpoint === "models" ? DESKTOP_FREE_MODELS_PATH : DESKTOP_FREE_CHAT_PATH, request.method, body, true, signal, true, relayToken); }
+      try { response = await this.remote(endpoint === "models" ? DESKTOP_FREE_MODELS_PATH : endpoint === "responses" ? DESKTOP_FREE_RESPONSES_PATH : DESKTOP_FREE_CHAT_PATH, request.method, body, true, signal, true, relayToken); }
       finally { clearTimeout(headerTimeout); }
       this.cachedStatus = null;
-      const completed = () => { if (endpoint === "chat/completions" && response.ok) this.activation.touch(); };
+      const completed = () => { if (endpoint !== "models" && response.ok) this.activation.touch(); };
       if (!response.body) { completed(); return new Response(null, { status: response.status, headers: responseHeaders(response.headers) }); }
       const reader = response.body.getReader();
       const abort = () => { void reader.cancel(signal.reason).catch(() => undefined); cleanup(); };
@@ -521,6 +536,7 @@ export class AnonymousInferenceService {
   private disable(): void {
     this.available = false;
     this.activation.close();
+    this.selectedAutoSessions.clear();
     this.stopHeartbeat();
     this.memberCredential = null;
     this.memberCredentialPromise = null;

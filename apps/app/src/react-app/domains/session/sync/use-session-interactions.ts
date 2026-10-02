@@ -352,7 +352,10 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
     return observeActivityRead(client, statusKey(workspaceId, sessionId), workspaceRoot, async (signal, snapshotStartedAt) => {
       const statuses = unwrap(await client.session.status({ directory: workspaceRoot || undefined }, { signal }));
       signal.throwIfAborted();
-      seedSessionStatus(workspaceId, sessionId, statuses[sessionId] ?? { type: "idle" }, { snapshotStartedAt });
+      seedSessionStatus(workspaceId, sessionId, statuses[sessionId] ?? { type: "idle" }, {
+        snapshotStartedAt,
+        engine: isOpencodeV2Client(client) ? "v2" : "v1",
+      });
     }, true);
   }, [client, workspaceId, sessionId, workspaceRoot]);
 

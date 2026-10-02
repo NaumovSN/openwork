@@ -181,6 +181,8 @@ async function closeModelPicker(app: Surface): Promise<void> {
   });
 }
 
+// Model rows are context-menu triggers (native right-click menus), so their
+// data-slot is not "command-item"; every row carries data-model-key.
 async function waitForModelInPicker(app: Surface, expected: string, timeoutMs = 45_000): Promise<void> {
   await waitFor(app, () => (Boolean(document.querySelector<HTMLButtonElement>('button[aria-label="Change model"]'))), {
     timeoutMs: 30_000,
@@ -201,7 +203,7 @@ async function waitForModelInPicker(app: Surface, expected: string, timeoutMs = 
       await evalIn(app, browserScript((expected) => {
         const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
         if (!(popover instanceof HTMLElement)) return false;
-        if ([...popover.querySelectorAll<HTMLElement>('[data-slot="command-item"]')]
+        if ([...popover.querySelectorAll<HTMLElement>("[data-model-key]")]
           .some((item) => (item.textContent ?? "").includes(expected))) return true;
         const modelButton = [...popover.querySelectorAll('button')]
           .find((button) => (button.textContent ?? "").trim().startsWith("Model"));
@@ -213,7 +215,7 @@ async function waitForModelInPicker(app: Surface, expected: string, timeoutMs = 
       const items = await evalIn(app, () => {
         const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
         if (!(popover instanceof HTMLElement)) return [];
-        return [...popover.querySelectorAll<HTMLElement>('[data-slot="command-item"]')]
+        return [...popover.querySelectorAll<HTMLElement>("[data-model-key]")]
           .map((item) => (item.textContent ?? "").trim());
       });
       if (Array.isArray(items) && items.every((item) => typeof item === "string")) {
@@ -231,7 +233,7 @@ async function selectModel(app: Surface, modelName: string): Promise<void> {
   await waitForModelInPicker(app, modelName);
   const picked = await evalIn(app, browserScript((modelName) => {
     const popover = document.querySelector<HTMLElement>('[data-slot="popover-content"]');
-    const item = [...(popover?.querySelectorAll<HTMLElement>('[data-slot="command-item"]') ?? [])]
+    const item = [...(popover?.querySelectorAll<HTMLElement>("[data-model-key]") ?? [])]
       .find((candidate) => (candidate.textContent ?? "").includes(modelName));
     if (!(item instanceof HTMLElement)) return false;
     item.click();
@@ -554,8 +556,13 @@ test.skipIf(!enabled)(title, { timeout: 600_000 }, async ({ evidence, place, ski
       await fill(app, 'input[data-command-palette-input]', "Migrate chats to OpenCode v2");
       await clickText(app, "Migrate chats to OpenCode v2", { selector: "[data-slot=command-item]" });
       await clickButton(app, "Migrate chats");
+      await waitFor(app, () => Boolean(document.querySelector('[data-testid="engine-migration-progress"]')), { label: "migration progress blocks the app" });
       await waitFor(app, () => document.body.innerText.includes("Migrated "), { timeoutMs: 120_000, label: "history migration completes through the desktop server" });
+      await screenshot(app, { caption: "Migration finishes in place and offers the engine switch" });
       expect((await readStatus(app)).chatRouting).toBe(false);
+      // Keep v1 for now; the palette switch below is the path under test.
+      await clickButton(app, "Not now");
+      await waitFor(app, () => !document.querySelector('[data-testid="engine-migration-progress"]'), { label: "migration result dismissed" });
       await go(app, `/workspace/${workspaceId}/settings/advanced`);
       await waitFor(app, () => document.body.innerText.includes("already in v2"), { label: "migration result in Advanced settings" });
       await revealText(app, "V1 chat history");

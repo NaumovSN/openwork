@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 
 import {
+  codeModeConnectionParts,
   createClientV2,
   createV2EventTranslationState,
   mapV2McpStatuses,
@@ -129,7 +130,7 @@ describe("native conversation mutations", () => {
 test("native reply identity survives snapshot and live translation without resolving the requested alias", async () => {
   const { replyModelFromInfo, replyModelLabel, mergeReplyMetadata } = await import("../src/react-app/domains/session/sync/reply-model");
   const originalFetch = globalThis.fetch;
-  const requested = { id: "openai/gpt-5.6-luna", providerID: "openwork-free", variant: "default" };
+  const requested = { id: "openai/gpt-6-luna", providerID: "openwork-free", variant: "default" };
   const resolvedModel = { id: "served-witness", providerID: "actual-provider", name: "Served witness" };
   let resolved = false;
   globalThis.fetch = async () => Response.json({ data: [{ id: "reply", type: "assistant", model: requested,
@@ -2836,4 +2837,25 @@ describe("sent user turns show what the person sent", () => {
     expect(v2PromptText(parts)).toBe("Plain request");
     expect(await transcript("Plain request")).toEqual([expect.objectContaining({ type: "text", text: "Plain request" })]);
   });
+});
+
+
+test("real Code Mode App calls keep stable progress ids and preserve a server-issued launch", () => {
+  const appId = `cob_0${"a".repeat(25)}`;
+  const revisionId = `cov_0${"b".repeat(25)}`;
+  const resourceUri = `ui://openwork/apps/${appId}/revisions/${revisionId}/index.html`;
+  const tool = "openwork-cloud_create_app";
+  const launch = { connectionId: appId, toolName: "open_app", resourceUri, arguments: { input: {} } };
+  const base = { id: "execute-build", callID: "execute-build", messageID: "message", sessionID: "session", type: "tool" as const, tool: "execute", metadata: { openworkV2CodeMode: true } };
+  const running = codeModeConnectionParts({ ...base, state: { status: "running", input: {}, title: "execute", metadata: { toolCalls: [{ tool: "openwork-cloud.create_app", status: "running", input: { title: "App" } }] }, time: { start: 1000 } } });
+  expect(running).toHaveLength(1);
+  expect(parseDynamicToolUIPart(running[0])?.state).toBe("input-available");
+  const completed = codeModeConnectionParts({ ...base, state: { status: "completed", input: {}, output: "App ready", title: "execute", metadata: { openworkMcpResults: [{ tool, input: { title: "App" }, status: "completed", output: { app: { appId }, launch } }] }, time: { start: 1000, end: 2000 } } });
+  expect(completed[0].callID).toBe(running[0].callID);
+  expect(parseDynamicToolUIPart(completed[0])?.callProviderMetadata?.openwork?.mcpResult).toMatchObject({ _meta: { "openwork/mcpApp": launch } });
+  const failed = codeModeConnectionParts({ ...base, state: { status: "error", input: {}, error: "Source invalid", metadata: { toolCalls: [{ tool: "openwork-cloud.create_app", status: "error", input: { title: "App" } }] }, time: { start: 1000, end: 2000 } } });
+  expect(failed[0].callID).toBe(running[0].callID);
+  expect(parseDynamicToolUIPart(failed[0])?.state).toBe("output-error");
+  const withoutLaunch = codeModeConnectionParts({ ...base, state: { status: "completed", input: {}, output: "App unavailable", title: "execute", metadata: { openworkMcpResults: [{ tool, input: {}, status: "completed", output: { app: { appId } } }] }, time: { start: 1000, end: 2000 } } });
+  expect(parseDynamicToolUIPart(withoutLaunch[0])?.callProviderMetadata?.openwork?.mcpResult).not.toHaveProperty("_meta");
 });

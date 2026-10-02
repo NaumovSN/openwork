@@ -178,8 +178,10 @@ function McpAppTileContent({
   onAutoLaunchDisabled,
   fallbackEndpoints,
   renderActions,
+  actionsPlacement,
 }: {
   renderActions?: DashboardTileActions;
+  actionsPlacement?: "header";
   entry: DashboardMcpAppEntry;
   /** Per-user and per-organization scope for workspace-bound last-known-good dashboard data. */
   cacheScopeKey: string;
@@ -626,6 +628,7 @@ function McpAppTileContent({
       <DashboardTileShell
         title={entry.title}
         renderActions={renderActions}
+        actionsPlacement={actionsPlacement}
         entryId={entry.id}
         subtitle={entry.serverName}
         badge={badge ? (

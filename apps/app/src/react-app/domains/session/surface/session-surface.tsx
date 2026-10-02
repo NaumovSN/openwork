@@ -1472,10 +1472,14 @@ export function SessionSurface(props: SessionSurfaceProps) {
     });
   }, [props.sessionId, props.workspaceId]);
 
+  const snapshotEngine = isOpencodeV2BaseUrl(props.opencodeBaseUrl) ? "v2" : "v1";
   useEffect(() => {
     if (!currentSnapshot) return;
-    openingHistory.seedSnapshot(currentSnapshot, () => seedSessionState(props.workspaceId, currentSnapshot, { preview: !hasFullHistory }));
-  }, [currentSnapshot, hasFullHistory, openingHistory.seedSnapshot, props.sessionId, props.workspaceId]);
+    openingHistory.seedSnapshot(currentSnapshot, () => seedSessionState(props.workspaceId, currentSnapshot, {
+      preview: !hasFullHistory,
+      engine: snapshotEngine,
+    }));
+  }, [currentSnapshot, hasFullHistory, openingHistory.seedSnapshot, props.sessionId, props.workspaceId, snapshotEngine]);
 
   const snapshot = resolveRenderedSessionSnapshot({
     sessionId: props.sessionId,
@@ -2657,7 +2661,10 @@ export function SessionSurface(props: SessionSurfaceProps) {
           const record = useSessionActivityStore.getState().recordsByWorkspaceId[props.workspaceId]?.[props.sessionId];
           if (record && record.runStatusAt >= startedAt) return;
           const probed = statuses[props.sessionId] ?? IDLE_STATUS;
-          seedSessionStatus(props.workspaceId, props.sessionId, probed, { snapshotStartedAt: startedAt });
+          seedSessionStatus(props.workspaceId, props.sessionId, probed, {
+            snapshotStartedAt: startedAt,
+            engine: isOpencodeV2BaseUrl(props.opencodeBaseUrl) ? "v2" : "v1",
+          });
           if (probed.type === "idle") {
             const phase = getQueuedDrainState(props.sessionId).phase;
             if (result.data) sessionHasPendingSubmission(props.opencodeBaseUrl, props.sessionId, result.data.messages);

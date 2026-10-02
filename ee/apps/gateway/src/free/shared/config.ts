@@ -3,7 +3,8 @@ import { DESKTOP_FREE_SESSION_POW_BITS, DESKTOP_FREE_SESSION_POW_MAX_BITS, DESKT
 import { DEFAULT_INSTALL_RAMP, parseInstallRamp } from "@openwork/free-auto/accounting"
 
 export const FREE_OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
-const DEFAULT_FREE_OPENAI_MODEL = "gpt-5.6-luna"
+export const FREE_OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
+const DEFAULT_FREE_OPENAI_MODEL = "gpt-6-luna"
 
 export function readAutoConfig(environment: Record<string, string | undefined>) {
   const member = readFreeInferenceConfig(environment)
@@ -55,7 +56,13 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
     blockedReleases: (environment.DESKTOP_FREE_BLOCKED_RELEASES ?? "").split(",").map((value) => value.trim().replace(/^v/, "")).filter(Boolean),
     deviceWeeklyAmount, installRamp,
     activityMaxGapMs: integer("ANONYMOUS_ACTIVITY_MAX_GAP_MS", 180000, 1000, 3600000),
-    ipNewIdentitiesPerDay: integer("ANONYMOUS_IP_NEW_IDENTITIES_PER_DAY", 5, 1, 1000),
+    /**
+     * Builds without a release tag (built from source, or by anyone) still get Auto, like OpenCode's anonymous free
+     * models: their machine id is only self-reported, so each IP gets a small daily budget and all of them together a
+     * shared daily cap, on top of the normal device and global windows. 0 for either turns untagged builds off.
+     */
+    untaggedIpDailyAmount: integer("ANONYMOUS_UNTAGGED_IP_DAILY_MICRO_USD", 200000, 0, 100000000) * 100,
+    untaggedGlobalDailyAmount: integer("ANONYMOUS_UNTAGGED_GLOBAL_DAILY_MICRO_USD", 10000000, 0, 1000000000) * 100,
     sessionPowBits: integer("ANONYMOUS_SESSION_POW_BITS", DESKTOP_FREE_SESSION_POW_BITS, 0, DESKTOP_FREE_SESSION_POW_MAX_BITS),
     sessionPowRounds: integer("ANONYMOUS_SESSION_POW_ROUNDS", DESKTOP_FREE_SESSION_POW_ROUNDS, 1, DESKTOP_FREE_SESSION_POW_MAX_ROUNDS),
     globalDailyAmount: integer("ANONYMOUS_GLOBAL_DAILY_MICRO_USD", 100000000, 1, 1000000000) * 100,
@@ -66,8 +73,8 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
     /** Charged when OpenAI never reports a request's usage (the stream broke or the client left); OpenAI has no usage webhook. */
     unreportedUsageAmount: integer("INFERENCE_FREE_UNREPORTED_USAGE_MICRO_USD", 40000, 0, 10000000) * 100,
     // OpenAI list prices for the free model, in USD per million tokens.
-    inputPrice: integer("INFERENCE_FREE_INPUT_PRICE_MICRO_USD_PER_MILLION", 250000, 1, 100000000) / 1000000,
-    outputPrice: integer("INFERENCE_FREE_OUTPUT_PRICE_MICRO_USD_PER_MILLION", 1200000, 1, 100000000) / 1000000,
+    inputPrice: integer("INFERENCE_FREE_INPUT_PRICE_MICRO_USD_PER_MILLION", 100000, 1, 100000000) / 1000000,
+    outputPrice: integer("INFERENCE_FREE_OUTPUT_PRICE_MICRO_USD_PER_MILLION", 500000, 1, 100000000) / 1000000,
     // Match the paid Gateway body ceiling; free requests do not get a smaller context limit.
     maxBodyBytes: integer("ANONYMOUS_MAX_BODY_BYTES", 32 * 1024 * 1024, 1024, 32 * 1024 * 1024),
     /** The largest single response frame the meter buffers; the answer as a whole is not capped. */
@@ -77,3 +84,7 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
   }
 }
 export type AutoConfig = ReturnType<typeof readAutoConfig>
+/** Untagged builds may use guest Auto only while both of their budgets are on. */
+export function untaggedAutoEnabled(config: Pick<AutoConfig, "untaggedIpDailyAmount" | "untaggedGlobalDailyAmount">) {
+  return config.untaggedIpDailyAmount > 0 && config.untaggedGlobalDailyAmount > 0
+}

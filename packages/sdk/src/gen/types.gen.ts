@@ -181,7 +181,6 @@ export type AdminOrganizationsPageResponse = {
       appMcpServers: boolean;
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
-      headlessAutomations: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -264,7 +263,6 @@ export type AdminOverviewResponse = {
       appMcpServers: boolean;
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
-      headlessAutomations: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -1443,8 +1441,7 @@ export type CapabilityDisabledError = {
     | "orgManagedDashboards"
     | "appMcpServers"
     | "slackAssistant"
-    | "slackAssistantHeadless"
-    | "headlessAutomations";
+    | "slackAssistantHeadless";
 };
 
 export type CreateInstallLinkRequest = {
@@ -5423,7 +5420,6 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       appMcpServers: boolean;
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
-      headlessAutomations: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -5489,7 +5485,6 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       appMcpServers: boolean;
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
-      headlessAutomations: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -10615,7 +10610,7 @@ export type GetV1McpAppsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can list Apps for dashboards.
+   * The caller must be an organization member.
    */
   403: ForbiddenError;
 };

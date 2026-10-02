@@ -128,7 +128,7 @@ export type InferenceOrganizationMetadata = {
   tier: InferenceTier;
 };
 
-export const INFERENCE_FREE_MODEL_ID = "openai/gpt-5.6-luna";
+export const INFERENCE_FREE_MODEL_ID = "openai/gpt-6-luna";
 export const INFERENCE_FREE_ENV = {
   enabled: "INFERENCE_FREE_ENABLED",
   weeklyBudgetUsd: "INFERENCE_FREE_WEEKLY_BUDGET_USD",
@@ -156,7 +156,7 @@ export function readFreeInferenceConfig(environment: Record<string, string | und
     || !Number.isSafeInteger(weeklyLimitAmount)) throw new Error("Invalid INFERENCE_FREE_WEEKLY_BUDGET_USD");
   const modelID = environment[INFERENCE_FREE_ENV.modelID] ?? INFERENCE_FREE_MODEL_ID;
   if (modelID !== INFERENCE_FREE_MODEL_ID) throw new Error("Unapproved free model");
-  return { enabled: enabled === "true" || enabled === "1", rolloutAllOrganizations: rollout === "true" || rollout === "1", weeklyBudgetUsd: weeklyLimitAmount / INFERENCE_USAGE_CONVERSION_FACTOR, weeklyLimitAmount, modelID };
+  return { enabled: enabled === "true" || enabled === "1", rolloutAllOrganizations: rollout === "true" || rollout === "1", weeklyBudgetUsd: weeklyLimitAmount / INFERENCE_USAGE_CONVERSION_FACTOR, weeklyLimitAmount, modelID: INFERENCE_FREE_MODEL_ID };
 }
 
 export function freeInferenceWindow(now = new Date()) {
@@ -252,9 +252,9 @@ export function managedModelCatalog(): ManagedModelRecommendation[] {
 }
 
 /**
- * Stripe states in which an organization is still paying, or still being collected, for OpenWork Models.
- * Free Auto never serves such an organization, even when its metadata says Models are off: that mismatch is
- * an entitlement incident to surface, not a customer to downgrade silently.
+ * Stripe states in which an organization is still paying, or still being collected, for OpenWork Models
+ * (a trial counts). Reporting only, for the free Auto usage report's "subscribed" column: free Auto serves
+ * these organizations too, from each member's free allowance, and never bills them.
  */
 export const INFERENCE_LIVE_SUBSCRIPTION_STATUSES = ["active", "trialing", "past_due", "incomplete"] as const;
 export function inferenceSubscriptionLive(status: string | null | undefined): boolean {

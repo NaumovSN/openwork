@@ -26,7 +26,7 @@ export function nonDefaultModelSummary(model: ModelRef, value: string | null, la
   return !isAutoModel(model) && value !== null ? label : null;
 }
 
-export const AUTO_MODEL_ID = "openai/gpt-5.6-luna";
+export const AUTO_MODEL_ID = "openai/gpt-6-luna";
 export const AUTO_PROVIDER_ID = "openwork-free";
 export const EXPLICIT_MODEL_CHOICE_KEY = "openwork.modelChoice.explicit";
 export function shouldSelectInitialAuto(input: { available: readonly ModelRef[]; current: ModelRef | null; empty: boolean; explicit: boolean }) {
@@ -64,7 +64,7 @@ export function publicModelTitle(model: ModelRef & { title?: string }): string |
 }
 
 export function modelSubtitle(model: ModelOption, exhausted = false) {
-  if (isAutoModel(model)) return exhausted ? "Free limit used up · resets Monday" : "Free · OpenWork picks the model";
+  if (isAutoModel(model)) return exhausted ? "Free limit used up" : "Free · OpenWork picks the model";
   // Gateway models assigned to the member that wait on their own provider sign-in.
   if (model.gatewayAuthorization) return [model.description?.trim(), "Sign-in required"].filter(Boolean).join(" · ");
   return [model.description?.trim(), model.organizationPinOrder !== undefined ? "pinned by your org" : null].filter(Boolean).join(" · ");

@@ -84,6 +84,28 @@ test("organizations that pay for OpenWork Models still get free Auto on the memb
   expect(results).toEqual([])
 })
 
+test("Auto keeps working through an OpenWork Models trial and after it ends, on a fresh free key", async () => {
+  // Stripe trialing counts as active: Models is on and the member's one key also serves Auto from the free allowance.
+  const trialing = { inference: { enabled: true, tier: "tier1" } }
+  results = [[{ metadata: trialing }], [person], []]
+  expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toMatch(/^ow_inf_/)
+  results = [[{ metadata: trialing, nowMs: now.getTime() }], [{ used_amount: 0 }]]
+  expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "free", reason: null, remainingUsd: 5 })
+  // A trial that ends without payment drops `inference` (Stripe cancellation, not an admin) and revokes the org's
+  // keys. Auto is still offered, and the next exchange mints a new key because no active one is left.
+  const ended = {}
+  expect(freeInferenceOrganizationAllowed(ended)).toBe(true)
+  writes.length = 0
+  results = [[{ metadata: ended }], [person], []]
+  expect((await ensureMemberFreeInferenceCredential(input))?.apiKey).toMatch(/^ow_inf_/)
+  expect(writes.map((write) => write.table)).toEqual([InferenceKeyTable])
+  results = [[{ metadata: ended, nowMs: now.getTime() }], [{ used_amount: 0 }]]
+  expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "free", reason: null })
+  // Only an admin turning Models off withdraws the offer.
+  expect(freeInferenceOrganizationAllowed({ inference: { enabled: false }, inferenceFree: { offerAllowed: false } })).toBe(false)
+  expect(results).toEqual([])
+})
+
 test("an organization that turns off the free starter model gets no free Auto", async () => {
   desktopPolicy = { allowCustomProviders: true, allowZenModel: false }
   expect(await ensureMemberFreeInferenceCredential(input)).toBeNull()
@@ -118,7 +140,7 @@ test("member status reports this week's usage against the allowance and never of
   results = [[{ metadata: {}, nowMs: now.getTime() }], [{ used_amount: 0 }]]
   const access = await getMemberInferenceAccess(input)
   expect(access).toMatchObject({ kind: "free", reason: null, canUpgrade: false, weeklyLimitUsd: 5, usedUsd: 0, remainingUsd: 5 })
-  expect(access.catalog?.map((model) => model.modelID)).toEqual(["openai/gpt-5.6-luna"])
+  expect(access.catalog?.map((model) => model.modelID)).toEqual(["openai/gpt-6-luna"])
   results = [[{ metadata: {}, nowMs: now.getTime() }], [{ used_amount: Number.MAX_SAFE_INTEGER }]]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ kind: "exhausted", reason: "free_allowance_exhausted", remainingUsd: 0 })
   expect(writes).toEqual([])
@@ -143,7 +165,7 @@ test("Auto is unpinned by default, an admin pin is explicit, and updates touch o
 
 test("member pin policy is authoritative without changing model availability", async () => {
   results = [[{ metadata: { inferenceFree: { defaultPinned: false } }, nowMs: now.getTime() }], []]
-  expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: false, kind: "free", modelID: "openai/gpt-5.6-luna" })
+  expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: false, kind: "free", modelID: "openai/gpt-6-luna" })
   results = [[{ metadata: { dpaSigned: true, inferenceFree: { defaultPinned: true } }, nowMs: now.getTime() }]]
   expect(await getMemberInferenceAccess(input)).toMatchObject({ defaultPinned: true, kind: "unavailable", reason: "admin_disabled" })
   expect(writes).toEqual([])

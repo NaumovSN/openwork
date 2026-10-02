@@ -2,11 +2,12 @@ import * as Sentry from "@sentry/node"
 import { randomBytes } from "node:crypto"
 import { INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
 import type { FreeAllowanceStore, FreeUsageReceipt } from "./allowance.js"
-import { FREE_OPENAI_CHAT_URL, type AutoConfig } from "./config.js"
+import { FREE_OPENAI_CHAT_URL, FREE_OPENAI_RESPONSES_URL, type AutoConfig } from "./config.js"
 import type { FreePrincipal } from "./principal.js"
 import { meterFreeResponse } from "./meter.js"
 import { retryFreeSettlement } from "./settlement.js"
 import { freeError } from "./errors.js"
+import type { FreeProtocol } from "./request.js"
 import type { RequestLogRecorder } from "../../request-log.js"
 
 /**
@@ -16,7 +17,7 @@ import type { RequestLogRecorder } from "../../request-log.js"
  */
 export async function dispatchFreeCompletion(input: {
   config: AutoConfig; store: FreeAllowanceStore; fetch: typeof fetch;
-  principal: FreePrincipal; prepared: { body: string; stream: boolean; choices?: number };
+  principal: FreePrincipal; prepared: { body: string; stream: boolean; choices?: number; protocol?: FreeProtocol };
   signal: AbortSignal; controller: AbortController;
   /** Members only: write-ahead Gateway usage log so Auto shows in the organization's usage. Guests are never logged. */
   startUsageLog?: (requestId: string, stream: boolean) => RequestLogRecorder;
@@ -42,7 +43,7 @@ export async function dispatchFreeCompletion(input: {
   const headerTimeout = setTimeout(() => controller.abort(), config.requestTimeoutMs)
   try {
     signal.throwIfAborted()
-    response = await input.fetch(FREE_OPENAI_CHAT_URL, {
+    response = await input.fetch(prepared.protocol === "responses" ? FREE_OPENAI_RESPONSES_URL : FREE_OPENAI_CHAT_URL, {
       method: "POST", redirect: "error", signal,
       headers: { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json", accept: prepared.stream ? "text/event-stream" : "application/json" },
       body: prepared.body,
@@ -73,7 +74,7 @@ export async function dispatchFreeCompletion(input: {
     return freeError(502, "free_inference_upstream_error", "Auto did not finish.")
   }
   usageLog?.markFirstByte()
-  const body = meterFreeResponse(response.body, { config, streaming: prepared.stream, choices: prepared.choices, maxBytes: config.maxResponseBytes, signal,
+  const body = meterFreeResponse(response.body, { config, protocol: prepared.protocol, streaming: prepared.stream, choices: prepared.choices, maxBytes: config.maxResponseBytes, signal,
     settle: async (receipt) => {
       await charge(receipt)
       if (!usageLog) return

@@ -3,15 +3,15 @@ import { FreeAutoBusyError } from "../shared/capacity.js"
 import { z } from "zod"
 import {
   DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH,
-  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_POW_PATTERN,
+  DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, DESKTOP_FREE_SESSION_POW_PATTERN, DESKTOP_FREE_PROOF_HEADER, DESKTOP_FREE_OPEN_API_KEY,
   type DesktopFreeAccessStatus, type DesktopFreeVersionError,
 } from "@openwork/free-auto"
 import { managedModelCatalog } from "@openwork/types/den/inference"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
-import { createAnonymousIdentities, issueAnonymousToken, resolveAnonymousClientAddress, verifyAnonymousToken } from "./identity.js"
+import { anonymousIpHash, createAnonymousIdentities, issueAnonymousToken, resolveAnonymousClientAddress, verifyAnonymousToken } from "./identity.js"
 import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/allowance.js"
-import { type AutoConfig } from "../shared/config.js"
-import type { GuestPrincipal } from "../shared/principal.js"
+import { untaggedAutoEnabled, type AutoConfig } from "../shared/config.js"
+import { freeIdentityHash, type GuestPrincipal } from "../shared/principal.js"
 import { checkDesktopFreeRequest, desktopFreeGateError, type DesktopFreeGateDependencies } from "./gate.js"
 import { releaseKeyFingerprint, sha256Hex, verifySessionPow } from "@openwork/free-auto/node"
 import { dispatchFreeCompletion } from "../shared/dispatch.js"
@@ -73,32 +73,54 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
       return Response.json({ error: { code: "session_pow_required", bits: config.sessionPowBits, rounds: config.sessionPowRounds, message: "A proof of work is required to start a guest session." } }, { status: 400, headers: { "cache-control": "no-store" } })
     }
     const identities = createAnonymousIdentities(gate.proof, address, config)
-    const minted = await store.consumeSession(identities.ipHash, identities.installationHash)
-    if (minted !== "accepted") return desktopFreeGateError(429, "anonymous_new_identity_capped")
+    await store.consumeSession(identities.installationHash)
     return c.json({ ...issueAnonymousToken(identities, gate.proof, config), model: DESKTOP_FREE_MODEL_ID }, 200, { "cache-control": "no-store" })
   }))
 
-  // Every guest request needs a guest token bound to this IP, plus a fresh signed
-  // proof from the same key and machine over the exact method, path, body and token.
-  async function authenticate(c: Context, bodyHash: string) {
+  /**
+   * Like OpenCode Zen's anonymous free models: a request with no desktop proof and no key (or the literal key
+   * "public") is served to any client, limited only by its IP's untagged budget and the shared caps.
+   */
+  function openRequest(request: Request) {
+    if (request.headers.has(DESKTOP_FREE_PROOF_HEADER)) return false
+    if (["x-api-key", "x-goog-api-key", "api-key"].some((name) => request.headers.has(name))) return false
+    return !request.headers.has("authorization") || bearer(request) === DESKTOP_FREE_OPEN_API_KEY
+  }
+
+  // A desktop request needs a guest token bound to this IP, plus a fresh signed proof from the same key and
+  // machine over the exact method, path, body and token. An open request needs neither.
+  async function authenticate(c: Context, bodyHash: string): Promise<{ error: Response } | { error?: undefined; principal: GuestPrincipal;
+    versionError: DesktopFreeVersionError | null; minimumVersion: string | null; currentVersion: string }> {
     if (!config.anonymousEnabled) return { error: switchedOff() }
     const token = bearer(c.req.raw)
     const address = dependencies.clientAddress(c)
+    if (openRequest(c.req.raw)) {
+      // With the untagged budgets off, an open client is told Auto is unavailable to it, like an untagged build.
+      if (!untaggedAutoEnabled(config)) return { principal: { kind: "installation", id: "", deviceless: true }, minimumVersion: null, currentVersion: "",
+        versionError: { code: "desktop_build_unverified", currentVersion: "", minimumVersion: null, message: "The OpenWork free model is currently unavailable." } }
+      if (!address) return { error: desktopFreeGateError(503, "anonymous_unavailable") }
+      const ipHash = anonymousIpHash(address, config)
+      return { principal: { kind: "installation", id: freeIdentityHash("open-ip", ipHash), untaggedIpHash: ipHash, deviceless: true },
+        versionError: null, minimumVersion: null, currentVersion: "" }
+    }
     const guest = token && address ? verifyAnonymousToken(token, address, config) : null
     if (!guest || !address) return { error: desktopFreeGateError(401, "invalid_anonymous_token") }
-    const principal: GuestPrincipal = { kind: "installation", id: guest.installationHash }
     const gate = await checkDesktopFreeRequest(c.req.raw, bodyHash, gateDependencies, guest)
     if (gate.error) return { error: gate.error }
-    return { ...gate, principal }
+    // The proof, not the token, decides: a token minted by a tagged build is still limited per IP on an untagged proof.
+    const principal: GuestPrincipal = gate.proof.version === 2
+      ? { kind: "installation", id: guest.installationHash, untaggedIpHash: guest.ipHash }
+      : { kind: "installation", id: guest.installationHash }
+    return { principal, versionError: gate.versionError, minimumVersion: gate.minimumVersion, currentVersion: gate.proof.appVersion }
   }
 
   app.get(DESKTOP_FREE_STATUS_PATH, route(async (c) => {
     if (new URL(c.req.url).search) return desktopFreeGateError(400, "invalid_request")
     const auth = await authenticate(c, sha256Hex(""))
     if (auth.error) return auth.error
-    const status: DesktopFreeAccessStatus = { state: "unavailable", code: "anonymous_unavailable", currentVersion: auth.proof.appVersion,
+    const status: DesktopFreeAccessStatus = { state: "unavailable", code: "anonymous_unavailable", currentVersion: auth.currentVersion,
       // Desktops up to v0.18.55 refuse a ready guest status without a minimum; with none configured, this build is it.
-      minimumVersion: auth.minimumVersion ?? auth.proof.appVersion, providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID,
+      minimumVersion: auth.minimumVersion ?? (auth.currentVersion || null), providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID,
       allowance: null, catalog: managedModelCatalog(), defaultPinned: false }
     if (auth.versionError) {
       status.state = auth.versionError.code === "desktop_update_required" ? "update_required" : "unavailable"
@@ -113,7 +135,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     if (auth.versionError) return versionResponse(auth.versionError)
     return c.json({ object: "list", data: [{ id: DESKTOP_FREE_MODEL_ID, object: "model", created: 0, owned_by: "openwork" }] }, 200, { "cache-control": "no-store" })
   }))
-  app.post(DESKTOP_FREE_CHAT_PATH, route(async (c) => {
+  for (const path of [DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH]) app.post(path, route(async (c) => {
     if (!config.anonymousEnabled) return switchedOff()
     if (new URL(c.req.url).search) return desktopFreeGateError(400, "invalid_request")
     const controller = new AbortController()
@@ -122,7 +144,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     const auth = await authenticate(c, parsed.bodyHash)
     if (auth.error) return auth.error
     if (auth.versionError) return versionResponse(auth.versionError)
-    const prepared = prepareFreeRequest(parsed.value, config)
+    const prepared = prepareFreeRequest(parsed.value, config, c.req.path === DESKTOP_FREE_RESPONSES_PATH ? "responses" : "chat")
     return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal: auth.principal,
       prepared, signal, controller })
   }))

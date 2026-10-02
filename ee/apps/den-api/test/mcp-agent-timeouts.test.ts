@@ -516,7 +516,7 @@ test("structured search output remains compatible with marketplace match kinds a
 })
 
 test("agent steering describes skill and sharing results as plain text without confirmation Apps", () => {
-  expect(agentModule.AGENT_MCP_INSTRUCTIONS).toContain("Use create_app to build a new app, dashboard, or interactive view")
+  expect(agentModule.AGENT_MCP_INSTRUCTIONS).toContain("start with prepare_app directly")
   expect(agentModule.AGENT_MCP_INSTRUCTIONS).not.toContain("save_artifact_view and follow its prerequisites")
   expect(agentModule.LEGACY_AGENT_MCP_INSTRUCTIONS).toContain("the user previews the draft and chooses Save")
   expect(agentModule.LEGACY_AGENT_MCP_INSTRUCTIONS).not.toContain("create_app")
