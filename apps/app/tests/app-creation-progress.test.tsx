@@ -269,3 +269,9 @@ test("an explicit App request shows actual discovery before preparation and keep
   expect(readyToWrite[0].id).toBe("search");
   expect(appCreationProgress(readyToWrite[0], true).stage).toBe("writing");
 });
+
+test("a rejected build reads as the change it needs, not the compiler's preamble", async () => {
+  const { appBuildProblem } = await import("../src/components/chat/app-builder-step");
+  expect(appBuildProblem({ type: "dynamic-tool", toolName: "openwork-cloud_create_app", toolCallId: "b", state: "output-error", input: {},
+    errorText: "MCP App compilation failed. Generated MCP Apps cannot use URL-bearing attributes. Use component props and React rendering." })).toBe("Can’t use URL-bearing attributes");
+});

@@ -75,3 +75,14 @@ test("Code Mode preserves real App preparation, launch and failed builds", () =>
     { tool: "openwork-cloud_update_app", input: { appId: "app" }, status: "error", error: "Compilation failed" },
   ]);
 });
+
+test("Code Mode inner calls reported with a dot (openwork-cloud.create_app) are still preserved", () => {
+  const collector = createMcpResultsCollector();
+  collector.before({ ...call, tool: "execute" });
+  collector.after({ ...call, tool: "openwork-cloud.create_app", input: { preparationId: "prepared" }, status: "error", error: new Error("MCP App compilation failed. Generated MCP Apps cannot use timers.") });
+  const result: { metadata?: Record<string, unknown> } = {};
+  collector.after({ ...call, tool: "execute", input: {}, status: "completed", result });
+  expect(result.metadata?.openworkMcpResults).toEqual([
+    { tool: "openwork-cloud_create_app", input: { preparationId: "prepared" }, status: "error", error: "MCP App compilation failed. Generated MCP Apps cannot use timers." },
+  ]);
+});

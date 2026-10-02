@@ -12,6 +12,8 @@ export type AppCreationRun = {
   discoveries?: DynamicToolUIPart[];
   executions?: DynamicToolUIPart[];
   builds: DynamicToolUIPart[];
+  /** Earlier attempts at this App that were rejected before a retry succeeded. */
+  attempts?: DynamicToolUIPart[];
 };
 export type AppCreationStage = "needs" | "writing" | "checking" | "ready";
 
@@ -97,8 +99,18 @@ export function appCreationRuns(messages: UIMessage[], creationRequested = false
       else runs.push({ id: part.toolCallId, builds: [part] });
     }
   }
+  // A preparation Den rejected, followed by another preparation, is the same
+  // App being retried: fold it into the next run instead of a card of its own.
+  for (let index = runs.length - 2; index >= 0; index -= 1) {
+    const run = runs[index]!;
+    const next = runs[index + 1]!;
+    const rejected = run.preparation && run.builds.length === 0 && appBuilderResultFailed(run.preparation);
+    if (!rejected || !next.preparation || !run.preparation) continue;
+    next.attempts = [...(run.discoveries ?? []), run.preparation, ...(run.attempts ?? []), ...(next.attempts ?? [])];
+    runs.splice(index, 1);
+  }
   for (const run of runs) {
-    const calls = [...(run.discoveries ?? []), ...(run.preparation ? [run.preparation] : []), ...run.builds];
+    const calls = [...(run.discoveries ?? []), ...(run.preparation ? [run.preparation] : []), ...(run.attempts ?? []), ...run.builds];
     run.executions = [...parts.values()].filter(part => part.callProviderMetadata?.openwork?.codeMode && calls.some(call => call.toolCallId.startsWith(`${part.toolCallId}:app:`)));
   }
   return runs;

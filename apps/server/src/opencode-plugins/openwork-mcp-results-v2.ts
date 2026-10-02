@@ -59,7 +59,13 @@ function jsonCopy(value: unknown): unknown {
   }
 }
 
-export function preservedEntry(event: ExecuteAfter): PreservedMcpResult | null {
+/** Code Mode reports inner calls as `openwork-cloud.create_app`; older engines used `_`. */
+function normalizedTool(tool: string): string {
+  return tool.replace(/^(openwork(?:-cloud)?)\./, "$1_");
+}
+
+export function preservedEntry(rawEvent: ExecuteAfter): PreservedMcpResult | null {
+  const event = { ...rawEvent, tool: normalizedTool(rawEvent.tool) };
   if (!OPENWORK_CLOUD_TOOL.test(event.tool)) return null;
   const appBuilder = /_(?:search_capabilities|prepare_app|create_app|update_app)$/.test(event.tool);
   const appLaunch = event.status === "completed" && isRecord(event.result.output) && isRecord(event.result.output.launch);
