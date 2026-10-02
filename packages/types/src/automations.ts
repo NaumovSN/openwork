@@ -287,6 +287,32 @@ export const remoteSessionCommandCompleteResponseSchema = z.object({
   }),
 })
 
+export const REMOTE_SESSION_FINAL_TEXT_MAX_LENGTH = 20_000
+export const remoteSessionStatusSchema = z.enum(["running", "waiting", "idle", "error"])
+export const remoteSessionWaitingForSchema = z.enum(["permission", "question"])
+export const remoteSessionEngineSchema = z.enum(["v1", "v2"])
+export const remoteSessionModelSchema = z.object({
+  providerId: idSchema,
+  modelId: idSchema,
+  variant: z.string().trim().min(1).max(60).nullable().optional(),
+})
+/**
+ * Progress the claiming desktop runner reports for a delivered remote-session
+ * command's local session, so Den callers can follow it to the final answer.
+ */
+export const remoteSessionCommandSessionReportSchema = z.object({
+  status: remoteSessionStatusSchema,
+  waitingFor: remoteSessionWaitingForSchema.nullable().optional(),
+  engine: remoteSessionEngineSchema.optional(),
+  model: remoteSessionModelSchema.nullable().optional(),
+  finalText: z.string().max(REMOTE_SESSION_FINAL_TEXT_MAX_LENGTH).optional(),
+  error: remoteSessionCommandErrorSchema.nullable().optional(),
+  messageCount: z.number().int().min(0).optional(),
+  observedAt: timestampSchema,
+})
+export type RemoteSessionCommandSessionReport = z.infer<typeof remoteSessionCommandSessionReportSchema>
+export const remoteSessionCommandSessionReportResponseSchema = z.object({ ok: z.literal(true) })
+
 export const automationDesktopRunnerAssignmentSchema = z.object({
   executionTarget: z.literal("desktop"),
   runId: idSchema,

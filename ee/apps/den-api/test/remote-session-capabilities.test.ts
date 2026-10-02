@@ -69,6 +69,7 @@ const unavailableCommandStore: RemoteSessionCommandStore = {
   enqueue: async () => { throw new Error("command store not stubbed for this test") },
   claim: async () => { throw new Error("command store not stubbed for this test") },
   complete: async () => { throw new Error("command store not stubbed for this test") },
+  report: async () => { throw new Error("command store not stubbed for this test") },
   get: async () => { throw new Error("command store not stubbed for this test") },
   listPendingForRunner: async () => { throw new Error("command store not stubbed for this test") },
 }
@@ -136,6 +137,16 @@ test("search finds the capabilities with executable shape metadata", () => {
 
   expect(searchRemoteSessionCapabilities("", 10)).toEqual([])
   expect(searchRemoteSessionCapabilities("unrelated zebra taxonomy", 10)).toEqual([])
+})
+
+test("read tells callers to poll a desktop command until its session settles", () => {
+  const read = searchRemoteSessionCapabilities("check remote session desktop command progress", 10)
+    .find((match) => match.name === "remote-session:read")
+  expect(read?.summary).toContain("session.status is idle")
+  expect(read?.summary).toContain("session.waitingFor")
+  expect(read?.argumentsSchema).toMatchObject({
+    properties: { commandId: { description: expect.stringContaining("session block") } },
+  })
 })
 
 test("task phrasings route to remote-session:create first", () => {
@@ -586,6 +597,7 @@ for (const deployment of noCloudDeployments) {
         workspaceId: null,
         resultSummary: null,
         error: null,
+        session: null,
         createdAt: Date.now(),
         updatedAt: Date.now(),
       }

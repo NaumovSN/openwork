@@ -4,8 +4,11 @@ import { eq } from "@openwork-ee/den-db/drizzle"
 import { RemoteSessionCommandTable } from "@openwork-ee/den-db/schema/remote-session-commands"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import {
+  REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
+  type AutomationDesktopRunnerCapability,
   automationDesktopRunnerRegistrationSchema,
   remoteSessionCommandCompleteRequestSchema,
+  remoteSessionCommandSessionReportSchema,
 } from "@openwork/types/automations"
 import { Hono } from "hono"
 import type {
@@ -84,6 +87,7 @@ function command(overrides: Partial<RemoteSessionCommand> = {}): RemoteSessionCo
     workspaceId: null,
     resultSummary: null,
     error: null,
+    session: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
     ...overrides,
@@ -98,6 +102,7 @@ function fakeStore(overrides: Partial<RemoteSessionCommandStore> = {}): RemoteSe
     enqueue: overrides.enqueue ?? unavailable,
     claim: overrides.claim ?? unavailable,
     complete: overrides.complete ?? unavailable,
+    report: overrides.report ?? unavailable,
     get: overrides.get ?? unavailable,
     listPendingForRunner: overrides.listPendingForRunner ?? unavailable,
   }
@@ -428,4 +433,245 @@ test("omitting target preserves the cloud create path", async () => {
   expect(runtimeResolved).toBe(true)
   expect(result.isError).toBeUndefined()
   expect(payload(result)).toMatchObject({ target: "cloud", sessionId: "ses_cloud" })
+})
+
+test("session reports accept the documented progress shape and reject the rest", () => {
+  const observedAt = Date.now()
+  expect(remoteSessionCommandSessionReportSchema.safeParse({ status: "running", observedAt }).success).toBe(true)
+  expect(remoteSessionCommandSessionReportSchema.safeParse({
+    status: "idle",
+    waitingFor: null,
+    engine: "v2",
+    model: { providerId: "provider", modelId: "model", variant: "high" },
+    finalText: "Done",
+    error: null,
+    messageCount: 4,
+    observedAt,
+  }).success).toBe(true)
+  expect(remoteSessionCommandSessionReportSchema.safeParse({ status: "waiting", waitingFor: "permission", observedAt }).success).toBe(true)
+  expect(remoteSessionCommandSessionReportSchema.safeParse({ status: "done", observedAt }).success).toBe(false)
+  expect(remoteSessionCommandSessionReportSchema.safeParse({ status: "running" }).success).toBe(false)
+  expect(remoteSessionCommandSessionReportSchema.safeParse({ status: "waiting", waitingFor: "approval", observedAt }).success).toBe(false)
+  expect(remoteSessionCommandSessionReportSchema.safeParse({ status: "idle", finalText: "x".repeat(20_001), observedAt }).success).toBe(false)
+  expect(remoteSessionCommandSessionReportSchema.safeParse({ status: "running", messageCount: -1, observedAt }).success).toBe(false)
+  expect(remoteSessionCommandSessionReportSchema.safeParse({
+    status: "error",
+    error: { code: "x".repeat(61), message: "failed" },
+    observedAt,
+  }).success).toBe(false)
+})
+
+async function sessionRouteApp(input: {
+  store: RemoteSessionCommandStore
+  capabilities?: AutomationDesktopRunnerCapability[]
+  activeOwner?: boolean
+}) {
+  const { AutomationService } = await import("../src/automations/service.js")
+  const { automationRunnerAuth } = await import("../src/automations/runner-auth.js")
+  const { registerAutomationRoutes } = await import("../src/routes/automations/index.js")
+  const service = new AutomationService()
+  service.isActiveRunnerOwner = async () => input.activeOwner ?? true
+  const app = new Hono<{ Variables: Partial<OrganizationContextVariables> }>()
+  registerAutomationRoutes(app, { service, commandStore: input.store })
+  const credential = automationRunnerAuth.issue({
+    organizationId: ORGANIZATION_ID,
+    ownerMemberId: MEMBER_ID,
+    runnerId: "runner-a",
+    capabilities: input.capabilities ?? [REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY],
+  }, "http://den.local")
+  return (body: unknown, token: string | null = credential.token) => app.request(
+    `http://den.local/v1/remote-session-commands/${COMMAND_ID}/session`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    },
+  )
+}
+
+test("the session route records a report from the claiming runner", async () => {
+  const reports: Parameters<RemoteSessionCommandStore["report"]>[0][] = []
+  const send = await sessionRouteApp({
+    store: fakeStore({ report: async (input) => { reports.push(input); return "reported" } }),
+  })
+  const response = await send({ status: "idle", finalText: "Done", messageCount: 3, observedAt: 1_000 })
+  expect(response.status).toBe(200)
+  expect(await response.json()).toEqual({ ok: true })
+  expect(reports).toEqual([{
+    commandId: COMMAND_ID,
+    organizationId: ORGANIZATION_ID,
+    ownerMemberId: MEMBER_ID,
+    runnerId: "runner-a",
+    status: "idle",
+    finalText: "Done",
+    messageCount: 3,
+    observedAt: 1_000,
+  }])
+})
+
+test("the session route maps unknown commands to 404 and other runners or states to 409", async () => {
+  const outcomes: Array<"not_found" | "conflict"> = ["not_found", "conflict"]
+  const send = await sessionRouteApp({ store: fakeStore({ report: async () => outcomes.shift() ?? "conflict" }) })
+  const unknown = await send({ status: "running", observedAt: 1 })
+  expect(unknown.status).toBe(404)
+  expect(await unknown.json()).toEqual({ error: "command_not_found" })
+  const conflict = await send({ status: "running", observedAt: 1 })
+  expect(conflict.status).toBe(409)
+  expect(await conflict.json()).toEqual({ error: "command_session_conflict" })
+})
+
+test("the session route requires runner auth, the remote-session capability, and a valid body", async () => {
+  const neverCalled = fakeStore()
+  const send = await sessionRouteApp({ store: neverCalled })
+  expect((await send({ status: "running", observedAt: 1 }, null)).status).toBe(401)
+  expect((await send({ status: "running", observedAt: 1 }, "not-a-runner-token")).status).toBe(401)
+  expect((await send({ status: "finished", observedAt: 1 })).status).toBe(400)
+
+  const legacy = await sessionRouteApp({ store: neverCalled, capabilities: [] })
+  const missing = await legacy({ status: "running", observedAt: 1 })
+  expect(missing.status).toBe(403)
+  expect(await missing.json()).toEqual({ error: "runner_capability_missing" })
+
+  const removedMember = await sessionRouteApp({ store: neverCalled, activeOwner: false })
+  expect((await removedMember({ status: "running", observedAt: 1 })).status).toBe(401)
+})
+
+test("read by command id includes the reported session progress", async () => {
+  const session = {
+    status: "idle" as const,
+    waitingFor: null,
+    engine: "v2" as const,
+    model: { providerId: "provider", modelId: "model", variant: null },
+    finalText: "Three files changed.",
+    lastError: null,
+    messageCount: 4,
+    observedAt: 1_000,
+  }
+  const store = fakeStore({
+    get: async () => command({ status: "delivered", sessionId: "ses_fixture", workspaceId: "ws_fixture", session }),
+  })
+  const result = await executeRemoteSessionCapability(
+    executeInput("read", { commandId: COMMAND_ID }),
+    deps({ commandStore: store }),
+  )
+  expect(result.isError).toBeUndefined()
+  expect(payload(result)).toMatchObject({ state: "delivered", sessionId: "ses_fixture", session })
+
+  const queued = await executeRemoteSessionCapability(
+    executeInput("read", { commandId: COMMAND_ID }),
+    deps({ commandStore: fakeStore({ get: async () => command() }) }),
+  )
+  expect(payload(queued).session).toBeNull()
+})
+
+test("the store accepts session reports only from the claiming runner while delivered", async () => {
+  const commandStore = (await import("../src/remote-sessions/commands.js")).databaseRemoteSessionCommandStore
+  const database = (await import("../src/db.js")).db
+  let commandId = ""
+  try {
+    const queued = await commandStore.enqueue({
+      organizationId: ORGANIZATION_ID,
+      ownerMemberId: MEMBER_ID,
+      createdByUserId: USER_ID,
+      title: "Desktop handoff",
+      prompt: "Inspect the repo",
+      ttlMs: defaultTtlMs,
+      idempotencyKey: createDenTypeId("remoteSessionCommand"),
+    })
+    commandId = queued.id
+    expect(queued.session).toBeNull()
+    const scope = { commandId, organizationId: ORGANIZATION_ID, ownerMemberId: MEMBER_ID }
+    const running = { status: "running" as const, observedAt: Date.now() }
+
+    await commandStore.claim({ ...scope, runnerId: "runner-a", now: Date.now() })
+    expect(await commandStore.report({ ...scope, runnerId: "runner-a", ...running })).toBe("conflict")
+    await commandStore.complete({
+      commandId,
+      runnerId: "runner-a",
+      status: "delivered",
+      sessionId: "ses_fixture",
+      workspaceId: "ws_fixture",
+    })
+    expect(await commandStore.report({ ...scope, runnerId: "runner-b", ...running })).toBe("conflict")
+    expect(await commandStore.report({
+      ...scope,
+      organizationId: createDenTypeId("organization"),
+      runnerId: "runner-a",
+      ...running,
+    })).toBe("not_found")
+    expect(await commandStore.report({
+      ...scope,
+      commandId: createDenTypeId("remoteSessionCommand"),
+      runnerId: "runner-a",
+      ...running,
+    })).toBe("not_found")
+    expect(await commandStore.report({ ...scope, commandId: "not-a-command", runnerId: "runner-a", ...running })).toBe("not_found")
+
+    expect(await commandStore.report({
+      ...scope,
+      runnerId: "runner-a",
+      status: "waiting",
+      waitingFor: "question",
+      engine: "v2",
+      model: { providerId: "provider", modelId: "model", variant: "high" },
+      messageCount: 2,
+      observedAt: 1_000,
+    })).toBe("reported")
+    const read = { commandId, organizationId: ORGANIZATION_ID, createdByUserId: USER_ID }
+    expect((await commandStore.get(read))?.session).toEqual({
+      status: "waiting",
+      waitingFor: "question",
+      engine: "v2",
+      model: { providerId: "provider", modelId: "model", variant: "high" },
+      finalText: null,
+      lastError: null,
+      messageCount: 2,
+      observedAt: 1_000,
+    })
+
+    const finalText = "Answer ".repeat(2_800)
+    expect(await commandStore.report({
+      ...scope,
+      runnerId: "runner-a",
+      status: "idle",
+      waitingFor: "permission",
+      finalText,
+      messageCount: 3,
+      observedAt: 2_000,
+    })).toBe("reported")
+    expect((await commandStore.get(read))?.session).toEqual({
+      status: "idle",
+      // waitingFor only applies to a waiting session.
+      waitingFor: null,
+      // Engine and model persist across reports that omit them.
+      engine: "v2",
+      model: { providerId: "provider", modelId: "model", variant: "high" },
+      finalText,
+      lastError: null,
+      messageCount: 3,
+      observedAt: 2_000,
+    })
+
+    expect(await commandStore.report({
+      ...scope,
+      runnerId: "runner-a",
+      status: "error",
+      error: { code: "provider_auth_failed", message: "The model provider rejected its credentials." },
+      observedAt: 3_000,
+    })).toBe("reported")
+    expect((await commandStore.get(read))?.session).toMatchObject({
+      status: "error",
+      finalText: null,
+      lastError: { code: "provider_auth_failed", message: "The model provider rejected its credentials." },
+      messageCount: 3,
+      observedAt: 3_000,
+    })
+  } finally {
+    if (commandId) {
+      await database.delete(RemoteSessionCommandTable).where(eq(RemoteSessionCommandTable.id, commandId))
+    }
+  }
 })

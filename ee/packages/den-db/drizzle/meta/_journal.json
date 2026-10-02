@@ -827,6 +827,13 @@
       "when": 1790968115525,
       "tag": "0118_slack_assistant_progress_updates",
       "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "5",
+      "when": 1790975539582,
+      "tag": "0119_remote_session_progress",
+      "breakpoints": true
     }
   ]
 }

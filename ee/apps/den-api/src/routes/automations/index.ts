@@ -25,6 +25,8 @@ import {
   remoteSessionCommandClaimResponseSchema,
   remoteSessionCommandCompleteRequestSchema,
   remoteSessionCommandCompleteResponseSchema,
+  remoteSessionCommandSessionReportResponseSchema,
+  remoteSessionCommandSessionReportSchema,
   updateAutomationSchema,
 } from "@openwork/types/automations"
 import {
@@ -39,7 +41,7 @@ import { automationService, type AutomationService } from "../../automations/ser
 import { automationRunnerAudienceFromRequest, automationRunnerAuth } from "../../automations/runner-auth.js"
 import { env } from "../../env.js"
 import { OpenWorkWebAccessRequiredError } from "../../openwork-web-runtime-access.js"
-import { databaseRemoteSessionCommandStore } from "../../remote-sessions/commands.js"
+import { databaseRemoteSessionCommandStore, type RemoteSessionCommandStore } from "../../remote-sessions/commands.js"
 import {
   RUNNER_KEEPALIVE_INTERVAL_MS,
   RUNNER_NOTIFICATION_POLL_MIN_MS,
@@ -125,10 +127,11 @@ const routeDescription = [
 
 export function registerAutomationRoutes<T extends { Variables: RouteVariables }>(
   app: Hono<T>,
-  options: { service?: AutomationService; enabled?: boolean } = {},
+  options: { service?: AutomationService; commandStore?: RemoteSessionCommandStore; enabled?: boolean } = {},
 ) {
   if (options.enabled === false) return
   const service = options.service ?? automationService
+  const commandStore = options.commandStore ?? databaseRemoteSessionCommandStore
 
   app.post(
     "/v1/automation-runners/token",
@@ -284,7 +287,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       (typeof automationItems)[number] | { kind: "remote_session_create"; commandId: string }
     > = [...automationItems]
     if (identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
-      const commands = await databaseRemoteSessionCommandStore.listPendingForRunner({
+      const commands = await commandStore.listPendingForRunner({
         organizationId: identity.organizationId,
         ownerMemberId: identity.ownerMemberId,
         now: Date.now(),
@@ -315,7 +318,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     if (!identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
       return c.json({ error: "runner_capability_missing" }, 403)
     }
-    const command = await databaseRemoteSessionCommandStore.claim({
+    const command = await commandStore.claim({
       commandId: c.req.valid("param").id,
       organizationId: identity.organizationId,
       ownerMemberId: identity.ownerMemberId,
@@ -353,7 +356,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       if (!identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
         return c.json({ error: "runner_capability_missing" }, 403)
       }
-      const command = await databaseRemoteSessionCommandStore.complete({
+      const command = await commandStore.complete({
         commandId: c.req.valid("param").id,
         runnerId: identity.runnerId,
         ...c.req.valid("json"),
@@ -367,6 +370,37 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
           workspaceId: command.workspaceId,
         },
       }))
+    },
+  )
+
+  app.post(
+    "/v1/remote-session-commands/:id/session",
+    runnerRoute({
+      summary: "Report a delivered remote session's progress",
+      responses: {
+        200: jsonResponse("The report was recorded.", remoteSessionCommandSessionReportResponseSchema),
+        403: jsonResponse("The runner did not register the remote-session capability.", runnerErrorSchema),
+        404: jsonResponse("The command does not exist for this runner's member.", runnerErrorSchema),
+        409: jsonResponse("Another runner claimed the command, or it is not delivered.", runnerErrorSchema),
+      },
+    }),
+    paramValidator(idParamsSchema), jsonValidator(remoteSessionCommandSessionReportSchema),
+    async (c) => {
+      const identity = await authenticateRunner(c)
+      if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      if (!identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
+        return c.json({ error: "runner_capability_missing" }, 403)
+      }
+      const result = await commandStore.report({
+        commandId: c.req.valid("param").id,
+        organizationId: identity.organizationId,
+        ownerMemberId: identity.ownerMemberId,
+        runnerId: identity.runnerId,
+        ...c.req.valid("json"),
+      })
+      if (result === "not_found") return c.json({ error: "command_not_found" }, 404)
+      if (result === "conflict") return c.json({ error: "command_session_conflict" }, 409)
+      return c.json(remoteSessionCommandSessionReportResponseSchema.parse({ ok: true }))
     },
   )
 

@@ -1,4 +1,4 @@
-import { index, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { index, int, mediumtext, mysqlEnum, mysqlTable, text, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn, timestamps } from "../columns"
 
 export const RemoteSessionCommandTable = mysqlTable(
@@ -23,6 +23,19 @@ export const RemoteSessionCommandTable = mysqlTable(
     result_summary: varchar("result_summary", { length: 4096 }),
     error_code: varchar("error_code", { length: 60 }),
     error_message: varchar("error_message", { length: 2000 }),
+    // Progress of the desktop session after delivery, reported by the runner
+    // that claimed the command. All nullable: older runners never report.
+    session_status: mysqlEnum("session_status", ["running", "waiting", "idle", "error"]),
+    session_waiting_for: mysqlEnum("session_waiting_for", ["permission", "question"]),
+    session_engine: mysqlEnum("session_engine", ["v1", "v2"]),
+    session_model_provider_id: varchar("session_model_provider_id", { length: 160 }),
+    session_model_model_id: varchar("session_model_model_id", { length: 160 }),
+    session_model_variant: varchar("session_model_variant", { length: 60 }),
+    session_final_text: mediumtext("session_final_text"),
+    session_error_code: varchar("session_error_code", { length: 60 }),
+    session_error_message: varchar("session_error_message", { length: 2000 }),
+    session_message_count: int("session_message_count"),
+    session_observed_at: timestamp("session_observed_at", { fsp: 3 }),
     ...timestamps,
   },
   (table) => [

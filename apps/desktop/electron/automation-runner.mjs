@@ -122,6 +122,209 @@ async function observeRemoteSessionFirstTurn(client, sessionId, workspaceId, opt
   return { outcome: "busy" }
 }
 
+/**
+ * After a remote session is delivered, its progress is followed in the
+ * background until it settles so Den callers can see the outcome.
+ */
+export const REMOTE_SESSION_WATCH = Object.freeze({
+  fastPollMs: 3_000,
+  fastWindowMs: 5 * 60_000,
+  slowPollMs: 15_000,
+  keepaliveMs: 60_000,
+  maxMs: 6 * 60 * 60_000,
+  /** Consecutive idle polls without any reply before the session counts as silent. */
+  silentIdlePolls: 3,
+})
+const REMOTE_SESSION_FINAL_TEXT_LIMIT = 20_000
+const REMOTE_SESSION_SNAPSHOT_LIMIT = 200
+
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/** Reads the optional engine and model a headless thread may carry. */
+export function remoteSessionThreadIdentity(thread) {
+  const engine = thread?.engine === "v1" || thread?.engine === "v2" ? thread.engine : undefined
+  const raw = isRecord(thread?.model) ? thread.model : null
+  const model = raw && typeof raw.providerId === "string" && raw.providerId && typeof raw.modelId === "string" && raw.modelId
+    ? {
+      providerId: raw.providerId,
+      modelId: raw.modelId,
+      ...(typeof raw.variant === "string" && raw.variant ? { variant: raw.variant } : {}),
+    }
+    : undefined
+  return { ...(engine ? { engine } : {}), ...(model ? { model } : {}) }
+}
+
+function messageText(message) {
+  return (Array.isArray(message?.parts) ? message.parts : [])
+    .filter((part) => part?.type === "text" && !part.synthetic && !part.ignored && typeof part.text === "string")
+    .map((part) => part.text.trim())
+    .filter(Boolean)
+    .join("\n\n")
+}
+
+/**
+ * Reads the pending permission or question for a session through the same
+ * engine proxy routes the desktop UI and task recovery already use.
+ * Returns undefined when the probe could not be read.
+ */
+async function readRemoteSessionWaitingFor(local, workspaceId, sessionId, engine, fetchImpl, signal) {
+  const workspace = `/workspace/${encodeURIComponent(workspaceId)}`
+  const session = encodeURIComponent(sessionId)
+  const [permissionPath, questionPath] = engine === "v2"
+    ? [`${workspace}/opencode2/api/session/${session}/permission`, `${workspace}/opencode2/api/session/${session}/form`]
+    : [`${workspace}/opencode/permission`, `${workspace}/opencode/question`]
+  const list = async (requestPath) => {
+    const payload = await requestJson(fetchImpl, local.baseUrl, local.token, requestPath, { signal })
+    const rows = isRecord(payload) && "data" in payload ? payload.data : payload
+    if (!Array.isArray(rows)) throw new Error("Invalid pending request list")
+    return rows.filter((row) => isRecord(row) && (engine === "v2" || row.sessionID === sessionId))
+  }
+  try {
+    const [permissions, questions] = await Promise.all([list(permissionPath), list(questionPath)])
+    if (permissions.length) return "permission"
+    if (questions.length) return "question"
+    return null
+  } catch (error) {
+    if (signal.aborted) throw error
+    return undefined
+  }
+}
+
+/** Turns one local snapshot into the session report Den stores. */
+export function remoteSessionObservation(snapshot, waitingFor) {
+  const messages = Array.isArray(snapshot?.messages) ? snapshot.messages : []
+  let lastUser = -1
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") { lastUser = index; break }
+  }
+  const replies = messages.slice(lastUser + 1).filter((message) => message?.role === "assistant")
+  const failed = [...replies].reverse().find((message) => message?.error)
+  const running = snapshot?.status?.type === "busy" || snapshot?.status?.type === "retry"
+  if (failed && !running) {
+    const classified = classifyRemoteSessionError(failed.error)
+    return {
+      status: "error",
+      error: {
+        code: classified.code,
+        message: (classified.message || "The session failed").slice(0, REMOTE_SESSION_MESSAGE_LIMIT),
+      },
+      messageCount: messages.length,
+    }
+  }
+  if (waitingFor) return { status: "waiting", waitingFor, messageCount: messages.length }
+  if (running) return { status: "running", messageCount: messages.length }
+  const finalText = [...replies].reverse().map(messageText).find(Boolean)
+  if (finalText || replies.some(hasAssistantOutput)) {
+    return {
+      status: "idle",
+      ...(finalText ? { finalText: finalText.slice(0, REMOTE_SESSION_FINAL_TEXT_LIMIT) } : {}),
+      messageCount: messages.length,
+    }
+  }
+  // Idle with no reply yet: status and messages are read separately, so one
+  // such read is not proof the session stopped.
+  return { status: "silent", messageCount: messages.length }
+}
+
+function observationKey(observation) {
+  return JSON.stringify([
+    observation.status,
+    observation.waitingFor ?? null,
+    observation.error?.code ?? null,
+    observation.error?.message ?? null,
+    observation.finalText ?? null,
+  ])
+}
+
+/**
+ * Follows a delivered remote session and reports its progress until it
+ * settles, the watch window ends, or Den stops accepting reports.
+ * `report` resolves to false when Den retired the command (404/409).
+ */
+export async function watchRemoteSession(input) {
+  const timing = { ...REMOTE_SESSION_WATCH, ...input.timing }
+  const fetchImpl = input.fetchImpl ?? fetch
+  const startedAt = Date.now()
+  let lastKey = null
+  let lastReportedAt = 0
+  let silentPolls = 0
+  while (!input.signal.aborted && Date.now() - startedAt < timing.maxMs) {
+    let observation = null
+    try {
+      const local = await input.getLocalRuntime()
+      if (!local?.baseUrl || !local?.token) throw new Error("The desktop runtime is unavailable")
+      const client = createWorkspaceSessionClient(local, input.workspaceId, fetchImpl)
+      const snapshot = await client.getThreadSnapshot(input.sessionId, {
+        signal: input.signal,
+        limit: REMOTE_SESSION_SNAPSHOT_LIMIT,
+      })
+      const running = snapshot?.status?.type === "busy" || snapshot?.status?.type === "retry"
+      const waitingFor = running
+        ? await readRemoteSessionWaitingFor(local, input.workspaceId, input.sessionId, input.engine, fetchImpl, input.signal)
+        : null
+      observation = remoteSessionObservation(snapshot, waitingFor)
+    } catch (error) {
+      if (input.signal.aborted) return "stopped"
+      if (error?.status === 404) {
+        observation = {
+          status: "error",
+          error: { code: "session_not_found", message: "The local session is no longer available." },
+        }
+      } else {
+        input.log?.(`remote session watch read failed: ${serializedError(error)}`)
+      }
+    }
+    if (observation?.status === "silent") {
+      silentPolls += 1
+      observation = silentPolls >= timing.silentIdlePolls
+        ? {
+          status: "error",
+          error: { code: "no_reply", message: "The session stopped without replying." },
+          messageCount: observation.messageCount,
+        }
+        : null
+    } else if (observation) {
+      silentPolls = 0
+    }
+    if (observation) {
+      const key = observationKey(observation)
+      const terminal = observation.status === "idle" || observation.status === "error"
+      if (key !== lastKey || Date.now() - lastReportedAt >= timing.keepaliveMs) {
+        let accepted
+        try {
+          accepted = await input.report({
+            ...observation,
+            waitingFor: observation.waitingFor ?? null,
+            error: observation.error ?? null,
+            ...(input.engine ? { engine: input.engine } : {}),
+            ...(input.model ? { model: input.model } : {}),
+            observedAt: Date.now(),
+          })
+        } catch (error) {
+          if (input.signal.aborted) return "stopped"
+          input.log?.(`remote session progress report failed: ${serializedError(error)}`)
+          accepted = null
+        }
+        if (accepted === false) return "retired"
+        if (accepted === true) {
+          lastKey = key
+          lastReportedAt = Date.now()
+          if (terminal) return observation.status
+        }
+      }
+    }
+    const elapsed = Date.now() - startedAt
+    try {
+      await sleep(elapsed < timing.fastWindowMs ? timing.fastPollMs : timing.slowPollMs, input.signal)
+    } catch {
+      return "stopped"
+    }
+  }
+  return input.signal.aborted ? "stopped" : "expired"
+}
+
 function sleep(ms, signal) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -353,7 +556,7 @@ export async function executeDesktopRemoteSession(assignment, options) {
     const firstTurn = started
       ? await observeRemoteSessionFirstTurn(client, sessionId, workspaceId, options)
       : { outcome: "not_started" }
-    return { sessionId, workspaceId, started, firstTurn }
+    return { sessionId, workspaceId, started, firstTurn, ...remoteSessionThreadIdentity(created) }
   } catch (error) {
     const contextualError = error instanceof Error ? error : new Error(serializedError(error))
     if (sessionId && Reflect.get(contextualError, "sessionId") === undefined) {
@@ -638,6 +841,7 @@ export function createDesktopAutomationRunner(options) {
     const active = { assignment, controller }
     state.active = active
     let result
+    let delivered = null
     try {
       const output = await executeDesktopRemoteSession(assignment, {
         getLocalRuntime: options.getLocalRuntime,
@@ -657,6 +861,8 @@ export function createDesktopAutomationRunner(options) {
           workspaceId: output.workspaceId,
           resultSummary: "Remote session created",
         }
+      // A session without a first turn has nothing to follow.
+      if (result.status === "delivered" && output.started) delivered = output
     } catch (error) {
       result = {
         status: "failed",
@@ -672,6 +878,7 @@ export function createDesktopAutomationRunner(options) {
         body: result,
         signal: AbortSignal.timeout(lifecycleRequestTimeoutMs),
       })
+      if (delivered) startRemoteSessionWatch(state, assignment, delivered)
     } finally {
       if (state.active === active) state.active = null
       if (isCurrent(state) && pendingConfiguration) {
@@ -680,6 +887,56 @@ export function createDesktopAutomationRunner(options) {
         activateConfiguration(next)
       }
     }
+  }
+
+  /**
+   * Follows a delivered session in the background. It holds no runner slot,
+   * so the work loop keeps claiming; retiring the generation (configuration
+   * change, credential rejection, or stop) aborts it. Watchers live only in
+   * memory: a desktop restart stops reporting.
+   */
+  const startRemoteSessionWatch = (state, assignment, delivered) => {
+    const commandPath = `/v1/remote-session-commands/${encodeURIComponent(assignment.commandId)}/session`
+    const identity = {
+      engine: delivered.engine,
+      model: delivered.model ?? (assignment.model
+        ? {
+          providerId: assignment.model.providerId,
+          modelId: assignment.model.modelId,
+          ...(assignment.model.variant ? { variant: assignment.model.variant } : {}),
+        }
+        : undefined),
+    }
+    const watch = watchRemoteSession({
+      sessionId: delivered.sessionId,
+      workspaceId: delivered.workspaceId,
+      ...identity,
+      getLocalRuntime: options.getLocalRuntime,
+      fetchImpl,
+      signal: state.controller.signal,
+      timing: options.remoteSessionWatch,
+      log: options.log,
+      report: async (body) => {
+        try {
+          await runnerRequest(state, commandPath, {
+            method: "POST",
+            body,
+            signal: AbortSignal.timeout(lifecycleRequestTimeoutMs),
+          })
+          return true
+        } catch (error) {
+          // An older Den without this route, or a command that is no longer
+          // delivered: stop reporting rather than retrying forever.
+          if (error?.status === 404 || error?.status === 409) return false
+          throw error
+        }
+      },
+    })
+    state.watchers.add(watch)
+    watch
+      .then((outcome) => options.log?.(`remote session ${assignment.commandId} watch ended: ${outcome}`))
+      .catch((error) => options.log?.(`remote session ${assignment.commandId} watch failed: ${serializedError(error)}`))
+      .finally(() => state.watchers.delete(watch))
   }
 
   const reconcile = (state) => {
@@ -776,6 +1033,7 @@ export function createDesktopAutomationRunner(options) {
       reconcilePromise: null,
       claimInFlight: false,
       active: null,
+      watchers: new Set(),
       retired: false,
       credentialRejected: false,
     }

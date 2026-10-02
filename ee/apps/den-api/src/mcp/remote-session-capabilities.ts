@@ -159,14 +159,14 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "read",
     summary:
-      "Read a remote session's recent transcript and status from your OpenWork Web instance, or the status of a queued desktop command.",
+      "Read a remote session's recent transcript and status from your OpenWork Web instance, or the status of a desktop command. For a desktop command, poll with commandId until state is failed or expired, or session.status is idle (session.finalText holds the answer) or error (session.lastError). When session.status is waiting, tell the person the desktop needs them to answer a session.waitingFor (permission or question) prompt in OpenWork.",
     searchExtraTokens:
       "remote session sessions chat thread cloud web instance read transcript status reply answer poll result output check progress desktop command",
     argumentsSchema: {
       type: "object",
       properties: {
         sessionId: { type: "string", description: "Session id returned by remote-session:create." },
-        commandId: { type: "string", description: "Desktop command id returned by remote-session:create." },
+        commandId: { type: "string", description: "Desktop command id returned by remote-session:create. The result includes a session block (status, waitingFor, engine, model, finalText, lastError, messageCount, observedAt) once the desktop reports progress; null until then or for older desktops." },
         messageId: { type: "string", description: "Only return this user turn and its assistant replies." },
         limit: { type: "number", description: "Maximum number of recent messages to return. Defaults to 20, max 100." },
       },
@@ -549,6 +549,7 @@ export async function executeRemoteSessionCapability(
         resultSummary: command.resultSummary,
         error: command.error,
         expiresAt: command.expiresAt,
+        session: command.session,
       })
     }
   }
