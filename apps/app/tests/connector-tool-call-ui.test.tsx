@@ -136,5 +136,5 @@ test("renders a connector logo beside a human-readable completed tool call", () 
 
   expect(html).toContain('data-connector-name="Google Workspace"');
   expect(html).toContain("ext-google-workspace.svg");
-  expect(html).toContain("Fetched Google Workspace Calendar Events");
+  expect(html).toContain("Fetched calendar events · Google Workspace");
 });

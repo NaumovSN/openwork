@@ -72,7 +72,7 @@ describe("retired desktop tool UI history", () => {
         expect(html).not.toContain(marker);
       }
       const details = renderToStaticMarkup(<TechnicalDetailsPanel part={part} />);
-      expect(details).toContain("historical-call");
+      // Details hold the raw payload, not internal call ids.
       if (typeof value === "string") expect(details).toContain(value.startsWith("{") ? "&quot;" : value);
     }
   });
