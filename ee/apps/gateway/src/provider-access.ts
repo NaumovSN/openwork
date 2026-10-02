@@ -20,14 +20,14 @@ export type LoadGatewayAccess = (scope: GatewayAccessScope) => Promise<GatewayAc
 type AccessDb = Pick<typeof import("./db.js").db, "select">
 
 // All relations are application-enforced, so every ownership/status edge is
-// checked here. The optional locking read also fences OAuth's local mutations.
-export async function loadGatewayAccess(scope: GatewayAccessScope, executor: AccessDb, lock = false): Promise<GatewayAccessRow[]> {
+// checked here. Plain read: callers re-check in their flow rather than locking.
+export async function loadGatewayAccess(scope: GatewayAccessScope, executor: AccessDb): Promise<GatewayAccessRow[]> {
   const grants = GatewayProviderAccessTable
   const groups = GatewayModelGroupTable
   const sets = GatewayCredentialSetTable
   const models = GatewayProviderModelTable
   const links = GatewayModelGroupModelTable
-  const query = executor.select({ grant: grants, group: groups, credentialSet: sets, model: models })
+  return executor.select({ grant: grants, group: groups, credentialSet: sets, model: models })
     .from(MemberTable)
     .innerJoin(GatewayKeyTable, and(eq(GatewayKeyTable.org_membership_id, MemberTable.id), eq(GatewayKeyTable.organization_id, MemberTable.organizationId)))
     .innerJoin(GatewayProviderTable, eq(GatewayProviderTable.organization_id, MemberTable.organizationId))
@@ -51,7 +51,6 @@ export async function loadGatewayAccess(scope: GatewayAccessScope, executor: Acc
             and ${TeamTable.organizationId} = ${MemberTable.organizationId})`),
       ),
     ))
-  return lock ? query.for("update") : query
 }
 
 export const loadGatewayAccessFromDb: LoadGatewayAccess = async (scope) => loadGatewayAccess(scope, (await import("./db.js")).db)
