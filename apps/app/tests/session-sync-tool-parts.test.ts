@@ -15,7 +15,6 @@ import {
   parseDynamicToolUIPart,
   parseStructuredOutputUIPart,
 } from "../src/react-app/domains/session/sync/parse-tool-parts";
-import { parseOpenWorkSessionCreateResult } from "../src/components/tools/openwork-session-create";
 import { codeModeToolCalls } from "../src/lib/code-mode-tools";
 import { useSessionActivityStore } from "../src/react-app/domains/session/status/session-activity-store";
 
@@ -93,9 +92,12 @@ describe("tool part mapper", () => {
   test("forwards native tool start time without inventing pending timing", () => {
     expect(parseDynamicToolUIPart(writeToolPart("running", { description: "Review" }, { tool: "task" })))
       .toMatchObject({ callProviderMetadata: { openwork: { toolStartedAt: 1 } } });
+    expect(parseDynamicToolUIPart(writeToolPart("running", { code: "return 1" }, {
+      tool: "execute", metadata: { openworkV2CodeMode: true },
+    }))?.callProviderMetadata?.openwork?.toolStartedAt).toBe(1);
     expect(parseDynamicToolUIPart(writeToolPart("pending", { description: "Review" }, { tool: "task" })))
       .toMatchObject({ callProviderMetadata: { opencode: { partId: "part-write" } } });
-    expect(parseDynamicToolUIPart(writeToolPart("pending", { description: "Review" }, { tool: "task" }))?.callProviderMetadata?.openwork)
+    expect(parseDynamicToolUIPart(writeToolPart("pending", { description: "Review" }, { tool: "task" }))?.callProviderMetadata?.openwork?.toolStartedAt)
       .toBeUndefined();
   });
 
@@ -187,6 +189,7 @@ describe("tool part mapper", () => {
     expect(parseDynamicToolUIPart(part)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-write" },
       openwork: {
+        sourcePartId: "part-write",
         mcpResult: {
           ...(isError === undefined ? {} : { isError }),
           content: [{ type: "text", text: "Fallback" }],
@@ -208,7 +211,7 @@ describe("tool part mapper", () => {
 
     expect(parseDynamicToolUIPart(running)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-task" },
-      openwork: { childSessionId: "ses_child_1", toolStartedAt: 1 },
+      openwork: { sourcePartId: "part-task", childSessionId: "ses_child_1", toolStartedAt: 1 },
     });
 
     const completed = writeToolPart(
@@ -221,7 +224,7 @@ describe("tool part mapper", () => {
 
     expect(parseDynamicToolUIPart(completed)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-task" },
-      openwork: { childSessionId: "ses_child_1", toolStartedAt: 1 },
+      openwork: { sourcePartId: "part-task", childSessionId: "ses_child_1", toolStartedAt: 1 },
     });
   });
 
@@ -232,6 +235,7 @@ describe("tool part mapper", () => {
 
     expect(parseDynamicToolUIPart(part)?.callProviderMetadata).toEqual({
       opencode: { partId: "part-write" },
+      openwork: { sourcePartId: "part-write" },
     });
   });
 
@@ -284,7 +288,7 @@ describe("tool part mapper", () => {
     expect(parsed.errorText.toLowerCase()).not.toContain("<!doctype");
   });
 
-  test("maps env var request tools for rich chat rendering", () => {
+  test("preserves historical env var request input for generic tool rendering", () => {
     const part = writeToolPart("running", { key: "NOTION_TOKEN" }, { tool: "request_env_var" });
     expect(parseDynamicToolUIPart(part)).toMatchObject({
       type: "dynamic-tool",
@@ -293,29 +297,19 @@ describe("tool part mapper", () => {
     });
   });
 
-  test("parses session creation output for rich chat rendering", () => {
-    expect(parseOpenWorkSessionCreateResult(JSON.stringify({
+  test("preserves session creation output without a UI-specific parser", () => {
+    const output = JSON.stringify({
       ok: true,
       workspaceId: "workspace-a",
       workspace: "Research",
-      created: [{
-        sessionId: "session-dolphins",
-        title: "Dolphin research",
-        started: true,
-        route: "/workspace/workspace-a/session/session-dolphins",
-      }],
+      created: [{ sessionId: "session-research", title: "Research", started: true }],
       failures: [],
-    }))).toEqual({
-      ok: true,
-      workspaceId: "workspace-a",
-      workspace: "Research",
-      created: [{
-        sessionId: "session-dolphins",
-        title: "Dolphin research",
-        started: true,
-        route: "/workspace/workspace-a/session/session-dolphins",
-      }],
-      failures: [],
+    });
+    const part = writeToolPart("completed", {}, { tool: "openwork_session_create" });
+    if (part.state.status !== "completed") throw new Error("Expected completed fixture");
+    part.state.output = output;
+    expect(parseDynamicToolUIPart(part)).toMatchObject({
+      type: "dynamic-tool", toolName: "openwork_session_create", state: "output-available", output,
     });
   });
 
@@ -332,6 +326,71 @@ describe("tool part mapper", () => {
       text: "{}",
       state: "done",
     });
+  });
+
+  test.each([
+    { name: "repeated header with tied neighbor", headerCreated: 10, neighborCreated: 10 },
+    { name: "repeated header with untimestamped neighbor", headerCreated: 10, neighborCreated: undefined },
+    { name: "late header with tied neighbor", headerCreated: undefined, neighborCreated: 10 },
+    { name: "late header with untimestamped neighbor", headerCreated: undefined, neighborCreated: undefined },
+  ])("metadata preserves source neighbors: $name", ({ headerCreated, neighborCreated }) => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, "session-a");
+    const apply = (id: string, created: number | undefined) => __applySessionSyncEventForTest(syncInput, {
+      type: "message.updated", properties: { info: {
+        id, role: "assistant", sessionID: "session-a", ...(created === undefined ? {} : { time: { created } }),
+      } },
+    });
+    const ids = () => getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a"))?.map((message) => message.id);
+    try {
+      apply("first", headerCreated);
+      apply("neighbor", neighborCreated);
+      apply("later", 20);
+      expect(ids()).toEqual(["first", "neighbor", "later"]);
+      apply("first", 10);
+      expect(ids()).toEqual(["first", "neighbor", "later"]);
+      apply("first", 30);
+      expect(ids()).toEqual(["neighbor", "later", "first"]);
+    } finally {
+      release();
+      cleanup();
+    }
+  });
+
+  test.each([false, true])("late user metadata orders the settled transcript without losing parts (part first: %s)", (partFirst) => {
+    const syncInput = { workspaceId: "workspace-a", baseUrl: "http://127.0.0.1:1234", openworkToken: "token" };
+    const cleanup = __createWorkspaceSessionSyncForTest(syncInput);
+    const release = trackWorkspaceSessionSync(syncInput, "session-a");
+    const apply = (id: string, role: "user" | "assistant", created: number) => __applySessionSyncEventForTest(syncInput, {
+      type: "message.updated", properties: { info: { id, role, sessionID: "session-a", time: { created } } },
+    });
+    const transcript = () => getReactQueryClient().getQueryData<UIMessage[]>(transcriptKey("workspace-a", "session-a")) ?? [];
+    try {
+      apply("msg-a", "assistant", 20);
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: {
+        part: writeToolPart("running", { filePath: "package.json" }),
+      } });
+      const userPart = { type: "message.part.updated", properties: { part: {
+        id: "user-text", messageID: "late-user", sessionID: "session-a", type: "text", text: "Read this file",
+      } } };
+      if (partFirst) __applySessionSyncEventForTest(syncInput, userPart);
+      apply("late-user", "user", 10);
+      if (!partFirst) __applySessionSyncEventForTest(syncInput, userPart);
+      expect(transcript().map((message) => message.id)).toEqual(["late-user", "msg-a"]);
+      expect(transcript()[0]).toMatchObject({ role: "user", parts: [{ type: "text", text: "Read this file" }] });
+      expect(transcript()[1]?.parts).toMatchObject([{ type: "dynamic-tool", state: "input-streaming" }]);
+      apply("follow-up", "user", 30);
+      apply("late-user", "user", 10);
+      __applySessionSyncEventForTest(syncInput, { type: "message.part.updated", properties: {
+        part: writeToolPart("completed", { filePath: "package.json" }),
+      } });
+      expect(transcript().map((message) => message.id)).toEqual(["late-user", "msg-a", "follow-up"]);
+      expect(transcript()[1]?.parts).toMatchObject([{ type: "dynamic-tool", state: "output-available" }]);
+    } finally {
+      release();
+      cleanup();
+    }
   });
 
   test("session sync defers empty in-progress write tools until input arrives", () => {

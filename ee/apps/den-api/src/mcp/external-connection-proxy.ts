@@ -35,6 +35,7 @@ import { db } from "../db.js"
 import { env } from "../env.js"
 import { tokenRoute } from "../middleware/index.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
+import { handleMcpAppServerRequest, isMcpAppServerId } from "./app-server.js"
 import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
 import { externalMcpAppResourceUri, resolveMcpMemberIdentity } from "./external-capabilities.js"
 import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
@@ -138,16 +139,16 @@ function toolVisibleToApp(tool: ExternalMcpProxyTool): boolean {
 
 function appOnlyProxyTool(tool: ExternalMcpProxyTool): ExternalMcpProxyTool | null {
   const resourceUri = externalMcpAppResourceUri(tool)
-  if (!resourceUri || !toolVisibleToApp(tool)) return null
   const meta = isRecord(tool._meta) ? tool._meta : {}
   const ui = isRecord(meta.ui) ? meta.ui : {}
+  if (!toolVisibleToApp(tool)) return null
   return {
     ...tool,
     _meta: {
       ...meta,
       ui: {
         ...ui,
-        resourceUri,
+        ...(resourceUri ? { resourceUri } : {}),
         visibility: ["app"],
       },
     },
@@ -211,7 +212,8 @@ export function createExternalConnectionProxyServer(input: {
     return appTool ? [appTool] : []
   })
   const appResourceUris = async () => new Set(
-    (await listAppTools()).map((tool) => externalMcpAppResourceUri(tool)).filter((uri) => uri !== null),
+    (await (input.appHostClient ? listAppTools() : listDirectTools()))
+      .map((tool) => externalMcpAppResourceUri(tool)).filter((uri) => uri !== null),
   )
   const server = new McpServer(input.descriptor.serverInfo ?? {
     name: connection.name,
@@ -223,9 +225,9 @@ export function createExternalConnectionProxyServer(input: {
       ...(downstreamUi ? { extensions: { [EXTENSION_ID]: downstreamUi } } : {}),
     },
     instructions: input.appHostClient
-      ? `This member-authorized OpenWork Connect endpoint exposes only app-visible MCP App tools and their bound resources for ${connection.name}. Ordinary provider capabilities remain available exclusively through search_capabilities and execute_capability.`
+      ? "This member-authorized OpenWork Connect endpoint privately exposes app-visible tools and their bound MCP App resources for this connection. Omitted UI visibility defaults to model and app; tools are projected here as app-only. Ordinary clients retain their configured direct or search_capabilities/execute_capability surface."
       : directClient
-        ? `This member-authorized OpenWork Connect endpoint exposes the tools of ${connection.name} directly, subject to your organization's access grants and tool policy. Resources are not exposed.`
+        ? `This member-authorized OpenWork Connect endpoint exposes the tools of ${connection.name} directly, subject to your organization's access grants and tool policy. Only MCP App resources bound to available model-visible tools are exposed.`
         : `This compatibility endpoint exposes only bounded search_capabilities and execute_capability for ${connection.name}. Direct provider tools, MCP App launch tools, and resources are not exposed.`,
   })
 
@@ -302,14 +304,14 @@ export function createExternalConnectionProxyServer(input: {
 
   if (input.descriptor.capabilities.resources) {
     server.server.setRequestHandler(ListResourcesRequestSchema, async () => {
-      if (!input.appHostClient) return { resources: [] }
+      if (!input.appHostClient && !directClient) return { resources: [] }
       const allowedUris = await appResourceUris()
       return { resources: (await runtime.listResources(input.operation)).filter((resource) => allowedUris.has(resource.uri)) }
     })
     server.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }))
     server.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-      if (!input.appHostClient) {
-        throw new McpError(ErrorCode.InvalidRequest, "Provider MCP App resources are available only through the OpenWork App host.")
+      if (!input.appHostClient && !directClient) {
+        throw new McpError(ErrorCode.InvalidRequest, "Provider MCP App resources require direct exposure or the OpenWork App host.")
       }
       if (!(await appResourceUris()).has(request.params.uri)) {
         throw new McpError(ErrorCode.InvalidRequest, "The resource is not bound to an available MCP App tool.")
@@ -423,7 +425,8 @@ export async function handleExternalConnectionProxyRequest(input: {
  * ordinary client receives only a bounded search/execute compatibility surface
  * unless an administrator marked the connection `exposeDirectly`, in which case
  * it is served as a standard MCP server whose tool catalog is filtered by the
- * organization's tool policy. Grants are re-checked on every request.
+ * organization's tool policy. Grants are re-checked on every request. An
+ * authored App id at the same path is served as that App's own MCP server.
  */
 export function registerExternalConnectionProxyRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(
   app: Hono<T>,
@@ -446,11 +449,18 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       return new Response(null, { status: 405, headers: { allow: "POST" } })
     }
 
+    // Each authored App is served as its own MCP server at a connection path,
+    // so released clients register and authorize it like any direct connection.
+    const requestedId = c.req.param("connectionId")
+    if (isMcpAppServerId(requestedId)) {
+      return handleMcpAppServerRequest({ app: app as unknown as Hono, context: c, principal, appId: requestedId })
+    }
+
     const organizationId = normalizeDenTypeId("organization", principal.organizationId)
 
     let connectionId
     try {
-      connectionId = normalizeDenTypeId("externalMcpConnection", c.req.param("connectionId"))
+      connectionId = normalizeDenTypeId("externalMcpConnection", requestedId)
     } catch {
       throw new McpError(ErrorCode.InvalidRequest, "The MCP connection id is invalid.")
     }

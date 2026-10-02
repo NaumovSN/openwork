@@ -1,5 +1,6 @@
-import { serve } from "@hono/node-server"
+import { DEN_HTTP_KEEP_ALIVE_TIMEOUT_MS, serveDenHttp } from "./http-server.js"
 import app from "./app.js"
+import { startSlackAssistantWorker } from "./slack-assistant/worker.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
 import { shutdownObservability } from "./observability/runtime.js"
@@ -11,6 +12,7 @@ import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-
 import { startAutomationSchedulerLoop } from "./automations/scheduler-loop.js"
 import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
 
+const stopSlackAssistantWorker = startSlackAssistantWorker()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopCloudIdleStopLoop = startCloudIdleStopLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
@@ -24,8 +26,8 @@ appLogger.info("external mcp implementation selected", { component: "server", ru
 // dev outbox) and must not be reachable from the LAN; production/default
 // behavior (all interfaces) is unchanged when DEN_BIND_HOST is unset.
 const bindHost = process.env.DEN_BIND_HOST?.trim()
-const server = serve({ fetch: app.fetch, port: env.port, ...(bindHost ? { hostname: bindHost } : {}) }, (info) => {
-  appLogger.info("server listening", { component: "server", port: info.port })
+const server = serveDenHttp({ fetch: app.fetch, port: env.port, ...(bindHost ? { hostname: bindHost } : {}) }, (info) => {
+  appLogger.info("server listening", { component: "server", port: info.port, keep_alive_timeout_ms: DEN_HTTP_KEEP_ALIVE_TIMEOUT_MS })
 })
 
 let shuttingDown = false
@@ -77,6 +79,7 @@ async function stopBackgroundLoops() {
   stopModelsAnalyticsExportLoop()
   const results = await Promise.allSettled([
     stopScimMaintenanceLoop(),
+    stopSlackAssistantWorker(),
     stopCloudIdleStopLoop(),
     stopWorkerProvisioningReconcileLoop(),
     stopGithubSyncWorker(),

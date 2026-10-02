@@ -74,6 +74,7 @@ export const idTypesMapNameToPrefix = {
   worker: "wrk",
   workerInstance: "wki",
   daytonaSandbox: "dts",
+  cloudRuntimeInstance: "cri",
   workerToken: "wkt",
   workerBundle: "wkb",
   automation: "atm",
@@ -113,6 +114,12 @@ export const idTypesMapNameToPrefix = {
   gatewayModelGroup: "gmg",
   gatewayModelGroupModel: "gmm",
   gatewayCredentialSet: "gcs",
+  organizationWebOrigin: "owo",
+  deviceCode: "dvc",
+  workspaceClaimCode: "wcc",
+  auditOperation: "aop",
+  auditEventResource: "aer",
+  auditUsageFact: "auf",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

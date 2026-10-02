@@ -38,6 +38,21 @@ function queuedTexts(sessionId: string) {
 describe("composer state store", () => {
   beforeEach(reset);
 
+  test("settles only the rejected Auto message without restoring it over newer edits or queueing a retry", () => {
+    const submitted = { ...draft("submitted"), messageId: "message-a" };
+    const composer: ComposerSessionState = { draft: "submitted", attachments: [], mentions: {}, pasteParts: [], revertMessageId: null };
+    useComposerStateStore.setState({ pendingMessages: { owner: [{ draft: submitted, composer, settled: false, previousMessageIds: [], submissionMessageIds: [] }] } });
+    useComposerStateStore.getState().setDraft("session-a", "newer edits");
+    useComposerStateStore.getState().settleAutoAccessWall("different-owner", "message-a", { state: "limit" });
+    expect(useComposerStateStore.getState().pendingMessages.owner[0].autoAccessWall).toBeUndefined();
+    useComposerStateStore.getState().settleAutoAccessWall("owner", "message-a", { state: "limit" });
+    const state = useComposerStateStore.getState();
+    expect(state.pendingMessages.owner[0]).toMatchObject({ settled: true, autoAccessWall: { state: "limit" } });
+    expect(state.sessions["session-a"].draft).toBe("newer edits");
+    expect(state.queuedDrafts).toEqual({});
+    useComposerStateStore.setState({ pendingMessages: {} });
+  });
+
   test("scopes queued drafts by session", () => {
     const { appendQueuedDraft } = useComposerStateStore.getState();
     appendQueuedDraft("session-a", draft("queued in A"));
@@ -142,6 +157,45 @@ describe("composer state store", () => {
       nextScopeKey: "alice-org-b|workspace|session",
       currentText: storedText,
       storedText,
+    })).toBe(true);
+  });
+
+  test("inside one scope a moved snapshot only fills an empty composer", () => {
+    const scope = "alice-org-a|workspace|session";
+
+    // Text being typed here is newer than whatever moved the snapshot.
+    expect(composerDraftNeedsHydration({
+      claimedScopeKey: scope,
+      nextScopeKey: scope,
+      currentText: "still typing here",
+      storedText: "older text from another writer",
+    })).toBe(false);
+    expect(composerDraftNeedsHydration({
+      claimedScopeKey: scope,
+      nextScopeKey: scope,
+      currentText: "still typing here",
+      storedText: "",
+    })).toBe(false);
+    // Attachments without text are live content too.
+    expect(composerDraftNeedsHydration({
+      claimedScopeKey: scope,
+      nextScopeKey: scope,
+      currentText: "[attachment att-1]",
+      storedText: "restored",
+      currentHasAttachments: true,
+    })).toBe(false);
+    // An empty composer still takes the persisted draft (first mount, reload).
+    expect(composerDraftNeedsHydration({
+      claimedScopeKey: scope,
+      nextScopeKey: scope,
+      currentText: "",
+      storedText: "restored",
+    })).toBe(true);
+    expect(composerDraftNeedsHydration({
+      claimedScopeKey: null,
+      nextScopeKey: scope,
+      currentText: "",
+      storedText: "restored",
     })).toBe(true);
   });
 

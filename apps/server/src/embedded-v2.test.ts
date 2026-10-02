@@ -20,6 +20,8 @@ if (!process.env.OPENWORK_EMBEDDED_V2_TEST_ROOT) {
         ...(process.env.OPENWORK_EMBEDDED_V2_TEST_NAME ? ["-t", process.env.OPENWORK_EMBEDDED_V2_TEST_NAME] : [])], {
         env: { ...env, HOME: root, XDG_CONFIG_HOME: join(root, "config"), XDG_DATA_HOME: join(root, "data"),
           XDG_CACHE_HOME: join(root, "cache"), XDG_STATE_HOME: join(root, "state"), OPENWORK_DEV_MODE: "1",
+          // Catalog fixtures assert exact provider lists; free Auto adds its own relay provider.
+          OPENWORK_DISABLE_FREE_INFERENCE: "1",
           OPENWORK_EMBEDDED_V2_TEST_ROOT: root, ...(nativeBinary ? { OPENWORK_TEST_NATIVE_V2_BIN: nativeBinary } : {}) },
         stdout: "pipe", stderr: "pipe",
       });
@@ -549,7 +551,7 @@ process.on("SIGTERM", () => { log({ stopped: true }); server.stop(true); process
     } finally { await handle.stop(); }
   }, 10_000);
 
-  test("Desktop optional preview preserves native skill sync, shared catalog projection and host configuration", async () => {
+  test("Desktop optional preview clears old Cloud skill copies, uses Connect on demand and keeps host configuration", async () => {
     const item = await fixture();
     const marker = join(item.options.opencodeV2.rootDir, "cloud-skills", "marker");
     await mkdir(join(marker, ".."), { recursive: true });
@@ -581,8 +583,6 @@ process.on("SIGTERM", () => { log({ stopped: true }); server.stop(true); process
       expect(await (await fetch(mount + "/skill", { headers })).json()).toEqual({ data: skillCatalog.data });
       expect(await (await fetch(mount + "/provider", { headers })).json()).toEqual({ data: [{ id: "preview", name: "Preview" }] });
       await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-      await mkdir(join(marker, ".."), { recursive: true });
-      await writeFile(marker, "preview-owned-marker");
       const sid = "ses_preview";
       await fetch(mount + "/session", { method: "POST", headers, body: JSON.stringify({ id: sid }) });
       const prompt = { id: "msg_preview", text: "Preview", skills: [{ id: "openwork-cloud-old", text: "Preview contract retained" }] };
@@ -591,13 +591,11 @@ process.on("SIGTERM", () => { log({ stopped: true }); server.stop(true); process
       expect(await response.json()).toEqual({ data: prompt });
       const previewLog = await readFile(item.log, "utf8");
       expect(previewLog.trim().split("\n").map((line) => JSON.parse(line)).some((entry) => entry.path?.endsWith("/permission"))).toBe(false);
-      expect(previewLog).toContain("Authorized organization skills are in the native skill catalog, not in Connect.");
+      expect(previewLog).toContain("discover available skills through OpenWork Connect on demand");
       expect(previewLog).toContain("OpenWork Connect tools are connected.");
       expect(JSON.parse(await readFile(join(item.options.opencodeV2.rootDir, "config/opencode.json"), "utf8")).skills).toEqual([join(item.root, "not-preview-managed")]);
-      expect(cloudReads).toBe(1);
-      await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      expect(cloudReads).toBe(0);
       await handle.stop();
-      await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       delete process.env.OPENWORK_ENGINE_V2_PREVIEW;
       await handle?.stop();

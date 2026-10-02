@@ -3,6 +3,8 @@ import { describe, expect, test } from "bun:test";
 import {
   buildZip,
   cellInputFromText,
+  extractOfficeText,
+  officeKindFromMimeOrFilename,
   excelSerialToIso,
   renderSheetTable,
   unsafeFormulaReason,
@@ -147,5 +149,24 @@ describe("@openwork/workbook", () => {
     expect(cellInputFromText(" 7")).toBe(" 7");
     expect(cellInputFromText("true")).toBe("true");
     expect(cellInputFromText("Infinity")).toBe("Infinity");
+  });
+
+  test("Office text: one extractor for every engine, pointing at a spreadsheet tool only when the engine has one", async () => {
+    expect(officeKindFromMimeOrFilename("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "x")).toBe("docx");
+    expect(officeKindFromMimeOrFilename("application/octet-stream", "folder/Deck.PPTX")).toBe("pptx");
+    expect(officeKindFromMimeOrFilename("", "numbers.xlsx")).toBe("xlsx");
+    expect(officeKindFromMimeOrFilename("application/pdf", "report.docx")).toBeNull();
+
+    const docx = await buildZip([{ name: "word/document.xml", data: utf8Bytes("<w:document><w:body><w:t>Plan &amp; owners</w:t></w:body></w:document>") }]);
+    expect(await extractOfficeText("docx", docx)).toBe("[word/document.xml]\nPlan & owners");
+    await expect(extractOfficeText("pptx", docx)).rejects.toThrow("No supported Office XML text entries");
+
+    const { bytes } = await writeXlsxWorkbook([{ name: "Long", rows: Array.from({ length: 40 }, (_row, index) => [`row ${index + 1}`, index]) }]);
+    const withoutTool = await extractOfficeText("xlsx", bytes);
+    expect(withoutTool).toContain("more_rows: rows from 26 are not shown");
+    expect(withoutTool).not.toContain("spreadsheet_read");
+    expect(await extractOfficeText("xlsx", bytes, { spreadsheetReadTool: "spreadsheet_read" })).toContain(
+      'more_rows: continue with spreadsheet_read(sheet: "Long", startRow: 26)',
+    );
   });
 });

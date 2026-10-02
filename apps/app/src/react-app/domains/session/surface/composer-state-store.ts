@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { AutoAccessWall } from "@/app/lib/inference-access";
 
 import { createPromptMessageID } from "../../../../app/lib/opencode";
 import type { ComposerAttachment, ComposerDraft } from "../../../../app/types";
@@ -41,10 +42,13 @@ export type ComposerStateStore = {
     /** The composer as submitted, so a send whose hold is released later can still be saved as unsent. */
     composer: ComposerSessionState;
     previousMessageIds: string[];
+    submissionMessageIds: readonly string[];
     serverMessageId?: string;
     preparedText?: string;
     settled: boolean;
+    autoAccessWall?: AutoAccessWall;
   }[]>;
+  settleAutoAccessWall: (owner: string, messageId: string, wall: AutoAccessWall) => void;
   pendingFocusSessionId: string | null;
   sessions: Record<string, ComposerSessionState>;
   queuedDrafts: Record<string, QueuedComposerItem[]>;
@@ -76,6 +80,10 @@ export function claimComposerSessionDraftScope(sessionId: string, scopeKey: stri
   composerSessionDraftScopes.set(session, scopeKey);
 }
 
+export function releaseComposerSessionDraftScope(sessionId: string, expected: string) {
+  if (composerSessionDraftScopes.get(sessionId.trim()) === expected) composerSessionDraftScopes.delete(sessionId.trim());
+}
+
 export function getComposerSessionDraftScope(sessionId: string) {
   return composerSessionDraftScopes.get(sessionId.trim()) ?? null;
 }
@@ -84,14 +92,26 @@ export function persistableComposerDraftText(text: string) {
   return text.replace(/\[attachment [^\]]+\]/g, "");
 }
 
+/**
+ * Decide whether the persisted draft snapshot should replace the in-memory
+ * composer. Crossing an account or organization boundary always rehydrates so
+ * the previous scope's text and attachments never survive into the next one.
+ * Inside one claimed scope the person's live composer is the newest source of
+ * truth: a snapshot that moved underneath it (another window, a queue mirror,
+ * a refused compare-and-swap) may only fill an empty composer, never replace
+ * text or attachments that are being edited here.
+ */
 export function composerDraftNeedsHydration(input: {
   claimedScopeKey: string | null;
   nextScopeKey: string;
   currentText: string;
   storedText: string;
+  currentHasAttachments?: boolean;
 }) {
-  return input.claimedScopeKey !== input.nextScopeKey
-    || persistableComposerDraftText(input.currentText) !== input.storedText;
+  if (input.claimedScopeKey !== input.nextScopeKey) return true;
+  const currentText = persistableComposerDraftText(input.currentText);
+  if (currentText.length > 0 || input.currentHasAttachments) return false;
+  return currentText !== input.storedText;
 }
 
 function createEmptyComposerSession(): ComposerSessionState {
@@ -115,6 +135,12 @@ function createQueuedItem(draft: ComposerDraft, id?: string): QueuedComposerItem
 export const useComposerStateStore = create<ComposerStateStore>((set) => ({
   failedDrafts: {},
   pendingMessages: {},
+  settleAutoAccessWall: (owner, messageId, wall) => set((state) => {
+    const pending = state.pendingMessages[owner];
+    if (!pending?.some((item) => item.draft.messageId === messageId)) return state;
+    return { pendingMessages: { ...state.pendingMessages, [owner]: pending.map((item) => item.draft.messageId === messageId
+      ? { ...item, settled: true, autoAccessWall: wall } : item) } };
+  }),
   pendingFocusSessionId: null,
   sessions: {},
   queuedDrafts: {},

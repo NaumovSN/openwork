@@ -1,11 +1,26 @@
 import { describe, expect, test } from "bun:test"
 import {
   normalizeOrganizationCapabilities,
+  ORGANIZATION_CAPABILITY_KEYS,
+  organizationCapabilityKeySchema,
   organizationHasCapability,
+  organizationAppMcpServersEnabled,
+  organizationManagedDashboardsEnabled,
   readOrganizationCapabilityOverrides,
 } from "../src/organization-capabilities.js"
 
-const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, gatewayDashboard: false, coworkerTeams: false }
+const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, slackAssistantHeadless: false, coworkerTeams: false }
+
+test("auditLogs accepts only canonical literal booleans and defaults off even for Enterprise", () => {
+  expect(organizationCapabilityKeySchema.parse("auditLogs")).toBe("auditLogs")
+  for (const auditLogs of [undefined, null, true, false, "true", "false", 1, {}, []]) {
+    const metadata = { plan: { tier: "enterprise" }, auditLogs: true, capabilities: { auditLogs } }
+    for (const input of [metadata, JSON.stringify(metadata)]) {
+      expect(organizationHasCapability(input, "auditLogs")).toBe(auditLogs === true)
+      expect(readOrganizationCapabilityOverrides(input)).toEqual(typeof auditLogs === "boolean" ? { auditLogs } : {})
+    }
+  }
+})
 
 describe("normalizeOrganizationCapabilities", () => {
   test("defaults every capability to false when metadata is empty", () => {
@@ -78,24 +93,20 @@ describe("readOrganizationCapabilityOverrides", () => {
 })
 
 describe("organizationHasCapability", () => {
-  test("gateway dashboard requires a literal true in object or JSON metadata", () => {
-    for (const gatewayDashboard of [undefined, null, false, "true", "false", 1, 0, {}, []]) {
-      const metadata = { capabilities: { gatewayDashboard } }
-      expect(organizationHasCapability(metadata, "gatewayDashboard")).toBe(false)
-      expect(organizationHasCapability(JSON.stringify(metadata), "gatewayDashboard")).toBe(false)
-      expect(readOrganizationCapabilityOverrides(metadata)).toEqual(gatewayDashboard === false ? { gatewayDashboard: false } : {})
+  test("retired gateway rollout metadata never becomes an active capability or override", () => {
+    expect(ORGANIZATION_CAPABILITY_KEYS).not.toContain("gatewayDashboard")
+    expect(organizationCapabilityKeySchema.safeParse("gatewayDashboard").success).toBe(false)
+    for (const gatewayDashboard of [undefined, null, true, false, "true", "false", 1, 0, {}, []]) {
+      const metadata = { capabilities: { gatewayDashboard, installLinks: true, mcpConnections: false } }
+      for (const input of [metadata, JSON.stringify(metadata)]) {
+        expect(normalizeOrganizationCapabilities(input)).toEqual({ ...defaultCapabilities, installLinks: true })
+        expect(readOrganizationCapabilityOverrides(input)).toEqual({ installLinks: true, mcpConnections: false })
+      }
     }
 
     for (const metadata of [null, undefined, "not json", "null", "[]", {}, { capabilities: null }, { capabilities: "true" }, { capabilities: [] }]) {
-      expect(organizationHasCapability(metadata, "gatewayDashboard")).toBe(false)
+      expect(normalizeOrganizationCapabilities(metadata)).toEqual(defaultCapabilities)
       expect(readOrganizationCapabilityOverrides(metadata)).toEqual({})
-    }
-
-    const metadata = { capabilities: { gatewayDashboard: true } }
-    for (const input of [metadata, JSON.stringify(metadata)]) {
-      expect(normalizeOrganizationCapabilities(input)).toEqual({ ...defaultCapabilities, gatewayDashboard: true })
-      expect(organizationHasCapability(input, "gatewayDashboard")).toBe(true)
-      expect(readOrganizationCapabilityOverrides(input)).toEqual({ gatewayDashboard: true })
     }
   })
 
@@ -113,4 +124,62 @@ describe("organizationHasCapability", () => {
     expect(organizationHasCapability(JSON.stringify({ capabilities: { installLinks: true } }), "installLinks")).toBe(true)
     expect(organizationHasCapability(JSON.stringify({ capabilities: { mcpConnections: true } }), "mcpConnections")).toBe(true)
   })
+})
+
+test("Slack Assistant is an explicit platform capability in object and JSON metadata", () => {
+  for (const value of [undefined, null, false, "true", 1, {}, []]) {
+    for (const input of [{ capabilities: { slackAssistant: value } }, JSON.stringify({ capabilities: { slackAssistant: value } })]) {
+      expect(organizationHasCapability(input, "slackAssistant")).toBe(false)
+      expect(readOrganizationCapabilityOverrides(input)).toEqual(value === false ? { slackAssistant: false } : {})
+    }
+  }
+  for (const input of [{ capabilities: { slackAssistant: true } }, '{"capabilities":{"slackAssistant":true}}']) {
+    expect(normalizeOrganizationCapabilities(input)).toEqual({ ...defaultCapabilities, slackAssistant: true })
+    expect(readOrganizationCapabilityOverrides(input)).toEqual({ slackAssistant: true })
+  }
+  expect(organizationHasCapability({ complimentaryAccess: { openworkWeb: true } }, "slackAssistant")).toBe(false)
+})
+
+test("orgManagedDashboards is default-off and enabled only by a literal true", () => {
+  for (const orgManagedDashboards of [undefined, null, false, "true", 1, {}, []]) {
+    const metadata = { capabilities: { orgManagedDashboards } }
+    expect(organizationManagedDashboardsEnabled(metadata)).toBe(false)
+    expect(organizationManagedDashboardsEnabled(JSON.stringify(metadata))).toBe(false)
+  }
+  for (const metadata of [null, undefined, "", "not json", {}, { capabilities: null }]) {
+    expect(organizationManagedDashboardsEnabled(metadata)).toBe(false)
+  }
+  const enabled = { plan: { tier: "team" }, capabilities: { installLinks: false, orgManagedDashboards: true } }
+  expect(organizationManagedDashboardsEnabled(enabled)).toBe(true)
+  expect(organizationManagedDashboardsEnabled(JSON.stringify(enabled))).toBe(true)
+  expect(organizationCapabilityKeySchema.parse("orgManagedDashboards")).toBe("orgManagedDashboards")
+  expect(normalizeOrganizationCapabilities(enabled)).toEqual({ ...defaultCapabilities, orgManagedDashboards: true })
+  expect(readOrganizationCapabilityOverrides(enabled)).toEqual({ installLinks: false, orgManagedDashboards: true })
+})
+
+test("appMcpServers is default-off and enabled only by a literal true", () => {
+  for (const appMcpServers of [undefined, null, false, "true", 1, {}, []]) {
+    const metadata = { capabilities: { appMcpServers } }
+    expect(organizationAppMcpServersEnabled(metadata)).toBe(false)
+    expect(organizationAppMcpServersEnabled(JSON.stringify(metadata))).toBe(false)
+  }
+  for (const metadata of [null, undefined, "", "not json", {}, { capabilities: null }]) {
+    expect(organizationAppMcpServersEnabled(metadata)).toBe(false)
+  }
+  const enabled = { plan: { tier: "team" }, capabilities: { installLinks: false, appMcpServers: true } }
+  expect(organizationAppMcpServersEnabled(enabled)).toBe(true)
+  expect(organizationAppMcpServersEnabled(JSON.stringify(enabled))).toBe(true)
+  expect(organizationCapabilityKeySchema.parse("appMcpServers")).toBe("appMcpServers")
+  expect(normalizeOrganizationCapabilities(enabled)).toEqual({ ...defaultCapabilities, appMcpServers: true })
+  expect(readOrganizationCapabilityOverrides(enabled)).toEqual({ installLinks: false, appMcpServers: true })
+})
+
+test("the Slack headless runtime is its own default-off platform capability", () => {
+  expect(organizationCapabilityKeySchema.parse("slackAssistantHeadless")).toBe("slackAssistantHeadless")
+  for (const value of [undefined, null, false, "true", 1, {}, []]) {
+    expect(organizationHasCapability({ capabilities: { slackAssistant: true, slackAssistantHeadless: value } }, "slackAssistantHeadless")).toBe(false)
+  }
+  const enabled = { capabilities: { slackAssistant: true, slackAssistantHeadless: true } }
+  expect(normalizeOrganizationCapabilities(enabled)).toEqual({ ...defaultCapabilities, slackAssistant: true, slackAssistantHeadless: true })
+  expect(readOrganizationCapabilityOverrides(JSON.stringify(enabled))).toEqual({ slackAssistant: true, slackAssistantHeadless: true })
 })

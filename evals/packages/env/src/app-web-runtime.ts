@@ -5,7 +5,8 @@ import { fileURLToPath } from "node:url";
 import { defaultDaytonaExec, execInSandbox } from "@openwork/hosts";
 import type { SandboxRepoSourceReceipt } from "@openwork/hosts";
 import { launchHeadlessWeb, resolveHeadlessWorldRuntimePaths } from "@openwork/world";
-import { resolveEvalEngine } from "./eval-engine.ts";
+import { resolveEvalEngine, type EvalEngine } from "./eval-engine.ts";
+import { seedSyntheticPreactivatedDen } from "./app-web-bootstrap.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../../..", import.meta.url));
 const EXECUTABLE_ENV_KEYS = ["PATH", "PNPM_HOME", "TMPDIR", "SHELL", "SYSTEMROOT", "COMSPEC", "PATHEXT", "WINDIR", "npm_execpath", "npm_node_execpath"];
@@ -20,6 +21,11 @@ export interface AppWebRuntime {
 }
 
 export interface AppWebRuntimeOptions {
+  engine?: EvalEngine;
+  den?: { apiUrl: string; webUrl: string };
+  webPort?: number;
+  emptyWorkspace?: boolean;
+  syntheticPreactivatedDenOrigin?: string;
   env?: Record<string, string>;
   browserHostSuffix?: string;
 }
@@ -33,7 +39,7 @@ function executableEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return env;
 }
 
-export function isolatedRuntimeEnvironment(root: string): NodeJS.ProcessEnv {
+export function isolatedRuntimeEnvironment(root: string, engine: EvalEngine = resolveEvalEngine()): NodeJS.ProcessEnv {
   const home = join(root, "home");
   const data = join(root, "data");
   const config = join(root, "config");
@@ -41,6 +47,9 @@ export function isolatedRuntimeEnvironment(root: string): NodeJS.ProcessEnv {
     HOME: home,
     USERPROFILE: home,
     XDG_CACHE_HOME: join(root, "cache"),
+    // Fresh app instances must not rewrite another Vite server's dependency
+    // cache while its browser is importing modules.
+    OPENWORK_VITE_CACHE_DIR: join(root, "cache", "vite"),
     XDG_CONFIG_HOME: config,
     XDG_DATA_HOME: data,
     XDG_STATE_HOME: join(root, "state"),
@@ -51,7 +60,7 @@ export function isolatedRuntimeEnvironment(root: string): NodeJS.ProcessEnv {
     OPENCODE_CONFIG_DIR: join(config, "opencode"),
     OPENCODE_DB: join(data, "opencode", "opencode.db"),
     OPENWORK_DEV_HEADLESS_WEB_DEN_PROXY: "0",
-    OPENWORK_ENGINE_V2_PREVIEW: resolveEvalEngine() === "v2" ? "1" : "0",
+    OPENWORK_ENGINE_V2_PREVIEW: engine === "v2" ? "1" : "0",
     OPENWORK_PORT: "0",
     OPENWORK_WEB_PORT: "0",
     OPENWORK_REMOTE_ACCESS: "0",
@@ -64,6 +73,17 @@ export function isolatedRuntimeEnvironment(root: string): NodeJS.ProcessEnv {
   };
 }
 
+export function appWebDenEnvironment(den?: AppWebRuntimeOptions["den"]): Record<string, string> {
+  if (!den) return {};
+  for (const address of [den.apiUrl, den.webUrl]) {
+    const url = new URL(address);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+      throw new Error("App-web Den addresses must be HTTP(S) URLs without credentials, query or fragment");
+    }
+  }
+  return { VITE_DEN_API_BASE_URL: den.apiUrl, VITE_DEN_BASE_URL: den.webUrl };
+}
+
 function runtimeDirectories(root: string): string[] {
   return ["home", "cache", "config/openwork", "config/opencode", "data/openwork", "data/opencode", "state"].map((path) => join(root, path));
 }
@@ -73,13 +93,15 @@ export async function startLocalRuntime(worldName: string, workspaceRoot: string
   const runtimeDirectory = resolveHeadlessWorldRuntimePaths(REPO_ROOT, worldName).directory;
   try {
     await Promise.all([mkdir(workspaceRoot, { recursive: true }), ...runtimeDirectories(fixtureRoot).map((path) => mkdir(path, { recursive: true }))]);
+    const bootstrapEnv = await seedSyntheticPreactivatedDen(fixtureRoot, options.syntheticPreactivatedDenOrigin);
     const runtime = await launchHeadlessWeb({
       repoRoot: REPO_ROOT,
       name: worldName,
       state: "isolated",
       workspace: workspaceRoot,
+      emptyWorkspace: options.emptyWorkspace,
       browserHostSuffix: options.browserHostSuffix,
-      env: { ...executableEnvironment(process.env), ...isolatedRuntimeEnvironment(fixtureRoot), ...options.env },
+      env: { ...executableEnvironment(process.env), ...isolatedRuntimeEnvironment(fixtureRoot, options.engine), ...options.env, ...(options.webPort ? { OPENWORK_WEB_PORT: String(options.webPort) } : {}), ...appWebDenEnvironment(options.den), ...bootstrapEnv },
     });
     return { webUrl: runtime.manifest.webUrl, openworkUrl: runtime.manifest.openworkUrl, runtimeDirectory, fixtureRoot, source: null, stop: () => runtime.stop() };
   } catch (error) {
@@ -123,6 +145,7 @@ const REMOTE_LAUNCH_SOURCE = `
 import { constants } from "node:fs";
 import { access, mkdir, readdir, symlink } from "node:fs/promises";
 import { launchHeadlessWeb } from "/workspace/packages/world/src/headless-web.ts";
+import { seedSyntheticPreactivatedDen } from "/workspace/evals/packages/env/src/app-web-bootstrap.ts";
 const input = JSON.parse(Buffer.from(process.argv[2], "base64url").toString("utf8"));
 await Promise.all(input.directories.map((path) => mkdir(path, { recursive: true })));
 const executable = {};
@@ -140,9 +163,10 @@ for (const tool of ["bun", "opencode"]) {
   }
 }
 executable.PATH = [toolBin, executable.PATH].filter(Boolean).join(":");
+const bootstrapEnv = await seedSyntheticPreactivatedDen(input.fixtureRoot, input.syntheticPreactivatedDenOrigin);
 const handle = await launchHeadlessWeb({
-  repoRoot: input.repoRoot, name: input.name, state: "isolated", workspace: input.workspace,
-  browserHostSuffix: input.browserHostSuffix, env: { ...executable, ...input.env },
+  repoRoot: input.repoRoot, name: input.name, state: "isolated", workspace: input.workspace, emptyWorkspace: input.emptyWorkspace,
+  browserHostSuffix: input.browserHostSuffix, env: { ...executable, ...input.env, ...bootstrapEnv },
 });
 await handle.detach();
 console.log(JSON.stringify({ webUrl: handle.manifest.webUrl, openworkUrl: handle.manifest.openworkUrl, runtimeManifestPath: handle.manifest.runtimeManifestPath }));
@@ -165,8 +189,10 @@ export async function startRemoteRuntime(sandbox: string, worldName: string, wor
   const launchModulePath = `/tmp/${worldName}-launch.mjs`;
   const stopModulePath = `/tmp/${worldName}-stop.mjs`;
   const output = await runRemoteModule(sandbox, launchModulePath, REMOTE_LAUNCH_SOURCE, {
+    syntheticPreactivatedDenOrigin: options.syntheticPreactivatedDenOrigin,
+    emptyWorkspace: options.emptyWorkspace,
     directories: [workspaceRoot, ...runtimeDirectories(fixtureRoot)],
-    env: { ...isolatedRuntimeEnvironment(fixtureRoot), ...options.env },
+    env: { ...isolatedRuntimeEnvironment(fixtureRoot, options.engine), ...options.env, ...(options.webPort ? { OPENWORK_WEB_PORT: String(options.webPort) } : {}), ...appWebDenEnvironment(options.den) },
     executableEnvKeys: EXECUTABLE_ENV_KEYS,
     fixtureRoot, name: worldName, repoRoot: "/workspace", workspace: workspaceRoot, browserHostSuffix: options.browserHostSuffix,
   }, `launch remote app-web runtime ${worldName}`, 120_000);

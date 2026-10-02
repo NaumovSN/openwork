@@ -687,6 +687,146 @@
       "when": 1789401504727,
       "tag": "0098_gateway_uncountable_usage",
       "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "5",
+      "when": 1789411682313,
+      "tag": "0099_cloud_runtime_instance",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "5",
+      "when": 1789424530207,
+      "tag": "0100_external_mcp_scope_text",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "5",
+      "when": 1789424530208,
+      "tag": "0101_artifact_view_data_mode",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "5",
+      "when": 1789492944536,
+      "tag": "0102_gateway_usage_limits",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "5",
+      "when": 1789498281031,
+      "tag": "0103_gateway_usage_replay_quarantine",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "5",
+      "when": 1789558703519,
+      "tag": "0104_gateway_usage_reset_pagination",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "5",
+      "when": 1789674563045,
+      "tag": "0105_gateway_incremental_usage",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "5",
+      "when": 1789679533234,
+      "tag": "0106_gateway_usage_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "5",
+      "when": 1789686477369,
+      "tag": "0107_gateway_usage_durable_capture",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "5",
+      "when": 1789739648235,
+      "tag": "0108_gateway_usage_organization_assignments",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "5",
+      "when": 1790127413187,
+      "tag": "0109_organization_web_origins",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "5",
+      "when": 1790207299296,
+      "tag": "0110_early_hiroim",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "5",
+      "when": 1790405726705,
+      "tag": "0111_device_authorization",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "5",
+      "when": 1790407468548,
+      "tag": "0112_claimable_workspaces",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "5",
+      "when": 1790454359250,
+      "tag": "0113_setup_agent_member",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "5",
+      "when": 1790605372888,
+      "tag": "0114_audit_operation_capture",
+      "breakpoints": true
+    },
+    {
+      "idx": 115,
+      "version": "5",
+      "when": 1790785674344,
+      "tag": "0115_slack_assistant",
+      "breakpoints": true
+    },
+    {
+      "idx": 116,
+      "version": "5",
+      "when": 1790791135950,
+      "tag": "0116_free_auto_and_provider_pins",
+      "breakpoints": true
+    },
+    {
+      "idx": 117,
+      "version": "5",
+      "when": 1790803693966,
+      "tag": "0117_slack_assistant_model",
+      "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "5",
+      "when": 1790968115525,
+      "tag": "0118_slack_assistant_progress_updates",
+      "breakpoints": true
     }
   ]
 }

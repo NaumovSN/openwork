@@ -108,7 +108,7 @@ beforeAll(async () => {
     activeOrganizationId: organizationId,
     token: staleSessionToken,
     expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-    createdAt: new Date(Date.now() - 60 * 60 * 1000),
+    createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
   })
   const connection = await createExternalMcpConnection({
     organizationId,
@@ -146,12 +146,14 @@ function request(path: string) {
   return principalRequest(userId, path)
 }
 
-function principalRequest(principalUserId: string, path: string, method = "GET") {
+function principalRequest(principalUserId: string, path: string, method = "GET", body?: unknown) {
   return app.fetch(new Request(`http://den-api.local${path}`, {
     method,
     headers: {
       "x-den-internal-mcp-principal": session.createInternalMcpPrincipalHeader({ userId: principalUserId, organizationId }),
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
     },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   }))
 }
 
@@ -271,6 +273,14 @@ test("requirements discovery is side-effect free", async () => {
   expect(body).toMatchObject({ status: "unreachable" })
   const after = await db.select({ id: schema.ExternalMcpConnectionTable.id }).from(schema.ExternalMcpConnectionTable)
   expect(after).toEqual(before)
+})
+
+test("members can check an MCP server before adding it to their own Library", async () => {
+  const response = await principalRequest(regularUserId, "/v1/mcp-connections/discover", "POST", {
+    url: "http://127.0.0.1:9/mcp",
+  })
+  expect(response.status).toBe(200)
+  expect(await response.json()).toMatchObject({ status: "unreachable", server: { initialize: "failed" } })
 })
 
 test("public client metadata exposes only the deployment-wide web callback", async () => {
@@ -1767,6 +1777,44 @@ test.each(["none", "apikey"] as const)("failed %s creation returns the diagnosti
   expect(await db.select().from(schema.ExternalMcpConnectionTable).where(
     drizzle.eq(schema.ExternalMcpConnectionTable.id, seededConnectionId()),
   )).toHaveLength(1)
+})
+
+test("OAuth connections accept every scope a large server advertises", async () => {
+  // PostHog advertises 155 scopes and requires none, so discovery recommends all of them.
+  const requestedScopes = Array.from({ length: 155 }, (_, index) => `resource_${index}:read`)
+  const response = await staleSessionRequest("/v1/mcp-connections", "POST", {
+    name: "Many-scope MCP",
+    url: "http://127.0.0.1:9/mcp",
+    authType: "oauth",
+    credentialMode: "per_member",
+    requestedScopes,
+  })
+  expect(response.status).toBe(200)
+  const body: unknown = await response.json()
+  if (!isRecord(body) || typeof body.id !== "string") throw new Error("Expected a created connection id.")
+  const [row] = await db
+    .select({ oauthConfiguration: schema.ExternalMcpConnectionTable.oauthConfiguration })
+    .from(schema.ExternalMcpConnectionTable)
+    .where(drizzle.eq(schema.ExternalMcpConnectionTable.id, body.id))
+    .limit(1)
+  expect(row?.oauthConfiguration?.requestedScopes).toEqual(requestedScopes)
+})
+
+test("an invalid connection body says what was wrong", async () => {
+  const response = await staleSessionRequest("/v1/mcp-connections", "POST", {
+    name: "Too-many-scope MCP",
+    url: "http://127.0.0.1:9/mcp",
+    authType: "oauth",
+    credentialMode: "per_member",
+    requestedScopes: Array.from({ length: 513 }, (_, index) => `scope_${index}`),
+  })
+  expect(response.status).toBe(400)
+  const body: unknown = await response.json()
+  if (!isRecord(body)) throw new Error("Expected a JSON error body.")
+  expect(body.error).toBe("invalid_request")
+  expect(typeof body.message).toBe("string")
+  expect(String(body.message)).toContain("requestedScopes")
+  expect(Array.isArray(body.details)).toBe(true)
 })
 
 test("connection configuration rejects credentials embedded in MCP URLs", async () => {

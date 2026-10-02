@@ -1,4 +1,4 @@
-import { addInitScript, browserScript, reattachSurface, type Surface } from "@openwork/cdp";
+import { addInitScript, allocateFreePorts, browserScript, reattachSurface, reload, type Surface } from "@openwork/cdp";
 import { CATALOG_FAST_VARIANT, FAST_DEFAULT_VARIANT, fastVariantId } from "@openwork/types/cloud-model-fast";
 import { spawn } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
@@ -10,6 +10,7 @@ import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, livePro
 import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
 import type { MockAgentWorkload, MockMcpHandle } from "@openwork/labs";
 import { chatContinuity } from "./chat-continuity.ts";
+import { readDefaultDesktopPolicy } from "./desktop-policies.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
@@ -150,7 +151,19 @@ export async function configureProvider(
         headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
       });
       const text = await response.text();
-      if (!response.ok && !(path.endsWith("/engine/reload") && response.status === 504)) {
+      let reloadPending = response.status === 504;
+      if (path.endsWith("/engine/reload") && response.status === 503) {
+        try {
+          const error: unknown = JSON.parse(text);
+          reloadPending = typeof error === "object" && error !== null && "code" in error
+            && error.code === "opencode_engine_unreachable";
+        } catch {
+          reloadPending = false;
+        }
+      }
+      // Initial engine startup can race config reload. The readiness check
+      // below must still observe the configured model in the live composer.
+      if (!response.ok && !(path.endsWith("/engine/reload") && reloadPending)) {
         return path + " failed: " + response.status + " " + text.slice(0, 500);
       }
       return "ok";
@@ -177,7 +190,9 @@ export async function configureProvider(
     return "ok";
   }, [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode)]), { awaitPromise: true, timeoutMs: 120_000 });
   if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
-  await seed.evalIn(app, () => { location.reload(); return true; });
+  // Wait for navigation before starting the model-readiness evaluation;
+  // scheduling location.reload() can run that evaluation in the old document.
+  await reload(app);
   // The display name the app gives the configured model once its provider list
   // contains it; a fixture provider declares it in opencode.json, a live one is
   // read from the engine catalog.
@@ -438,6 +453,17 @@ export async function abandonedQuestion(seed: Seed) {
   return { ...base, engine, ask, followup, session };
 }
 
+/** Real provider errors and automatic recovery, without synthetic UI events. */
+export async function sessionProviderErrorRecovery(seed: Seed) {
+  const prompt = "Prepare a short reliability summary.";
+  const reply = "The reliability summary is ready.";
+  const base = await splitPaneQuestions(seed, "session-provider-error-recovery", [{
+    promptMarker: prompt, latestUserTurn: true, serverErrorAttempts: 2, finalReply: reply, steps: [],
+  }]);
+  const session = await seedSessionRetry(seed, base.app, { title: "Response recovery" });
+  return { ...base, session, prompt, reply };
+}
+
 /** Real native permissions and a provider retry, without synthetic UI events. */
 export async function permissionStopRecovery(seed: Seed) {
   const engine = resolveEvalEngine();
@@ -489,7 +515,11 @@ export async function restartUpdateTaskWorld(seed: Seed) {
     window.__openworkUpdaterEvalBridge = {
       getChannel: async () => ({ channel: "stable", currentVersion }),
       setChannel: async (channel) => ({ channel, currentVersion }),
-      check: async () => ({ available: true, channel: "stable", currentVersion, latestVersion: "9.9.9" }),
+      // Like the main process, report the staged build to checks that must preserve it.
+      check: async (_channel?: string, _targetVersion?: string, options?: { preserveStaged?: boolean }) => ({
+        available: true, channel: "stable", currentVersion, latestVersion: "9.9.9",
+        ...(options?.preserveStaged ? { stagedVersion: "9.9.9" } : {}),
+      }),
       download: async () => ({ ok: true }),
       // Do not replace a binary in a journey. Unlike the download-only fixture,
       // confirmation goes through real main-process app.relaunch()/app.quit().
@@ -606,16 +636,185 @@ export async function focusContinuity(seed: Seed) {
   return { app, workspace, session };
 }
 
-export async function modelPicker(seed: Seed) {
-  const den = await seed.den();
-  const app = await seed.desktop({ den, as: "admin" });
-  const session = await seedSessionRetry(seed, app);
-  return { app, den, session };
+async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: boolean; disableAutoByEnvironment?: boolean } = {}) {
+  const [webPort] = await allocateFreePorts(1);
+  if (!webPort) throw new Error("No app-web port available for the picker fixture");
+  const den = await seed.den({
+    trustedOrigins: [`http://127.0.0.1:${webPort}`],
+    ...(options.disabledAutoDesktop ? { env: { INFERENCE_FREE_ENABLED: "false", ANONYMOUS_INFERENCE_ENABLED: "false" } } : {}),
+    mocks: { provider: seed.mock({ isolatedProcessEnv: true }) },
+  });
+  const witness = den.mocks.provider;
+  const created = await seed.api(den.admin, "/v1/llm-providers", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Organization provider", source: "custom", allMembers: true, memberIds: [], teamIds: [],
+      apiKey: "synthetic-picker-key",
+      customConfig: {
+        id: "picker-organization", name: "Organization provider", npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: `${witness.url}/v1` }, env: ["PICKER_FIXTURE_API_KEY"],
+        models: [{ id: "organization-model", name: "Organization witness", tool_call: true }],
+      },
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const provider = recordValue(created.body, "llmProvider");
+  const organizationProviderId = recordValue(provider, "id");
+  if (created.response.status !== 201 || typeof organizationProviderId !== "string") {
+    throw new Error(`Picker organization provider setup failed: HTTP ${created.response.status}`);
+  }
+  const workspacePath = seed.tmpPath("model-picker");
+  const app = options.disabledAutoDesktop
+    ? await seed.desktop({ name: "model-picker-disabled-auto", den, as: "admin", env: {
+      OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1", OPENWORK_DEV_MODE: "1",
+      OPENWORK_DEV_FREE_RELEASE_SECRET: "fixture-free-release-secret-000000000000000000",
+      OPENWORK_FREE_INFERENCE_ORIGIN: new URL(witness.url).origin,
+      OPENWORK_DEV_FREE_CONTROL_PLANE: den.ref.apiUrl,
+      ...(options.disableAutoByEnvironment ? { OPENWORK_DISABLE_FREE_INFERENCE: "1" } : {}),
+    } })
+    : await seed.appWeb({ name: "model-picker", workspacePath, webPort, den: den.ref });
+  await addInitScript(app.client, browserScript((providerId) => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const response = await originalFetch(input, init);
+      const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+      const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+      if (method !== "GET" || !/\/v1\/llm-providers(?:\/[^/]+\/connect)?$/.test(url.pathname) || !response.ok) return response;
+      const body: unknown = await response.clone().json();
+      if (!body || typeof body !== "object") return response;
+      const pin = (entry: unknown) => {
+        if (entry && typeof entry === "object" && "id" in entry && entry.id === providerId) {
+          return { ...entry, pinnedModelIds: ["organization-model"] };
+        }
+        return entry;
+      };
+      const next = {
+        ...body,
+        ...("llmProviders" in body && Array.isArray(body.llmProviders) ? { llmProviders: body.llmProviders.map(pin) } : {}),
+        ...("llmProvider" in body ? { llmProvider: pin(body.llmProvider) } : {}),
+      };
+      return new Response(JSON.stringify(next), { status: response.status, headers: { "content-type": "application/json" } });
+    };
+  }, [organizationProviderId]));
+  await seed.evalIn(app, () => { location.reload(); return true; });
+  await seed.signIn(app, den.admin, "picker member");
+  const workspace = await seed.workspace(app, workspacePath);
+  const auto = { providerID: "openwork-free", modelID: "openai/gpt-6-luna" };
+  const byok = { providerID: "picker-byok", modelID: "byok-model" };
+  const favorite = { providerID: "picker-byok", modelID: "pinned-model" };
+  const recent = { providerID: "picker-byok", modelID: "recent-model" };
+  const organization = { providerID: organizationProviderId, modelID: "organization-model" };
+  const providerOptions = { baseURL: `${witness.url}/v1`, apiKey: "synthetic-picker-key" };
+  await configureProvider(seed, app, workspace.workspaceId, organization.providerID, organization.modelID, {
+    enabled_providers: [auto.providerID, byok.providerID, organization.providerID, "openwork"],
+    provider: {
+      // Native Auto belongs to the local relay; do not replace it with a mock BYOK provider.
+      ...(options.disabledAutoDesktop ? {} : { [auto.providerID]: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Free", options: providerOptions,
+        models: { [auto.modelID]: { name: "GPT-6 Luna" } } } }),
+      openwork: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Models", options: providerOptions,
+        models: { "hosted-model": { name: "Hosted witness" } } },
+      [byok.providerID]: { npm: "@ai-sdk/openai-compatible", name: "BYOK provider", options: providerOptions,
+        models: { [byok.modelID]: { name: "BYOK witness" }, [favorite.modelID]: { name: "Pinned witness" }, [recent.modelID]: { name: "Recent witness" } } },
+      [organization.providerID]: { npm: "@ai-sdk/openai-compatible", name: "Organization provider", options: providerOptions,
+        models: { [organization.modelID]: { name: "Organization witness" } } },
+    },
+  });
+  await seed.evalIn(app, browserScript((favorite, recent) => {
+    localStorage.setItem("openwork.modelCollections.v1", JSON.stringify({ favorites: [favorite], recent: [recent] }));
+    location.reload();
+    return true;
+  }, [favorite, recent]));
+  const session = await seedSessionRetry(seed, app, { title: "Choose a model without losing a draft" });
+  return { app, den, workspace, session, auto, byok, favorite, recent, organization,
+    requests: () => witness.agentRequests(),
+  };
+}
+
+export function modelPicker(seed: Seed) {
+  return seedModelPicker(seed);
+}
+
+async function seedDisabledAutoPicker(seed: Seed, disableAutoByEnvironment: boolean) {
+  const world = await seedModelPicker(seed, { disabledAutoDesktop: true, disableAutoByEnvironment });
+  // No first-class seed primitive initializes model preferences on a sessionless route.
+  await seed.evalIn(world.app, browserScript((auto, workspaceId) => {
+    localStorage.setItem("openwork.defaultModel", `${auto.providerID}/${auto.modelID}`);
+    location.hash = `/workspace/${workspaceId}/session`;
+    location.reload();
+    return true;
+  }, [world.auto, world.workspace.workspaceId]));
+  return world;
+}
+
+/** A saved Auto default on the native renderer, with Den's free switch explicitly off. */
+export function modelPickerDisabledAuto(seed: Seed) {
+  return seedDisabledAutoPicker(seed, false);
+}
+
+/** The same saved model choices with the desktop deployment's local opt-out. */
+export function modelPickerDeploymentDisabledAuto(seed: Seed) {
+  return seedDisabledAutoPicker(seed, true);
+}
+
+/**
+ * A member's desktop with one organization-managed provider (assigned in Den) and one personal provider added
+ * on the device, after which an admin picks "Only models you provide" in the AI Gateway's "Who can use models"
+ * (allowCustomProviders off).
+ */
+export async function modelAccessPicker(seed: Seed) {
+  const mock = seed.mock({});
+  const den = await seed.den({ mocks: { agent: mock } });
+  const witness = den.mocks.agent;
+  const created = await seed.api(den.admin, "/v1/llm-providers", {
+    method: "POST",
+    body: JSON.stringify({
+      name: "Organization provider", source: "custom", allMembers: true, memberIds: [], teamIds: [],
+      apiKey: "synthetic-managed-key",
+      customConfig: {
+        id: "managed-organization", name: "Organization provider", npm: "@ai-sdk/openai-compatible",
+        options: { baseURL: `${witness.url}/v1` }, env: ["MANAGED_FIXTURE_API_KEY"],
+        models: [{ id: "organization-model", name: "Organization witness", tool_call: true }],
+      },
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const provider = isRecord(created.body) && isRecord(created.body.llmProvider) ? created.body.llmProvider : null;
+  const organizationProviderId = provider && typeof provider.id === "string" ? provider.id : null;
+  if (created.response.status !== 201 || !organizationProviderId) throw new Error(`Organization provider setup failed: HTTP ${created.response.status}`);
+  const app = await seed.desktop({ name: "model-access-picker", den, as: "admin" });
+  const workspace = await seed.workspace(app, seed.tmpPath("model-access-picker"), { create: true });
+  const personal = { providerID: "personal-byok", modelID: "byok-model" };
+  // A key the member added on this device before the policy existed. The org's model stays the default.
+  const added = await seed.evalIn(app, browserScript(async (workspaceId, opencodeJson) => {
+    const port = localStorage.getItem("openwork.server.port");
+    const token = localStorage.getItem("openwork.server.token");
+    if (!port || !token) return "missing local server credentials";
+    const call = (path: string, init: RequestInit) => fetch("http://127.0.0.1:" + port + path, {
+      ...init, headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" } });
+    const patched = await call("/workspace/" + encodeURIComponent(workspaceId) + "/config", { method: "PATCH", body: JSON.stringify({ opencode: JSON.parse(opencodeJson) }) });
+    if (!patched.ok) return "config " + patched.status;
+    const reloaded = await call("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
+    return reloaded.ok || reloaded.status === 504 || reloaded.status === 503 ? "ok" : "reload " + reloaded.status;
+  }, [workspace.workspaceId, JSON.stringify({ provider: {
+    [personal.providerID]: { npm: "@ai-sdk/openai-compatible", name: "Personal provider",
+      options: { baseURL: `${witness.url}/v1`, apiKey: "sk-personal" }, models: { [personal.modelID]: { name: "Personal witness" } } },
+  } })]), { awaitPromise: true });
+  if (added !== "ok") throw new Error(`Adding the personal provider failed: ${String(added)}`);
+  // Saved the way the AI Gateway dialog saves "Only models you provide".
+  const stored = await readDefaultDesktopPolicy(seed, den.admin);
+  const policy = { ...(isRecord(stored.policy) ? stored.policy : {}), allowCustomProviders: false };
+  const updated = await seed.api(den.admin, `/v1/desktop-policies/${String(stored.id)}`, {
+    method: "PATCH", body: JSON.stringify({ policyName: stored.policyName, policy }), signal: AbortSignal.timeout(30_000),
+  });
+  if (!updated.response.ok) throw new Error(`Saving model access failed: HTTP ${updated.response.status}`);
+  await seed.evalIn(app, () => { location.reload(); return true; });
+  const session = await seedSessionRetry(seed, app, { title: "Only models you provide" });
+  return { app, den, workspace, session, policy, personal, organization: { providerID: organizationProviderId, modelID: "organization-model" } };
 }
 
 /** Model picker contract through a real native engine and a synthetic provider. */
 export async function modelPickerEffortWeb(seed: Seed) {
-  const engine = resolveEvalEngine();
+  const engine = "v2";
   const fastProviderId = "fast-witness";
   const fastModelId = "gpt-5.4";
   const providerId = "effort-witness";
@@ -625,7 +824,7 @@ export async function modelPickerEffortWeb(seed: Seed) {
     promptMarker: prompt, latestUserTurn: true, finalReply: "Air scatters blue light more strongly.", steps: [],
   }] });
   const workspacePath = seed.tmpPath("model-picker-effort");
-  const app = await seed.appWeb({ name: "model-picker-effort", workspacePath, mocks: { agent: mock } });
+  const app = await seed.appWeb({ name: "model-picker-effort", workspacePath, engine, mocks: { agent: mock } });
   // Observe model references without consuming or changing the app's requests.
   await addInitScript(app.client, () => {
     window.__modelEffortRequests = [];
@@ -691,9 +890,9 @@ export async function connectionsMenu(seed: Seed) {
   const connector = seed.mock();
   const den = await seed.den({ mocks: { connector } });
   const connections: { id: string; name: string }[] = [];
-  for (let index = 1; index <= 14; index += 1) {
+  for (const name of ["HubSpot", "GitHub", "Slack"]) {
     connections.push(await seed.orgConnection(den.admin, {
-      name: `Composer connection ${String(index).padStart(2, "0")}`,
+      name,
       url: den.mocks.connector.mcpUrl,
       authType: "oauth",
       credentialMode: "per_member",
@@ -702,14 +901,6 @@ export async function connectionsMenu(seed: Seed) {
   }
   const app = await seed.desktop({ den, as: "admin" });
   const session = await seedSessionRetry(seed, app);
-  // TODO(primitive): click a button by its title when it has no accessible name.
-  const opened = await seed.evalIn(app, () => {
-    const trigger = document.querySelector<HTMLButtonElement>('button[title="Agents, commands, skills, plugins, and connections"]');
-    if (!(trigger instanceof HTMLButtonElement)) return false;
-    trigger.click();
-    return true;
-  });
-  if (opened !== true) throw new Error("Composer capability menu did not open.");
   return { app, den, session, connections };
 }
 
@@ -1970,11 +2161,12 @@ export async function longHistory(seed: Seed, options: { holdAncillaryReads?: bo
       const opening: { openedAt: number | null; trusted: boolean; first: Paint | null; latest: Paint | null; full: Paint | null } = {
         openedAt: null, trusted: false, first: null, latest: null, full: null,
       };
+      const pageReads: { before: string | null; limit: string | null; nextCursor: string | null }[] = [];
       const state = {
         workspaceId, sessionId, documentId: performance.timeOrigin, opening, reads,
         status: { attempts: 0, pending: 0, aborted: 0, failed: 0 },
         todo: { attempts: 0, pending: 0, aborted: 0, failed: 0 },
-        history: { limited: 0, full: 0, fullSucceeded: 0 },
+        history: { limited: 0, full: 0, fullSucceeded: 0, single: 0, pageReads },
         released: false,
         expired: false,
       };
@@ -2032,13 +2224,23 @@ export async function longHistory(seed: Seed, options: { holdAncillaryReads?: bo
         if (!kind) {
           const historyRead = messagePaths.has(url.pathname);
           const full = historyRead && !url.searchParams.has("limit");
-          if (historyRead) {
+          const pageRead: (typeof pageReads)[number] | null = historyRead
+            ? { before: url.searchParams.get("before"), limit: url.searchParams.get("limit"), nextCursor: null } : null;
+          if (pageRead) {
+            pageReads.push(pageRead);
             if (full) state.history.full += 1;
             else state.history.limited += 1;
             publish();
+          } else if ([...messagePaths].some((path) => url.pathname.startsWith(`${path}/`) && !url.pathname.slice(path.length + 1).includes("/"))) {
+            state.history.single += 1;
+            publish();
           }
           const response = await originalFetch.call(window, input, init);
-          if (full && response.ok) { state.history.fullSucceeded += 1; publish(); }
+          if (pageRead) {
+            pageRead.nextCursor = response.headers.get("X-Next-Cursor");
+            if (full && response.ok) state.history.fullSucceeded += 1;
+            publish();
+          }
           return response;
         }
         const counter = state[kind];
@@ -2567,54 +2769,6 @@ export async function computerMentions(seed: Seed) {
   };
 }
 
-/** A deterministic model calls the real built-in visualization tool. */
-export async function visualization(seed: Seed) {
-  const providerId = "visualization-mock";
-  const modelId = "visualization-model";
-  const design = {
-    id: "project-overview", title: "Project overview", revision: 1,
-    navigation: ["Overview", "Projects", "Settings"],
-    sections: [{ title: "Your workspace", columns: "two", blocks: [
-      { kind: "metric", label: "Active projects", value: "12" },
-      { kind: "field", label: "Project name", value: "Website refresh" },
-      { kind: "button", label: "Create project" },
-      { kind: "list", label: "Recent activity", items: ["Draft reviewed", "Mockup updated"] },
-      { kind: "image", label: "Cover image" },
-      { kind: "text", label: "Design note", value: "<script>window.mockupExecuted = true</script>" },
-    ] }],
-  };
-  const mock = seed.mock({ agentWorkloads: [
-    { latestUserTurn: true, promptMarker: "Sketch a project overview", finalReply: "Your first sketch is ready.", steps: [{ tool: "openwork_visualization", arguments: design }] },
-    { latestUserTurn: true, promptMarker: "Create version 2", finalReply: "Your revised sketch is ready.", steps: [{ tool: "openwork_visualization", arguments: { ...design, revision: 2, description: "A calmer overview" } }] },
-  ] });
-  const den = await seed.den({ mocks: { agent: mock } });
-  const app = await seed.desktop({ name: "visualization", model: `${providerId}/${modelId}` });
-  const workspace = await seed.workspace(app, seed.tmpPath("visualization"));
-  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
-    permission: { openwork_visualization: "allow" },
-    provider: { [providerId]: {
-      npm: "@ai-sdk/openai-compatible", name: "Visualization mock",
-      options: { baseURL: `${den.mocks.agent.url}/v1`, apiKey: "sk-visualization" },
-      models: { [modelId]: { name: "Visualization model", tool_call: true } },
-    } },
-  });
-  const session = await seedSessionRetry(seed, app);
-  return {
-    den, app, workspace, session,
-    preview: async () => {
-      const result = await evalIn(app, () => {
-      const preview = document.querySelector<HTMLElement>('[data-testid="visualization-preview"]');
-      return { viewport: preview?.getAttribute('data-viewport'), width: preview?.getBoundingClientRect().width,
-        scripts: preview?.querySelectorAll('script').length, executed: window.mockupExecuted === true,
-        cards: document.querySelectorAll<HTMLElement>('[data-testid="visualization-card"]').length };
-    });
-      if (!isRecord(result) || typeof result.width !== "number") throw new Error("Visualization preview missing");
-      return { ...result, width: result.width };
-    },
-  };
-}
-
-
 /** One profile across engine switches; the journey, not the seed, creates its history. */
 export async function workspaceEngineUpgrade(seed: Seed) {
   if (resolveEvalEngine() !== "v1") throw new SkipError("upgrade baseline requires OPENWORK_EVAL_ENGINE=v1");
@@ -2766,6 +2920,9 @@ export async function skillLifecycle(seed: Seed) {
       } } } : {}),
     }, "v2");
     const session = await seedSessionRetry(seed, app, { title: "Release report" });
+    // OAuth leaves the native app behind the browser on macOS. CDP keyboard
+    // input needs renderer focus even when this isolated test window is hidden.
+    await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
     const skillName = "release-briefing";
     return {
       app, den, workspace, session, skillName, live, modelId,
@@ -2785,6 +2942,17 @@ export async function skillLifecycle(seed: Seed) {
        * provider and model, never from an organization model that replaced it.
        * Only a live provider reports token usage; the fixture model streams none.
        */
+      async conversationState() {
+        const result = await request(`/workspace/${workspace.workspaceId}/opencode2/api/session/${session.sessionId}/message`);
+        const messages = isRecord(result.json) && Array.isArray(result.json.data) ? result.json.data.filter(isRecord) : [];
+        return {
+          users: messages.filter(message => message.type === "user").map(message => {
+            if (typeof message.text !== "string") throw new Error("Native user message is missing its text");
+            return message.text;
+          }),
+          completed: messages.filter(message => message.type === "assistant" && message.finish === "stop").map(message => message.id),
+        };
+      },
       async usedConfiguredModel() {
         const result = await request(`/workspace/${workspace.workspaceId}/opencode2/api/session/${session.sessionId}/message`);
         const messages = isRecord(result.json) && Array.isArray(result.json.data) ? result.json.data.filter(isRecord) : [];

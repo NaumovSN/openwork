@@ -1,6 +1,11 @@
 import type { EnginePermissionRule } from "./managed-policy-rules.js";
 import { nativeModelVariants } from "@openwork/types/cloud-model-fast";
+import { gatewayBase } from "./gateway-quota.js";
+import { openworkContextV2PluginPath, openworkGatewayQuotaV2PluginPath, openworkMcpResultsV2PluginPath, openworkProviderFiltersV2PluginPath } from "./openwork-extensions-plugin-path.js";
+import { pathToFileURL } from "node:url";
 // Provider injection uses v2's watched config, without disposing live sessions.
+// This module deliberately has no reload/dispose call, unlike managed-opencode.ts
+// and server.ts reloadOpencodeEngine.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -81,6 +86,8 @@ export interface OpencodeV2ProviderSpec {
   headers?: Record<string, unknown>;
   apiKey: string;
   models: OpencodeV2ModelSpec[];
+  whitelist?: string[];
+  blacklist?: string[];
 }
 
 export interface ManagedOpencodeV2ServerOptions {
@@ -90,6 +97,16 @@ export interface ManagedOpencodeV2ServerOptions {
   nativeSkills?: boolean;
   nativeCatalogMetadata?: boolean;
   cwd?: string;
+  /**
+   * Scopes this server's generated config and plugin loaders under
+   * `<rootDir>/instances/<instanceId>`. Several OpenWork apps (an installed
+   * build, a dev build, a test world) can share one engine state directory;
+   * with one shared config they overwrite each other's file, each write
+   * reloads the engine's model catalog, and a turn that starts mid-reload or
+   * after the other app's write fails with "Model unavailable". History
+   * (`opencode.db`) and the workspace stay shared.
+   */
+  instanceId?: string;
   hostname?: string;
   port?: number;
   env?: Record<string, string>;
@@ -97,6 +114,7 @@ export interface ManagedOpencodeV2ServerOptions {
   bootTimeoutMs?: number;
   expectedVersion?: string;
   apiContract?: NativeApiContract;
+  contextTools?: { url: string; token: string };
   permissions?: () => Promise<EnginePermissionRule[]>;
 }
 
@@ -119,7 +137,12 @@ export interface ManagedOpencodeV2Server {
   health(): Promise<OpencodeV2Health>;
   fetchJson(path: string, init?: { method?: string; body?: unknown; directory?: string; timeoutMs?: number }): Promise<{ status: number; json: unknown }>;
   injectProvider(spec: OpencodeV2ProviderSpec): Promise<void>;
-  setProviders(specs: OpencodeV2ProviderSpec[]): Promise<void>;
+  /**
+   * Replace the mirrored providers. `disabledProviderIds` hides those
+   * providers (including built-ins such as OpenCode Zen) from the native
+   * catalog, matching v1 `disabled_providers`.
+   */
+  setProviders(specs: OpencodeV2ProviderSpec[], disabledProviderIds?: string[]): Promise<void>;
   /** Extra absolute skill directories registered through native config `skills`. */
   setSkills(directories: string[]): Promise<void>;
   close(): Promise<void>;
@@ -143,15 +166,26 @@ function diagnostics(exitCode: number | null, stdout: string, stderr: string): E
 /** The whole generated engine config: every writer emits all current keys. */
 export function renderOpencodeV2Config(input: {
   providers: OpencodeV2ProviderSpec[];
+  /** v1 `disabled_providers` equivalent; applied through the catalog filter plugin. */
+  disabledProviderIds?: string[];
   permissions?: EnginePermissionRule[];
   skills: string[];
   nativeCatalogMetadata?: boolean;
   apiContract?: NativeApiContract;
+  gatewayQuotaPluginDirectory?: string;
+  providerFiltersPluginDirectory?: string;
+  /** Preserves OpenWork Cloud connection reports from Code Mode calls for the chat. */
+  mcpResultsPluginDirectory?: string;
+  contextPluginDirectory?: string;
+  contextTools?: { url: string; token: string };
 }): Record<string, unknown> {
+  const disabled = new Set(input.disabledProviderIds ?? []);
+  const enabledProviders = input.providers.filter((provider) => !disabled.has(provider.id));
   const providerConfig: Record<string, unknown> = {};
-  for (const provider of input.providers) {
+  for (const provider of enabledProviders) {
     const models: Record<string, unknown> = {};
     for (const model of provider.models) {
+      if ((provider.whitelist !== undefined && !provider.whitelist.includes(model.id)) || provider.blacklist?.includes(model.id)) continue;
       const config = model.config ?? {};
       const modalities = isRecord(config.modalities) ? config.modalities : {};
       models[model.id] = {
@@ -188,9 +222,34 @@ export function renderOpencodeV2Config(input: {
       models,
     };
   }
+  const gatewayProviders = Object.fromEntries(enabledProviders.flatMap((provider) => {
+    const base = gatewayBase(provider.id, provider.baseUrl);
+    return base ? [[provider.id, base.href]] : [];
+  }));
+  const filters: Record<string, { whitelist?: string[]; blacklist?: string[] }> = Object.fromEntries(
+    enabledProviders.filter(provider => provider.whitelist !== undefined || provider.blacklist !== undefined)
+      .map(provider => [provider.id, { whitelist: provider.whitelist, blacklist: provider.blacklist }]),
+  );
+  // v2 config has no `disabled_providers`. An empty whitelist removes every
+  // model of a provider from the native catalog, built-in ones included, so a
+  // disconnected OpenCode Zen disappears here too and returns once re-enabled.
+  for (const id of disabled) filters[id] = { whitelist: [] };
+  const plugins = [
+    ...(input.contextTools && input.contextPluginDirectory ? [{ package: pathToFileURL(input.contextPluginDirectory).href, options: input.contextTools }] : []),
+    ...(Object.keys(gatewayProviders).length && input.gatewayQuotaPluginDirectory ? [{
+      package: pathToFileURL(input.gatewayQuotaPluginDirectory).href,
+      options: { providers: gatewayProviders },
+    }] : []),
+    ...(Object.keys(filters).length && input.providerFiltersPluginDirectory ? [{
+      package: pathToFileURL(input.providerFiltersPluginDirectory).href,
+      options: { providers: filters },
+    }] : []),
+    ...(input.mcpResultsPluginDirectory ? [{ package: pathToFileURL(input.mcpResultsPluginDirectory).href }] : []),
+  ];
   return {
     $schema: "https://opencode.ai/config.json",
     providers: providerConfig,
+    ...(plugins.length ? { plugins } : {}),
     ...(input.permissions ? { permissions: input.permissions } : {}),
     ...(input.skills.length ? { skills: [...input.skills] } : {}),
   };
@@ -202,12 +261,18 @@ export async function createManagedOpencodeV2Server(
   const hostname = options.hostname ?? "127.0.0.1";
   const port = options.port ?? 0;
   const bootTimeoutMs = options.bootTimeoutMs ?? 60_000;
-  const configDir = join(options.rootDir, "config");
+  const instanceRoot = options.instanceId ? join(options.rootDir, "instances", options.instanceId) : options.rootDir;
+  const configDir = join(instanceRoot, "config");
+  const gatewayQuotaPluginDirectory = join(instanceRoot, "gateway-quota-plugin");
+  const providerFiltersPluginDirectory = join(instanceRoot, "provider-filters-plugin");
+  const mcpResultsPluginDirectory = join(instanceRoot, "mcp-results-plugin");
+  const contextPluginDirectory = join(instanceRoot, "context-plugin");
   const password = randomBytes(24).toString("base64url");
   const username = "opencode";
   let url = "";
   const providers = new Map<string, OpencodeV2ProviderSpec>();
   let skills: string[] = [];
+  let disabledProviderIds: string[] = [];
   let writes: Promise<void> = Promise.resolve();
   let configurationRevision = 0;
   const opencodeModelsUrl = (options.env?.OPENCODE_MODELS_URL ?? process.env.OPENCODE_MODELS_URL)?.replace(/\/+$/, "");
@@ -228,11 +293,29 @@ export async function createManagedOpencodeV2Server(
   await chmod(options.rootDir, 0o700);
   await mkdir(configDir, { recursive: true, mode: 0o700 });
   await chmod(configDir, 0o700);
+  await mkdir(gatewayQuotaPluginDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(join(gatewayQuotaPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
+  await writeFile(join(gatewayQuotaPluginDirectory, "server.js"),
+    `export { default } from ${JSON.stringify(pathToFileURL(openworkGatewayQuotaV2PluginPath()).href)};\n`, { mode: 0o600 });
+  await mkdir(providerFiltersPluginDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(join(providerFiltersPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
+  await writeFile(join(providerFiltersPluginDirectory, "server.js"),
+    `export { default } from ${JSON.stringify(pathToFileURL(openworkProviderFiltersV2PluginPath()).href)};\n`, { mode: 0o600 });
+  await mkdir(mcpResultsPluginDirectory, { recursive: true, mode: 0o700 });
+  await writeFile(join(mcpResultsPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
+  await writeFile(join(mcpResultsPluginDirectory, "server.js"),
+    `export { default } from ${JSON.stringify(pathToFileURL(openworkMcpResultsV2PluginPath()).href)};\n`, { mode: 0o600 });
+  if (options.contextTools) {
+    await mkdir(contextPluginDirectory, { recursive: true, mode: 0o700 });
+    await writeFile(join(contextPluginDirectory, "package.json"), JSON.stringify({ type: "module" }), { mode: 0o600 });
+    await writeFile(join(contextPluginDirectory, "server.js"),
+      `export { default } from ${JSON.stringify(pathToFileURL(openworkContextV2PluginPath()).href)};\n`, { mode: 0o600 });
+  }
   // Replace the generated config before boot, removing stale managed-policy
   // registrations while retaining independent engine permissions. Leave the
   // old entrypoint on disk: another configuration may still reference it.
-  // Boot registers no skill directories: a stale materialized root is never
-  // visible until a fresh cloud skill sync succeeds.
+  // Cloud skills use Connect on demand, just like v1. No generated Cloud
+  // skill directory is registered with the native engine.
   await writeConfig();
   const child = spawn(options.bin, ["serve", "--hostname", hostname, "--port", String(port)], {
     cwd: options.cwd,
@@ -332,8 +415,19 @@ export async function createManagedOpencodeV2Server(
     const target = join(configDir, "opencode.json");
     const temporary = `${target}.tmp-${randomBytes(8).toString("hex")}`;
     const { skills: configuredSkills, ...hostConfig } = options.config ?? {};
+    // Mandatory native hosts install their own plugins; OpenWork's engine
+    // extensions are for the Desktop engine only.
+    const extensions = options.nativeSkills !== true;
     const generated = renderOpencodeV2Config({
       providers: [...providers.values()],
+      disabledProviderIds,
+      ...(extensions ? {
+        gatewayQuotaPluginDirectory,
+        providerFiltersPluginDirectory,
+        mcpResultsPluginDirectory,
+        contextPluginDirectory,
+        contextTools: options.contextTools,
+      } : {}),
       nativeCatalogMetadata: options.nativeCatalogMetadata,
       apiContract: options.apiContract,
       ...(options.permissions ? { permissions: await options.permissions() } : {}),
@@ -350,6 +444,9 @@ export async function createManagedOpencodeV2Server(
         ...(Array.isArray(generated.permissions) ? generated.permissions : []),
       ] } : {}),
     }, null, 2)}\n`;
+    // The engine watches this file and reloads its model catalog on every
+    // change; an identical rewrite would only open a window where models are
+    // briefly unavailable.
     if (await readFile(target, "utf8").catch((error: NodeJS.ErrnoException) => { if (error.code !== "ENOENT") throw error; return ""; }) === content) return;
     await writeFile(temporary, content, { mode: 0o600 });
     await rename(temporary, target);
@@ -398,11 +495,12 @@ export async function createManagedOpencodeV2Server(
       providers.set(spec.id, spec);
       await writeConfig();
     },
-    async setProviders(specs) {
+    async setProviders(specs, disabled = []) {
       providers.clear();
       for (const spec of specs) {
         providers.set(spec.id, spec);
       }
+      disabledProviderIds = [...new Set(disabled)].sort();
       await writeConfig();
     },
     async setSkills(directories) {

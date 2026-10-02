@@ -108,6 +108,30 @@ test("test evidence writes visual validations, assertions, failures, and unvalid
   }
 });
 
+test("a screenshot captioned with its step name reads as that step in the record and on disk", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-step-caption-"));
+  try {
+    const testEvidence = createTestEvidence({ name: "toolbar", outDir: dir });
+    testEvidence.recordScreenshot(screenshotArtifact("old toolbar"), { caption: "before: the toolbar shows Suspend" });
+    testEvidence.recordScreenshot(screenshotArtifact("new toolbar"), { caption: "after: Suspend is gone" });
+    testEvidence.recordScreenshot(screenshotArtifact("blank"), { caption: "   " });
+    testEvidence.recordScreenshot(screenshotArtifact("uncaptioned"));
+    await testEvidence.close();
+
+    const testRun = await payload(dir);
+    assert.ok(Array.isArray(testRun.artifacts));
+    assert.deepEqual(
+      testRun.artifacts.map((artifact) => isRecord(artifact) ? artifact.caption : null),
+      ["before: the toolbar shows Suspend", "after: Suspend is gone", "toolbar artifact 3", "toolbar artifact 4"],
+    );
+    await stat(join(dir, "01-before-the-toolbar-shows-suspend.png"));
+    await stat(join(dir, "02-after-suspend-is-gone.png"));
+    await stat(join(dir, "03-toolbar-artifact-3.png"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("test evidence writes a JSON artifact and lists it in the test run", async () => {
   const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-json-"));
   try {
@@ -141,6 +165,25 @@ test("test evidence records the selected engine in JSON and the HTML header", as
     const testRun = await payload(dir);
     assert.equal(testRun.engine, "v2");
     assert.match(await readFile(join(dir, "index.html"), "utf8"), /engine v2/);
+  } finally {
+    if (previous === undefined) delete process.env.OPENWORK_EVAL_ENGINE;
+    else process.env.OPENWORK_EVAL_ENGINE = previous;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("test evidence records a world-owned engine without changing the ambient engine", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-world-engine-"));
+  const previous = process.env.OPENWORK_EVAL_ENGINE;
+  process.env.OPENWORK_EVAL_ENGINE = "v1";
+  try {
+    const testEvidence = createTestEvidence({ name: "world engine", outDir: dir });
+    testEvidence.setEngine("v2");
+    await testEvidence.close();
+    assert.equal((await payload(dir)).engine, "v2");
+    assert.match(await readFile(join(dir, "index.html"), "utf8"), /engine v2/);
+    assert.equal(process.env.OPENWORK_EVAL_ENGINE, "v1");
+    assert.throws(() => testEvidence.setEngine("v1"), /closed/);
   } finally {
     if (previous === undefined) delete process.env.OPENWORK_EVAL_ENGINE;
     else process.env.OPENWORK_EVAL_ENGINE = previous;
@@ -222,46 +265,67 @@ test("test evidence accepts unchanged screenshots and only lets one validation u
   }
 });
 
-test("screenshot automatically records an artifact in ambient test evidence", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-screenshot-"));
-  try {
-    const png = Buffer.from("ambient screenshot pixels");
-    const methods: string[] = [];
-    const client: CdpClient = {
-      close() {},
-      async send(method) {
-        methods.push(method);
-        if (method === "Page.bringToFront") return {};
-        if (method === "Page.captureScreenshot") return { data: png.toString("base64") };
-        if (method === "Runtime.evaluate") {
-          return { result: { value: { route: "#/ambient", visibleText: "Ambient screenshot" } } };
-        }
-        throw new Error(`Unexpected CDP method: ${method}`);
-      },
-    };
-    const app: Surface = {
-      handle: { name: "fake", kind: "chrome", hostKind: "test", cdpUrl: "http://127.0.0.1" },
-      client,
-    };
-    const testEvidence = createTestEvidence({ name: "ambient screenshot", outDir: dir });
-    const captured = await withTestEvidence(testEvidence, () => screenshot(app));
-    assert.deepEqual(methods.slice(0, 2), ["Page.bringToFront", "Page.captureScreenshot"]);
-    assert.equal(captured.route, "#/ambient");
-    await testEvidence.close();
+for (const caption of [undefined, 'after: <guide> grows & keeps "its beginning"']) {
+  test(`screenshot persists ${caption === undefined ? "the default" : "an explicit escaped"} caption in ambient evidence`, async () => {
+    const dir = await mkdtemp(join(tmpdir(), "openwork-test-evidence-screenshot-"));
+    try {
+      const png = Buffer.from("ambient screenshot pixels");
+      const methods: string[] = [];
+      const client: CdpClient = {
+        close() {},
+        async send(method) {
+          methods.push(method);
+          if (method === "Page.bringToFront") return {};
+          if (method === "Page.captureScreenshot") return { data: png.toString("base64") };
+          if (method === "Runtime.evaluate") {
+            return { result: { value: { route: "#/ambient", visibleText: "Ambient screenshot" } } };
+          }
+          throw new Error(`Unexpected CDP method: ${method}`);
+        },
+      };
+      const app: Surface = {
+        handle: { name: "fake", kind: "chrome", hostKind: "test", cdpUrl: "http://127.0.0.1" },
+        client,
+      };
+      const testEvidence = createTestEvidence({ name: "ambient screenshot", outDir: dir });
+      const captured = await withTestEvidence(testEvidence, () => caption === undefined ? screenshot(app) : screenshot(app, { caption }));
+      assert.deepEqual(captured.png, png);
+      assert.equal(captured.hash, createHash("sha256").update(png).digest("hex"));
+      assert.deepEqual(methods.slice(0, 2), ["Page.bringToFront", "Page.captureScreenshot"]);
+      assert.equal(captured.route, "#/ambient");
+      await testEvidence.close();
 
-    const testRun = await payload(dir);
-    assert.deepEqual(testRun.summary, {
-      ok: false,
-      totalArtifacts: 1,
-      passedArtifacts: 0,
-      failedArtifacts: 0,
-      unvalidatedArtifacts: 1,
-      pendingArtifacts: 0,
-      passedExpectations: 0,
-      failedExpectations: 0,
-      pendingJudgments: 0,
-    });
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
-});
+      const testRun = await payload(dir);
+      assert.deepEqual(testRun.summary, {
+        ok: false,
+        totalArtifacts: 1,
+        passedArtifacts: 0,
+        failedArtifacts: 0,
+        unvalidatedArtifacts: 1,
+        pendingArtifacts: 0,
+        passedExpectations: 0,
+        failedExpectations: 0,
+        pendingJudgments: 0,
+      });
+      assert.ok(Array.isArray(testRun.artifacts));
+      const artifact = testRun.artifacts[0];
+      assert.ok(isRecord(artifact));
+      assert.equal(artifact.caption, caption ?? "ambient screenshot artifact 1");
+      assert.ok(typeof artifact.fileName === "string");
+      assert.deepEqual(await readFile(join(dir, artifact.fileName)), png);
+      const index = await readFile(join(dir, "index.html"), "utf8");
+      if (caption === undefined) {
+        assert.equal(artifact.fileName, "01-ambient-screenshot-artifact-1.png");
+        assert.match(index, /<h2>ambient screenshot artifact 1<\/h2>/);
+      } else {
+        assert.match(index, /<h2>after: &lt;guide&gt; grows &amp; keeps &quot;its beginning&quot;<\/h2>/);
+        assert.doesNotMatch(index, /<guide>/);
+      }
+      assert.deepEqual(artifact.results, []);
+      assert.deepEqual(artifact.judgments, []);
+      assert.equal(artifact.ok, null);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+}

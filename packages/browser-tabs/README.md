@@ -49,7 +49,8 @@ Required factory options:
 - `remoteDebugPort: number`: the shell's enabled Electron loopback CDP port.
 - `partition: string`: a persistent partition, e.g. `persist:coworker-browser`.
 - `preloadPath: string`: an absolute path to the shipped browser preload asset.
-- `openExternal(url): Promise<unknown>`: the shell's explicit external opener.
+- `openExternal(url): Promise<unknown>`: the shell's explicit external opener;
+  reject when the open fails so the link-open error is shown.
 - `runDetachedTask(label, task): void`: run the task and report rejected promises.
   Desktop injects its existing process-resilience helper.
 
@@ -70,7 +71,7 @@ Optional adapters:
   instead of sending them to the main renderer. Payloads retain
   `ownerSessionId`, `visibleSessionId`, `activeTabIdByOwner`, and panel tab shapes.
 - `BrowserWindow`: optional Electron constructor override for the parking host.
-- `showNativeContextMenu`, `closeNativeContextMenu`, `listInstalledBrowsers`:
+- `showNativeContextMenu`, `closeNativeContextMenu`:
   Desktop's native menu services. No overlay renderer or preload is needed.
 - `createBrowserTaskHost`, `createWebMcpBroker`, `createWebMcpFramePolicy`,
   `BrowserTaskError`: Desktop injects its existing task/WebMCP services. Their

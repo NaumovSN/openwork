@@ -1,4 +1,5 @@
 import type { WorkspaceWire } from "@openwork/types/workspace";
+import type { DesktopFreeProofClaims } from "@openwork/free-auto";
 
 export type WorkspaceType = "local" | "remote";
 
@@ -97,6 +98,12 @@ export interface EmbeddedOpencodeV2Options {
   env?: Record<string, string>;
   bootTimeoutMs?: number;
 }
+export type DesktopFreeSigner = {
+  currentVersion: string;
+  identity: () => Promise<Pick<DesktopFreeProofClaims, "publicKey" | "machineId" | "appVersion" | "platform" | "arch">>;
+  /** `nonce` lets the caller bind work (a session proof-of-work) to the proof before it is signed. */
+  sign: (request: { method: string; path: string; body: Uint8Array; authorization: string; nonce?: string }) => Promise<string>;
+};
 
 export interface ServerConfig {
   host: string;
@@ -125,6 +132,7 @@ export interface ServerConfig {
   /** Embedding-host selection, never loaded from user configuration or environment. */
   engine?: "v1" | "v2";
   opencodeV2?: EmbeddedOpencodeV2Options & { bin?: string };
+  anonymousInference?: { desktop: DesktopFreeSigner };
 }
 
 export interface Capabilities {

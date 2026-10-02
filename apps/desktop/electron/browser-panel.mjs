@@ -1,8 +1,7 @@
 import { fileURLToPath } from "node:url";
-import { shell } from "electron";
 import { createBrowserPanel as createBrowserHost } from "@openwork/browser-tabs/electron";
-import { listInstalledBrowsers } from "./installed-browsers.mjs";
 import { runDetachedTask } from "./process-resilience.mjs";
+import { openExternalUrl } from "./open-external.mjs";
 import { BrowserTaskError, createBrowserTaskHost } from "./browser-task.mjs";
 import { createWebMcpBroker } from "./webmcp-host.mjs";
 import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
@@ -11,10 +10,13 @@ import { createWebMcpFramePolicy } from "./webmcp-policy.mjs";
 export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, checkPolicy, showNativeContextMenu, closeNativeContextMenu }) {
   return createBrowserHost({
     getWindow, remoteDebugPort, checkPolicy, showNativeContextMenu, closeNativeContextMenu,
-    listInstalledBrowsers, createBrowserTaskHost, createWebMcpBroker, createWebMcpFramePolicy, BrowserTaskError,
+    createBrowserTaskHost, createWebMcpBroker, createWebMcpFramePolicy, BrowserTaskError,
     partition: "persist:openwork-browser",
     preloadPath: fileURLToPath(import.meta.resolve("@openwork/browser-tabs/preload")),
-    openExternal: (url) => shell.openExternal(url),
+    async openExternal(url) {
+      const result = await openExternalUrl(url);
+      if (!result.ok) throw new Error(result.error);
+    },
     runDetachedTask,
     handleDeepLink(url) {
       if (!url.startsWith("openwork://") && !url.startsWith("openwork-dev://")) return false;

@@ -3,6 +3,10 @@ import { create } from "zustand";
 import type { FilePart, Part, PermissionRequest, PermissionV2Request, QuestionRequest, Session, SessionStatus, Todo } from "@opencode-ai/sdk/v2/client";
 
 import { getReactQueryClient } from "../../../infra/query-client";
+import { readGatewayUsageScope } from "@/app/lib/gateway-usage-scope";
+import { refreshGatewayUsageAfterCompletion } from "../../cloud/gateway-usage-refresh";
+import { gatewayUsageQueryPrefix } from "../../cloud/gateway-usage-state";
+import { mergeReplyMetadata, replyModelFromInfo } from "./reply-model";
 import { closeSessionBrowserTabs } from "@/app/lib/desktop";
 import { captureAnalyticsEvent, takeTaskRunStart } from "@/app/lib/analytics";
 import { trackTaskCompleted, trackTaskFailed } from "@/app/lib/den-telemetry";
@@ -31,6 +35,7 @@ import {
 import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "@/app/lib/openwork-server";
 import type { LatestSessionHistory } from "../surface/session-render-state";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
+import { upsertMessageByChronology } from "./message-merge";
 import { isOrphanedInteraction, isTerminalToolPart, terminalToolCallIds, terminalTranscriptToolCallIds } from "./orphaned-interactions";
 import {
   useSessionActivityStore,
@@ -103,8 +108,11 @@ type SyncEntry = {
   liveSessionIds: Set<string>;
   statusReconcileTimer: ReturnType<typeof setTimeout> | null;
   statusReconcileAbort: AbortController | null;
+  // Consecutive failed status reads; paces the active poll (see activeSessionStatusReconcileDelayMs).
+  statusReconcileFailures: number;
   runActiveObservedAt: Map<string, number>;
   assistantMessageCompletedAt: Map<string, number>;
+  gatewayUsageRuns: Map<string, { scope: number; key: string; providerId: string | null; completed: boolean }>;
   nativeSequenceBySession: Map<string, { sequence: number; revision: number }>;
   nativeSequenceRevision: number;
   nativeTerminalSessions: Set<string>;
@@ -116,6 +124,18 @@ type DeltaFlushScheduler = (
   lane: DeltaFlushLane,
   run: () => void,
 ) => () => void;
+
+let gatewayUsageRunSequence = 0;
+function newGatewayUsageRun(key: string): { scope: number; key: string; providerId: string | null; completed: boolean } {
+  return { scope: readGatewayUsageScope().generation, key, providerId: null, completed: false };
+}
+
+function gatewayUsageProviderId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return null;
+  if ("providerID" in value && typeof value.providerID === "string") return value.providerID;
+  if ("model" in value && value.model && typeof value.model === "object" && "providerID" in value.model && typeof value.model.providerID === "string") return value.model.providerID;
+  return null;
+}
 
 const idleStatus: SessionStatus = { type: "idle" };
 const syncs = new Map<string, SyncEntry>();
@@ -130,8 +150,31 @@ const backgroundDeltaFlushMs = 100;
 // terminal status edge. This is a reconciliation cadence, not a completion
 // timeout: elapsed time never marks a task done.
 const activeSessionStatusReconcileIntervalMs = 250;
+// A failed read leaves the run state untouched (it is not evidence that work
+// stopped), so without backoff an unreachable engine — for example the one
+// the user just switched away from — would be polled at 4 Hz indefinitely.
+const activeSessionStatusReconcileMaxBackoffMs = 15_000;
 
 type SessionStatusSource = "stream" | "connect-reconcile" | "active-reconcile" | "snapshot";
+
+/** Which OpenCode engine a sync entry (or a status read) belongs to. */
+export type SessionSyncEngine = "v1" | "v2";
+
+function syncEngine(baseUrl: string): SessionSyncEngine {
+  return isOpencodeV2BaseUrl(baseUrl) ? "v2" : "v1";
+}
+
+/**
+ * Keep the fast cadence until the read is flagged degraded (a transient blip
+ * still settles within a second), then back off exponentially.
+ */
+export function activeSessionStatusReconcileDelayMs(consecutiveFailures: number): number {
+  if (consecutiveFailures < reconcileFailureDegradedThreshold) return activeSessionStatusReconcileIntervalMs;
+  return Math.min(
+    activeSessionStatusReconcileMaxBackoffMs,
+    1_000 * 2 ** (consecutiveFailures - reconcileFailureDegradedThreshold),
+  );
+}
 
 function developerDiagnosticsEnabled() {
   if (typeof window === "undefined") return false;
@@ -242,6 +285,23 @@ let deltaFlushScheduler = defaultDeltaFlushScheduler;
 export function markSessionSnapshotFetchStart(snapshot: OpenworkSessionHistory, startedAt: number) {
   sessionSnapshotFetchStarts.set(snapshot, startedAt);
 }
+
+const historyCredentials = new Map<string | null, number>();
+let nextHistoryCredential = 0;
+
+export function sessionHistoryCredential(token?: string | null) {
+  const key = token ?? null;
+  let credential = historyCredentials.get(key);
+  if (credential === undefined) {
+    credential = ++nextHistoryCredential;
+    historyCredentials.set(key, credential);
+    if (historyCredentials.size > 32) historyCredentials.delete(historyCredentials.keys().next().value ?? null);
+  }
+  return credential;
+}
+
+export const sessionMetadataKey = (input: Pick<SyncOptions, "workspaceId" | "baseUrl" | "openworkToken">, sessionId: string) =>
+  ["react-session-metadata", input.workspaceId, input.baseUrl, sessionHistoryCredential(input.openworkToken), sessionId] as const;
 
 export const snapshotKey = (workspaceId: string, sessionId: string) =>
   ["react-session-snapshot", workspaceId, sessionId] as const;
@@ -490,6 +550,7 @@ function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: st
   entry.retainedSessionTimers.delete(sessionId);
   entry.runActiveObservedAt.delete(sessionId);
   entry.assistantMessageCompletedAt.delete(sessionId);
+  entry.gatewayUsageRuns.delete(sessionId);
   for (const [key, pending] of entry.pendingDeltas) {
     if (pending.sessionId === sessionId) entry.pendingDeltas.delete(key);
   }
@@ -501,14 +562,22 @@ function clearTrackedSession(input: SyncOptions, entry: SyncEntry, sessionId: st
     entry.deltaFlushLane = null;
     entry.cancelDeltaFlush = null;
   }
-  // Keep sequence and settlement watermarks: delayed events/reads must not
-  // resurrect a terminal run or a replied interaction after cache release.
-  queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, sessionId), exact: true });
-  queryClient.removeQueries({ queryKey: questionKey(input.workspaceId, sessionId), exact: true });
-  // Status entries are exempt from TanStack GC (see query-client.ts), so the
-  // tracked-session lifecycle owns their cleanup.
-  queryClient.removeQueries({ queryKey: statusKey(input.workspaceId, sessionId), exact: true });
-  queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, sessionId), exact: true });
+  // A runtime restart can replace the endpoint while retaining the same
+  // workspace/session cache keys. Releasing the old sync must not erase the
+  // replacement sync's mounted or retained conversation.
+  const hasOtherOwner = [...syncs.values()].some((other) =>
+    other !== entry && other.input.workspaceId === input.workspaceId && isTrackedSession(other, sessionId));
+  if (!hasOtherOwner) {
+    // Keep sequence and settlement watermarks: delayed events/reads must not
+    // resurrect a terminal run or a replied interaction after cache release.
+    queryClient.removeQueries({ queryKey: permissionKey(input.workspaceId, sessionId), exact: true });
+    queryClient.removeQueries({ queryKey: questionKey(input.workspaceId, sessionId), exact: true });
+    // These caches are GC-exempt (see query-client.ts). In particular, live
+    // transcripts must retain their part declarations so deltas can land.
+    queryClient.removeQueries({ queryKey: transcriptKey(input.workspaceId, sessionId), exact: true });
+    queryClient.removeQueries({ queryKey: statusKey(input.workspaceId, sessionId), exact: true });
+    queryClient.removeQueries({ queryKey: todoKey(input.workspaceId, sessionId), exact: true });
+  }
   if (entry.refs <= 0 && entry.retainedSessionTimers.size === 0) {
     disposeWorkspaceSync(syncKey(input), entry);
   }
@@ -548,6 +617,7 @@ function disposeWorkspaceSync(key: string, entry: SyncEntry) {
   entry.liveSessionIds.clear();
   entry.runActiveObservedAt.clear();
   entry.assistantMessageCompletedAt.clear();
+  entry.gatewayUsageRuns.clear();
   entry.titleRecovery?.dispose();
   entry.dispose();
   if (syncs.get(key) === entry) syncs.delete(key);
@@ -834,7 +904,7 @@ function toUIPart(part: Part): UIMessage["parts"][number] | null {
       type: "text",
       text: part.name ? `@${part.name}` : "@agent",
       state: "done",
-      providerMetadata: { opencode: { partId: part.id } },
+      providerMetadata: { opencode: { partId: part.id, ...(part.name ? { agentMention: part.name } : {}) } },
     };
   }
   if (part.type === "step-start") return { type: "step-start" };
@@ -855,6 +925,11 @@ function toUIParts(part: Part): UIMessage["parts"] {
 
 function upsertMessage(messages: UIMessage[], next: UIMessage) {
   const index = messages.findIndex((message) => message.id === next.id);
+  if (next.metadata !== undefined) {
+    const existing = messages[index];
+    const merged = existing ? { ...existing, ...next, metadata: mergeReplyMetadata(existing.metadata, next.metadata), parts: next.parts.length > 0 ? next.parts : existing.parts } : next;
+    return upsertMessageByChronology(messages, merged);
+  }
   if (index === -1) return [...messages, next];
   return messages.map((message, messageIndex) =>
     messageIndex === index
@@ -905,6 +980,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (event.type === "session.execution.started") {
       entry.nativeTerminalSessions.delete(sessionId);
       applySessionRunStatus(entry, workspaceId, sessionId, { type: "busy" });
+      const usageRun = entry.gatewayUsageRuns.get(sessionId);
+      if (usageRun) usageRun.providerId = gatewayUsageProviderId(event.properties);
     } else if (event.type === "session.execution.progress") {
       clearSessionRetry(entry, workspaceId, sessionId);
     } else if (event.type === "session.execution.failed") {
@@ -947,6 +1024,8 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const title = typeof update.info.title === "string" ? update.info.title : "";
     if (title && !isGeneratedSessionTitle(title)) entry.titleRecovery?.resolve(update.sessionId);
     if (!isTrackedSession(entry, update.sessionId)) return;
+    const revert = (update.info as { revert?: OpenworkSessionSnapshot["session"]["revert"] }).revert;
+    queryClient.setQueryData(sessionMetadataKey(input, update.sessionId), { revert });
     // Keep the cached snapshot's revert cursor in sync with the server. The
     // renderer derives the visible transcript from this cursor, so a revert
     // (or its cleanup on the next prompt) must reach the snapshot cache or
@@ -955,7 +1034,6 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       snapshotKey(workspaceId, update.sessionId),
       (current) => {
         if (!current) return current;
-        const revert = (update.info as { revert?: OpenworkSessionSnapshot["session"]["revert"] }).revert;
         return { ...current, session: { ...current.session, revert } };
       },
     );
@@ -1000,6 +1078,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     if (sessionId) {
       const sessionError = sessionErrorFromProperties(event.properties);
       const errorPresentation = presentOpencodeSessionError(sessionError);
+      if (errorPresentation.gatewayUsage) void queryClient.invalidateQueries({ queryKey: gatewayUsageQueryPrefix });
       const errorText = describeOpencodeSessionError(sessionError);
       const runStartedAt = takeTaskRunStart(sessionId);
       if (runStartedAt !== null) {
@@ -1158,12 +1237,14 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (event.type === "message.updated") {
     const props = (event.properties ?? {}) as {
-      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; time?: { created?: number; completed?: number } };
+      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; parentID?: string; time?: { created?: number; completed?: number } };
     };
     const info = props.info;
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
       return;
     }
+    const usageRun = entry.gatewayUsageRuns.get(info.sessionID);
+    if (usageRun && info.role === "assistant") usageRun.providerId = gatewayUsageProviderId(info) ?? usageRun.providerId;
     useSessionActivityStore.getState().markMessageRole(workspaceId, info.sessionID, info.id, info.role);
     if (info.role === "assistant" && typeof info.time?.completed === "number") {
       const observedAt = perfNow();
@@ -1182,9 +1263,12 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     const next = {
       id: info.id,
       role: info.role,
-      ...(typeof created === "number"
-        ? { metadata: { opencode: { created, ...(typeof completed === "number" ? { completed } : {}) } } }
-        : {}),
+      metadata: { opencode: {
+        ...(typeof created === "number" ? { created } : {}),
+        ...(typeof completed === "number" ? { completed } : {}),
+        ...(typeof info.parentID === "string" ? { parentID: info.parentID } : {}),
+        ...(replyModelFromInfo(info) ? { replyModel: replyModelFromInfo(info) } : {}),
+      } },
       parts: [],
     } satisfies UIMessage;
     queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID), (current = []) =>
@@ -1192,6 +1276,32 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     );
     useSessionActivityStore.getState().observeTranscript(workspaceId, info.sessionID,
       queryClient.getQueryData<UIMessage[]>(transcriptKey(workspaceId, info.sessionID)) ?? []);
+    return;
+  }
+
+  if (event.type === "session.history.truncated") {
+    const props = event.properties;
+    if (!props || typeof props !== "object" || !("sessionID" in props) || !("messageID" in props)
+      || typeof props.sessionID !== "string" || typeof props.messageID !== "string") return;
+    const { sessionID, messageID } = props;
+    if (!isTrackedSession(entry, sessionID)) return;
+    const fullKey = snapshotKey(workspaceId, sessionID);
+    const latestKey = ["react-session-latest", ...fullKey];
+    void queryClient.cancelQueries({ queryKey: latestKey });
+    void queryClient.cancelQueries({ queryKey: fullKey, exact: true });
+    // Native revert commit permanently deletes this suffix. Ordinary snapshot
+    // merges deliberately preserve cached messages, so clear every history
+    // cache before removing the temporary revert cursor.
+    queryClient.setQueriesData<LatestSessionHistory>({ queryKey: latestKey }, current => current ? {
+      messages: applyRevertCursor(current.messages, messageID),
+      source: applyRevertCursor(current.source, messageID),
+    } : current);
+    queryClient.setQueryData<UIMessage[]>(transcriptKey(workspaceId, sessionID), (current = []) => applyRevertCursor(current, messageID));
+    queryClient.setQueryData<OpenworkSessionHistory>(fullKey, current => {
+      if (!current) return current;
+      const boundary = current.messages.findIndex(message => message.info.id === messageID);
+      return boundary < 0 ? current : { ...current, messages: current.messages.slice(0, boundary) };
+    });
     return;
   }
 
@@ -1484,6 +1594,9 @@ function applySessionRunStatus(
   }
 
   const live = isLiveStatus(status);
+  if (live && (!wasLive || !entry.gatewayUsageRuns.has(sessionId))) {
+    entry.gatewayUsageRuns.set(sessionId, newGatewayUsageRun(`${workspaceId}:${sessionId}:run:${++gatewayUsageRunSequence}`));
+  }
   if (v2 && !live) {
     store.replaceWaitingRequests(workspaceId, sessionId, "permission",
       (getReactQueryClient().getQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId)) ?? []).map((permission) => permission.id));
@@ -1513,6 +1626,16 @@ function applySessionRunStatus(
     }
     const shouldRecordTerminal = wasLive || runStartedAt !== null;
     const shouldConvergeTerminal = shouldRecordTerminal || options.terminalEvent === true;
+    if (shouldConvergeTerminal && (options.completed ?? !v2)) {
+      const usageRun = entry.gatewayUsageRuns.get(sessionId) ?? newGatewayUsageRun(`${workspaceId}:${sessionId}:terminal:${entry.nativeSequenceBySession.get(sessionId)?.sequence ?? "unknown"}`);
+      entry.gatewayUsageRuns.set(sessionId, usageRun);
+      if (!usageRun.completed) {
+        usageRun.completed = true;
+        if (usageRun.providerId === null || usageRun.providerId.startsWith("ipr_")) {
+          refreshGatewayUsageAfterCompletion(usageRun.scope, usageRun.key);
+        }
+      }
+    }
     if (shouldConvergeTerminal) void reconcileSessionPermissions(entry, sessionId);
     if (tracked && shouldConvergeTerminal) void refreshSessionTodos(workspaceId, sessionId);
     if (tracked && shouldConvergeTerminal) {
@@ -1592,9 +1715,15 @@ async function reconcileSessionRunStatuses(
   // Capture one revision instead of copying every historical sequence on each
   // poll. A same-clock native edge still invalidates this read for its session.
   const sequenceRevision = entry.nativeSequenceRevision;
+  // Activity records are keyed by workspace and session, not by engine. While
+  // another engine's sync is in use for this workspace (chats were switched to
+  // it), the rest of the workspace's records belong to that engine: this
+  // engine's status read cannot settle them. It still settles what it tracks.
+  const workspaceRecordsOwned = !hasActiveOtherEngineSync(entry);
   if (source === "connect-reconcile") {
     const records = useSessionActivityStore.getState().recordsByWorkspaceId[input.workspaceId] ?? {};
-    for (const sessionId of new Set([...Object.keys(records), ...entry.trackedSessionRefs.keys()])) {
+    const candidates = workspaceRecordsOwned ? Object.keys(records) : [];
+    for (const sessionId of new Set([...candidates, ...entry.trackedSessionRefs.keys()])) {
       void reconcileSessionPermissions(entry, sessionId);
       void refreshSessionTodos(input.workspaceId, sessionId);
     }
@@ -1609,11 +1738,13 @@ async function reconcileSessionRunStatuses(
     // presenting a confident ticking "Working" row. Aborted fetches are
     // lifecycle noise (dispose, generation rotation), not failures.
     if (!signal.aborted) {
+      entry.statusReconcileFailures += 1;
       useWorkspaceSyncStreamStore.getState().publishReconcileFailure(key);
     }
     return;
   }
   if (signal.aborted) return;
+  entry.statusReconcileFailures = 0;
   const streamStore = useWorkspaceSyncStreamStore.getState();
   const recovered = (streamStore.reconcileHealthByKey[key]?.consecutiveFailures ?? 0) > 0;
   streamStore.publishReconcileSuccess(key, startedAt);
@@ -1630,7 +1761,7 @@ async function reconcileSessionRunStatuses(
   for (const [sessionId, status] of Object.entries(statuses)) {
     if (source === "connect-reconcile" || isLiveStatus(status)) sessionIds.add(sessionId);
   }
-  const knownSessionIds = source === "connect-reconcile"
+  const knownSessionIds = source === "connect-reconcile" && workspaceRecordsOwned
     ? Object.keys(records)
     : [...entry.trackedSessionRefs.keys(), ...entry.retainedSessionTimers.keys()];
   for (const sessionId of knownSessionIds) {
@@ -1681,7 +1812,33 @@ function scheduleActiveSessionStatusReconciliation(entry: SyncEntry) {
       if (entry.statusReconcileAbort === controller) entry.statusReconcileAbort = null;
       scheduleActiveSessionStatusReconciliation(entry);
     });
-  }, activeSessionStatusReconcileIntervalMs);
+  }, activeSessionStatusReconcileDelayMs(entry.statusReconcileFailures));
+}
+
+/** Another engine's sync for the same workspace is referenced by a live owner. */
+function hasActiveOtherEngineSync(entry: SyncEntry) {
+  const engine = syncEngine(entry.input.baseUrl);
+  for (const other of syncs.values()) {
+    if (other === entry || other.refs <= 0 || other.input.workspaceId !== entry.input.workspaceId) continue;
+    if (syncEngine(other.input.baseUrl) !== engine) return true;
+  }
+  return false;
+}
+
+/**
+ * Chat routing moved this workspace to another engine. A released entry that
+ * only retained sessions would keep polling the engine the app no longer
+ * shows, and its idle reads would settle conversations (including migrated
+ * ones, which keep their ids) that now run on the other engine. Switching
+ * back reconnects and reconciles a fresh entry.
+ */
+function retireOtherEngineSyncs(input: SyncOptions) {
+  const engine = syncEngine(input.baseUrl);
+  for (const [key, entry] of syncs) {
+    if (entry.refs > 0 || entry.input.workspaceId !== input.workspaceId) continue;
+    if (syncEngine(entry.input.baseUrl) === engine) continue;
+    disposeWorkspaceSync(key, entry);
+  }
 }
 
 /**
@@ -1731,6 +1888,7 @@ export function __resetWorkspaceSyncReconcileHealthForTest() {
 
 export function ensureWorkspaceSessionSync(input: SyncOptions) {
   const key = syncKey(input);
+  retireOtherEngineSyncs(input);
   const existing = syncs.get(key);
   if (existing) {
     existing.input = input;
@@ -1774,8 +1932,10 @@ export function ensureWorkspaceSessionSync(input: SyncOptions) {
     liveSessionIds: new Set(),
     statusReconcileTimer: null,
     statusReconcileAbort: null,
+    statusReconcileFailures: 0,
     runActiveObservedAt: new Map(),
     assistantMessageCompletedAt: new Map(),
+    gatewayUsageRuns: new Map(),
     nativeSequenceBySession: new Map(),
     nativeSequenceRevision: 0,
     nativeTerminalSessions: new Set(),
@@ -1852,7 +2012,8 @@ export function seedSessionStatus(
   workspaceId: string,
   sessionId: string,
   incomingStatus: SessionStatus,
-  options: { snapshotStartedAt: number },
+  /** `engine` is the engine the status was read from; only its syncs adopt the run. */
+  options: { snapshotStartedAt: number; engine?: SessionSyncEngine },
 ) {
   const queryClient = getReactQueryClient();
   const { snapshotStartedAt } = options;
@@ -1871,12 +2032,24 @@ export function seedSessionStatus(
     undefined,
     { snapshotStartedAt },
   );
+  if (!isLiveStatus(status)) {
+    // Run status is not an interaction snapshot. An idle read must not hide
+    // cached approvals/questions when their independent refresh fails or waits.
+    const activity = useSessionActivityStore.getState();
+    const permissions = queryClient.getQueryData<PendingPermission[]>(permissionKey(workspaceId, sessionId));
+    const questions = queryClient.getQueryData<PendingQuestion[]>(questionKey(workspaceId, sessionId));
+    if (permissions) activity.replaceWaitingRequests(workspaceId, sessionId, "permission", permissions.map((item) => item.id));
+    if (questions) activity.replaceWaitingRequests(workspaceId, sessionId, "question", questions.map((item) => item.id));
+  }
   queryClient.setQueryData(statusKey(workspaceId, sessionId), status);
   if (isLiveStatus(status)) {
     for (const entry of syncs.values()) {
-      if (entry.input.workspaceId === workspaceId) {
-        trackLiveSession(entry, sessionId, status, "snapshot");
-      }
+      if (entry.input.workspaceId !== workspaceId) continue;
+      // Another engine's sync cannot validate this run: its status read does
+      // not list it, so it would settle a live run as idle, invalidate the
+      // transcript, and adopt it again from the refetch on every poll.
+      if (options.engine && syncEngine(entry.input.baseUrl) !== options.engine) continue;
+      trackLiveSession(entry, sessionId, status, "snapshot");
     }
   }
 }
@@ -1903,7 +2076,11 @@ async function refreshSessionTodos(workspaceId: string, sessionId: string) {
   await queryClient.invalidateQueries({ queryKey });
 }
 
-export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionHistory, options: { preview?: boolean } = {}) {
+export function seedSessionState(
+  workspaceId: string,
+  snapshot: OpenworkSessionHistory,
+  options: { preview?: boolean; engine?: SessionSyncEngine } = {},
+) {
   // A reverted window cannot establish which messages are still visible.
   if (options.preview && snapshot.session.revert?.messageID) return;
   const queryClient = getReactQueryClient();
@@ -1955,6 +2132,7 @@ export function seedSessionState(workspaceId: string, snapshot: OpenworkSessionH
   if (snapshot.status !== undefined && typeof snapshotStartedAt === "number") {
     seedSessionStatus(workspaceId, snapshot.session.id, snapshot.status, {
       snapshotStartedAt,
+      engine: options.engine,
     });
   }
 
@@ -2110,8 +2288,10 @@ export function __createWorkspaceSessionSyncForTest(input: SyncOptions) {
     liveSessionIds: new Set(),
     statusReconcileTimer: null,
     statusReconcileAbort: null,
+    statusReconcileFailures: 0,
     runActiveObservedAt: new Map(),
     assistantMessageCompletedAt: new Map(),
+    gatewayUsageRuns: new Map(),
     nativeSequenceBySession: new Map(),
     nativeSequenceRevision: 0,
     nativeTerminalSessions: new Set(),

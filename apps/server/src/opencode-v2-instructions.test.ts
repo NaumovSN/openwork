@@ -106,21 +106,26 @@ test("native-2 skill paths become locations after exact workspace readiness", as
   });
 });
 
-test("v2 guidance routes all skills natively without XML or Connect skill prose", () => {
+test("native v2 guidance routes all skills natively without XML or Connect skill prose", () => {
   for (const connected of [true, false, "unknown"] as const) {
-    const baseline = buildOpenWorkV2Instructions(connected);
-    for (const value of [baseline, buildOpenWorkV2Instructions(connected, "preview"), buildOpenWorkV2Instructions(connected, "native")]) {
-      const text = JSON.stringify(value);
-      expect(value).toEqual(baseline);
-      expect(text).not.toContain("available_remote_skills");
-      expect(text).not.toContain("execute_capability");
-      expect(value.operatingInstructions).not.toContain("remote skills");
-      expect(value.operatingInstructions).not.toContain("remote skill catalog");
-      expect(value.operatingInstructions).toContain("Authorized organization skills are in the native skill catalog");
-      expect(value.skillInstructions).not.toContain("provided by OpenWork Connect");
-      expect(value.skillInstructions).toContain("openwork-cloud-");
-      expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(7 * 1024);
-    }
+    const value = buildOpenWorkV2Instructions(connected, "native");
+    const text = JSON.stringify(value);
+    expect(text).not.toContain("available_remote_skills");
+    expect(text).not.toContain("execute_capability");
+    expect(value.operatingInstructions).not.toContain("remote skills");
+    expect(value.operatingInstructions).not.toContain("remote skill catalog");
+    expect(value.operatingInstructions).toContain("Authorized organization skills are in the native skill catalog");
+    expect(value.skillInstructions).not.toContain("provided by OpenWork Connect");
+    expect(value.skillInstructions).toContain("openwork-cloud-");
+    expect(Buffer.byteLength(text, "utf8")).toBeLessThanOrEqual(7 * 1024);
   }
   expect(buildOpenWorkV2Instructions("unknown", "native").connect).toContain("current tool catalog");
+});
+
+test("preview v2 discovers remote skills on demand and keeps local skills native", () => {
+  const connected = buildOpenWorkV2Instructions(true);
+  expect(connected.operatingInstructions).toContain("remote skills");
+  expect(connected.skillInstructions).toContain("OpenWork Connect");
+  expect(connected.skillInstructions).toContain("on demand");
+  expect(JSON.stringify(connected)).not.toContain("<available_remote_skills>");
 });

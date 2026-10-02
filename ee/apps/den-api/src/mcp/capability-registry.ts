@@ -34,6 +34,7 @@ import {
 import {
   connectedConnectionActionPayload,
   connectionActionPayloadFromStatus,
+  connectionActionAppMeta,
   connectionActionTextFallback,
 } from "./connection-action.js"
 import {
@@ -46,7 +47,6 @@ import {
   type ExternalCapabilityExecuteResult,
   type McpMemberIdentity,
 } from "./external-capabilities.js"
-import { attachPluginFlowCard } from "./plugin-flow-app.js"
 import { invokeMcpOperation, normalizeToolBody, normalizeToolRecord } from "./invoke.js"
 import {
   executeMarketplaceCapability,
@@ -57,6 +57,7 @@ import {
   type MarketplaceCapabilityObjectType,
 } from "./marketplace-capabilities.js"
 import {
+  connectionStatusMatch,
   executeNativeCapability,
   parseNativeCapabilityName,
   searchNativeCapabilities,
@@ -102,6 +103,10 @@ export type ExecuteCapabilityToolResult = {
 export type CapabilityExecuteInput = {
   name: string
   schemaDigest?: string
+  /** Refuse an external tool whose input schema no longer matches schemaDigest. */
+  requireSchemaMatch?: boolean
+  /** Refuse an external tool that its provider no longer marks read-only for this caller. */
+  requireReadOnly?: boolean
   path?: unknown
   query?: unknown
   body?: unknown
@@ -230,6 +235,7 @@ const externalMcpProviderErrorOutputSchema = z.object({
 
 const externalCapabilityErrorPayloadSchema = z.object({
   error: z.string(),
+  reason: z.string().optional(),
   message: z.string(),
   requiredScope: z.enum(["mcp:read", "mcp:write"]).optional(),
   referenceId: z.string().optional(),
@@ -260,6 +266,7 @@ export function externalCapabilityErrorToolResult(
     : undefined
   const payload = externalCapabilityErrorPayloadSchema.parse({
     error: result.error,
+    ...(result.reason ? { reason: result.reason } : {}),
     message: result.message,
     ...(result.requiredScope ? { requiredScope: result.requiredScope } : {}),
     ...(result.referenceId === undefined ? {} : { referenceId: result.referenceId }),
@@ -286,6 +293,7 @@ export function externalCapabilityErrorToolResult(
     isError: true,
     content: textContent(JSON.stringify(payload)),
     structuredContent: connectionActionPayloadFromStatus(result.connectionStatus),
+    _meta: connectionActionAppMeta(result.connectionStatus.connectionId),
   }
 }
 
@@ -462,7 +470,7 @@ const catalogSource: CapabilitySource = {
         body,
       },
     })
-    return attachPluginFlowCard({ name: parsed.name, path, body, result })
+    return result
   },
 }
 
@@ -562,6 +570,7 @@ const externalMcpSource: CapabilitySource = {
       return {
         content: textContent(connectionActionTextFallback(payload)),
         structuredContent: { ...payload },
+        _meta: connectionActionAppMeta(payload.connectionId),
       }
     }
     const result = await executeExternalCapability({
@@ -572,6 +581,8 @@ const externalMcpSource: CapabilitySource = {
       toolName: parsed.toolName,
       args: normalizeToolBody(input.body),
       schemaDigest: input.schemaDigest,
+      ...(input.requireSchemaMatch ? { requireSchemaMatch: true } : {}),
+      ...(input.requireReadOnly ? { requireReadOnly: true } : {}),
       redirectUriBase: ctx.redirectUriBase,
     })
     return result.ok
@@ -683,10 +694,6 @@ const remoteSessionSource: CapabilitySource = {
     return action ? { kind: "remoteSession", name, action } : null
   },
   search: async (ctx, query, limit) => {
-    // Remote sessions require an active membership and the organization's
-    // Cloud capability flag: a member of a flag-off org never discovers
-    // these capabilities. Worker provisioning state is checked at execute
-    // time and reported as an actionable needs-setup result.
     if (!ctx.sourceFilter.api || !ctx.member || !ctx.remoteSessionsEnabled) return []
     return searchRemoteSessionCapabilities(query, limit)
   },
@@ -842,3 +849,22 @@ export const CAPABILITY_REGISTRY = createCapabilityRegistry(CAPABILITY_SOURCES)
 export const searchCapabilityRegistry = CAPABILITY_REGISTRY.search
 export const executeCapability = CAPABILITY_REGISTRY.execute
 export const buildCapabilityToolTree = CAPABILITY_REGISTRY.buildToolTree
+
+export async function liveArtifactConnectionFailure(
+  context: CapabilityRegistryContext,
+  missing: readonly { capabilityName: string }[],
+) {
+  const ids = new Set(missing.flatMap((entry) => {
+    const parsed = parseNativeCapabilityName(entry.capabilityName)
+    return parsed ? [parsed.connectionId] : []
+  }))
+  if (!ids.size) return null
+  const namespace = await context.resolveNamespaceContext()
+  const connection = namespace.nativeProviderEntries.find((entry) => ids.has(entry.id) && !entry.connectedForMe)
+  if (!connection) return null
+  const status = connectionStatusMatch(connection, 1).connectionStatus
+  return status ? {
+    connectionStatus: status,
+    connectionCard: connectionActionPayloadFromStatus(status),
+  } : null
+}

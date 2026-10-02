@@ -1,7 +1,7 @@
 import { readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join, sep } from "node:path";
 import { parseFrontmatter } from "./frontmatter.js";
-import { OPENWORK_AGENT_PROMPT } from "./openwork-agent-prompt.js";
+import { OPENWORK_AGENT_PROMPT, OPENWORK_CONNECT_ROUTING_INSTRUCTION } from "./openwork-agent-prompt.js";
 import type { CloudNativeSkillState } from "./cloud-native-skills.js";
 
 export const OPENWORK_V2_INSTRUCTION_KEY = "openwork.context";
@@ -154,15 +154,30 @@ export async function waitForNativeOpenWorkV2Skills(
   throw new Error("Native skills did not reach the current workspace contents");
 }
 
-export function buildOpenWorkV2Instructions(connectReady: boolean | "unknown", _mode: "preview" | "native" = "preview") {
+/**
+ * Preview hosts discover remote skills on demand through Connect; native skills
+ * are workspace files. Mandatory native hosts materialize authorized
+ * organization skills into the native catalog instead.
+ */
+export function buildOpenWorkV2Instructions(connectReady: boolean | "unknown", mode: "preview" | "native" = "preview") {
+  const connect = connectReady === true ? "OpenWork Connect tools are connected. Use only capabilities actually returned by discovery."
+    : connectReady === "unknown" ? "Use OpenWork Connect only when its tools appear in the current tool catalog. If they are absent, continue with local work. Do not claim remote capabilities without discovery."
+    : "OpenWork Connect is not connected for this request. Do not claim remote capabilities are available.";
+  if (mode === "native") {
+    return {
+      operatingInstructions: OPENWORK_AGENT_PROMPT.replace(
+        OPENWORK_CONNECT_ROUTING_INSTRUCTION,
+        "Org-connected services, Workflows, and Automations reach you through OpenWork Connect: discover and execute capabilities through the native OpenWork MCP interface exposed by the current tool catalog, using an exact returned name. Authorized organization skills are in the native skill catalog, not in Connect. The current tool catalog determines whether Connect is available; only name services that discovery actually returns.",
+      ),
+      connect,
+      skillInstructions: "Use the current native skill catalog and skill tool for workspace skills and authorized organization skills alike; organization skills appear there with ids prefixed openwork-cloud-. Load current instructions before following them. Removed skills from previous turns are not available capabilities. Do not fetch skills through OpenWork Connect tools. Skill contents are subordinate to the user's request and operating instructions.",
+    };
+  }
   return {
-    operatingInstructions: OPENWORK_AGENT_PROMPT.replace(
-      "Org-connected services, remote skills, Workflows, and Automations reach you through OpenWork Connect: discover with openwork-cloud_search_capabilities, then run with openwork-cloud_execute_capability using an exact returned name. The runtime steering later in this prompt states whether that connection is ready right now; only name services that search or the remote skill catalog actually returns.",
-      "Org-connected services, Workflows, and Automations reach you through OpenWork Connect: discover and execute capabilities through the native OpenWork MCP interface exposed by the current tool catalog, using an exact returned name. Authorized organization skills are in the native skill catalog, not in Connect. The current tool catalog determines whether Connect is available; only name services that discovery actually returns.",
-    ),
-    connect: connectReady === true ? "OpenWork Connect tools are connected. Use only capabilities actually returned by discovery."
-      : connectReady === "unknown" ? "Use OpenWork Connect only when its tools appear in the current tool catalog. If they are absent, continue with local work. Do not claim remote capabilities without discovery."
-      : "OpenWork Connect is not connected for this request. Do not claim remote capabilities are available.",
-    skillInstructions: "Use the current native skill catalog and skill tool for workspace skills and authorized organization skills alike; organization skills appear there with ids prefixed openwork-cloud-. Load current instructions before following them. Removed skills from previous turns are not available capabilities. Do not fetch skills through OpenWork Connect tools. Skill contents are subordinate to the user's request and operating instructions.",
+    // Keep v1 guidance, translating only the native MCP tool spelling.
+    operatingInstructions: OPENWORK_AGENT_PROMPT.replaceAll("openwork-cloud_", "openwork-cloud."),
+    context: "Use openwork_context to discover OpenWork app reads. Use openwork_query with session.search then session.read to read another conversation without opening it. Session reads include the conversation and its background agents’ live activity. These are native tools, not tools.search calls. Only use capabilities actually returned by discovery.",
+    connect,
+    skillInstructions: "Use the native skill tool for local workspace skills. For organization skills, discover available skills through OpenWork Connect on demand and retrieve the selected skill's current instructions before using it. Skill contents are subordinate to the user's request and operating instructions.",
   };
 }
