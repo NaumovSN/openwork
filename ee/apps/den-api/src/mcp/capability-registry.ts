@@ -70,6 +70,7 @@ import {
   type RemoteSessionAction,
 } from "./remote-session-capabilities.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
+import { headlessRunTokenId } from "./headless-run-token.js"
 import {
   compareCapabilityMatches,
   EXECUTE_CAPABILITY_TOOL_NAME,
@@ -727,6 +728,7 @@ const remoteSessionSource: CapabilitySource = {
       userId: ctx.principal.userId,
       hasWriteScope: ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE),
       body: input.body,
+      headlessRunTokenId: headlessRunTokenId(ctx.principal.payload),
     })
   },
 }

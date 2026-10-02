@@ -841,6 +841,13 @@
       "when": 1790977843475,
       "tag": "0120_remote_session_requests",
       "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "5",
+      "when": 1790980102568,
+      "tag": "0121_slack_desktop_handoff",
+      "breakpoints": true
     }
   ]
 }

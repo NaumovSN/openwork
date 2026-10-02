@@ -88,14 +88,24 @@ export function stepLabel(name: string, input: Record<string, unknown> = {}) {
 export type HeadlessDeps = {
   config: HeadlessConfig
   fetch: typeof fetch
-  mintToken: (input: { userId: string; organizationId: string }) => Promise<{ token: string }>
+  /** `messageId` is the Slack run's turn id; Den remembers the run the token was minted for. */
+  mintToken: (input: { userId: string; organizationId: string; messageId?: string }) => Promise<{ token: string }>
 }
 
 function defaultDeps(): HeadlessDeps | null {
   const config = headlessRunnerConfig()
   // Loaded lazily: the minter pulls in the auth and database modules.
-  const mintToken: HeadlessDeps["mintToken"] = async (input) =>
-    (await import("../mcp/headless-run-token-mint.js")).mintHeadlessRunMcpToken(input)
+  const mintToken: HeadlessDeps["mintToken"] = async (input) => {
+    const minted = await (await import("../mcp/headless-run-token-mint.js")).mintHeadlessRunMcpToken(input)
+    try {
+      // Work this run hands to the member's desktop then reports back to its Slack thread.
+      const { recordSlackRunToken } = await import("./desktop-handoff.js")
+      await recordSlackRunToken({ tokenId: minted.tokenId, expiresAt: minted.expiresAt, userId: input.userId, messageId: input.messageId })
+    } catch {
+      // The run still works; only a desktop handoff's thread report is lost.
+    }
+    return minted
+  }
   return config ? { config, fetch, mintToken } : null
 }
 
@@ -141,7 +151,7 @@ async function send(
   model?: string,
 ) {
   // One fresh, member-scoped MCP token per admitted run; the runner holds it in memory only.
-  const { token } = await deps.mintToken(actor)
+  const { token } = await deps.mintToken({ userId: actor.userId, organizationId: actor.organizationId, messageId })
   const { status, payload } = await call(deps, "POST", `/v1/sessions/${encodeURIComponent(sessionId)}/turns`, {
     messageId,
     prompt,

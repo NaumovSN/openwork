@@ -76,6 +76,20 @@ platform capability are rechecked while processing each turn.
   minutes, and unused install OAuth state after ten minutes. Native sessions keep
   their existing retention policy. Deleting a connector removes its Slack data.
 
+## Work handed to the desktop
+
+On the headless runner, Den records which Slack run each MCP token was minted
+for (`slack_assistant_run_token`). When that run calls `remote-session:create`
+with target `desktop`, the command is linked to the thread its reply went to
+(`slack_assistant_desktop_handoff`); nothing the model sends picks the thread.
+A sweep on worker nodes then posts, mentioning the member: the finished answer
+(first ~600 characters, with mentions and links escaped), a session failure, an
+unclaimed command expiring, or a delivery failure, each once; and "waiting for
+you to approve" once per waiting episode. Leases keep several Den instances from
+posting twice. Nothing is posted once the assistant is off, the member lost
+access, or Slack rejects the thread. A crash between posting and recording the
+post can repeat that one message. OpenWork Web runs have no such link yet.
+
 There is no atomic transaction spanning Slack and the database. A process crash
 after Slack accepts a chunk but before its checkpoint commits can duplicate that
 chunk. A crash before an empty session is saved can leave an unused native

@@ -12,6 +12,7 @@ import {
 } from "@openwork/types/automations"
 import { db } from "../db.js"
 import { env } from "../env.js"
+import { appLogger } from "../observability/logger.js"
 import {
   getOpenWorkWebRuntimeAccess,
   OPENWORK_WEB_ACCESS_REQUIRED_CODE,
@@ -302,6 +303,16 @@ export type RemoteSessionExecuteDeps = {
   }) => Promise<{ connected: boolean; controlCapable: boolean }>
   /** How long a desktop request is awaited before returning its requestId. */
   requestWait?: { timeoutMs: number; pollMs: number }
+  /**
+   * Links a queued desktop command to the run that created it (a Slack thread),
+   * so the outcome is posted there. Resolves true when linked.
+   */
+  linkDesktopCommand?: (input: {
+    commandId: string
+    organizationId: DenTypeId<"organization">
+    userId: string
+    runTokenId: string
+  }) => Promise<boolean>
 }
 
 export type RemoteSessionToolResult = {
@@ -517,6 +528,9 @@ export const DEFAULT_REMOTE_SESSION_DEPS: RemoteSessionExecuteDeps = {
   desktopPresence: defaultDesktopPresence,
   requestStore: databaseRemoteSessionRequestStore,
   desktopRunner: defaultDesktopRunner,
+  // Loaded lazily: the Slack module pulls in the assistant repository.
+  linkDesktopCommand: async (input) =>
+    (await import("../slack-assistant/desktop-handoff.js")).linkDesktopCommandToSlack(input),
 }
 
 const DESKTOP_REQUEST_WAIT = { timeoutMs: 20_000, pollMs: 500 }
@@ -749,6 +763,29 @@ export type RemoteSessionExecuteInput = {
   userId: string
   hasWriteScope: boolean
   body: unknown
+  /** Set when the call is made with a headless-run token Den minted (for example for a Slack run). */
+  headlessRunTokenId?: string | null
+}
+
+/** Never fails the create: the command is already queued, only the thread report is lost. */
+async function linkToOriginatingRun(
+  deps: RemoteSessionExecuteDeps,
+  input: RemoteSessionExecuteInput,
+  commandId: string,
+  hasPrompt: boolean,
+) {
+  if (!hasPrompt || !input.headlessRunTokenId || !deps.linkDesktopCommand) return false
+  try {
+    return await deps.linkDesktopCommand({
+      commandId,
+      organizationId: input.organizationId,
+      userId: input.userId,
+      runTokenId: input.headlessRunTokenId,
+    })
+  } catch (error) {
+    appLogger.warn("remote_session_desktop_link_failed", { command_id: commandId, error })
+    return false
+  }
 }
 
 export async function executeRemoteSessionCapability(
@@ -870,11 +907,18 @@ export async function executeRemoteSessionCapability(
         ttlMs: DEFAULT_TTL_MS,
         idempotencyKey: createDenTypeId("remoteSessionCommand"),
       })
+      const postsToThread = await linkToOriginatingRun(deps, input, command.id, body.prompt !== undefined)
       return jsonResult({
         target: "desktop",
         state: "queued",
         commandId: command.id,
         expiresAt: command.expiresAt,
+        ...(postsToThread
+          ? {
+              resultPostedInThread: true,
+              note: "OpenWork will post the result in this Slack thread when the desktop finishes, fails, or needs approval. Tell the person that, then end your turn; for status questions later, use remote-session:read with this commandId.",
+            }
+          : {}),
       })
     }
   }

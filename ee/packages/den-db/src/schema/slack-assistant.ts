@@ -1,4 +1,4 @@
-import { boolean, index, int, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
+import { boolean, index, int, mysqlEnum, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { compatJsonColumn, denTypeIdColumn, encryptedMediumTextColumn, encryptedTextColumn } from "../columns"
 
 // One app per connector; teamId is globally unique so a Slack workspace cannot
@@ -92,4 +92,52 @@ export const SlackAssistantOAuthStateTable = mysqlTable(
     expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
   },
   (t) => [index("slack_assistant_oauth_expiry").on(t.expiresAt)],
+)
+
+/**
+ * Which Slack run a headless-run MCP token was minted for. Den writes this row
+ * itself when it mints the token, so a tool call made with that token can be
+ * traced back to its Slack thread without trusting anything the model sends.
+ */
+export const SlackAssistantRunTokenTable = mysqlTable(
+  "slack_assistant_run_token",
+  {
+    tokenId: denTypeIdColumn("oauthAccessToken", "token_id").primaryKey(),
+    connectionId: denTypeIdColumn("externalMcpConnection", "connection_id").notNull(),
+    eventId: varchar("event_id", { length: 64 }).notNull(),
+    userId: denTypeIdColumn("user", "user_id").notNull(),
+    expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
+  },
+  (t) => [index("slack_assistant_run_token_expiry").on(t.expiresAt)],
+)
+
+/**
+ * Work a Slack run handed to the member's desktop (`remote-session:create`
+ * with target "desktop"). The outcome is posted to the originating thread once;
+ * `postedOutcome` stays null until then. Leases let several Den instances share
+ * the sweep without posting twice.
+ */
+export const SlackAssistantDesktopHandoffTable = mysqlTable(
+  "slack_assistant_desktop_handoff",
+  {
+    commandId: denTypeIdColumn("remoteSessionCommand", "command_id").primaryKey(),
+    connectionId: denTypeIdColumn("externalMcpConnection", "connection_id").notNull(),
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    /** The member whose desktop runs the work; the command is read as them. */
+    userId: denTypeIdColumn("user", "user_id").notNull(),
+    eventId: varchar("event_id", { length: 64 }).notNull(),
+    teamId: varchar("team_id", { length: 64 }).notNull(),
+    channelId: varchar("channel_id", { length: 64 }).notNull(),
+    threadTs: varchar("thread_ts", { length: 64 }).notNull(),
+    recipientUserId: varchar("recipient_user_id", { length: 64 }).notNull(),
+    postedOutcome: mysqlEnum("posted_outcome", ["finished", "failed", "expired", "undeliverable", "abandoned"]),
+    /** The current waiting episode was already announced; cleared when the session moves on. */
+    waitingPosted: boolean("waiting_posted").notNull().default(false),
+    attempts: int("attempts").notNull().default(0),
+    availableAt: timestamp("available_at", { fsp: 3 }).notNull().defaultNow(),
+    leaseUntil: timestamp("lease_until", { fsp: 3 }),
+    leaseOwner: varchar("lease_owner", { length: 64 }),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (t) => [index("slack_assistant_desktop_handoff_queue").on(t.postedOutcome, t.availableAt)],
 )
