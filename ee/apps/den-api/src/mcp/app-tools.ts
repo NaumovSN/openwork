@@ -155,7 +155,7 @@ export async function resolveMcpAppTools(ctx: CapabilityRegistryContext, declara
       throw unavailable(tool, "Apps can bind saved Workflows, connection tools, and OpenWork actions that read, not skills, remote sessions, or admin tools.")
     }
     const checked = mcpAppToolBindingSchema.safeParse(binding)
-    if (!checked.success) throw unavailable(tool, "its input schema is too large or is not an object schema.")
+    if (!checked.success) throw unavailable(tool, "its input schema is not an object schema.")
     return checked.data
   }
 
