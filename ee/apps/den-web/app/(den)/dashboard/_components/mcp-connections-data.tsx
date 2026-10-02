@@ -1,13 +1,24 @@
 "use client";
 
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { DenRequestCanceledError, DenRequestTimeoutError, getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import {
+  isCurrentMemberApiKeyBoundary,
+  MEMBER_API_KEY_UNCERTAIN_MESSAGE,
+  memberApiKeyRequest,
+  nextMemberApiKeyBoundary,
+  settleMemberApiKeySave,
+  type MemberApiKeyBoundary,
+  type MemberApiKeySaveOutcome,
+} from "./member-api-key";
 import {
   type ExternalMcpDiagnostic,
   parseExternalMcpDiagnostic,
 } from "./mcp-tool-error-attribution";
 import type { McpAuthorizationDebugDetails } from "./mcp-authorization-url";
+import { libraryQueryKeys } from "./library-data";
 
 const ORG_SCOPE_HEADER = "x-openwork-org-id";
 
@@ -24,7 +35,17 @@ function requireOrgId(orgId: string | null) {
 
 export type ExternalMcpAuthType = "oauth" | "apikey" | "none";
 export type ExternalMcpCredentialMode = "shared" | "per_member";
+export type ExternalMcpApiKeyAuthScheme = "bearer" | "token";
 export type ExternalMcpConnectionScope = "usable" | "manageable";
+
+export const DEFAULT_API_KEY_AUTH_SCHEME: ExternalMcpApiKeyAuthScheme = "bearer";
+
+export function apiKeyAuthSchemeInput(
+  authType: ExternalMcpAuthType,
+  apiKeyAuthScheme: ExternalMcpApiKeyAuthScheme,
+): { apiKeyAuthScheme?: ExternalMcpApiKeyAuthScheme } {
+  return authType === "apikey" ? { apiKeyAuthScheme } : {};
+}
 
 export type ExternalMcpAccessSummary = {
   orgWide: boolean;
@@ -43,6 +64,7 @@ export type ExternalMcpConnection = {
   url: string;
   authType: ExternalMcpAuthType;
   credentialMode: ExternalMcpCredentialMode;
+  apiKeyAuthScheme: ExternalMcpApiKeyAuthScheme;
   /** True when granted members may use this connection as a standard MCP server with its own tool catalog. */
   exposeDirectly: boolean;
   connected: boolean;
@@ -353,6 +375,7 @@ export function useUpdateMcpConnectionToolPolicy(connectionId: string) {
 const RUN_TOOL_REQUEST_TIMEOUT_MS = 160000;
 
 export function useRunMcpConnectionTool(connectionId: string) {
+  const queryClient = useQueryClient();
   const { orgId } = useOrgDashboard();
   return useMutation({
     mutationFn: async (input: { toolName: string; arguments: Record<string, unknown> }): Promise<ExternalMcpToolRun> => {
@@ -398,6 +421,10 @@ export function useRunMcpConnectionTool(connectionId: string) {
         inspection: parseToolCallInspection(payload.inspection),
       };
     },
+    onSettled: () => Promise.all([
+      queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
+      queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items }),
+    ]),
   });
 }
 
@@ -652,6 +679,7 @@ export type CreateMcpConnectionInput = {
   credentialMode: ExternalMcpCredentialMode;
   exposeDirectly?: boolean;
   apiKey?: string;
+  apiKeyAuthScheme?: ExternalMcpApiKeyAuthScheme;
   oauthClient?: {
     clientId: string;
     clientSecret?: string;
@@ -680,6 +708,7 @@ export type UpdateMcpConnectionInput = {
   credentialMode: ExternalMcpCredentialMode;
   exposeDirectly: boolean;
   apiKey?: string;
+  apiKeyAuthScheme?: ExternalMcpApiKeyAuthScheme;
   oauthClient?: {
     clientId: string;
     clientSecret?: string;
@@ -943,6 +972,126 @@ export function useStartMcpConnectionOAuth() {
       return payload as { status: "connected" | "needs_auth"; authorizeUrl: string | null };
     },
   });
+}
+
+type ActiveMemberApiKeyAttempt = {
+  boundary: MemberApiKeyBoundary;
+  controller: AbortController;
+};
+
+export type MemberApiKeySaveResult = MemberApiKeySaveOutcome & { attemptGeneration: number };
+
+export function memberApiKeySaveErrorMessage(_cause: unknown): string {
+  return MEMBER_API_KEY_UNCERTAIN_MESSAGE;
+}
+
+/**
+ * Saves a caller-owned API key without placing it in TanStack mutation state.
+ * Only the connection id is retained while the request is pending.
+ */
+export function useSaveMyMcpApiKey(connectionId: string | null) {
+  const queryClient = useQueryClient();
+  const { orgId } = useOrgDashboard();
+  const organizationId = orgId ?? null;
+  const boundaryRef = useRef<MemberApiKeyBoundary>({ organizationId, connectionId, generation: 0 });
+  const renderedBoundary = nextMemberApiKeyBoundary(boundaryRef.current, organizationId, connectionId);
+  if (renderedBoundary !== boundaryRef.current) boundaryRef.current = renderedBoundary;
+  const activeAttempt = useRef<ActiveMemberApiKeyAttempt | null>(null);
+  const [pendingAttempt, setPendingAttempt] = useState<{ connectionId: string; generation: number } | null>(null);
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      const boundary = boundaryRef.current;
+      boundaryRef.current = nextMemberApiKeyBoundary(boundary, boundary.organizationId, boundary.connectionId, true);
+      activeAttempt.current?.controller.abort();
+      activeAttempt.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const boundary = boundaryRef.current;
+    const active = activeAttempt.current;
+    if (active && !isCurrentMemberApiKeyBoundary(boundary, active.boundary)) {
+      active.controller.abort();
+      activeAttempt.current = null;
+    }
+    setPendingAttempt((pending) => pending && pending.generation !== boundary.generation ? null : pending);
+  }, [connectionId, organizationId]);
+
+  const cancel = useCallback(() => {
+    const boundary = boundaryRef.current;
+    boundaryRef.current = nextMemberApiKeyBoundary(boundary, boundary.organizationId, boundary.connectionId, true);
+    activeAttempt.current?.controller.abort();
+    activeAttempt.current = null;
+    if (mounted.current) setPendingAttempt(null);
+  }, []);
+
+  const save = useCallback(async (apiKey: string): Promise<MemberApiKeySaveResult> => {
+    const currentBoundary = boundaryRef.current;
+    const attemptOrganizationId = currentBoundary.organizationId;
+    const attemptConnectionId = currentBoundary.connectionId;
+    if (!attemptOrganizationId || !attemptConnectionId) {
+      return { kind: "stale", attemptGeneration: currentBoundary.generation };
+    }
+    const attemptBoundary = nextMemberApiKeyBoundary(
+      currentBoundary,
+      attemptOrganizationId,
+      attemptConnectionId,
+      true,
+    );
+    boundaryRef.current = attemptBoundary;
+    activeAttempt.current?.controller.abort();
+    const controller = new AbortController();
+    const attempt = { boundary: attemptBoundary, controller };
+    activeAttempt.current = attempt;
+    setPendingAttempt({ connectionId: attemptConnectionId, generation: attemptBoundary.generation });
+    const outcome = await settleMemberApiKeySave({
+      request: async () => {
+        const request = memberApiKeyRequest(attemptConnectionId, attemptOrganizationId, apiKey);
+        const { response } = await requestJson(
+          request.path,
+          { ...request.init, signal: controller.signal },
+          15000,
+        );
+        return { ok: response.ok, status: response.status };
+      },
+      refresh: async () => {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
+          queryClient.invalidateQueries({ queryKey: libraryQueryKeys.items }),
+        ]);
+      },
+      isCurrent: () => mounted.current
+        && activeAttempt.current === attempt
+        && isCurrentMemberApiKeyBoundary(boundaryRef.current, attemptBoundary),
+    });
+    try {
+      return { ...outcome, attemptGeneration: attemptBoundary.generation };
+    } finally {
+      if (activeAttempt.current === attempt) {
+        activeAttempt.current = null;
+        if (mounted.current) {
+          setPendingAttempt((pending) => pending?.generation === attemptBoundary.generation ? null : pending);
+        }
+      }
+    }
+  }, [queryClient]);
+
+  const isCurrentAttempt = useCallback((attemptGeneration: number): boolean => (
+    mounted.current && boundaryRef.current.generation === attemptGeneration
+  ), []);
+  const currentPendingAttempt = pendingAttempt?.generation === boundaryRef.current.generation ? pendingAttempt : null;
+
+  return {
+    cancel,
+    isCurrentAttempt,
+    isPending: currentPendingAttempt !== null,
+    pendingConnectionId: currentPendingAttempt?.connectionId ?? null,
+    save,
+  };
 }
 
 export function useDisconnectMyProviderAccount() {

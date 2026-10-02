@@ -27,6 +27,8 @@ export function ApiKeyFields({ name, saving, error, onSave }: {
           kind="secret"
           name="connector-api-key"
           aria-label="API key"
+          autoComplete="off"
+          data-ph-no-capture
           placeholder={`${name} API key`}
           value={apiKey}
           onChange={(event) => setApiKey(event.target.value)}
