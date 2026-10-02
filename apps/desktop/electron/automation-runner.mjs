@@ -316,6 +316,19 @@ export function runnerTokenAudience(token) {
   return runnerTokenBinding(token)?.audience ?? null
 }
 
+const RUNNER_OFF_VALUES = new Set(["off", "0", "false", "disabled"])
+
+/**
+ * `OPENWORK_AUTOMATION_RUNNER=off` keeps this desktop from claiming any
+ * Automation run or remote-session command. Eval desktops set it by default:
+ * Den hands a member's work to any of that member's runners, so a test
+ * desktop signed in to a real account would otherwise take real work.
+ */
+export function automationRunnerDisabledReason(env) {
+  const value = String(env?.OPENWORK_AUTOMATION_RUNNER ?? "").trim().toLowerCase()
+  return RUNNER_OFF_VALUES.has(value) ? `OPENWORK_AUTOMATION_RUNNER=${value}` : null
+}
+
 export function createDesktopAutomationRunner(options) {
   const fetchImpl = options.fetchImpl ?? fetch
   const random = options.random ?? Math.random
@@ -669,8 +682,18 @@ export function createDesktopAutomationRunner(options) {
     void connectLoop(state)
   }
 
+  const disabledReason = options.disabledReason ?? null
+  let loggedDisabled = false
+
   return {
     configure(next) {
+      if (disabledReason) {
+        if (next && !loggedDisabled) {
+          loggedDisabled = true
+          options.log?.(`ignoring runner configuration: disabled by ${disabledReason}; this desktop will not claim Automation runs or remote-session commands`)
+        }
+        return { connected: false }
+      }
       const baseUrl = next ? normalizeRunnerBaseUrl(next.baseUrl) : null
       const token = next?.token ? String(next.token) : ""
       const binding = token ? runnerTokenBinding(token) : null

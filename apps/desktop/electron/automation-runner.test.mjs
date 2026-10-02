@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  automationRunnerDisabledReason,
   classifyAutomationExecutionError,
   createDesktopAutomationRunner,
   executeDesktopAutomation,
@@ -399,6 +400,47 @@ test("a runner credential bound elsewhere reports why this desktop stays disconn
   assert.deepEqual(logged, [
     "rejected runner credential for https://den.example.com/api/den"
       + ": token audience https://api.example.com",
+  ])
+})
+
+test("OPENWORK_AUTOMATION_RUNNER=off disables the runner; other values leave it on", () => {
+  for (const value of ["off", "OFF", " 0 ", "false", "disabled"]) {
+    assert.equal(
+      automationRunnerDisabledReason({ OPENWORK_AUTOMATION_RUNNER: value }),
+      `OPENWORK_AUTOMATION_RUNNER=${value.trim().toLowerCase()}`,
+    )
+  }
+  for (const env of [{}, { OPENWORK_AUTOMATION_RUNNER: "" }, { OPENWORK_AUTOMATION_RUNNER: "on" }, { OPENWORK_AUTOMATION_RUNNER: "1" }]) {
+    assert.equal(automationRunnerDisabledReason(env), null)
+  }
+})
+
+test("a disabled runner ignores renderer configuration and never contacts Den", async () => {
+  const logged = []
+  const attempted = []
+  const runner = createDesktopAutomationRunner({
+    disabledReason: "OPENWORK_AUTOMATION_RUNNER=off",
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" }),
+    fetchImpl: async (url) => {
+      attempted.push(String(url))
+      throw new Error("no network in test")
+    },
+    log: (state) => logged.push(state),
+  })
+  const configuration = {
+    baseUrl: "https://den.example.com",
+    token: runnerTokenFor("https://den.example.com"),
+    runnerId: "runner-1",
+  }
+  assert.deepEqual(runner.configure(configuration), { connected: false })
+  assert.deepEqual(runner.configure(configuration), { connected: false })
+  assert.deepEqual(runner.wake(), { polled: false })
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  runner.stop()
+  assert.deepEqual(attempted, [])
+  assert.deepEqual(logged, [
+    "ignoring runner configuration: disabled by OPENWORK_AUTOMATION_RUNNER=off;"
+      + " this desktop will not claim Automation runs or remote-session commands",
   ])
 })
 

@@ -63,7 +63,7 @@ import { createDesktopTransferRegistry, downloadBinaryToPath, uploadMultipartFro
 import {
   createLinuxDesktopIntegration,
 } from "./linux-desktop-integration.mjs";
-import { createDesktopAutomationRunner, normalizeRunnerBaseUrl } from "./automation-runner.mjs";
+import { automationRunnerDisabledReason, createDesktopAutomationRunner, normalizeRunnerBaseUrl } from "./automation-runner.mjs";
 import {
   desktopActivationRequired,
   enterprisePreactivationCommandAllowed,
@@ -1368,7 +1368,12 @@ const legacyRunnerBaseUrls = [
     : null,
   `${DEFAULT_DEN_BASE_URL}/api/den`,
 ].map((value) => normalizeRunnerBaseUrl(value)).filter(Boolean);
+const automationRunnerDisabledBy = automationRunnerDisabledReason(process.env);
+if (automationRunnerDisabledBy) {
+  console.info(`[automation-runner] disabled by ${automationRunnerDisabledBy}; renderer runner configuration will be ignored`);
+}
 const desktopAutomationRunner = createDesktopAutomationRunner({
+  disabledReason: automationRunnerDisabledBy,
   // v1 credentials predate token audiences. Keep them usable during the Den
   // rollout only for endpoints trusted before the renderer starts issuing IPC.
   legacyBaseUrls: legacyRunnerBaseUrls,
