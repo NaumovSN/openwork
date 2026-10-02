@@ -544,7 +544,7 @@ async function creationJourney({ world, agent, user, probe, step, evidence }: Sp
       await agent.send(prompt);
       await user.see({ text: "Needs a fix" }, { timeoutMs: 120_000 });
       await user.see({ text: "The App could not be created." }, { timeoutMs: 30_000 });
-      await user.notSee({ role: "button", label: "Stop" });
+      expect(await probe.eventually(async () => (await probe.dom('button[aria-label="Stop"]')).elements, { within: 30_000, intervalMs: 200, label: "the failed creation turn finishes before the next workload", until: elements => elements.length === 0 })).toHaveLength(0);
       expect((await probe.dom('[data-built-app-preview]')).elements).toHaveLength(0);
       evidence.recordAssertionEvidence("A real compilation failure never becomes readiness", `${name}: create_app rejects invalid source; the creation step says Needs a fix and opens no App.`, true);
       await user.screenshot();
