@@ -258,6 +258,24 @@ test("spawnElectron maps the v2 eval lane before Daytona caller overrides", asyn
   assert.match(argsText(starts[1] ?? { args: [] }), /OPENWORK_ENGINE_V2_PREVIEW=.*sidecar/);
 });
 
+test("spawnElectron starts Daytona desktops with no Automation runner unless a caller opts in", async () => {
+  const { exec, calls } = createFakeExec((port) => `https://cdp-${port}.example.test`);
+  const host = createDaytonaHost({
+    sandboxId: "openwork-test-runner-default",
+    log: () => undefined,
+    exec,
+    repoRoot: "/repo",
+    waitForCdp: successfulPolls(),
+  });
+  await host.spawnElectron("runner-default");
+  await host.spawnElectron("runner-opt-in", { env: { OPENWORK_AUTOMATION_RUNNER: "on" } });
+
+  const starts = calls.filter((call) => argsText(call).includes("/workspace/.devcontainer/start-daytona-electron.sh"));
+  assert.match(argsText(starts[0] ?? { args: [] }), /OPENWORK_AUTOMATION_RUNNER=.*off/);
+  assert.match(argsText(starts[1] ?? { args: [] }), /OPENWORK_AUTOMATION_RUNNER=.*on/);
+  assert.doesNotMatch(argsText(starts[1] ?? { args: [] }), /OPENWORK_AUTOMATION_RUNNER=.*off/);
+});
+
 test("retained packaged Electron uses an explicit binary, complete blank profile, and same-profile VM shortcuts", async () => {
   const { exec, calls } = createFakeExec((port) => `https://cdp-${port}.example.test`);
   const host = createDaytonaHost({
