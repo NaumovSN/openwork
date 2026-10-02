@@ -7036,7 +7036,7 @@ export type MintAutomationRunnerTokenData = {
     runnerId: string;
     protocolVersion: 1;
     supportedExecutionTargets: ["desktop"];
-    capabilities?: Array<"model_attention_v1" | "remote_session_v1">;
+    capabilities?: Array<"model_attention_v1" | "remote_session_v1" | "remote_session_control_v1">;
     appVersion: string;
     platform: "darwin" | "win32" | "linux";
     concurrency: number;
