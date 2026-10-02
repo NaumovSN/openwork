@@ -17,6 +17,8 @@ export type ConnectorToolIdentity = {
   serviceUrl: string | null;
   toolNamespace: string | null;
   connectionId: string | null;
+  /** Live member status from the org connection list; absent when unknown. */
+  connectedForMe?: boolean;
 };
 
 const NATIVE_CONNECTOR_IDENTITIES: ConnectorToolIdentity[] = [
@@ -101,6 +103,7 @@ function identityFromConnection(connection: DenExternalMcpConnection): Connector
     serviceUrl: native?.serviceUrl ?? url,
     toolNamespace: null,
     connectionId: connection.id,
+    connectedForMe: connection.connectedForMe && connection.needsReconnect !== true,
   };
 }
 
