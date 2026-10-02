@@ -204,8 +204,8 @@ test("Den Web gives two ordinary members private keys on one admin-created conne
       oauth: mcpMock({ isolatedProcessEnv: true }),
     },
   });
-  const alpha = await inviteMember(den, "alpha", { name: "Member A", password: randomBytes(24).toString("base64url") });
-  const beta = await inviteMember(den, "beta", { name: "Member B", password: randomBytes(24).toString("base64url") });
+  const alpha = await inviteMember(den, "alpha", { name: "Member A", password: `Aa1!${randomBytes(18).toString("base64url")}` });
+  const beta = await inviteMember(den, "beta", { name: "Member B", password: `Aa1!${randomBytes(18).toString("base64url")}` });
 
   const accepted = new Set<string>();
   const wire: { fingerprint: string; status: number; scheme: string }[] = [];
@@ -297,10 +297,11 @@ test("Den Web gives two ordinary members private keys on one admin-created conne
     await admin.see({ role: "heading", label: `Add ${CONNECTION_NAME}` }, { timeoutMs: READINESS_TIMEOUT_MS });
     await admin.see({ role: "radio", label: /Each person adds a key/ });
     await admin.click({ role: "radio", label: /Each person adds a key/ });
-    await admin.see({ role: "combobox", label: /Authorization scheme/ }, { text: "Bearer" });
-    await admin.click({ role: "combobox", label: /Authorization scheme/ });
-    await admin.click({ role: "option", label: "Token" });
-    await admin.see({ role: "combobox", label: /Authorization scheme/ }, { text: "Token" });
+    await admin.see({ role: "button", label: /Authorization scheme/ }, { text: "Bearer" });
+    await admin.click({ role: "button", label: /Authorization scheme/ });
+    expect((await adminPage.dom('[role="listbox"] [role="option"]')).elements.map(option => option.text)).toEqual(["Bearer", "Token"]);
+    await admin.click({ role: "option", nth: 1 });
+    await admin.see({ role: "button", label: /Authorization scheme/ }, { text: "Token" });
     await admin.see({ role: "button", label: "Use individual keys" });
     await admin.notSee({ label: "API key" });
     expect((await adminPage.dom('input[name="sign-in-mode"][value="per_member"]:checked')).elements).toHaveLength(1);
