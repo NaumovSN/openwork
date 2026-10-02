@@ -108,8 +108,50 @@ Create a **private service** so it has no public URL; only den-api reaches it. U
 
 On den-api, set `DEN_HEADLESS_RUNNER_URL` to the private service address (for example `http://headless-runner:8795`) and `DEN_HEADLESS_RUNNER_TOKEN` to the same value as `HEADLESS_API_TOKEN`. Then turn on **Slack Assistant** and **Slack Assistant: headless runtime** for an organization in `/admin`.
 
+## Run as a Worker (Cloudflare or celld)
+
+The same runner also builds as a Worker with **one Durable Object per session** (`src/worker`). It serves the same HTTP API, so den-api only needs a different `DEN_HEADLESS_RUNNER_URL`. It runs on Cloudflare Workers and, with the same `wrangler.jsonc`, on [celld](https://celld.dev): self-hosted Workers and Durable Objects whose state lives in an S3-compatible bucket you own.
+
+```
+caller ─► Worker (bearer token, routing) ─► HeadlessSession "hs_…" (Store + Runner + its own SQLite)
+```
+
+What changes compared with the Node server:
+
+| | Node server | Worker |
+|---|---|---|
+| State | One SQLite file for every session, on one volume | One SQLite database per session, inside its Durable Object (replicated by Cloudflare, or by celld to your bucket) |
+| Scaling | One instance | Sessions spread across the runtime; an idle session costs nothing but storage |
+| Concurrency | `HEADLESS_MAX_CONCURRENT_TURNS` per process | One running turn per session; there is no global limit, so the Gateway's rate limits are the cap |
+| Restart mid-turn | Turns marked `interrupted` (`runner_restarted`) at startup | The same, when the session's object next starts (a deploy, a Cloudflare restart, or a celld node loss). Den resumes them by re-sending the `messageId` |
+| Credentials | Memory only | Memory only, in the session's object. They are lost when the object restarts, which is what makes the turn resumable rather than silently continued |
+
+`HEADLESS_DB_PATH` and `HEADLESS_PORT` do not apply. A turn stays in memory while its model and MCP requests are in flight: an outbound request keeps a Durable Object running on both Cloudflare and celld.
+
+```sh
+pnpm --filter @openwork-ee/headless-runner worker:e2e        # wrangler dev (local workerd)
+pnpm --filter @openwork-ee/headless-runner worker:e2e:celld  # celld dev; needs celld ≥ 0.6.1 on PATH or CELLD_BIN
+```
+
+Both run the Worker against a mock model and a mock MCP server, and check the API, per-turn credentials, a tool call, an MCP tool call, idempotent sends, and that a turn cut off by a runtime restart comes back `interrupted` and then resumes to completion.
+
+**Deploy to Cloudflare:** set the secret and the plain values, then deploy.
+
+```sh
+cd ee/apps/headless-runner
+pnpm dlx wrangler@4.142.0 secret put HEADLESS_API_TOKEN
+pnpm worker:deploy --var HEADLESS_MODEL_PROTOCOL:openai --var HEADLESS_MODEL_BASE_URL:https://inference.openworklabs.com/api/v1 \
+  --var HEADLESS_MODEL:<alias> --var HEADLESS_MCP_URL:https://api.openworklabs.com/mcp/agent
+```
+
+**Deploy to celld:** `celld deploy` reads the same `wrangler.jsonc` and bundles with esbuild (`CELLD_ESBUILD=node_modules/.bin/esbuild`). celld derives Durable Object ids from the script name, so keep `name` stable once sessions exist. Run at least two nodes on one bucket for failover; see the celld docs for TLS and the private peer network.
+
+`pnpm smoke:remote` runs one real turn against any deployed runner: `HEADLESS_URL`, `HEADLESS_API_TOKEN` and `SMOKE_MODEL_API_KEY` (plus `SMOKE_MCP_TOKEN` for tools).
+
+`worker-configuration.d.ts` holds the Workers runtime types for the compatibility date in `wrangler.jsonc`. Regenerate it with `pnpm worker:types` after changing that file.
+
 ## Limits and next steps
 
-- **Single instance.** State is one SQLite file. Scale by sharding sessions across instances, each with its own volume.
+- **Single instance (Node server).** State is one SQLite file. Scale by sharding sessions across instances, each with its own volume, or run the Worker build above.
 - **Credentials come from the caller.** For Slack, Den mints a short-lived, run-scoped MCP token (client `openwork-headless-run`, at most 60 minutes) for the linked member on every admitted run, and a fresh one each time it resumes a turn that paused for `credentials_refresh`. A run can last hours while no token outlives an hour, and a run nobody supervises loses its tools within the hour.
 - **Slack is the first caller.** Automations would be next, as an `AutomationEngineAdapter` over this API.

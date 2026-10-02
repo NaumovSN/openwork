@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
+import { nodeSqlite } from "../src/node-sqlite.js"
 import { buildContext, TRIMMED_TOOL_OUTPUT } from "../src/runner.js"
 import { Store, type StoredMessage } from "../src/store.js"
 import { calls, fakeMcp, makeRunner, scriptedModel, tempDbPath, text, waitForAbort } from "./helpers.js"
@@ -38,11 +39,12 @@ test("never writes caller credentials to disk", async () => {
   const path = tempDbPath()
   const mcp = fakeMcp({ lookup: () => "ok" })
   const { model } = scriptedModel([calls({ id: "c1", name: "lookup", input: {} }), text("done")])
-  const { store, runner } = makeRunner({ store: new Store(path), model, mcp: mcp.connector })
+  const driver = nodeSqlite(path)
+  const { store, runner } = makeRunner({ store: new Store(driver), model, mcp: mcp.connector })
   const session = store.createSession({})
   runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "go", credentials: creds })
   await runner.idle()
-  store.db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
+  driver.db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
   const bytes = readFileSync(path).toString("latin1")
   assert.ok(bytes.includes("done"))
   assert.ok(!bytes.includes(creds.modelApiKey))
@@ -131,7 +133,7 @@ test("a runaway queue is capped per conversation", () => {
 
 test("a crash mid-tool-call resumes without re-running the tool", async () => {
   const path = tempDbPath()
-  const crashed = new Store(path)
+  const crashed = new Store(nodeSqlite(path))
   const session = crashed.createSession({})
   crashed.admitTurn({ sessionId: session.id, messageId: "msg_1", prompt: "post the update", model: null })
   crashed.setTurnStatus(session.id, "msg_1", "running")
@@ -143,7 +145,7 @@ test("a crash mid-tool-call resumes without re-running the tool", async () => {
   })
   crashed.close()
 
-  const store = new Store(path)
+  const store = new Store(nodeSqlite(path))
   assert.equal(store.recoverInterruptedTurns(), 1)
   assert.equal(store.getTurn(session.id, "msg_1")?.status, "interrupted")
 

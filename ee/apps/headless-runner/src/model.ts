@@ -30,6 +30,8 @@ export class ModelError extends Error {
 }
 
 type Fetch = typeof fetch
+/** Calls the global fetch unbound: Workers throw "Illegal invocation" when it is called as a method of another object. */
+const globalFetch: Fetch = (input, init) => fetch(input, init)
 type Sleep = (ms: number, signal: AbortSignal) => Promise<void>
 
 const defaultSleep: Sleep = (ms, signal) =>
@@ -201,7 +203,7 @@ export function anthropicModel(options: {
   return {
     async complete(request) {
       const json = await postJson({
-        fetch: options.fetch ?? fetch,
+        fetch: options.fetch ?? globalFetch,
         sleep: options.sleep ?? defaultSleep,
         url: `${options.baseUrl}/messages`,
         headers: { "x-api-key": request.apiKey, "anthropic-version": "2023-06-01" },
@@ -325,7 +327,7 @@ export function openAIModel(options: { baseUrl: string; maxOutputTokens: number;
   return {
     async complete(request) {
       const json = await postJson({
-        fetch: options.fetch ?? fetch,
+        fetch: options.fetch ?? globalFetch,
         sleep: options.sleep ?? defaultSleep,
         url: `${options.baseUrl}/chat/completions`,
         headers: { authorization: `Bearer ${request.apiKey}` },

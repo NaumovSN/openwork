@@ -16,25 +16,14 @@ import { serve } from "@hono/node-server"
 import { z } from "zod"
 import { createApp } from "../src/app.js"
 import { loadConfig } from "../src/config.js"
-import { FILE_TOOL_NAMES } from "../src/files.js"
-import { remoteMcpConnector } from "../src/mcp.js"
-import { anthropicModel, openAIModel } from "../src/model.js"
-import { Runner } from "../src/runner.js"
+import { nodeSqlite } from "../src/node-sqlite.js"
+import { createRunner } from "../src/runtime.js"
 import { Store } from "../src/store.js"
 
 const prompt = process.argv.slice(2).join(" ") || "Use OpenWork to find what I can connect to, then write a short summary to notes/summary.md."
 const config = loadConfig({ ...process.env, HEADLESS_DB_PATH: join(mkdtempSync(join(tmpdir(), "headless-smoke-")), "s.sqlite") })
-const store = new Store(config.dbPath)
-const runner = new Runner({
-  store,
-  model:
-    config.model.protocol === "anthropic"
-      ? anthropicModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens })
-      : openAIModel({ baseUrl: config.model.baseUrl, maxOutputTokens: config.model.maxOutputTokens }),
-  defaultModel: config.model.model,
-  mcp: config.mcp ? remoteMcpConnector({ url: config.mcp.url, allowlist: config.mcp.toolAllowlist, reservedNames: FILE_TOOL_NAMES }) : undefined,
-  limits: config.limits,
-})
+const store = new Store(nodeSqlite(config.dbPath))
+const runner = createRunner(config, store)
 const server = serve({ fetch: createApp({ store, runner, apiToken: config.apiToken }).fetch, port: 0 })
 await new Promise((resolve) => server.once("listening", resolve))
 const address = server.address()

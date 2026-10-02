@@ -3,6 +3,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { McpConnector } from "../src/mcp.js"
 import type { ModelClient, ModelRequest, ModelStep } from "../src/model.js"
+import { nodeSqlite } from "../src/node-sqlite.js"
 import { Runner, type RunnerOptions } from "../src/runner.js"
 import { Store } from "../src/store.js"
 import type { ToolCall } from "../src/types.js"
@@ -43,7 +44,7 @@ export function fakeMcp(handlers: Record<string, (input: Record<string, unknown>
 }
 
 export function makeRunner(input: { store?: Store; model: ModelClient; mcp?: McpConnector } & Partial<RunnerOptions>) {
-  const store = input.store ?? new Store(tempDbPath())
+  const store = input.store ?? new Store(nodeSqlite(tempDbPath()))
   const runner = new Runner({
     store,
     defaultModel: "gwm_test",

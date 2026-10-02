@@ -1,6 +1,6 @@
-import { timingSafeEqual } from "node:crypto"
 import { Hono } from "hono"
 import { z } from "zod"
+import { bearerAuth } from "./auth.js"
 import { normalizePath } from "./files.js"
 import type { Runner } from "./runner.js"
 import type { Store } from "./store.js"
@@ -36,21 +36,11 @@ export function createApp(input: {
   models?: () => Promise<ModelCatalog>
 }) {
   const { store, runner } = input
-  const expected = Buffer.from(input.apiToken)
-  /** Constant-time compare; only the length of the (random, 32+ char) token can leak. */
-  const tokenMatches = (candidate: string) => {
-    const actual = Buffer.from(candidate)
-    return actual.length === expected.length && timingSafeEqual(actual, expected)
-  }
   const app = new Hono()
 
   app.get("/health", (c) => c.json({ ok: true }))
 
-  app.use("/v1/*", async (c, next) => {
-    const match = /^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "")
-    if (!match || !tokenMatches(match[1])) return c.json({ error: "unauthorized" }, 401)
-    await next()
-  })
+  app.use("/v1/*", bearerAuth(() => input.apiToken))
 
   app.onError((error, c) => {
     console.error("[headless-runner] request failed", { path: c.req.path, error: error.message })

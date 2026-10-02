@@ -1,5 +1,5 @@
 import { z } from "zod"
-import type { Store } from "./store.js"
+import { utf8Length, type Store } from "./store.js"
 import type { ToolResult, ToolSpec } from "./types.js"
 
 /**
@@ -78,7 +78,7 @@ export const FILE_TOOL_NAMES: ReadonlySet<string> = new Set(FILE_TOOLS.map((tool
 const fail = (output: string): ToolResult => ({ output, isError: true })
 
 function checkedWrite(store: Store, sessionId: string, path: string, content: string): ToolResult {
-  const size = Buffer.byteLength(content)
+  const size = utf8Length(content)
   if (size > FILE_LIMITS.maxFileBytes) return fail(`File is larger than ${FILE_LIMITS.maxFileBytes} bytes.`)
   const files = store.listFiles(sessionId)
   const existing = files.find((file) => file.path === path)

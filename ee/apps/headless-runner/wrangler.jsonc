@@ -1,0 +1,16 @@
+// The headless runner as a Worker with one Durable Object per session.
+// Only keys that `celld deploy` also accepts are used, so the same file deploys to Cloudflare
+// (`wrangler deploy`) and to a self-hosted celld fleet (`celld deploy`). celld derives Durable
+// Object ids from the script name, so keep `name` stable once sessions exist.
+// Configuration (HEADLESS_* in the README) is set per deployment: secrets with
+// `wrangler secret put`, plain values with `--var NAME:value`.
+{
+  "name": "openwork-headless-runner",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "HEADLESS_SESSION", "class_name": "HeadlessSession" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["HeadlessSession"] }]
+}

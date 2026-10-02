@@ -1,2 +1,5 @@
 dist/
 data/
+.celld/
+.dev.vars
+.wrangler/

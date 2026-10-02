@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { FILE_LIMITS, normalizePath, runFileTool } from "../src/files.js"
 import { formatToolResult, modelToolName } from "../src/mcp.js"
+import { nodeSqlite } from "../src/node-sqlite.js"
 import { Store } from "../src/store.js"
 
 test("paths cannot escape the session workspace", () => {
@@ -14,7 +15,7 @@ test("paths cannot escape the session workspace", () => {
 })
 
 test("files are isolated per session and quota-limited", () => {
-  const store = new Store(":memory:")
+  const store = new Store(nodeSqlite(":memory:"))
   const a = store.createSession({})
   const b = store.createSession({})
   assert.equal(runFileTool(store, a.id, "write_file", { path: "x.md", content: "hello" }).isError, false)
