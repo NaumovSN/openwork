@@ -104,10 +104,10 @@ export function OrganizationMark({ name, size = "md" }: { name: string; size?: "
   );
 }
 
-/** A quiet group label with its count, e.g. "On this device 2". Sentence case (DESIGN C7). */
+/** A quiet group label with its count, e.g. "ON THIS DEVICE 2"; shown in capitals as in the Connect a provider design. */
 export function ProviderSectionLabel({ id, count, children }: { id?: string; count?: number; children: ReactNode }) {
   return (
-    <div className="flex items-center justify-between px-2 pb-1 text-xs font-medium text-muted-foreground">
+    <div className="flex items-center justify-between px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
       <span id={id}>{children}</span>
       {count !== undefined ? <span className="tabular-nums">{count}</span> : null}
     </div>

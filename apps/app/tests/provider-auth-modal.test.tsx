@@ -89,7 +89,8 @@ describe("connect providers gateway visibility", () => {
     await act(async () => root.render(<ProviderAuthModal {...props} openWorkModelsState="included" organizationName="Example Team" organizationProviderCount={2} organizationProviderIds={new Set(["google"])} />));
     const included = dialog().querySelector('[data-testid="included-openwork-provider"]');
     expect(included?.textContent).toContain("OpenWork Models");
-    expect(included?.textContent).toContain("Included");
+    expect(included?.textContent).toContain("Auto");
+    for (const word of ["Included", "Connected", "Free", "No account needed", "weekly limit"]) expect(dialog().textContent).not.toContain(word);
     expect(included?.querySelector("button")).toBeNull();
     expect(dialog().textContent).not.toContain("Subscribe");
     expect(dialog().textContent).toContain("2 included by Example Team");
@@ -103,7 +104,9 @@ describe("connect providers gateway visibility", () => {
     expect(providerButton("gateway-openai")).toBeUndefined();
     expect(providerButton("gateway-anthropic")).toBeUndefined();
     for (const id of ["openai", "anthropic", "custom-endpoint"]) {
-      expect(providerButton(id)?.textContent).toContain("Connected");
+      // A connected provider says how it is connected and offers no action word.
+      expect(providerButton(id)?.textContent).toContain("on this device");
+      expect(providerButton(id)?.textContent).not.toContain("Connect");
     }
     expect(providerButton("google")?.textContent).toContain("Connect");
     expect(providerButton("google")?.textContent).not.toContain("Connected");
@@ -166,13 +169,13 @@ describe("connect providers gateway visibility", () => {
   test("keeps existing entries when gateway IDs are omitted and updates when they arrive", async () => {
     const props = createProps();
     await act(async () => root.render(<ProviderAuthModal {...props} gatewayProviderIds={undefined} />));
-    expect(providerButton("gateway-openai")?.textContent).toContain("Connected");
-    expect(providerButton("gateway-anthropic")?.textContent).toContain("Connected");
+    expect(providerButton("gateway-openai")?.textContent).toContain("on this device");
+    expect(providerButton("gateway-anthropic")?.textContent).toContain("on this device");
 
     await act(async () => root.render(<ProviderAuthModal {...props} />));
     expect(providerButton("gateway-openai")).toBeUndefined();
     expect(providerButton("gateway-anthropic")).toBeUndefined();
-    expect(providerButton("custom-endpoint")?.textContent).toContain("Connected");
+    expect(providerButton("custom-endpoint")?.textContent).toContain("on this device");
   });
 
   test("does not render an empty connected group when only gateway providers are connected", async () => {
@@ -180,7 +183,7 @@ describe("connect providers gateway visibility", () => {
       <ProviderAuthModal {...createProps()} connectedProviderIds={[...gatewayProviderIds]} />,
     ));
 
-    expect(dialog().textContent).not.toContain("Connected");
+    expect(dialog().textContent).not.toContain("On this device");
     expect(dialog().textContent).not.toContain("All providers");
     expect(providerButton("openai")).toBeDefined();
     expect(providerButton("gateway-openai")).toBeUndefined();

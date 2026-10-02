@@ -63,9 +63,9 @@ export function publicModelTitle(model: ModelRef & { title?: string }): string |
   return title;
 }
 
-/** The free Auto row's meta line, the same in Settings and the Connect a provider sheet. */
-export function autoProviderSubtitle(signedIn: boolean) {
-  return signedIn ? "Auto · Free · weekly limit for your account" : "Auto · Free · No account needed · weekly limit on this device";
+/** The OpenWork Models row's meta line, the same in Settings and the Connect a provider sheet. */
+export function autoProviderSubtitle() {
+  return "Auto";
 }
 
 export function modelSubtitle(model: ModelOption, exhausted = false) {

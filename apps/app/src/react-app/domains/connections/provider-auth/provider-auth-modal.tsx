@@ -714,9 +714,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           <div className="truncate text-sm font-medium text-dls-text">{entry.name}</div>
           <div className="line-clamp-2 text-xs text-muted-foreground">{entrySubtitle(entry)}</div>
         </div>
-        {entry.connected ? (
-          <ProviderStatus tone="ready">Connected</ProviderStatus>
-        ) : (
+        {entry.connected ? null : (
           <span className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${active ? "bg-dls-text text-dls-surface" : "text-muted-foreground"}`}>
             Connect
           </span>
@@ -785,11 +783,11 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                           <ProviderTile providerId="openwork" size="sm" />
                           <div className="min-w-0 flex-1">
                             <div className="truncate text-sm font-medium text-dls-text">OpenWork Models</div>
-                            <div className="line-clamp-2 text-xs text-muted-foreground">{autoProviderSubtitle(Boolean(props.organizationName))}</div>
+                            <div className="line-clamp-2 text-xs text-muted-foreground">{autoProviderSubtitle()}</div>
                           </div>
-                          <ProviderStatus tone={props.openWorkModelsState === "off" || props.openWorkModelsState === "unavailable" ? "neutral" : "ready"}>
-                            {props.openWorkModelsState === "off" ? "Turned off" : props.openWorkModelsState === "unavailable" ? "Unavailable" : "Included"}
-                          </ProviderStatus>
+                          {props.openWorkModelsState === "off" || props.openWorkModelsState === "unavailable" ? (
+                            <ProviderStatus tone="neutral">{props.openWorkModelsState === "off" ? "Turned off" : "Unavailable"}</ProviderStatus>
+                          ) : null}
                         </div>
                       ) : null}
                       {filteredEntries.slice(0, connectedCount).map((entry, index) => renderEntry(entry, index))}

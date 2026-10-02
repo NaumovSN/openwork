@@ -148,7 +148,7 @@ export function AiSettingsView(props: AiSettingsViewProps) {
             : props.autoError ? <ProviderStatus tone="error">Could not verify</ProviderStatus>
             : autoAvailable ? <ProviderStatus tone="ready">Ready to use</ProviderStatus>
             : <ProviderStatus tone="neutral">Unavailable</ProviderStatus>}
-          meta={<ProviderMeta id="openwork" parts={[autoProviderSubtitle(signedIn)]} />}
+          meta={<ProviderMeta id="openwork" parts={[autoProviderSubtitle()]} />}
           actions={props.onSetAutoEnabled ? <Button variant="ghost" disabled={props.autoBusy || (autoOff && !props.autoPreferences?.canEnable)} onClick={() => void props.onSetAutoEnabled?.(autoOff)}>{autoOff ? "Turn on" : "Turn off"}</Button> : null}
         /> : null}
         {local.map((provider) => <ProviderRow
