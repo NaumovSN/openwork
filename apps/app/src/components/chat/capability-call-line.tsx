@@ -10,12 +10,7 @@ import {
   type ChatToolReconnectCallbacks,
 } from "@/components/tools/use-chat-tool-reconnect"
 import { Button } from "@/components/ui/button"
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible"
-import { getCapabilityCallQuote, getCapabilityCallSentence } from "@/lib/capability-call"
+import { getCapabilityCallSentence } from "@/lib/capability-call"
 import { trackToolCallDuration } from "@/lib/tool-call-duration"
 import { isToolPartInFlight } from "@/lib/tool-activity"
 import { cn } from "@/lib/utils"
@@ -79,6 +74,13 @@ function formatTechnicalValue(value: unknown): string {
 }
 
 /** One human sentence explaining what to do about a failed call. */
+/** First sentence of a raw tool error, short enough for the row. */
+function shortError(text: string | undefined): string | null {
+  const first = (text ?? "").replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s/)[0] ?? ""
+  if (!first) return null
+  return first.length > 90 ? `${first.slice(0, 89)}…` : first
+}
+
 function failureInstruction(part: DynamicToolUIPart, reconnectName: string | null): string {
   if (reconnectName) {
     return `${reconnectName} needs a fresh sign-in. Reconnect it, then retry.`
@@ -166,7 +168,6 @@ export function CapabilityCallLine({
   onReopenAuthorization,
 }: CapabilityCallLineProps) {
   const [open, setOpen] = useState(false)
-  const [detailsOpen, setDetailsOpen] = useState(false)
   const inFlight = !statusUnknown && isToolPartInFlight(part)
   const isFailed = part.state === "output-error"
   const duration = statusUnknown || hideDuration ? null : trackToolCallDuration(part)
@@ -196,95 +197,49 @@ export function CapabilityCallLine({
     )
   }
 
-  // Failures stay minimal until the user asks for more: one collapsed
-  // line, expanding into the Paper "Failed Call Card" (quote, instruction
-  // + Reconnect/Retry, technical details).
+  // A failed call is one row like every other step: what failed, a short
+  // reason or the fix on the same line, Reconnect when that is the fix, and
+  // the raw call behind the details icon (always visible on a failure).
   if (isFailed) {
     const sentence = getCapabilityCallSentence(part, { includeQuery: false, connectionName: connector?.name })
     const failureLabel = sentence.failure ?? `${sentence.past} failed`
-    const quote = sentence.failure ? null : getCapabilityCallQuote(part)
-    const initial = sentence.service?.charAt(0).toUpperCase() ?? null
+    const reason = reconnectState === "connected"
+      ? "Connection restored. Check whether the action finished before retrying."
+      : reconnectAction ? failureInstruction(part, reconnectAction.connectionName) : shortError(part.errorText)
     return (
-      <Collapsible
-        data-capability-call={part.toolName}
-        open={open}
-        onOpenChange={setOpen}
-        className={className}
-      >
-        <CollapsibleTrigger
-          className="group flex min-w-0 max-w-full cursor-pointer items-center gap-2 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
-          aria-label={open ? `${failureLabel}. Hide failure details` : `${failureLabel}. Show what to do next`}
-        >
+      <div data-capability-call={part.toolName} className={cn("group/step min-w-0", className)}>
+        <div className="flex min-h-6 min-w-0 items-center gap-2 text-sm text-muted-foreground">
           {connector ? <ConnectorMark connector={connector} /> : null}
-          <span className="min-w-0 truncate">{sentence.failure ?? sentence.past}</span>
-          {!sentence.failure ? <span className="shrink-0 text-xs text-dls-secondary">failed</span> : null}
-          {duration ? (
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span>
+          <span className="shrink-0">{failureLabel}</span>
+          {reason ? <span className="min-w-0 truncate text-xs text-muted-foreground" title={reason}>{reason}</span> : null}
+          {duration ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span> : null}
+          {reconnectAction && onReconnect ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="ms-auto shrink-0"
+              data-testid="chat-mcp-reconnect-action"
+              disabled={reconnectPresentation?.disabled}
+              title={`${reconnectPresentation?.buttonLabel} ${reconnectAction.connectionName}`}
+              aria-label={`${reconnectPresentation?.buttonLabel} ${reconnectAction.connectionName}`}
+              onClick={() => void handleReconnect()}
+            >
+              <ReconnectIcon
+                data-icon="inline-start"
+                className={cn("size-3.5", reconnectState === "opening" && "animate-spin")}
+                aria-hidden="true"
+              />
+              {reconnectPresentation?.buttonLabel}
+            </Button>
           ) : null}
-        </CollapsibleTrigger>
-        <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
-          <div className="mt-2 flex flex-col gap-2 border-s border-border ps-3">
-            <div className="flex min-w-0 items-center gap-2.5">
-              {connector ? (
-                <ConnectorMark connector={connector} />
-              ) : initial ? (
-                <span
-                  aria-hidden="true"
-                  className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-semibold text-foreground"
-                >
-                  {initial}
-                </span>
-              ) : null}
-              <span className="min-w-0 truncate text-sm font-medium text-foreground">
-                {sentence.failure ?? sentence.present}
-              </span>
-            </div>
-            {quote ? (
-              <div className="flex min-w-0 gap-2.5 ps-0.5">
-                <span aria-hidden="true" className="w-0.5 shrink-0 rounded-full bg-border" />
-                <p className="min-w-0 text-[13px] leading-5 text-muted-foreground">“{quote}”</p>
-              </div>
-            ) : null}
-            <div className="flex min-w-0 items-center gap-2">
-              <p className="min-w-0 text-sm leading-5 text-dls-secondary">
-                {reconnectState === "connected" ? "The connection is restored. Check whether the action finished before retrying." : failureInstruction(part, reconnectAction?.connectionName ?? null)}
-              </p>
-              {reconnectAction && onReconnect ? (
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="xs"
-                  className="ms-auto shrink-0"
-                  data-testid="chat-mcp-reconnect-action"
-                  disabled={reconnectPresentation?.disabled}
-                  title={`${reconnectPresentation?.buttonLabel} ${reconnectAction.connectionName}`}
-                  aria-label={`${reconnectPresentation?.buttonLabel} ${reconnectAction.connectionName}`}
-                  onClick={() => void handleReconnect()}
-                >
-                  <ReconnectIcon
-                    data-icon="inline-start"
-                    className={cn("size-3.5", reconnectState === "opening" && "animate-spin")}
-                    aria-hidden="true"
-                  />
-                  {reconnectPresentation?.buttonLabel}
-                </Button>
-              ) : null}
-            </div>
-            {reconnectError ? (
-              <p className="text-xs text-dls-secondary" role="alert">{describeChatToolFailure(reconnectError)}</p>
-            ) : null}
-            <div>
-              <Button variant="ghost" size="icon-xs" title="Technical details" aria-label="Technical details"
-                onClick={() => setDetailsOpen(!detailsOpen)}
-                aria-expanded={detailsOpen}
-              >
-                <CodeXml aria-hidden="true" />
-              </Button>
-              {detailsOpen ? <TechnicalDetailsPanel part={part} /> : null}
-            </div>
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
+          <DetailsToggle open={open} onToggle={() => setOpen(!open)} label={failureLabel} alwaysVisible />
+        </div>
+        {reconnectError ? (
+          <p className="mt-1 text-xs text-dls-secondary" role="alert">{describeChatToolFailure(reconnectError)}</p>
+        ) : null}
+        {open ? <TechnicalDetailsPanel part={part} /> : null}
+      </div>
     )
   }
 
