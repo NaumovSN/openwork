@@ -8,7 +8,7 @@ const test = spec.world(modelPicker, {
 
 const searchPlaceholder = "Search models…";
 
-test("a signed-in member keeps Auto and BYOK accessible while organizing pins without losing a draft", async ({ world, user, probe, step }) => {
+test("a signed-in member keeps Auto and BYOK accessible while organizing pins without losing a draft", async ({ world, user, probe, step, evidence }) => {
   expect(world.auto.modelID).toBe("openai/gpt-6-luna");
   const draft = "Keep this draft while choosing a model.";
   const picker = '[data-testid="composer-model-picker"]';
@@ -23,6 +23,8 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
   const columnsHoldStill = async () => {
     for (const slot of ["model-source", "model-selection"]) {
       const lefts = (await probe.dom(`${picker} [data-model-key] [data-slot="${slot}"]`)).elements.map((element) => Math.round(element.rect.left));
+      evidence.recordAssertionEvidence(`Every model row keeps its ${slot === "model-source" ? "source mark" : "selection check"} in one column`,
+        `${lefts.length} rows, left edges ${[...new Set(lefts)].join(", ")}px`, lefts.length > 3 && new Set(lefts).size === 1);
       expect(lefts.length).toBeGreaterThan(3);
       expect(new Set(lefts).size, `${slot} column: ${lefts.join(", ")}`).toBe(1);
     }
@@ -145,7 +147,7 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
   });
 });
 
-test("a signed-in member recovers from an empty search, sees Effort managed by Auto, and switches models from a pinned row's menu", async ({ world, user, probe, step }) => {
+test("a signed-in member recovers from an empty search, sees Effort managed by Auto, and switches models from a pinned row's menu", async ({ world, user, probe, step, evidence }) => {
   const draft = "Keep this draft while exploring the picker.";
   const picker = '[data-testid="composer-model-picker"]';
   const key = (model: { providerID: string; modelID: string }) => `${model.providerID}:${model.modelID}`;
@@ -169,7 +171,9 @@ test("a signed-in member recovers from an empty search, sees Effort managed by A
     await selected(world.auto);
     await user.notSee({ text: "Advanced options" });
     await user.see({ testId: "model-effort" }, { text: /Effort\s*Managed by Auto/ });
-    expect((await probe.dom(`${picker} [data-testid="model-effort"]:disabled`)).elements).toHaveLength(1);
+    const managed = (await probe.dom(`${picker} [data-testid="model-effort"]:disabled`)).elements;
+    evidence.recordAssertionEvidence("With Auto selected, Effort sits directly in the picker and reads Managed by Auto", managed[0]?.text ?? "no Effort row", managed.length === 1 && /Managed by Auto/.test(managed[0].text));
+    expect(managed).toHaveLength(1);
     await user.notSee({ role: "switch", label: "Fast mode" });
     await user.screenshot();
   });
@@ -305,6 +309,7 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
   await step("High is persisted and reaches the real v2 provider request", async () => {
     const requests = await world.requests();
     expect(requests).toHaveLength(1);
+    evidence.recordAssertionEvidence("Effort picked from the picker's Effort menu reaches the provider", `first request: model ${String(requests[0]?.model)}, reasoningEffort ${String(requests[0]?.reasoningEffort)}`, requests[0]?.model === world.modelId && requests[0]?.reasoningEffort === "high");
     expect(requests[0]).toMatchObject({ model: world.modelId, reasoningEffort: "high" });
     expect(await world.modelRequests()).toEqual([{ model: { providerID: world.providerId, id: world.modelId, variant: "high" } }]);
     const native = await world.readNative(`${prefix}/session/${world.session.sessionId}`);
