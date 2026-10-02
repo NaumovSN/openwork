@@ -6,7 +6,7 @@ const test = spec.world(modelPicker, {
   timeout: 420_000, resources: { surfaces: ["appWeb"], services: ["den", "mock"] },
 });
 
-test("Connect a provider shows each provider with only what it needs: no status words, and Connect only where nothing is added yet", async ({ user, probe, step }) => {
+test("Connect a provider shows each provider with only what it needs: no status words, and Connect only where nothing is added yet", async ({ user, probe, step, evidence }) => {
   const dialog = '[role="dialog"]';
   const dialogText = async () => (await probe.dom(dialog)).elements[0]?.text ?? "";
 
@@ -28,6 +28,10 @@ test("Connect a provider shows each provider with only what it needs: no status 
     // Every provider still to add ends with the one Connect action.
     const available = (await probe.dom(`${dialog} [aria-labelledby="connect-provider-available"] button[data-provider-id]`)).elements;
     expect(available.length).toBeGreaterThan(0);
+    const statusWords = ["Connected", "Included", "No account needed", "weekly limit"].filter((word) => text.includes(word));
+    evidence.recordAssertionEvidence("Connect a provider shows no status words and offers Connect only on providers not yet added",
+      `status words found: ${statusWords.join(", ") || "none"}; ${available.length} providers to add, all ending in Connect`,
+      statusWords.length === 0 && available.length > 0 && available.every((provider) => /Connect$/.test(provider.text)));
     for (const provider of available) expect(provider.text).toMatch(/Connect$/);
     await user.screenshot();
   });
