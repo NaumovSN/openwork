@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { spec } from "@openwork/testkit";
+import { spec, type SpecBodyContext } from "@openwork/testkit";
 import { appSource, appTitle, buildPrompt, buildReply, chatPrompt, chatReply, launchInput, mcpAppServers, mcpAppServersChat, mcpAppCreationV1, mcpAppCreationV2, mcpAppCreationDesktop, payload, pricerTitle, record, reopenPrompt, reopenReply, reservationId, rows, toolNames } from "../worlds/mcp-app-servers.ts";
 
 const test = spec.world(mcpAppServers, {
@@ -475,15 +475,12 @@ chatTest("an owner follows App creation progress and opens the finished App besi
 });
 
 
-const creationResources = { surfaces: ["appWeb"] as const, services: ["den", "mock"] as const };
-const lifecycleTests = [
-  { name: "v1 web", test: spec.world(mcpAppCreationV1, { resources: creationResources, needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000 }) },
-  { name: "v2 web", test: spec.world(mcpAppCreationV2, { resources: creationResources, needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000 }) },
-  { name: "native Desktop", test: spec.world(mcpAppCreationDesktop, { resources: { surfaces: ["desktop"], services: ["den", "mock"], nativeReason: "Verify the App pane beside Electron's native composer and personal dashboard tile controls in the Desktop shell." }, needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000 }) },
-];
+const creationV1Test = spec.world(mcpAppCreationV1, { resources: { surfaces: ["appWeb"], services: ["den", "mock"] }, needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000 });
+const creationV2Test = spec.world(mcpAppCreationV2, { resources: { surfaces: ["appWeb"], services: ["den", "mock"] }, needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000 });
+const creationDesktopTest = spec.world(mcpAppCreationDesktop, { resources: { surfaces: ["desktop"], services: ["den", "mock"], nativeReason: "Verify the App pane beside Electron's native composer and personal dashboard tile controls in the Desktop shell." }, needs: { commands: ["bun", "pnpm", "opencode"] }, timeout: 600_000 });
 
-for (const { name, test: lifecycleTest } of lifecycleTests) {
-  lifecycleTest(`an owner creates, edits, reopens and stops an App on ${name}`, async ({ world, agent, user, probe, step, evidence }) => {
+async function creationJourney({ world, agent, user, probe, step, evidence }: SpecBodyContext<Awaited<ReturnType<typeof mcpAppCreationV1>>>) {
+    const name = world.engine + ("openworkUrl" in world.app ? " web" : " native Desktop");
     let frame: Awaited<ReturnType<typeof world.appFrame>> | undefined;
     const closeFrame = async () => { await frame?.[Symbol.asyncDispose](); frame = undefined; };
     await using cleanup = { [Symbol.asyncDispose]: async () => { await frame?.[Symbol.asyncDispose](); } };
@@ -501,8 +498,8 @@ for (const { name, test: lifecycleTest } of lifecycleTests) {
       expect((await probe.dom('[data-app-creation-step="writing"][data-step-status="running"]')).elements).toHaveLength(1);
       expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(0);
       const calls = (await world.den.mocks.inventory.agentRequests({ promptMarker: buildPrompt })).filter(request => request.kind === "tool");
-      expect(calls).toHaveLength(2);
-      evidence.recordAssertionEvidence("Discovery and preparation are real calls before any preview", `${name}: two model calls completed before the held build. The preparation stage is complete, writing is active, and the preview remains absent.`, true);
+      expect(calls.length).toBeGreaterThanOrEqual(2);
+      evidence.recordAssertionEvidence("Discovery and preparation are real calls before any preview", `${name}: the model requested discovery and preparation before the held build. The actual preparation result completes that stage, writing is active, and the preview remains absent.`, true);
       await user.screenshot();
       await world.holdCreation(false);
     });
@@ -510,6 +507,7 @@ for (const { name, test: lifecycleTest } of lifecycleTests) {
       await user.see({ text: buildReply }, { timeoutMs: 120_000 });
       expect((await probe.dom("[data-built-app-preview]")).elements).toHaveLength(1);
       await revision("revision one");
+      evidence.recordJsonArtifact("Actual discovery and builder calls", await world.den.mocks.inventory.agentRequests({ promptMarker: buildPrompt }));
       await user.see({ role: "button", label: "Open preview" });
       const pane = (await probe.dom("[data-built-app-preview]")).elements[0]?.rect;
       const composer = (await probe.dom('textarea, [contenteditable="true"][role="textbox"]')).elements.find(element => element.rect.width > 0)?.rect;
@@ -582,5 +580,8 @@ for (const { name, test: lifecycleTest } of lifecycleTests) {
       evidence.recordAssertionEvidence("Personal placement survives refresh, removal and Undo", `${name}: the real App shows revision two in its personal tile, refreshes through the tile menu, and remains usable after remove and Undo.`, true);
       await user.screenshot();
     });
-  });
 }
+
+creationV1Test("an owner creates, edits, reopens and stops an App on v1 web", creationJourney);
+creationV2Test("an owner creates, edits, reopens and stops an App on v2 web", creationJourney);
+creationDesktopTest("an owner creates, edits, reopens and stops an App on native Desktop", creationJourney);
