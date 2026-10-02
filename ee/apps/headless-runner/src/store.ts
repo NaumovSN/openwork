@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto"
 import { DatabaseSync } from "node:sqlite"
 import { z } from "zod"
 import type { Usage } from "./model.js"
+import { withoutAttachments } from "./tool-files.js"
 import { ACTIVE, messageSchema, turnStatusSchema, type Message, type TurnStatus } from "./types.js"
 
 const sessionRow = z.object({
@@ -239,6 +240,22 @@ export class Store {
     this.db
       .prepare("INSERT INTO messages (session_id, seq, message_id, body, created_at) VALUES (?, ?, ?, ?, ?)")
       .run(sessionId, row.n + 1, messageId, JSON.stringify(messageSchema.parse(message)), this.now())
+  }
+
+  /** Replaces the image and PDF bytes in one turn's tool results with the note later turns see instead. */
+  stripAttachments(sessionId: string, messageId: string) {
+    const rows = this.db
+      .prepare("SELECT seq, message_id, body FROM messages WHERE session_id = ? AND message_id = ? ORDER BY seq")
+      .all(sessionId, messageId)
+    const update = this.db.prepare("UPDATE messages SET body = ? WHERE session_id = ? AND seq = ?")
+    this.transaction(() => {
+      for (const row of rows) {
+        const value = messageRow.parse(row)
+        const message = messageSchema.parse(JSON.parse(value.body))
+        const stripped = withoutAttachments(message)
+        if (stripped !== message) update.run(JSON.stringify(messageSchema.parse(stripped)), sessionId, value.seq)
+      }
+    })
   }
 
   messages(sessionId: string): StoredMessage[] {

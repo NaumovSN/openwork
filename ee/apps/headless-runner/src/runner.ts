@@ -3,6 +3,7 @@ import { FILE_TOOLS, FILE_TOOL_NAMES, runFileTool } from "./files.js"
 import type { McpConnector, ToolSession } from "./mcp.js"
 import { ModelError, type ModelClient } from "./model.js"
 import type { Store, StoredMessage, Turn } from "./store.js"
+import { withoutAttachments } from "./tool-files.js"
 import { RESUMABLE, type Message, type ToolResult, type TurnCredentials } from "./types.js"
 
 export const DEFAULT_SYSTEM_PROMPT = `You are OpenWork, an assistant running in the cloud on behalf of one person. There is no UI and nobody can approve actions while you work.
@@ -79,7 +80,7 @@ function fitTurn(turn: Message[], budget: number): Message[] {
   }
   const trimmed = new Set(candidates.slice(0, Math.min(candidates.length, Math.ceil(count / TRIM_BLOCK) * TRIM_BLOCK)).map((candidate) => candidate.index))
   return turn.map((message, index) =>
-    trimmed.has(index) && message.role === "tool" ? { ...message, output: TRIMMED_TOOL_OUTPUT, images: undefined } : message,
+    trimmed.has(index) && message.role === "tool" ? { ...message, output: TRIMMED_TOOL_OUTPUT, images: undefined, documents: undefined } : message,
   )
 }
 
@@ -101,12 +102,8 @@ export function buildContext(messages: StoredMessage[], currentMessageId: string
     const isCurrent = turn[0].messageId === currentMessageId
     const entries = isCurrent
       ? fitTurn(turn.map((entry) => entry.message), budget)
-      : // Images are large; the model sees them in the turn that fetched them, earlier turns keep the text.
-        turn.map(({ message }) =>
-          message.role === "tool" && message.images
-            ? { ...message, images: undefined, output: `${message.output}\n[images from an earlier turn not shown]` }
-            : message,
-        )
+      : // Images and PDFs are large; the model sees them in the turn that fetched them, earlier turns keep the text.
+        turn.map(({ message }) => withoutAttachments(message))
     const size = entries.reduce((sum, message) => sum + messageSize(message), 0)
     if (!isCurrent && used + size > budget) break
     kept.unshift(entries)
@@ -321,6 +318,7 @@ export class Runner {
             output: outcome.output,
             isError: outcome.isError,
             ...(outcome.images?.length ? { images: outcome.images } : {}),
+            ...(outcome.documents?.length ? { documents: outcome.documents } : {}),
           })
           outcomes.push(outcome)
         }
@@ -352,6 +350,9 @@ export class Runner {
       await tools?.close()
       // One line per turn, never content or credentials: how it ended, how long it ran, and what it cost.
       const turn = store.getTurn(sessionId, messageId)
+      // Later turns never see a finished turn's images and PDFs, so their bytes are not kept on the small disk.
+      // Interrupted turns keep them: the turn resumes and still needs them.
+      if (turn && ["completed", "failed", "aborted"].includes(turn.status)) store.stripAttachments(sessionId, messageId)
       console.log(
         `[headless-runner] turn ended ${JSON.stringify({
           sessionId,

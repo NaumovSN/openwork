@@ -66,14 +66,32 @@ test("the snapshot reports image counts, not image data", async () => {
     }),
   })
   const app = createApp({ store, runner, apiToken: TOKEN })
+  const read = async (sessionId: string) =>
+    (await app.request(`/v1/sessions/${sessionId}`, { headers: { authorization: `Bearer ${TOKEN}` } })).text()
+  const counts = z.object({ messages: z.array(z.object({ imageCount: z.number().optional(), documentCount: z.number().optional() })) })
+
+  // While a turn holds files, the snapshot counts them.
+  const holding = store.createSession({})
+  store.appendMessage(holding.id, "msg_1", {
+    role: "tool",
+    callId: "c1",
+    name: "look",
+    output: "files",
+    isError: false,
+    images: [{ mediaType: "image/png", data: "QUJD" }],
+    documents: [{ mediaType: "application/pdf", data: "JVBERi0=", name: "a.pdf" }],
+  })
+  const held = await read(holding.id)
+  assert.ok(!held.includes("QUJD") && !held.includes("JVBERi0="))
+  assert.ok(counts.parse(JSON.parse(held)).messages.some((message) => message.imageCount === 1 && message.documentCount === 1))
+
+  // Once the turn ends its files are dropped from storage, leaving a note.
   const session = store.createSession({})
   runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "go", credentials: { modelApiKey: "k", mcpToken: "t" } })
   await runner.idle()
-  const response = await app.request(`/v1/sessions/${session.id}`, { headers: { authorization: `Bearer ${TOKEN}` } })
-  const body = await response.text()
-  assert.ok(!body.includes("QUJD"))
-  const parsed = z.object({ messages: z.array(z.object({ imageCount: z.number().optional() })) }).parse(JSON.parse(body))
-  assert.ok(parsed.messages.some((message) => message.imageCount === 1))
+  const finished = await read(session.id)
+  assert.ok(!finished.includes("QUJD"))
+  assert.ok(finished.includes("[images from an earlier turn not shown]"))
 })
 
 test("lists the models a caller can pick", async () => {

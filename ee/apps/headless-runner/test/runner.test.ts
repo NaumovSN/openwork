@@ -386,6 +386,60 @@ test("an image from a tool is shown to the model in its turn, then dropped from 
   assert.equal(toolLater?.role === "tool" && toolLater.images, undefined)
 })
 
+test("a PDF from a tool reaches the model in its turn, and its bytes are not kept once the turn ends", async () => {
+  const pdf = Buffer.from("%PDF-1.7 brief").toString("base64")
+  const { model, requests } = scriptedModel([calls({ id: "c1", name: "read_file_from_slack", input: { file_id: "F1" } }), text("It describes the flow."), text("Sure.")])
+  const { store, runner } = makeRunner({
+    model,
+    mcp: async () => ({
+      tools: [{ name: "read_file_from_slack", description: "read", inputSchema: { type: "object" } }],
+      async call() {
+        return { output: "[PDF brief.pdf (14 bytes), attached]", isError: false, documents: [{ mediaType: "application/pdf", data: pdf, name: "brief.pdf" }] }
+      },
+      async close() {},
+    }),
+  })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "can you read this pdf?", credentials: creds })
+  await runner.idle()
+  const toolInTurn = requests[1].messages.find((message) => message.role === "tool")
+  assert.deepEqual(toolInTurn?.role === "tool" && toolInTurn.documents, [{ mediaType: "application/pdf", data: pdf, name: "brief.pdf" }])
+
+  const stored = store.messages(session.id).find((entry) => entry.message.role === "tool")?.message
+  assert.equal(stored?.role === "tool" && stored.documents, undefined)
+  assert.equal(stored?.role === "tool" && stored.output, "[PDF brief.pdf (14 bytes), attached]\n[files from an earlier turn not shown]")
+  store.db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
+  const rows = store.db.prepare("SELECT body FROM messages WHERE session_id = ?").all(session.id)
+  assert.ok(!JSON.stringify(rows).includes(pdf), "the PDF bytes are gone from the database")
+
+  runner.send({ sessionId: session.id, messageId: "msg_2", prompt: "thanks", credentials: creds })
+  await runner.idle()
+  const toolLater = requests[2].messages.find((message) => message.role === "tool")
+  assert.equal(toolLater?.role === "tool" && toolLater.output, "[PDF brief.pdf (14 bytes), attached]\n[files from an earlier turn not shown]")
+})
+
+test("a turn paused for fresh credentials keeps its files, since it resumes and still needs them", async () => {
+  const pdf = Buffer.from("%PDF-1.7 brief").toString("base64")
+  const { model } = scriptedModel([calls({ id: "c1", name: "read_file_from_slack", input: {} }), text("done")])
+  const { store, runner } = makeRunner({
+    model,
+    limits: { maxConcurrentTurns: 4, maxSteps: Number.POSITIVE_INFINITY, turnTimeoutMs: Number.POSITIVE_INFINITY, credentialRefreshMs: 0, contextCharBudget: 100_000 },
+    mcp: async () => ({
+      tools: [{ name: "read_file_from_slack", description: "read", inputSchema: { type: "object" } }],
+      async call() {
+        return { output: "[PDF brief.pdf, attached]", isError: false, documents: [{ mediaType: "application/pdf", data: pdf, name: "brief.pdf" }] }
+      },
+      async close() {},
+    }),
+  })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "read it", credentials: creds })
+  await runner.idle()
+  assert.equal(store.getTurn(session.id, "msg_1")?.status, "interrupted")
+  const stored = store.messages(session.id).find((entry) => entry.message.role === "tool")?.message
+  assert.equal(stored?.role === "tool" && stored.documents?.length, 1)
+})
+
 test("context keeps whole recent turns within budget", () => {
   const entry = (seq: number, messageId: string, body: string) => ({
     seq,

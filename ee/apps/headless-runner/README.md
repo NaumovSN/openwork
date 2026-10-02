@@ -26,7 +26,7 @@ headless-runner (one Node process, SQLite file)
 | **Cheap** | One process serves many sessions, and an idle session is just rows. Anthropic prompt caching sits on the system prompt and the newest message, so each agent step reuses the previous prefix. In the smoke test, 123k of 167k input tokens were cache reads. Tool output, file sizes and context are capped. A long turn drops its oldest large tool outputs in blocks, so the cached prefix survives most steps. |
 | **Reliable** | Every step is written to SQLite (WAL) before the next one starts. Sends are idempotent on `messageId`. Follow-ups sent while a turn runs are queued per conversation and answered in order, each seeing the earlier answers; the caller never has to retry "busy". After a crash or restart, turns are marked `interrupted`; sending the same `messageId` again resumes them. A tool call whose result was never recorded is **not re-run**: it is recorded as an error so the model can check its effect instead of repeating a possible write. Model calls retry on 408/409/425/429/5xx with backoff. Turns have no time or step limit by default (both are optional settings); every model and tool call has its own timeout, and a turn that repeats the same calls with the same results five times in a row ends as `stuck_repeating`. A turn using a caller's MCP token pauses itself between steps every 50 minutes (`interrupted`, `credentials_refresh`) so the caller can resume it with a fresh token; no tool call is cut off. There is a global concurrency limit. Each turn logs one line when it starts and one when it ends (status, error code, steps, tool calls, elapsed time, tokens), never content or credentials. |
 | **Safe** | No shell, no host filesystem, no child processes. Network access goes only to the two operator-configured URLs (https, or http on loopback). Callers can't redirect it. Model keys and MCP tokens are supplied per turn, held in memory only, and never written to disk or logs (a test checks this). File paths are normalized so they can't escape the session. A service bearer token (≥32 chars) guards every `/v1` route. `HEADLESS_MCP_TOOL_ALLOWLIST` can narrow the MCP tools. The default system prompt asks the model to read and draft, and to change data only when explicitly asked. |
-| **Simple** | About 1,400 lines of source, four runtime deps (`hono`, `@hono/node-server`, `@modelcontextprotocol/client`, `zod`), and `node:sqlite`. No agent framework, no provider SDKs. |
+| **Simple** | About 1,900 lines of source, four runtime deps (`hono`, `@hono/node-server`, `@modelcontextprotocol/client`, `zod`), the workspace's `@openwork/workbook` for Office files, and `node:sqlite`. No agent framework, no provider SDKs. The build bundles the workspace package into `dist/server.js` with esbuild, so it runs on plain Node. |
 
 ## API
 
@@ -55,7 +55,17 @@ Turn status is one of `queued`, `running`, `completed`, `failed`, `interrupted` 
 - `runner_restarted`
 - `credentials_refresh` (an `interrupted` turn waiting to be resumed with a fresh MCP token)
 
-Images that a tool returns (MCP `image` content, or `resource` blobs with an image type), for example a file read from Slack, are passed to the model as image input: PNG, JPEG, GIF or WebP, at most 4 per result and about 3.7 MB each. They go to Anthropic as image blocks in the tool result, and to OpenAI as image parts in a following user message. Only the turn that fetched an image sees it; later turns keep the text. The session API reports `imageCount` instead of the image data.
+Files that a tool returns (MCP `image` or `audio` content, or `resource` blobs), for example a file read from Slack, reach the model in the best form it can read:
+
+| File | The model gets |
+|---|---|
+| PNG, JPEG, GIF, WebP | The image: at most 4 per result, about 3.7 MB each |
+| PDF | The document itself (text and page images): at most 2 per result, 10 MB each |
+| Word, PowerPoint, Excel (`.docx`, `.pptx`, `.xlsx`) | Extracted text, from the same `@openwork/workbook` extractor the desktop app uses |
+| Text (`text/*`, JSON, YAML, CSV, code, SVG, …) | The decoded text |
+| Anything else (audio, video, archives, `.doc`/`.xls`, Keynote, HEIC, …) | A note with the name, type, size, and what to ask for instead |
+
+Images and PDFs go to Anthropic as image and document blocks in the tool result, and to OpenAI as image and file parts in a following user message. Only the turn that fetched them sees them: when a turn completes, fails, or is stopped, their bytes are dropped from the database and later turns see a note. An interrupted turn keeps them, since it resumes. The session API reports `imageCount` and `documentCount` instead of the data.
 
 The model sees these tools:
 

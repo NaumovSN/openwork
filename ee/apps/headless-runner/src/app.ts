@@ -82,17 +82,18 @@ export function createApp(input: {
       session,
       status: turns.some((turn) => ACTIVE.has(turn.status)) ? "busy" : "idle",
       turns,
-      // Image data stays in the store; callers poll this, so they get a count instead.
+      // Image and PDF data stay in the store; callers poll this, so they get counts instead.
       messages: scoped.slice(-query.data.limit).map((entry) => {
         const { seq, messageId, message } = entry
         if (message.role !== "tool") return { seq, messageId, ...message }
-        const { images, output, ...rest } = message
+        const { images, documents, output, ...rest } = message
         return {
           seq,
           messageId,
           ...rest,
           ...(query.data.outputs === "full" ? { output } : { outputLength: output.length }),
           ...(images ? { imageCount: images.length } : {}),
+          ...(documents ? { documentCount: documents.length } : {}),
         }
       }),
       finalAssistantText,
