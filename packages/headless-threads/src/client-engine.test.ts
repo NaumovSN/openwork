@@ -293,8 +293,23 @@ describe("v2 transport", () => {
 
     const accepted = await createClient(double).sendTurn(SESSION_ID, { prompt: "And next week?", messageId: "msg_run_1" });
 
-    expect(accepted).toMatchObject({ messageCountBefore: 0, messageId: null, alreadyPresent: false });
+    expect(accepted).toMatchObject({ messageCountBefore: 0, messageId: "msg_run_1", alreadyPresent: false });
     expect(double.calls().filter((call) => call.startsWith("POST"))).toEqual([`POST ${V2}/session/${SESSION_ID}/prompt`]);
+  });
+
+  test("a v2 turn carries the caller's message id, so the engine admits a retry once", async () => {
+    const double = createServerDouble({
+      engineStatus: V2_ON,
+      defaultModel: 404,
+      sessionModel: { providerID: "openai", id: "gpt-5" },
+    });
+
+    await createClient(double).sendTurn(SESSION_ID, { prompt: "And next week?", messageId: "msg_run_1" });
+
+    expect(double.requests.at(-1)).toMatchObject({
+      path: `${V2}/session/${SESSION_ID}/prompt`,
+      body: { text: "And next week?", id: "msg_run_1" },
+    });
   });
 });
 

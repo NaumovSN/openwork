@@ -434,10 +434,9 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       });
       return fromV2Session(created.data);
     },
-    // v2 has no client-chosen message id, so `messageId` cannot reach the
-    // engine. `sendTurn` still skips a turn whose id is already present, but
-    // a retry with a caller-made id resubmits the turn.
-    async submit(threadId, prompt, model, _messageId, signal) {
+    // v2 takes a client-chosen prompt `id`, keeps it as the user message id,
+    // and admits a repeated id once, so a retried turn never runs twice.
+    async submit(threadId, prompt, model, messageId, signal) {
       if (model !== null) {
         const modelPath = `${v2SessionPath(threadId)}/model`;
         const result = await send("POST", modelPath, {
@@ -447,7 +446,10 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
         if (!result.response.ok) throw failure("POST", modelPath, result);
       }
       const promptPath = `${v2SessionPath(threadId)}/prompt`;
-      const result = await send("POST", promptPath, { body: { text: prompt }, signal });
+      const result = await send("POST", promptPath, {
+        body: { text: prompt, ...(messageId === undefined ? {} : { id: messageId }) },
+        signal,
+      });
       if (!result.response.ok) throw failure("POST", promptPath, result);
     },
     messages: (threadId, signal) => v2Messages(threadId, { signal }),
@@ -519,8 +521,7 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
       threadId,
       acceptedAt: now(),
       messageCountBefore,
-      // v2 assigns its own message id, so waits fall back to the message count.
-      messageId: engine.engine === "v1" ? input.messageId ?? null : null,
+      messageId: input.messageId ?? null,
       alreadyPresent: false,
     };
   }
