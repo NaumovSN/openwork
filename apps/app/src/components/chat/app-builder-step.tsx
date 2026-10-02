@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { formatToolCallDuration } from "@/lib/tool-call-duration";
 import { isToolPartInFlight } from "@/lib/tool-activity";
 import { useOptionalMessageList } from "./message-list-provider";
@@ -113,7 +114,7 @@ export function AppBuilderStep({
       aria-label={sentence}
     >
       <div className="flex min-h-6 min-w-0 items-center gap-2 text-sm text-muted-foreground">
-        <img src="/openwork-mark.svg" alt="" className="size-4 shrink-0 opacity-80 dark:invert" />
+        <img src={resolveExtensionIconSrc("/openwork-mark.svg")} alt="" className="size-4 shrink-0 opacity-80 dark:invert" />
         <span className={`shrink-0 ${progress.running ? "ow-text-shimmer motion-reduce:animate-none" : ""}`}>{sentence}</span>
         {state ? <span className="min-w-0 truncate text-xs text-muted-foreground">{state}</span> : null}
         {shownElapsed ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{shownElapsed}</span> : null}

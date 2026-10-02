@@ -163,7 +163,7 @@ for (const engine of ["v1", "v2"] as const)
     await render([created, edited], false, engine);
     expect(usePanelTabStore.getState().sessions.session?.tabs).toHaveLength(0);
     await render([created, edited], false, engine, false, true);
-    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.includes("Open preview"))?.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Open preview"]')?.click());
     expect(usePanelTabStore.getState().sessions.session?.tabs).toHaveLength(1);
     expect(usePanelTabStore.getState().sessions.session?.tabs[0]).toMatchObject({ part: edited });
   });

@@ -121,10 +121,10 @@ export function TechnicalDetailsPanel({ part }: { part: DynamicToolUIPart }) {
 
 
 /**
- * Raw details stay one quiet click away: a code icon in a fixed trailing slot
- * that appears on hover or keyboard focus (always on touch, and always for a
- * failure, which is when people actually need it). Reserving the slot keeps
- * the row from shifting when the icon appears.
+ * Raw details stay one quiet click away: a code icon right after the row's
+ * content that appears on hover or keyboard focus (always on touch, and
+ * always for a failure, which is when people actually need it). Its slot is
+ * reserved, so the row never shifts when it appears.
  */
 export function DetailsToggle({ open, onToggle, label, alwaysVisible = false }: {
   open: boolean
@@ -134,7 +134,7 @@ export function DetailsToggle({ open, onToggle, label, alwaysVisible = false }: 
 }) {
   return (
     <Button type="button" variant={open ? "secondary" : "ghost"} size="icon-xs"
-      className={cn("ms-auto shrink-0 text-muted-foreground transition-opacity duration-150 motion-reduce:transition-none",
+      className={cn("shrink-0 text-muted-foreground transition-opacity duration-150 motion-reduce:transition-none",
         open || alwaysVisible ? "opacity-100" : "opacity-0 group-hover/step:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100")}
       aria-label={`${open ? "Hide" : "Show"} technical details for ${label}`} title="Technical details"
       aria-expanded={open} onClick={onToggle} data-testid="tool-details-toggle">
@@ -218,7 +218,7 @@ export function CapabilityCallLine({
               type="button"
               variant="ghost"
               size="xs"
-              className="ms-auto shrink-0"
+              className="shrink-0"
               data-testid="chat-mcp-reconnect-action"
               disabled={reconnectPresentation?.disabled}
               title={`${reconnectPresentation?.buttonLabel} ${reconnectAction.connectionName}`}
