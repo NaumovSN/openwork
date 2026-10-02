@@ -409,19 +409,19 @@ async function readOpenworkAgentContext(
   };
 }
 
-async function queryOpenworkAffordance(rawArgs: unknown): Promise<unknown> {
+async function queryOpenworkAffordance(rawArgs: unknown, engineV2Ready: EngineV2Probe): Promise<unknown> {
   const request = openworkAffordanceRequestSchema.parse(rawArgs);
   if (request.id === "session.search") {
     return affordanceResult(
       request.id,
-      await searchOpenWorkSessions(request.args ?? {}),
+      await searchOpenWorkSessions(request.args ?? {}, engineV2Ready),
       affordanceReadEffects,
     );
   }
   if (request.id === "session.read") {
     return affordanceResult(
       request.id,
-      await readOpenWorkSession(request.args ?? {}),
+      await readOpenWorkSession(request.args ?? {}, engineV2Ready),
       affordanceReadEffects,
     );
   }
@@ -689,15 +689,35 @@ function ownEngineReader(): OpenworkEngineReader {
  * Every read still passes through the host's engine mount, which keeps its
  * workspace ownership and session-home checks.
  */
-function engineReaders(): OpenworkEngineReader[] {
-  const own = ownEngineReader();
+async function otherEngineReader(engineV2Ready: EngineV2Probe): Promise<OpenworkEngineReader | null> {
   const transport = openworkReadTransport.getStore();
-  if (transport) return transport.other ? [own, transport.other] : [own];
-  return [own, {
+  if (transport) return transport.other ?? null;
+  // Launched by v1: touch v2 only while it runs. Its native mount starts
+  // folder upkeep on first sight, which must not happen when v2 is off.
+  if (!await engineV2Ready()) return null;
+  return {
     engine: "v2",
     get: createV2ReadAdapter(serverGet),
     activity: (workspaceId, sessionId) => readV2SessionActivity(serverGet, workspaceId, sessionId),
-  }];
+  };
+}
+
+type EngineV2Probe = () => Promise<boolean>;
+const ENGINE_V2_STATUS_TTL_MS = 30_000;
+const engineV2StatusSchema = z.object({ enabled: z.boolean(), running: z.boolean() }).passthrough();
+
+/** Whether the v2 engine is enabled and running, cached briefly per plugin instance. */
+function createEngineV2Probe(now: () => number = Date.now): EngineV2Probe {
+  let cached: { ready: Promise<boolean>; at: number } | undefined;
+  return () => {
+    if (cached && now() - cached.at < ENGINE_V2_STATUS_TTL_MS) return cached.ready;
+    const ready = serverGet("/experimental/engine-v2-preview/status").then((value) => {
+      const status = engineV2StatusSchema.safeParse(value);
+      return status.success && status.data.enabled && status.data.running;
+    }, () => false);
+    cached = { ready, at: now() };
+    return ready;
+  };
 }
 
 async function listWorkspaceSessions(reader: OpenworkEngineReader, workspace: OpenWorkWorkspace, limit: number): Promise<SessionInfo[]> {
@@ -800,7 +820,7 @@ async function forEachWithConcurrency<T>(items: T[], concurrency: number, run: (
   await Promise.all(Array.from({ length: Math.min(Math.max(1, concurrency), Math.max(1, items.length)) }, () => worker()));
 }
 
-async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
+async function searchOpenWorkSessions(rawArgs: unknown, engineV2Ready: EngineV2Probe): Promise<object> {
   const parsed = sessionSearchArgsSchema.safeParse(rawArgs);
   if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
   const args = parsed.data;
@@ -816,7 +836,8 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
 
   const sessions: Array<{ workspace: OpenWorkWorkspace; session: SessionInfo; reader: OpenworkEngineReader }> = [];
   const workspaceErrors: Array<{ workspaceId: string; workspace: string; error: string }> = [];
-  const readers = engineReaders();
+  const other = await otherEngineReader(engineV2Ready);
+  const readers = other ? [ownEngineReader(), other] : [ownEngineReader()];
   await Promise.all(workspaces.map(async (workspace) => {
     const listed = await Promise.all(readers.map((reader, index) =>
       listWorkspaceSessions(reader, workspace, SESSION_SEARCH_TITLE_LIST_LIMIT).catch((error: unknown) => {
@@ -927,19 +948,24 @@ async function readWorkspaceModels(reader: OpenworkEngineReader, workspace: Open
 async function readSessionOnEitherEngine(
   workspace: OpenWorkWorkspace,
   sessionId: string,
-  readers: OpenworkEngineReader[],
+  engineV2Ready: EngineV2Probe,
 ): Promise<{ session: SessionInfo; reader: OpenworkEngineReader } | null> {
-  for (const reader of readers) {
-    try {
-      return { session: await readWorkspaceSession(workspace, sessionId, reader), reader };
-    } catch {
-      // Not on this engine, or not owned by this workspace there.
-    }
+  const own = ownEngineReader();
+  try {
+    return { session: await readWorkspaceSession(workspace, sessionId, own), reader: own };
+  } catch {
+    // Not on this engine, or not owned by this workspace there.
   }
-  return null;
+  const other = await otherEngineReader(engineV2Ready);
+  if (!other) return null;
+  try {
+    return { session: await readWorkspaceSession(workspace, sessionId, other), reader: other };
+  } catch {
+    return null;
+  }
 }
 
-async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
+async function readOpenWorkSession(rawArgs: unknown, engineV2Ready: EngineV2Probe): Promise<object> {
   const parsed = sessionReadArgsSchema.safeParse(rawArgs);
   if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
   const args = parsed.data;
@@ -951,10 +977,9 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
     return { ok: false, error: args.workspaceId ? `No workspace matched ${args.workspaceId}` : "No OpenWork workspaces are available" };
   }
 
-  const readers = engineReaders();
   for (const workspace of workspaces) {
     try {
-      const located = await readSessionOnEitherEngine(workspace, args.sessionId, readers);
+      const located = await readSessionOnEitherEngine(workspace, args.sessionId, engineV2Ready);
       if (!located) {
         if (args.workspaceId) break;
         continue;
@@ -1342,6 +1367,7 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown, _options
   );
   const engineMcpStatusClient = readEngineMcpStatusClient(factoryInput);
   const engineMcpStatusDirectory = factoryContext.directory ?? factoryContext.worktree;
+  const engineV2Ready = createEngineV2Probe();
   return {
   "tool.execute.before": fulfillGmailAttachments.before,
   event: fulfillGmailAttachments.event,
@@ -1395,7 +1421,7 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown, _options
       description: "Run a side-effect-free OpenWork affordance whose executor is OpenWork. Use the exact id and arguments from openwork_context. This reads backend or app state without navigation or window focus.",
       args: openworkAffordanceRequestSchema.shape,
       async execute(rawArgs: unknown) {
-        return JSON.stringify(await queryOpenworkAffordance(rawArgs), null, 2);
+        return JSON.stringify(await queryOpenworkAffordance(rawArgs, engineV2Ready), null, 2);
       },
     },
     openwork_execute: {

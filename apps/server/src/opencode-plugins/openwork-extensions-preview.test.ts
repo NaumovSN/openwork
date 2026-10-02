@@ -145,6 +145,8 @@ function startFakeOpenWorkServer(options: {
   messages?: Array<{ info: { id: string; role: string; error?: unknown }; parts: Array<{ type: string; text?: string }> }>;
   /** Sessions the v2 engine holds for ws_1, keyed by id, with their visible text. */
   v2Sessions?: Record<string, { title: string; text: string; created: number }>;
+  /** The v2 engine's preview status; defaults to running when v2Sessions is set. */
+  v2Status?: { enabled: boolean; running: boolean };
 } = {}) {
   const requests: Array<{ pathname: string; search: string; authorization: string | null; method: string; body?: unknown }> = [];
   const uiControlRequests: Array<{ authorization: string | null; body: unknown }> = [];
@@ -239,6 +241,11 @@ function startFakeOpenWorkServer(options: {
 
       if (url.pathname === "/workspaces") {
         return Response.json({ items: [workspaceOne, workspaceTwo], workspaces: [workspaceOne, workspaceTwo] });
+      }
+
+      if (url.pathname === "/experimental/engine-v2-preview/status") {
+        const running = options.v2Sessions !== undefined;
+        return Response.json({ ...(options.v2Status ?? { enabled: running, running }), chatRouting: false });
       }
 
       // The v2 engine's native mount for ws_1, in its own response shapes.
@@ -975,6 +982,41 @@ describe("OpenWorkExtensionsPreview session tools", () => {
     // v1 was asked first; v2 was read only through the host's native mount, never written.
     expect(fake.requests.some((request) => request.pathname === "/workspace/ws_1/opencode/session/ses_v2only")).toBe(true);
     expect(fake.requests.filter((request) => request.pathname.includes("/opencode2/")).every((request) => request.method === "GET")).toBe(true);
+  });
+
+  test("on v1, makes no v2 requests while v2 is disabled and caches its status", async () => {
+    const fake = startFakeOpenWorkServer({
+      v2Sessions: { ses_v2only: { title: "Heron rollout", text: "raven launch", created: 500 } },
+      v2Status: { enabled: false, running: false },
+    });
+    const plugin = await OpenWorkExtensionsPreview();
+
+    expect(await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_v2only" } })).toContain("was not found");
+    const searched = affordanceResultSchema("session.search", searchResultSchema)
+      .parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.search", args: { query: "raven launch" } })));
+
+    expect(searched.result.results.map((result) => result.sessionId)).not.toContain("ses_v2only");
+    expect(fake.requests.filter((request) => request.pathname.includes("/opencode2"))).toEqual([]);
+    expect(fake.requests.filter((request) => request.pathname === "/experimental/engine-v2-preview/status")).toHaveLength(1);
+  });
+
+  test("on v1, an enabled but stopped v2 engine is not read", async () => {
+    const fake = startFakeOpenWorkServer({
+      v2Sessions: { ses_v2only: { title: "Heron rollout", text: "raven launch", created: 500 } },
+      v2Status: { enabled: true, running: false },
+    });
+    const plugin = await OpenWorkExtensionsPreview();
+
+    expect(await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_v2only" } })).toContain("was not found");
+    expect(fake.requests.filter((request) => request.pathname.includes("/opencode2"))).toEqual([]);
+  });
+
+  test("session.read on v1 does not check v2 when the session is on v1", async () => {
+    const fake = startFakeOpenWorkServer({ v2Sessions: {} });
+    const plugin = await OpenWorkExtensionsPreview();
+
+    await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha" } });
+    expect(fake.requests.some((request) => request.pathname === "/experimental/engine-v2-preview/status" || request.pathname.includes("/opencode2"))).toBe(false);
   });
 
   test("session.read keeps v1 sessions on v1 and reports engine v1", async () => {
