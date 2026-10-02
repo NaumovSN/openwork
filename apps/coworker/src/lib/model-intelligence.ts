@@ -7,7 +7,9 @@ import { MODEL_INTELLIGENCE_INDEX, normalizeModelSelectionPreferences, type Mode
  * in `threads.ts` (kept local to avoid a module cycle). OpenCode's own catalog
  * is absent on purpose: it is selectable, never chosen for the person.
  */
-const IMPLICIT_ANCHOR_TIERS: readonly ModelTier[] = ["cloud", "key", "local-server", "free"];
+const IMPLICIT_ANCHOR_TIERS: readonly ModelTier[] = ["free", "cloud", "key", "local-server"];
+/** The Luna a coworker prefers by default, newest first; free Auto serves GPT-6 Luna. */
+const PREFERRED_LUNA: readonly string[] = ["gpt-6-luna", "gpt-5.6-luna"];
 
 export { modelSelectionDefaults, normalizeModelSelectionPreferences, MODEL_INTELLIGENCE_INDEX } from "./model-intelligence-index.ts";
 export type { ModelSelectionPreferences } from "./model-intelligence-index.ts";
@@ -85,7 +87,7 @@ function isGatewayModel(model: EngineModelOption): boolean {
 
 function modelIdentity(model: EngineModelOption): string | undefined {
   const identity = model.upstreamModelId ?? (isGatewayModel(model) ? undefined : model.intelligence?.apiModelId ?? model.modelId);
-  return identity === "openai/gpt-5.6-luna" ? "gpt-5.6-luna" : identity;
+  return identity?.startsWith("openai/") && identity.endsWith("-luna") ? identity.slice("openai/".length) : identity;
 }
 
 /**
@@ -118,15 +120,16 @@ export function preferredRoleModel(
   const tier = anchor?.tier ?? IMPLICIT_ANCHOR_TIERS.find((tier) => catalog.models.some((model) => model.tier === tier && usable(model) && !excluded.has(model.id)));
   const pool = catalog.models.filter((model) => {
     if (model.tier !== tier || model.tier === "opencode" || model.providerId === "opencode" || !usable(model) || excluded.has(model.id)) return false;
-    if (modelIdentity(model) !== "gpt-5.6-luna") return false;
+    if (!PREFERRED_LUNA.includes(modelIdentity(model) ?? "")) return false;
     if (isGatewayModel(model) && (!model.modelGroupId || !model.credentialSetId)) return false;
     if (purpose === "thinking" && (model.intelligence ? model.intelligence.reasoning !== true : !model.reasoning)) return false;
     return !anchor || model.id === anchor.id || (sameModelBoundary(model, anchor) && costsNoMoreThan(model, anchor) && preserves(model, anchor));
   });
   const first = pool[0];
   if (!first || pool.some((model) => !sameModelBoundary(model, first))) return null;
+  const lunaRank = (model: EngineModelOption) => PREFERRED_LUNA.indexOf(modelIdentity(model) ?? "");
   return pool.find((model) => model.id === anchor?.id)
-    ?? [...pool].sort((a, b) => Number(b.isProviderDefault) - Number(a.isProviderDefault) || a.id.localeCompare(b.id))[0] ?? null;
+    ?? [...pool].sort((a, b) => lunaRank(a) - lunaRank(b) || Number(b.isProviderDefault) - Number(a.isProviderDefault) || a.id.localeCompare(b.id))[0] ?? null;
 }
 
 export function chooseAutomaticRoleModel(

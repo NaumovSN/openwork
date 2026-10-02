@@ -106,27 +106,27 @@ export type ModelSource = "cloud" | "local";
 
 /**
  * What stands behind a model, in the order a coworker should prefer when
- * nobody chose: the OpenWork account, a subscription or key on this Mac, a
- * model server running on this Mac, and last OpenWork's free model that needs
- * no account. OpenCode's own catalog (`opencode`) is a tier of its own: it
- * stays selectable in settings and for testing, but the app never promotes it
- * or picks it by itself.
+ * nobody chose: OpenWork's free model (Auto, served with or without an
+ * account), the OpenWork account, a subscription or key on this Mac, then a
+ * model server running on this Mac. OpenCode's own catalog (`opencode`) is a
+ * tier of its own: it stays selectable in settings and for testing, but the
+ * app never promotes it or picks it by itself.
  */
 export type ModelTier = "cloud" | "key" | "local-server" | "free" | "opencode";
 
 /** The tiers the app may choose from on its own; `opencode` is deliberately absent. */
-export const MODEL_TIER_ORDER: readonly ModelTier[] = ["cloud", "key", "local-server", "free"];
+export const MODEL_TIER_ORDER: readonly ModelTier[] = ["free", "cloud", "key", "local-server"];
 
 /**
- * OpenWork's free model for people without an account. The engine reports it
- * as its own provider once the free service is connected; until that service
- * is released the provider is absent and the app says the model is not
- * available yet. The ids match the desktop's free-access contract (provider
- * `openwork-free`, standard Luna) so both apps read the same catalog entry.
+ * OpenWork's free model (Auto), for everyone including people without an
+ * account. The embedded OpenWork server relays it and reports it as its own
+ * provider; when the free service is off or refused, the provider is absent and
+ * the app says the model is not available. The ids match the desktop's
+ * free-access contract (`@openwork/free-auto`) so both apps read the same entry.
  */
 export const OPENWORK_FREE_PROVIDER_ID = "openwork-free";
-export const OPENWORK_FREE_MODEL_ID = "openai/gpt-5.6-luna";
-export const OPENWORK_FREE_MODEL_LABEL = "Luna";
+export const OPENWORK_FREE_MODEL_ID = "openai/gpt-6-luna";
+export const OPENWORK_FREE_MODEL_LABEL = "GPT-6 Luna";
 
 /** The engine's own catalog provider: selectable, never recommended. */
 export const OPENCODE_PROVIDER_ID = "opencode";
@@ -344,23 +344,30 @@ export function connectedModelCatalog(
       };
     }),
   );
-  // Account providers first: they are what "Continue with OpenWork" promised.
-  // OpenCode's own catalog last: listed, never promoted.
+  // OpenWork's free model first: it is every coworker's default. Then account
+  // providers, what "Continue with OpenWork" promised. OpenCode's own catalog
+  // last: listed, never promoted.
   models.sort((left, right) =>
+    Number(right.tier === "free") - Number(left.tier === "free") ||
     Number(right.source === "cloud") - Number(left.source === "cloud") ||
     Number(left.tier === "opencode") - Number(right.tier === "opencode") ||
     left.providerLabel.localeCompare(right.providerLabel) ||
     Number(right.isProviderDefault) - Number(left.isProviderDefault) ||
     left.modelLabel.localeCompare(right.modelLabel),
   );
-  return { models, connectedProviderIds: providers.map((provider) => provider.id), cloud };
+  // As in OpenWork Desktop, the engine's built-in OpenCode Zen models that cost
+  // nothing are a silent fallback, not a provider anyone chose: list them only
+  // while nothing else is available. A Zen subscription's paid models stay.
+  const zenFallback = (model: EngineModelOption) => model.providerId === OPENCODE_PROVIDER_ID && model.cost.input === 0 && model.cost.output === 0;
+  const listed = models.some((model) => !zenFallback(model)) ? models.filter((model) => !zenFallback(model)) : models;
+  return { models: listed, connectedProviderIds: providers.map((provider) => provider.id), cloud };
 }
 
 /**
  * The model a coworker should start on when nobody chose one: a connected,
- * tool-capable, non-deprecated model from the best tier available — the
- * OpenWork account, then a subscription or key on this Mac, then a local model
- * server, and only then OpenWork's free model — preferring the provider's own
+ * tool-capable, non-deprecated model from the best tier available — OpenWork's
+ * free model, then the OpenWork account, then a subscription or key on this
+ * Mac, and then a local model server — preferring the provider's own
  * default, then the newest release. OpenCode's own catalog is never
  * recommended: a person can still choose it in settings. Returns null when no
  * connected model in those tiers can use tools, so the caller can say so

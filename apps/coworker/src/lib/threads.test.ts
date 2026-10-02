@@ -363,8 +363,8 @@ test("connectedModelCatalog tells account (OpenWork Cloud) providers from this M
       ["lpr_01org/acme-router", "cloud"],
       ["openwork/fable", "cloud"],
       ["anthropic/claude-haiku-4-5", "local"],
-      ["opencode/big-pickle", "local"],
     ],
+    "OpenCode Zen's free fallback is hidden while anything else is available",
   );
   assert.equal(withStatus.cloud?.skippedProviders[0]?.reason, "needs_key");
   const gateway: Parameters<typeof connectedModelCatalog>[0] = {
@@ -405,7 +405,7 @@ test("connectedModelCatalog tells account (OpenWork Cloud) providers from this M
   });
   assert.deepEqual(
     signedOut.models.map((model) => model.providerId),
-    ["anthropic", "opencode"],
+    ["anthropic"],
   );
 });
 
@@ -474,20 +474,26 @@ test("recommendModel picks a connected, tool-capable model — the account's fir
   assert.equal(recommendModel(chatOnly), null, "nothing is recommended when no connected model can use tools");
   assert.equal(recommendModel({ models: catalog.models.filter((model) => model.providerId === "openrouter") }), null, "a deprecated model is never recommended");
 
-  // OpenCode's own catalog is selectable but never recommended; OpenWork's free
-  // model is, once the engine reports its provider, and a key on this Mac beats it.
+  // OpenWork's free model is every coworker's default once the engine reports
+  // its provider. OpenCode Zen's free models are only a fallback: hidden while
+  // anything else is listed, and never recommended.
   const withoutAccount = connectedModelCatalog(fixtureCatalog({
     connected: ["opencode", "openwork-free"],
     default: { opencode: "big-pickle" },
     all: [
       fixtureProvider({ id: "opencode", name: "OpenCode Zen", source: "custom", env: [], options: {}, models: { "big-pickle": { name: "Big Pickle", capabilities: { toolcall: true, reasoning: true } } } }),
-      fixtureProvider({ id: "openwork-free", name: "OpenWork", source: "custom", env: [], options: {}, models: { "openai/gpt-5.6-luna": { name: "Luna", capabilities: { toolcall: true, reasoning: true } } } }),
+      fixtureProvider({ id: "openwork-free", name: "OpenWork", source: "custom", env: [], options: {}, models: { "openai/gpt-6-luna": { name: "GPT-6 Luna", capabilities: { toolcall: true, reasoning: true } } } }),
     ],
   }));
-  assert.deepEqual(withoutAccount.models.map((model) => [model.id, model.tier]), [["openwork-free/openai/gpt-5.6-luna", "free"], ["opencode/big-pickle", "opencode"]], "OpenCode's catalog sorts last");
-  assert.equal(recommendModel(withoutAccount)?.id, "openwork-free/openai/gpt-5.6-luna", "OpenWork's free model fills a blank when nothing of the person's own is connected");
-  assert.equal(recommendModel({ models: withoutAccount.models.filter((model) => model.providerId === "opencode") }), null, "OpenCode's catalog alone recommends nothing: it stays a deliberate choice");
-  assert.equal(recommendModel({ models: [...withoutAccount.models, ...local.models] })?.id, "anthropic/claude-haiku-4-5", "a key on this Mac still comes before the free model");
+  assert.deepEqual(withoutAccount.models.map((model) => [model.id, model.tier]), [["openwork-free/openai/gpt-6-luna", "free"]], "OpenCode Zen's free fallback is hidden");
+  assert.equal(recommendModel(withoutAccount)?.id, "openwork-free/openai/gpt-6-luna", "OpenWork's free model fills a blank without an account");
+  const zenOnly = connectedModelCatalog(fixtureCatalog({
+    connected: ["opencode"], default: { opencode: "big-pickle" },
+    all: [fixtureProvider({ id: "opencode", name: "OpenCode Zen", source: "custom", env: [], options: {}, models: { "big-pickle": { name: "Big Pickle", capabilities: { toolcall: true, reasoning: true } } } })],
+  }));
+  assert.deepEqual(zenOnly.models.map((model) => model.id), ["opencode/big-pickle"], "with nothing else available Zen stays listed");
+  assert.equal(recommendModel(zenOnly), null, "OpenCode's catalog alone recommends nothing: it stays a deliberate choice");
+  assert.equal(recommendModel({ models: [...withoutAccount.models, ...local.models] })?.id, "openwork-free/openai/gpt-6-luna", "the free model stays the default when a key on this Mac is connected");
 });
 
 test("a retry the engine never moved on from reads as idle once its next attempt is long past", () => {
