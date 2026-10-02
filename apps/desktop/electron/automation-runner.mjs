@@ -2,6 +2,12 @@ import { createHeadlessThreadClient } from "@openwork/headless-threads"
 
 const EMPTY_USAGE = { inputTokens: null, outputTokens: null, costMicros: null }
 const RUNNER_WORK_POLL_MS = 60_000
+/** Inventory is gathered at most this often; it is sent only when it changed. */
+const INVENTORY_MIN_INTERVAL_MS = 2 * 60_000
+const INVENTORY_WORKSPACE_LIMIT = 50
+const INVENTORY_MODEL_LIMIT = 200
+const INVENTORY_REQUEST_TIMEOUT_MS = 10_000
+const INVENTORY_CONCURRENCY = 4
 
 function serializedError(value) {
   if (value instanceof Error) return value.message
@@ -266,6 +272,135 @@ export async function executeDesktopAutomation(assignment, options) {
   }
 }
 
+function trimmedText(value, limit) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, limit) : null
+}
+
+/** Runs `task` over `items` with at most `limit` in flight, preserving order. */
+async function mapBounded(items, limit, task) {
+  const results = new Array(items.length)
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await task(items[index])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
+function modelsFromV1Providers(payload) {
+  const providers = Array.isArray(payload?.all) ? payload.all : []
+  const connected = Array.isArray(payload?.connected) ? new Set(payload.connected) : null
+  const models = []
+  for (const provider of providers) {
+    const providerId = trimmedText(provider?.id, 160)
+    if (!providerId || (connected && !connected.has(providerId))) continue
+    const entries = provider?.models && typeof provider.models === "object" ? Object.entries(provider.models) : []
+    for (const [key, model] of entries) {
+      const modelId = trimmedText(model?.id, 160) ?? trimmedText(key, 160)
+      if (!modelId) continue
+      models.push({ providerId, modelId, name: trimmedText(model?.name, 200) ?? modelId })
+    }
+  }
+  return models
+}
+
+function modelsFromV2Catalog(payload) {
+  const items = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : []
+  return items.flatMap((model) => {
+    const providerId = trimmedText(model?.providerID, 160)
+    const modelId = trimmedText(model?.id, 160)
+    if (!providerId || !modelId) return []
+    return [{ providerId, modelId, name: trimmedText(model?.name, 200) ?? modelId }]
+  })
+}
+
+function defaultModelFrom(payload) {
+  const model = payload?.model
+  const providerId = trimmedText(model?.providerID, 160)
+  const modelId = trimmedText(model?.modelID, 160)
+  if (!providerId || !modelId) return null
+  const variant = trimmedText(model?.variant, 60)
+  return { providerId, modelId, ...(variant ? { variant } : {}) }
+}
+
+/**
+ * What this desktop has for remote-session callers: a friendly computer
+ * label and, per workspace, its engine, default model and usable models.
+ * Every source is optional: an endpoint this openwork-server lacks (404) or
+ * that fails reads as "nothing known" rather than failing the report. Returns
+ * null when the local runtime is not up yet.
+ */
+export async function collectDesktopInventory(options) {
+  const local = await options.getLocalRuntime()
+  if (!local?.baseUrl || !local?.token) return null
+  const computer = await options.describeComputer()
+  const localRequest = (requestPath) => requestJson(options.fetchImpl ?? fetch, local.baseUrl, local.token, requestPath, {
+    signal: options.signal
+      ? AbortSignal.any([options.signal, AbortSignal.timeout(INVENTORY_REQUEST_TIMEOUT_MS)])
+      : AbortSignal.timeout(INVENTORY_REQUEST_TIMEOUT_MS),
+  })
+  const optional = (requestPath) => localRequest(requestPath).catch(() => null)
+  const listed = await localRequest("/workspaces")
+  const status = await optional("/experimental/engine-v2-preview/status")
+  const engine = status?.enabled === true && status?.chatRouting === true ? "v2" : "v1"
+  const items = (Array.isArray(listed?.items) ? listed.items : [])
+    .filter((item) => typeof item?.id === "string" && item.id)
+    .slice(0, INVENTORY_WORKSPACE_LIMIT)
+  const workspaces = await mapBounded(items, INVENTORY_CONCURRENCY, async (item) => {
+    const base = `/workspace/${encodeURIComponent(item.id)}`
+    const [defaults, catalog] = await Promise.all([
+      optional(`${base}/default-model`),
+      optional(engine === "v2" ? `${base}/opencode2/api/model` : `${base}/opencode/provider`),
+    ])
+    const models = engine === "v2" ? modelsFromV2Catalog(catalog) : modelsFromV1Providers(catalog)
+    return {
+      workspaceId: String(item.id).slice(0, 240),
+      name: trimmedText(item.displayName, 120) ?? trimmedText(item.name, 120) ?? "Workspace",
+      active: item.id === listed?.activeId,
+      engine,
+      defaultModel: defaultModelFrom(defaults),
+      models: models.slice(0, INVENTORY_MODEL_LIMIT),
+    }
+  })
+  return {
+    computer: {
+      label: trimmedText(computer?.label, 120) ?? "Computer",
+      platform: computer.platform,
+      appVersion: trimmedText(computer?.appVersion, 80) ?? "unknown",
+    },
+    workspaces,
+  }
+}
+
+/**
+ * Describes this computer for remote-session callers. macOS has a
+ * user-visible computer name (System Settings > General > Sharing); other
+ * platforms, and a Mac whose name cannot be read, use the host name.
+ */
+export function createComputerDescriber(options) {
+  return async () => {
+    const named = options.platform === "darwin" && options.readComputerName
+      ? trimmedText(await options.readComputerName().catch(() => null), 120)
+      : null
+    let hostname = null
+    try { hostname = trimmedText(options.hostname(), 120) } catch { /* unnamed host */ }
+    return {
+      label: named ?? hostname ?? "Computer",
+      platform: options.platform,
+      appVersion: options.appVersion,
+    }
+  }
+}
+
+function workspaceUnavailable(workspaceId) {
+  const error = new Error(`Workspace ${workspaceId} is not available on this desktop`)
+  Object.defineProperty(error, "code", { value: "workspace_unavailable" })
+  return error
+}
+
 /** Delivers a remote command as a normal visible local OpenWork session. */
 export async function executeDesktopRemoteSession(assignment, options) {
   const local = await options.getLocalRuntime()
@@ -278,9 +413,15 @@ export async function executeDesktopRemoteSession(assignment, options) {
     { ...request, signal: options.signal },
   )
   const listed = await localRequest("/workspaces")
-  const workspaces = Array.isArray(listed?.items) ? listed.items : []
-  const workspace = workspaces.find((item) => item?.id === listed?.activeId) ?? workspaces[0]
-  if (!workspace?.id) throw new Error("No local workspace is available")
+  let workspace
+  try {
+    // The caller's chosen workspace must exist here, exactly like an
+    // Automation's pinned workspace; never fall back to the active one.
+    workspace = resolveAssignmentWorkspace(listed, assignment.workspaceId ?? null)
+  } catch (error) {
+    if (assignment.workspaceId) throw workspaceUnavailable(assignment.workspaceId)
+    throw error
+  }
   const workspaceId = String(workspace.id)
   const client = createWorkspaceSessionClient(local, workspaceId, options.fetchImpl ?? fetch)
   let sessionId = null
@@ -367,6 +508,51 @@ export function createDesktopAutomationRunner(options) {
   let pendingConfiguration = null
   let stopped = false
   const rejectedCredentials = new Set()
+
+  const inventoryMinIntervalMs = options.inventoryMinIntervalMs ?? INVENTORY_MIN_INTERVAL_MS
+  const now = options.now ?? Date.now
+
+  /**
+   * Tells Den what this desktop has, so remote-session callers can choose a
+   * computer, workspace and model. Sent once per credential (registration)
+   * and then only when it changed, gathered at most once per interval. Den
+   * versions without the endpoint answer 404 and are not asked again under
+   * this credential. A failure never affects polling for work.
+   */
+  const reportInventory = (state) => {
+    if (!options.describeComputer || state.inventoryUnsupported || state.inventoryInFlight || !isCurrent(state)) return
+    if (state.inventoryCheckedAt !== null && now() - state.inventoryCheckedAt < inventoryMinIntervalMs) return
+    state.inventoryCheckedAt = now()
+    state.inventoryInFlight = (async () => {
+      try {
+        const inventory = await collectDesktopInventory({
+          getLocalRuntime: options.getLocalRuntime,
+          describeComputer: options.describeComputer,
+          fetchImpl,
+          signal: state.controller.signal,
+        })
+        if (!inventory || !isCurrent(state)) {
+          // The local runtime is still starting: try again on the next poll.
+          if (!inventory) state.inventoryCheckedAt = null
+          return
+        }
+        const key = JSON.stringify(inventory)
+        if (key === state.inventoryKey) return
+        await runnerRequest(state, "/v1/automation-runner/inventory", {
+          method: "PUT",
+          body: inventory,
+          signal: AbortSignal.timeout(lifecycleRequestTimeoutMs),
+        })
+        state.inventoryKey = key
+      } catch (error) {
+        if (error?.status === 404) state.inventoryUnsupported = true
+        else options.log?.(`runner inventory report failed: ${serializedError(error)}`)
+      } finally {
+        state.inventoryInFlight = null
+        options.onInventoryReported?.()
+      }
+    })()
+  }
 
   const credentialKey = (configuration) => `${configuration.baseUrl}\n${configuration.token}`
   const isCurrent = (state) => !stopped
@@ -581,7 +767,7 @@ export function createDesktopAutomationRunner(options) {
       result = {
         status: "failed",
         error: {
-          code: "execution_failed",
+          code: error?.code === "workspace_unavailable" ? "workspace_unavailable" : "execution_failed",
           message: (serializedError(error) || "Remote session creation failed").slice(0, 2_000),
         },
       }
@@ -668,6 +854,7 @@ export function createDesktopAutomationRunner(options) {
   const connectLoop = async (state) => {
     let reconnectAttempt = 0
     while (isCurrent(state)) {
+      reportInventory(state)
       try {
         await reconcile(state)
         reconnectAttempt = 0
@@ -701,6 +888,10 @@ export function createDesktopAutomationRunner(options) {
       active: null,
       retired: false,
       credentialRejected: false,
+      inventoryKey: null,
+      inventoryCheckedAt: null,
+      inventoryInFlight: null,
+      inventoryUnsupported: false,
     }
     current = state
     void connectLoop(state)
@@ -754,6 +945,7 @@ export function createDesktopAutomationRunner(options) {
     wake() {
       const state = current
       if (stopped || !state || !isCurrent(state)) return { polled: false }
+      reportInventory(state)
       reconcile(state).catch((error) => {
         options.log?.(`runner wake poll failed: ${error instanceof Error ? error.message : String(error)}`)
       })

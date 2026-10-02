@@ -161,6 +161,7 @@ test("agent MCP server exposes steering instructions during initialize", async (
   expect(client.getInstructions()).toContain("never retry the same arguments unchanged")
   expect(client.getInstructions()).toContain("on the remote session")
   expect(client.getInstructions()).toContain("remote-session:create")
+  expect(client.getInstructions()).toContain("first execute remote-session:targets")
   expect(client.getInstructions()).toContain("OpenWork Web instance")
 
   await client.close()

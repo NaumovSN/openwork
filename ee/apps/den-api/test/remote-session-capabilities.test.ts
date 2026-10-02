@@ -111,7 +111,8 @@ function executeInput(action: "create" | "send" | "read", body: unknown, hasWrit
   }
 }
 
-test("capability names parse for exactly the three actions", () => {
+test("capability names parse for exactly the remote-session actions", () => {
+  expect(parseRemoteSessionCapabilityName("remote-session:targets")).toBe("targets")
   expect(parseRemoteSessionCapabilityName("remote-session:create")).toBe("create")
   expect(parseRemoteSessionCapabilityName("remote-session:send")).toBe("send")
   expect(parseRemoteSessionCapabilityName("remote-session:read")).toBe("read")
@@ -146,6 +147,20 @@ test("task phrasings route to remote-session:create first", () => {
   ]) {
     expect(searchRemoteSessionCapabilities(query, 10)[0]?.name).toBe("remote-session:create")
   }
+})
+
+test("targets queries route to remote-session:targets first", () => {
+  for (const query of [
+    "which computers and workspaces can I use",
+    "list my desktops and models",
+  ]) {
+    expect(searchRemoteSessionCapabilities(query, 10)[0]?.name).toBe("remote-session:targets")
+  }
+  const targets = searchRemoteSessionCapabilities("remote session targets", 10).find((match) => match.name === "remote-session:targets")
+  expect(targets?.argumentsSchema).toMatchObject({ properties: { includeModels: { type: "boolean" } } })
+  const create = searchRemoteSessionCapabilities("create a remote session", 10).find((match) => match.name === "remote-session:create")
+  expect(create?.summary).toContain("remote-session:targets")
+  expect(create?.argumentsSchema).toMatchObject({ properties: { computerId: { type: "string" }, workspaceId: { type: "string" } } })
 })
 
 test("create returns the native session identifiers", async () => {
@@ -579,6 +594,8 @@ for (const deployment of noCloudDeployments) {
         prompt: "Inspect the repo",
         model: null,
         idempotencyKey: null,
+        targetComputerId: null,
+        targetWorkspaceId: null,
         expiresAt: Date.now() + 600_000,
         claimedByRunnerId: null,
         claimedAt: null,
@@ -608,7 +625,7 @@ for (const deployment of noCloudDeployments) {
         expect(context.remoteSessionsEnabled).toBe(true)
         const source = registry.CAPABILITY_SOURCES.remoteSession
         expect((await source.search(context, "remote session desktop", 10)).map((match) => match.name).sort()).toEqual([
-          "remote-session:create", "remote-session:read", "remote-session:send",
+          "remote-session:create", "remote-session:read", "remote-session:send", "remote-session:stop", "remote-session:targets",
         ])
         expect(await source.enumerate(context)).toEqual([])
         const createInput = { name: "remote-session:create", body: { target: "desktop", title: command.title, prompt: command.prompt } }

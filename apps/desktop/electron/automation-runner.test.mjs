@@ -3,6 +3,8 @@ import test from "node:test"
 
 import {
   classifyAutomationExecutionError,
+  collectDesktopInventory,
+  createComputerDescriber,
   createDesktopAutomationRunner,
   executeDesktopAutomation,
   executeDesktopRemoteSession,
@@ -1996,4 +1998,225 @@ test("a desktop leaves a run pinned to another desktop's workspace and claims th
   assert.equal(completion.workspaceId, "workspace-1")
   assert.deepEqual(denPaths.filter((path) => path.endsWith("/claim")), ["/v1/automation-runs/run-here/claim"])
   assert.equal(denPaths.some((path) => path.includes("run-elsewhere")), false, "the foreign-pinned run is never claimed")
+})
+
+const LAPTOP = { label: "Work Laptop", platform: "darwin", appVersion: "0.19.0" }
+
+function inventoryServer(overrides = {}) {
+  const requests = []
+  const fetchImpl = async (url) => {
+    const parsed = new URL(url)
+    requests.push(parsed.pathname)
+    const routes = {
+      "/workspaces": () => Response.json({
+        items: [
+          { id: "ws-notes", name: "notes", displayName: "Notes" },
+          { id: "ws-repo", name: "repo-folder" },
+        ],
+        activeId: "ws-repo",
+      }),
+      "/experimental/engine-v2-preview/status": () => Response.json({ message: "not found" }, { status: 404 }),
+      "/workspace/ws-notes/default-model": () => Response.json({ message: "not found" }, { status: 404 }),
+      "/workspace/ws-repo/default-model": () => Response.json({
+        model: { providerID: "anthropic", modelID: "claude-sonnet", variant: "high" },
+        updatedAt: 1,
+      }),
+      "/workspace/ws-notes/opencode/provider": () => Response.json({ message: "engine starting" }, { status: 503 }),
+      "/workspace/ws-repo/opencode/provider": () => Response.json({
+        all: [
+          { id: "anthropic", name: "Anthropic", models: { "claude-sonnet": { id: "claude-sonnet", name: "Claude Sonnet" } } },
+          { id: "unconnected", name: "Unconnected", models: { hidden: { id: "hidden", name: "Hidden" } } },
+        ],
+        connected: ["anthropic"],
+      }),
+      ...overrides,
+    }
+    const route = routes[parsed.pathname]
+    if (!route) throw new Error(`Unexpected inventory request ${parsed.pathname}`)
+    return route()
+  }
+  return { requests, fetchImpl }
+}
+
+test("desktop inventory reports workspaces, engine, default model and connected models with 404 fallbacks", async () => {
+  const server = inventoryServer()
+  const inventory = await collectDesktopInventory({
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" }),
+    describeComputer: async () => LAPTOP,
+    fetchImpl: server.fetchImpl,
+  })
+  assert.deepEqual(inventory, {
+    computer: LAPTOP,
+    workspaces: [
+      { workspaceId: "ws-notes", name: "Notes", active: false, engine: "v1", defaultModel: null, models: [] },
+      {
+        workspaceId: "ws-repo",
+        name: "repo-folder",
+        active: true,
+        engine: "v1",
+        defaultModel: { providerId: "anthropic", modelId: "claude-sonnet", variant: "high" },
+        models: [{ providerId: "anthropic", modelId: "claude-sonnet", name: "Claude Sonnet" }],
+      },
+    ],
+  })
+  assert.equal(await collectDesktopInventory({
+    getLocalRuntime: async () => null,
+    describeComputer: async () => LAPTOP,
+  }), null)
+})
+
+test("desktop inventory reads v2 workspaces' models from the native engine and bounds the lists", async () => {
+  const many = Array.from({ length: 60 }, (_, index) => ({ id: `ws-${index}`, name: `Workspace ${index}` }))
+  const server = inventoryServer({
+    "/workspaces": () => Response.json({ items: many, activeId: "ws-0" }),
+    "/experimental/engine-v2-preview/status": () => Response.json({ enabled: true, chatRouting: true }),
+  })
+  const fetchImpl = async (url, init) => {
+    const { pathname } = new URL(url)
+    if (pathname.endsWith("/default-model")) return Response.json({ model: null, updatedAt: null })
+    if (pathname.endsWith("/opencode2/api/model")) {
+      return Response.json({ data: Array.from({ length: 250 }, (_, index) => ({ id: `m${index}`, providerID: "openwork", name: `Model ${index}` })) })
+    }
+    return server.fetchImpl(url, init)
+  }
+  const inventory = await collectDesktopInventory({
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" }),
+    describeComputer: async () => LAPTOP,
+    fetchImpl,
+  })
+  assert.equal(inventory.workspaces.length, 50)
+  assert.equal(inventory.workspaces[0].engine, "v2")
+  assert.equal(inventory.workspaces[0].active, true)
+  assert.equal(inventory.workspaces[0].defaultModel, null)
+  assert.equal(inventory.workspaces[0].models.length, 200)
+  assert.deepEqual(inventory.workspaces[0].models[1], { providerId: "openwork", modelId: "m1", name: "Model 1" })
+})
+
+test("the computer label is the Mac's computer name, falling back to the host name", async () => {
+  const mac = createComputerDescriber({ platform: "darwin", appVersion: "0.19.0", hostname: () => "host-1", readComputerName: async () => "Work Laptop\n" })
+  assert.deepEqual(await mac(), { label: "Work Laptop", platform: "darwin", appVersion: "0.19.0" })
+  const unreadable = createComputerDescriber({ platform: "darwin", appVersion: "0.19.0", hostname: () => "host-1", readComputerName: async () => { throw new Error("no scutil") } })
+  assert.equal((await unreadable()).label, "host-1")
+  const linux = createComputerDescriber({ platform: "linux", appVersion: "0.19.0", hostname: () => "build-box", readComputerName: async () => "ignored" })
+  assert.equal((await linux()).label, "build-box")
+})
+
+test("the runner reports inventory on connect, then only when it changed, and stops on an older Den", async () => {
+  let clock = 0
+  let label = "Work Laptop"
+  const reports = []
+  let inventoryStatus = 200
+  let notifyReported = () => {}
+  const server = inventoryServer()
+  const runner = createDesktopAutomationRunner({
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" }),
+    describeComputer: async () => ({ ...LAPTOP, label }),
+    inventoryMinIntervalMs: 1_000,
+    now: () => clock,
+    onInventoryReported: () => notifyReported(),
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(url)
+      if (parsed.origin === "http://127.0.0.1:3000") return server.fetchImpl(url, options)
+      if (parsed.pathname === "/v1/automation-runner/work") return Response.json({ items: [] })
+      if (parsed.pathname === "/v1/automation-runner/inventory") {
+        assert.equal(options.method, "PUT")
+        reports.push(JSON.parse(options.body))
+        return inventoryStatus === 200
+          ? Response.json({ ok: true, updatedAt: 1 })
+          : Response.json({ error: "not_found" }, { status: inventoryStatus })
+      }
+      throw new Error(`Unexpected Den request ${parsed.pathname}`)
+    },
+    waitBeforeReconnect: () => new Promise(() => {}),
+  })
+  const reported = () => new Promise((resolve) => { notifyReported = resolve })
+
+  let next = reported()
+  runner.configure({ baseUrl: "https://den.example.com", token: runnerTokenFor("https://den.example.com"), runnerId: "runner-1" })
+  await withTimeout(next, "inventory was not reported on connect")
+  assert.equal(reports.length, 1)
+  assert.equal(reports[0].computer.label, "Work Laptop")
+  assert.equal(reports[0].workspaces.length, 2)
+
+  // Within the interval nothing is gathered at all.
+  const gathered = server.requests.length
+  runner.wake()
+  await flushTasks()
+  assert.equal(server.requests.length, gathered)
+
+  // After the interval an unchanged inventory is gathered but not sent.
+  clock = 5_000
+  next = reported()
+  runner.wake()
+  await withTimeout(next, "inventory was not re-gathered")
+  assert.equal(reports.length, 1)
+
+  // A change is sent; a 404 from an older Den stops reporting under this credential.
+  clock = 10_000
+  label = "Renamed Laptop"
+  inventoryStatus = 404
+  next = reported()
+  runner.wake()
+  await withTimeout(next, "changed inventory was not reported")
+  assert.equal(reports.length, 2)
+  clock = 20_000
+  label = "Renamed Again"
+  runner.wake()
+  await flushTasks()
+  assert.equal(reports.length, 2)
+  runner.stop()
+})
+
+test("a remote session pinned to a workspace is created there, never in the active one", async () => {
+  const sessionPaths = opencodeSessionPaths("ws-notes", "session-pinned")
+  const result = await executeDesktopRemoteSession(remoteSessionAssignment({ prompt: null, model: null, workspaceId: "ws-notes" }), {
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local-client-token" }),
+    fetchImpl: async (url) => {
+      const parsed = new URL(url)
+      if (parsed.pathname === "/workspaces") return Response.json({ items: [{ id: "ws-repo" }, { id: "ws-notes" }], activeId: "ws-repo" })
+      if (parsed.pathname === sessionPaths.create) return Response.json({ id: "session-pinned" }, { status: 201 })
+      throw new Error(`Unexpected request ${parsed.pathname}`)
+    },
+    signal: new AbortController().signal,
+  })
+  assert.deepEqual(result, { sessionId: "session-pinned", workspaceId: "ws-notes", started: false })
+})
+
+test("a remote session pinned to a missing workspace completes as workspace_unavailable", async () => {
+  const completions = []
+  let offered = false
+  let resolveCompleted
+  const completed = new Promise((resolve) => { resolveCompleted = resolve })
+  const runner = createDesktopAutomationRunner({
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local-client-token" }),
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(url)
+      if (parsed.origin === "http://127.0.0.1:3000") {
+        if (parsed.pathname === "/workspaces") return Response.json({ items: [{ id: "ws-repo" }], activeId: "ws-repo" })
+        throw new Error(`No session may be created: ${parsed.pathname}`)
+      }
+      if (parsed.pathname === "/v1/automation-runner/work") {
+        if (offered) return Response.json({ items: [] })
+        offered = true
+        return Response.json({ items: [{ kind: "remote_session_create", commandId: "command-1" }] })
+      }
+      if (parsed.pathname.endsWith("/claim")) {
+        return Response.json({ assignment: remoteSessionAssignment({ workspaceId: "ws-gone" }) })
+      }
+      if (parsed.pathname.endsWith("/complete")) {
+        completions.push(JSON.parse(options.body))
+        resolveCompleted()
+        return Response.json({ command: { id: "command-1", status: "failed" } })
+      }
+      throw new Error(`Unexpected request ${parsed.pathname}`)
+    },
+    waitBeforeReconnect: () => new Promise(() => {}),
+  })
+  runner.configure({ baseUrl: "https://den.example.com", token: runnerTokenFor("https://den.example.com"), runnerId: "runner-1" })
+  await withTimeout(completed, "pinned remote session completion timed out")
+  runner.stop()
+  assert.deepEqual(completions, [{
+    status: "failed",
+    error: { code: "workspace_unavailable", message: "Workspace ws-gone is not available on this desktop" },
+  }])
 })

@@ -15,6 +15,10 @@ export const RemoteSessionCommandTable = mysqlTable(
     model_model_id: varchar("model_model_id", { length: 160 }),
     model_variant: varchar("model_variant", { length: 60 }),
     idempotency_key: varchar("idempotency_key", { length: 160 }),
+    /** Runner row (computer) the caller chose; only it may claim the command. */
+    target_computer_id: varchar("target_computer_id", { length: 160 }),
+    /** Workspace on that computer the session must be created in. */
+    target_workspace_id: varchar("target_workspace_id", { length: 240 }),
     expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
     claimed_by_runner_id: varchar("claimed_by_runner_id", { length: 160 }),
     claimed_at: timestamp("claimed_at", { fsp: 3 }),

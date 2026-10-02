@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, lte } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, gt, inArray, isNull, lte, or } from "@openwork-ee/den-db/drizzle"
 import { RemoteSessionCommandTable } from "@openwork-ee/den-db/schema/remote-session-commands"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { RemoteSessionCommandCompleteRequest } from "@openwork/types/automations"
@@ -19,6 +19,10 @@ export type RemoteSessionCommand = {
   prompt: string | null
   model: { providerId: string; modelId: string; variant: string | null } | null
   idempotencyKey: string | null
+  /** Computer (runner row id) the caller chose; only that runner may claim it. */
+  targetComputerId: string | null
+  /** Workspace on that computer the session must be created in. */
+  targetWorkspaceId: string | null
   expiresAt: number
   claimedByRunnerId: string | null
   claimedAt: number | null
@@ -39,13 +43,23 @@ type EnqueueInput = {
   model?: { providerId: string; modelId: string; variant?: string }
   ttlMs: number
   idempotencyKey?: string
+  targetComputerId?: string
+  targetWorkspaceId?: string
 }
+
+/**
+ * The claiming desktop's computer ids: its runner row id, plus the install id
+ * that named rows registered before rows were scoped. A command pinned to a
+ * computer is visible only to the runner whose ids include its target.
+ */
+type RunnerComputerIds = readonly string[]
 
 type ClaimInput = {
   commandId: string
   organizationId: string
   ownerMemberId: string
   runnerId: string
+  computerIds: RunnerComputerIds
   now: number
 }
 
@@ -62,6 +76,7 @@ export interface RemoteSessionCommandStore {
   listPendingForRunner(input: {
     organizationId: string
     ownerMemberId: string
+    computerIds: RunnerComputerIds
     now: number
     limit: number
   }): Promise<RemoteSessionCommand[]>
@@ -95,6 +110,8 @@ function mapCommand(row: CommandRow): RemoteSessionCommand {
       ? { providerId: row.model_provider_id, modelId: row.model_model_id, variant: row.model_variant }
       : null,
     idempotencyKey: row.idempotency_key,
+    targetComputerId: row.target_computer_id,
+    targetWorkspaceId: row.target_workspace_id,
     expiresAt: row.expires_at.getTime(),
     claimedByRunnerId: row.claimed_by_runner_id,
     claimedAt: row.claimed_at?.getTime() ?? null,
@@ -105,6 +122,12 @@ function mapCommand(row: CommandRow): RemoteSessionCommand {
     createdAt: row.created_at.getTime(),
     updatedAt: row.updated_at.getTime(),
   }
+}
+
+function targetableBy(computerIds: RunnerComputerIds) {
+  return computerIds.length > 0
+    ? or(isNull(RemoteSessionCommandTable.target_computer_id), inArray(RemoteSessionCommandTable.target_computer_id, [...computerIds]))
+    : isNull(RemoteSessionCommandTable.target_computer_id)
 }
 
 async function commandById(commandId: string): Promise<RemoteSessionCommand | null> {
@@ -130,6 +153,8 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       model_model_id: input.model?.modelId ?? null,
       model_variant: input.model?.variant ?? null,
       idempotency_key: input.idempotencyKey ?? null,
+      target_computer_id: input.targetComputerId ?? null,
+      target_workspace_id: input.targetWorkspaceId ?? null,
       expires_at: new Date(now + input.ttlMs),
       created_at: new Date(now),
       updated_at: new Date(now),
@@ -154,6 +179,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       eq(RemoteSessionCommandTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
       eq(RemoteSessionCommandTable.status, "pending"),
       gt(RemoteSessionCommandTable.expires_at, now),
+      targetableBy(input.computerIds),
     ))
     if (!automationUpdateChangedRows(result)) return null
     return commandById(input.commandId)
@@ -215,6 +241,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       eq(RemoteSessionCommandTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
       eq(RemoteSessionCommandTable.status, "pending"),
       gt(RemoteSessionCommandTable.expires_at, new Date(input.now)),
+      targetableBy(input.computerIds),
     )).orderBy(asc(RemoteSessionCommandTable.created_at), asc(RemoteSessionCommandTable.id)).limit(input.limit)
     return rows.map(mapCommand)
   },
