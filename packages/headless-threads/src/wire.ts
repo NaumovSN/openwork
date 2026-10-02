@@ -96,8 +96,8 @@ export const threadSnapshotSchema = z.object({
   status: threadStatusSchema,
 });
 
-type SessionWire = z.infer<typeof sessionSchema>;
-type MessageWire = z.infer<typeof messageSchema>;
+export type SessionWire = z.infer<typeof sessionSchema>;
+export type MessageWire = z.infer<typeof messageSchema>;
 type PartWire = z.infer<typeof partSchema>;
 type TodoWire = z.infer<typeof todoSchema>;
 
