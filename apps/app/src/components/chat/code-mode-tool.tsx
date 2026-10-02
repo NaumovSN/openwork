@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { DynamicToolUIPart } from "ai";
 import { ChevronRight } from "lucide-react";
-import { CapabilityCallLine, TechnicalDetailsPanel } from "./capability-call-line";
+import { CapabilityCallLine, DetailsToggle, TechnicalDetailsPanel } from "./capability-call-line";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { getCapabilityCallSentence } from "@/lib/capability-call";
 import { codeModeSummary } from "@/lib/code-mode-summary";
@@ -12,12 +12,19 @@ import { cn } from "@/lib/utils";
 import { resolveConnectorToolIdentity, type ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity";
 
 /** Keep the script's activity on the same rail as the rest of the turn. */
-export function CodeModeTool({ part, calls, lifecycle, connectors }: {
+/** The agent reading its own toolbox: plumbing, not work the person asked for. */
+function isToolLookup(call: DynamicToolUIPart) {
+  return call.toolName === "search" || call.toolName.endsWith("search_capabilities");
+}
+
+export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
   part: DynamicToolUIPart;
   calls: DynamicToolUIPart[];
   lifecycle: CurrentToolLifecycle | null;
   connectors: ConnectorToolIdentity[];
 }) {
+  // Catalog lookups are the agent reading its own toolbox, never shown.
+  const calls = allCalls.filter((call) => !isToolLookup(call));
   // A finished group folds unless the person explicitly chose otherwise.
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -34,7 +41,10 @@ export function CodeModeTool({ part, calls, lifecycle, connectors }: {
     const interval = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(interval);
   }, [running]);
-  const open = userOpen ?? inFlight;
+  // Groups never open or close on their own: live progress shows in the
+  // collapsed line, so finishing a step doesn't make the chat jump. Only the
+  // person's choice opens a group, and it stays as they left it.
+  const open = userOpen ?? false;
   const failedCalls = calls.filter(call => call.state === "output-error");
   const failed = part.state === "output-error";
   const startedAt = running ? getToolCallStartedAt(part) : null;
@@ -45,8 +55,13 @@ export function CodeModeTool({ part, calls, lifecycle, connectors }: {
   const serviceName = (call: DynamicToolUIPart) => {
     // Catalog search is an OpenWork mechanism, not a service the person used.
     if (call.toolName.endsWith("search_capabilities")) return null;
+    // The service a call reached (Render, Slack…) wins. Only calls with no
+    // connector of their own, such as Den scripts, are named by where they
+    // ran; the MCP's settings title ("Cloud Control") is plumbing.
     const connector = resolveConnectorToolIdentity(call, connectors);
-    return connector?.name ?? getCapabilityCallSentence(call, { includeQuery: false }).service;
+    if (connector?.name) return connector.name;
+    if (call.toolName.startsWith("openwork-cloud_")) return "OpenWork Cloud";
+    return getCapabilityCallSentence(call, { includeQuery: false }).service;
   };
   const summary = codeModeSummary(calls, { running, failed, serviceName });
   const current = [...calls].reverse().find(call => isToolPartInFlight(call));
@@ -58,44 +73,65 @@ export function CodeModeTool({ part, calls, lifecycle, connectors }: {
   // in the child sentence ("Creating a note" versus "Creating note").
   const comparable = (value: string) => value.toLowerCase().replace(/\b(?:a|an|the)\b/g, "").replace(/\s+/g, " ").trim();
   const distinctCurrent = currentSentence && !comparable(summary).startsWith(comparable(currentSentence));
-  const label = statusUnknown ? `${summary} — Status unavailable`
+  const label = statusUnknown ? `${summary}, status unavailable`
     : waiting ? "Waiting for your action"
       : !open && distinctCurrent ? `${summary} · ${currentSentence}` : summary;
 
+  // A finished script that only read the tool catalog did no work the
+  // person asked for: show nothing rather than "Checked which tools…".
+  if (allCalls.length > 0 && calls.length === 0 && !isToolPartInFlight(part) && part.state !== "output-error") return null;
+
+  // One call is one step: no nested rail, no "1 step", no repeated sentence.
+  // The row's details icon opens the script (its source and its error).
+  const only = calls.length === 1 && !waiting && !statusUnknown ? calls[0] : undefined;
+  if (only) {
+    // The call's own input is the readable one (a Den script's source); the
+    // script's result lives on the outer step.
+    const merged: DynamicToolUIPart = only.state === "output-available" && part.state === "output-available"
+      ? { ...only, output: part.output } : only;
+    return (
+      <div data-code-mode-call={part.toolCallId}>
+        <CapabilityCallLine
+          part={merged}
+          connector={resolveConnectorToolIdentity(only, connectors)}
+          quietFailure
+          shimmer={running}
+          statusUnknown={isToolPartInFlight(only) && (!running || !inFlight)}
+        />
+      </div>
+    );
+  }
+
   return (
     <Collapsible open={open} onOpenChange={setUserOpen} data-code-mode-call={part.toolCallId}>
-      <CollapsibleTrigger
-        className="group flex min-w-0 max-w-full items-center gap-2 text-start text-sm text-muted-foreground hover:text-foreground"
-        aria-label={`${label}. ${open ? "Hide steps" : "Show steps"}`}
-      >
-        <ChevronRight aria-hidden="true" className={cn("size-4 shrink-0 transition-transform duration-150 ease-out motion-reduce:transition-none", open && "rotate-90")} />
-        <span className={cn("min-w-0 truncate", running && !current && "ow-text-shimmer")}>{label}</span>
-        {calls.length > 0 ? <span className="shrink-0 text-xs">{calls.length} {calls.length === 1 ? "step" : "steps"}</span> : null}
-        {waitingOn ? <span className="shrink-0 text-xs">Waiting on {waitingOn}</span> : null}
-        {failedCalls.length > 0 ? <span className="shrink-0 text-xs">{failedCalls.length} {failedCalls.length === 1 ? "failed call" : "failed calls"}</span> : null}
-        {duration ? <span className="ms-auto shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span> : null}
-      </CollapsibleTrigger>
+      <div className="group/step flex min-w-0 items-center gap-2">
+        <CollapsibleTrigger
+          className="group flex min-w-0 max-w-full items-center gap-2 text-start text-sm text-muted-foreground hover:text-foreground"
+          aria-label={`${label}. ${open ? "Hide steps" : "Show steps"}`}
+        >
+          <ChevronRight aria-hidden="true" className={cn("size-4 shrink-0 transition-transform duration-150 ease-out motion-reduce:transition-none", open && "rotate-90")} />
+          <span className={cn("min-w-0 truncate", running && !current && "ow-text-shimmer")}>{label}</span>
+          {calls.length > 0 ? <span className="shrink-0 text-xs">{calls.length} {calls.length === 1 ? "step" : "steps"}</span> : null}
+          {waitingOn ? <span className="shrink-0 text-xs">Waiting on {waitingOn}</span> : null}
+          {failedCalls.length > 0 ? <span className="shrink-0 text-xs">{failedCalls.length} failed</span> : null}
+          {duration ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span> : null}
+        </CollapsibleTrigger>
+        <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={label} alwaysVisible={failed} />
+      </div>
+      {detailsOpen ? <TechnicalDetailsPanel part={part} /> : null}
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-180 ease-out data-starting-style:h-0 data-ending-style:h-0 motion-reduce:transition-none [&[hidden]:not([hidden='until-found'])]:hidden">
-        <div className="mt-2 flex flex-col gap-2 border-s border-border ps-3">
+        <div className="mt-2 flex flex-col gap-1 border-s border-border ps-3">
           {calls.map(call => (
             <CapabilityCallLine
               key={call.toolCallId}
               part={call}
               connector={resolveConnectorToolIdentity(call, connectors)}
-              resultUnavailable={call.state === "output-available"}
               statusUnknown={isToolPartInFlight(call) && (!running || !inFlight)}
               quietFailure
               shimmer={running && call.toolCallId === current?.toolCallId}
             />
           ))}
           {calls.length === 0 && running ? <span className="text-xs text-muted-foreground">Starting…</span> : null}
-          <Collapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
-            <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-              <ChevronRight aria-hidden="true" className={cn("size-3 transition-transform duration-150 ease-out motion-reduce:transition-none", detailsOpen && "rotate-90")} />
-              Technical details
-            </CollapsibleTrigger>
-            <CollapsibleContent><TechnicalDetailsPanel part={part} /></CollapsibleContent>
-          </Collapsible>
         </div>
       </CollapsibleContent>
     </Collapsible>

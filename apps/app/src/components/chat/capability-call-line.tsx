@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import type { DynamicToolUIPart } from "ai"
-import { Ellipsis, ExternalLink, LoaderCircle, RefreshCcw } from "lucide-react"
+import { CodeXml, ExternalLink, LoaderCircle, RefreshCcw } from "lucide-react"
 
 import { describeChatToolFailure } from "@/components/tools/error-attribution"
 import {
@@ -75,19 +75,32 @@ function formatTechnicalValue(value: unknown): string {
 /** One human sentence explaining what to do about a failed call. */
 function failureInstruction(part: DynamicToolUIPart, reconnectName: string | null): string {
   if (reconnectName) {
-    return `${reconnectName} needs a fresh sign-in — reconnect it, then retry.`
+    return `${reconnectName} needs a fresh sign-in. Reconnect it, then retry.`
   }
   const errorText = part.state === "output-error" ? part.errorText : null
   return describeChatToolFailure(errorText ?? "")
 }
 
-export function TechnicalDetailsPanel({ part, resultUnavailable = false }: { part: DynamicToolUIPart; resultUnavailable?: boolean }) {
+/** A script's source reads as code, not as an escaped JSON string. */
+function scriptSource(input: unknown): { code: string } | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return null
+  const code = Object.entries(input).find(([key]) => key === "code")?.[1]
+  return typeof code === "string" ? { code: code.trim() } : null
+}
+
+export function TechnicalDetailsPanel({ part }: { part: DynamicToolUIPart }) {
+  const script = scriptSource(part.input)
   return (
     <div className="mt-2 flex flex-col gap-2 rounded-lg bg-muted p-2 text-xs">
+      {part.state === "output-error" && part.errorText ? (
+        <p className="whitespace-pre-wrap wrap-break-word text-foreground">{part.errorText}</p>
+      ) : null}
       <div className="font-mono text-[11px] text-muted-foreground">
         {part.toolName} · {part.toolCallId}
       </div>
-      {part.input !== undefined && part.input !== null ? (
+      {script ? (
+        <pre className="max-h-60 overflow-auto whitespace-pre font-mono leading-5">{script.code}</pre>
+      ) : part.input !== undefined && part.input !== null ? (
         <pre className="max-h-40 overflow-auto whitespace-pre-wrap wrap-break-word">
           {formatTechnicalValue(part.input)}
         </pre>
@@ -97,15 +110,31 @@ export function TechnicalDetailsPanel({ part, resultUnavailable = false }: { par
           {formatTechnicalValue(part.output)}
         </pre>
       ) : null}
-      {resultUnavailable ? (
-        <p>The engine did not provide an individual result for this action. See the execution details.</p>
-      ) : null}
-      {part.state === "output-error" && part.errorText ? (
-        <pre className="max-h-60 overflow-auto whitespace-pre-wrap wrap-break-word opacity-80">
-          {part.errorText}
-        </pre>
-      ) : null}
     </div>
+  )
+}
+
+
+/**
+ * Raw details stay one quiet click away: a code icon in a fixed trailing slot
+ * that appears on hover or keyboard focus (always on touch, and always for a
+ * failure, which is when people actually need it). Reserving the slot keeps
+ * the row from shifting when the icon appears.
+ */
+export function DetailsToggle({ open, onToggle, label, alwaysVisible = false }: {
+  open: boolean
+  onToggle: () => void
+  label: string
+  alwaysVisible?: boolean
+}) {
+  return (
+    <Button type="button" variant={open ? "secondary" : "ghost"} size="icon-xs"
+      className={cn("ms-auto shrink-0 text-muted-foreground transition-opacity duration-150 motion-reduce:transition-none",
+        open || alwaysVisible ? "opacity-100" : "opacity-0 group-hover/step:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100")}
+      aria-label={`${open ? "Hide" : "Show"} technical details for ${label}`} title="Technical details"
+      aria-expanded={open} onClick={onToggle} data-testid="tool-details-toggle">
+      <CodeXml aria-hidden="true" />
+    </Button>
   )
 }
 
@@ -123,7 +152,7 @@ export function CapabilityCallLine({
   part,
   className,
   connector,
-  resultUnavailable = false,
+
   statusUnknown = false,
   quietFailure = false,
   shimmer = false,
@@ -147,16 +176,17 @@ export function CapabilityCallLine({
   // in the rail without turning a failed call into a prominent card.
   if (isFailed && quietFailure && !reconnectAction) {
     const sentence = getCapabilityCallSentence(part, { includeQuery: false, connectionName: connector?.name })
-    const label = sentence.failure ?? `Couldn't complete ${sentence.past.toLowerCase()}`
+    const label = sentence.failure ?? `${sentence.past} failed`
     return (
-      <Collapsible data-capability-call={part.toolName} open={open} onOpenChange={setOpen} className={className}>
-        <CollapsibleTrigger className="flex min-w-0 items-center gap-2 text-start text-sm text-muted-foreground hover:text-foreground" aria-label={`${label}. ${open ? "Hide" : "Show"} technical details`}>
+      <div data-capability-call={part.toolName} className={cn("group/step min-w-0", className)}>
+        <div className="flex min-h-6 min-w-0 items-center gap-2 text-sm text-muted-foreground">
           {connector ? <ConnectorMark connector={connector} /> : null}
           <span className="min-w-0 truncate">{label}</span>
           {duration ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span> : null}
-        </CollapsibleTrigger>
-        <CollapsibleContent><TechnicalDetailsPanel part={part} /></CollapsibleContent>
-      </Collapsible>
+          <DetailsToggle open={open} onToggle={() => setOpen(!open)} label={label} alwaysVisible />
+        </div>
+        {open ? <TechnicalDetailsPanel part={part} /> : null}
+      </div>
     )
   }
 
@@ -242,7 +272,7 @@ export function CapabilityCallLine({
                 onClick={() => setDetailsOpen(!detailsOpen)}
                 aria-expanded={detailsOpen}
               >
-                <Ellipsis aria-hidden="true" />
+                <CodeXml aria-hidden="true" />
               </Button>
               {detailsOpen ? <TechnicalDetailsPanel part={part} /> : null}
             </div>
@@ -253,31 +283,25 @@ export function CapabilityCallLine({
   }
 
   const sentence = getCapabilityCallSentence(part, { connectionName: connector?.name })
-  const line = statusUnknown ? `${sentence.present} — status unavailable` : inFlight ? sentence.present : sentence.past
+  const line = statusUnknown ? `${sentence.present}, status unavailable` : inFlight ? sentence.present : sentence.past
   return (
-    <Collapsible data-capability-call={part.toolName} open={open} onOpenChange={setOpen} className={className}>
-      <div className="flex min-w-0 items-center gap-2">
-        <CollapsibleTrigger
-          className="group flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-start text-sm text-muted-foreground transition-colors hover:text-foreground"
-          aria-label={open ? `${line}. Hide technical details` : `${line}. Show technical details`}
-        >
-          {connector ? (
-            <ConnectorMark connector={connector} />
-          ) : inFlight ? (
-            <span className="flex size-3.5 shrink-0 items-center justify-center">
-              {shimmer ? <span aria-hidden="true" className="size-1 rounded-full bg-muted-foreground" />
-                : <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin text-muted-foreground" />}
-            </span>
-          ) : null}
-          <span className={cn("min-w-0 truncate", shimmer && inFlight && "ow-text-shimmer motion-reduce:animate-none")}>{line}</span>
-          {duration ? (
-            <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span>
-          ) : null}
-        </CollapsibleTrigger>
+    <div data-capability-call={part.toolName} className={cn("group/step min-w-0", className)}>
+      <div className="flex min-h-6 min-w-0 items-center gap-2 text-sm text-muted-foreground">
+        {connector ? (
+          <ConnectorMark connector={connector} />
+        ) : inFlight ? (
+          <span className="flex size-3.5 shrink-0 items-center justify-center">
+            {shimmer ? <span aria-hidden="true" className="size-1 rounded-full bg-muted-foreground" />
+              : <LoaderCircle aria-hidden="true" className="size-3.5 animate-spin text-muted-foreground" />}
+          </span>
+        ) : null}
+        <span className={cn("min-w-0 truncate", shimmer && inFlight && "ow-text-shimmer motion-reduce:animate-none")}>{line}</span>
+        {duration ? (
+          <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span>
+        ) : null}
+        <DetailsToggle open={open} onToggle={() => setOpen(!open)} label={line} />
       </div>
-      <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
-        <TechnicalDetailsPanel part={part} resultUnavailable={resultUnavailable} />
-      </CollapsibleContent>
-    </Collapsible>
+      {open ? <TechnicalDetailsPanel part={part} /> : null}
+    </div>
   )
 }
