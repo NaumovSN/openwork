@@ -429,6 +429,7 @@ export function McpView(props: McpViewProps) {
   const [computerUseMcpCommand, setComputerUseMcpCommand] = useState<string[] | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ExtensionInventoryFilter>(primaryLibraryFilter(props.initialFilter));
+  const [onlyNeedsSignIn, setOnlyNeedsSignIn] = useState(props.initialState === "needs_signin");
   const [layout, setLayout] = useState<ExtensionLayout>(readExtensionLayout);
   const [claudeImportOpen, setClaudeImportOpen] = useState(false);
   const [screen, setScreen] = useState<LibraryScreen>({ kind: "list" });
@@ -523,6 +524,11 @@ export function McpView(props: McpViewProps) {
   const setInventoryFilter = (nextFilter: ExtensionInventoryFilter) => {
     setFilter(nextFilter);
     props.onFilterChange?.(nextFilter);
+  };
+  const toggleNeedsSignIn = () => {
+    const next = !onlyNeedsSignIn;
+    setOnlyNeedsSignIn(next);
+    props.onStateChange?.(next ? "needs_signin" : "all", filter);
   };
   const libraryCloudSignedIn = cloudSession.isSignedIn
     || (Boolean(cloudSession.authToken.trim()) && denAuth.isSignedIn);
@@ -1661,6 +1667,7 @@ export function McpView(props: McpViewProps) {
     const error = readMcpErrorInfo(props.mcpStatuses[server.name]);
     const attention = libraryRowAttention(group);
     rows.push({
+      needsSignIn: group === "needs_signin",
       key: `server:${server.name}`,
       section: "mac",
       taxonomy: "mcp",
@@ -1718,6 +1725,7 @@ export function McpView(props: McpViewProps) {
     const attention = libraryRowAttention(group);
     const connection = taxonomy === "connection" ? connectionForPlugin(plugin.name) : undefined;
     rows.push({
+      needsSignIn: group === "needs_signin",
       key: `mine:${plugin.id}`,
       section: "mine",
       taxonomy,
@@ -1756,6 +1764,7 @@ export function McpView(props: McpViewProps) {
     const group = connectMcpInventoryGroup(entry, props.availableConnectMcpStatuses ?? {});
     const attention = libraryRowAttention(group);
     rows.push({
+      needsSignIn: group === "needs_signin",
       key: `connect-mcp:${entry.id ?? entry.name}`,
       section: "openwork",
       taxonomy: "connection",
@@ -1793,6 +1802,7 @@ export function McpView(props: McpViewProps) {
     const hidden = isOpenWorkExtensionHidden(`plugin:${plugin.pluginId}`);
     const fileCount = plugin.files.length;
     rows.push({
+      needsSignIn: group === "needs_signin",
       key: `plugin:${plugin.pluginId}`,
       section: "openwork",
       taxonomy,
@@ -1820,6 +1830,7 @@ export function McpView(props: McpViewProps) {
     const group = resolveExtensionInventoryGroup(item);
     const attention = libraryRowAttention(group);
     rows.push({
+      needsSignIn: group === "needs_signin",
       key: item.id,
       section: "openwork",
       taxonomy: "connection",
@@ -1844,6 +1855,7 @@ export function McpView(props: McpViewProps) {
   const sharedOwned = ownedPlugins.filter((plugin) => isLibraryAudienceShared(libraryCloud.audienceFor(plugin.id)));
   const firstSharedOwned = sharedOwned[0];
   const openworkRowCount = rows.filter((row) => row.section === "openwork").length;
+  const needsSignInCount = rows.filter((row) => row.needsSignIn === true).length;
   const sectionMeta: Partial<Record<LibrarySection, string | null>> = {
     mine: firstSharedOwned
       ? t("extensions.section_mine_shared", { count: String(sharedOwned.length), audience: libraryAudienceName(libraryCloud.audienceFor(firstSharedOwned.id)) })
@@ -1859,6 +1871,7 @@ export function McpView(props: McpViewProps) {
       filter={filter}
       search={search}
       sectionMeta={sectionMeta}
+      onlyNeedsSignIn={onlyNeedsSignIn}
       signedOut={signedOut}
       onSignUp={props.onOpenCloudAccount}
       emptyState={(
@@ -2034,6 +2047,26 @@ export function McpView(props: McpViewProps) {
             </button>
           );
         })}
+        {needsSignInCount > 0 || onlyNeedsSignIn ? (
+          <>
+            <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+            <button
+              type="button"
+              aria-pressed={onlyNeedsSignIn}
+              onClick={toggleNeedsSignIn}
+              data-testid="library-needs-sign-in-filter"
+              className={`inline-flex h-[30px] items-center gap-1.5 rounded-full border px-3 text-[13px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring ${
+                onlyNeedsSignIn
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border bg-background text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+              }`}
+            >
+              <span className="size-1.5 rounded-full bg-amber-9" aria-hidden />
+              {t("extensions.filter_needs_sign_in")}
+              <span className={onlyNeedsSignIn ? "text-background/70" : "text-dls-secondary"}>{needsSignInCount}</span>
+            </button>
+          </>
+        ) : null}
         <div className="ml-auto flex items-center gap-1">
           <div className="mr-1 w-[min(220px,40vw)]">
             <SettingsListSearchInput
@@ -2300,6 +2333,8 @@ export type LibraryRow = {
   section: LibrarySection;
   taxonomy: ExtensionTaxonomy;
   searchText: string;
+  /** Waits on the member's own sign-in; the "Needs sign-in" filter keeps only these. */
+  needsSignIn?: boolean;
   node: ReactNode;
 };
 
@@ -2371,6 +2406,7 @@ export function LibraryInventory(props: {
   filter: ExtensionInventoryFilter;
   search?: string;
   sectionMeta?: Partial<Record<LibrarySection, string | null>>;
+  onlyNeedsSignIn?: boolean;
   signedOut?: boolean;
   onSignUp?: () => void;
   emptyState?: ReactNode;
@@ -2379,6 +2415,7 @@ export function LibraryInventory(props: {
   const category = primaryLibraryFilter(props.filter);
   const visible = props.rows.filter((row) =>
     matchesExtensionFilter(category, row.taxonomy)
+    && (!props.onlyNeedsSignIn || row.needsSignIn === true)
     && (!needle || row.searchText.toLowerCase().includes(needle)));
   const sections = librarySectionOrder
     .map((section) => ({ section, rows: visible.filter((row) => row.section === section) }))
@@ -2386,7 +2423,7 @@ export function LibraryInventory(props: {
   const containerClassName = props.layout === "list"
     ? "overflow-hidden rounded-xl border border-dls-border bg-dls-surface [&>div+div]:border-t [&>div+div]:border-dls-border/60"
     : "grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3";
-  const showLocked = props.signedOut === true && category === "all" && !needle;
+  const showLocked = props.signedOut === true && category === "all" && !needle && !props.onlyNeedsSignIn;
 
   return (
     <div className="space-y-6">
