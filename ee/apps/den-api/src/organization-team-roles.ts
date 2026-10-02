@@ -1,5 +1,5 @@
-import { and, eq, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
-import { InvitationTable, MemberTable, OrganizationTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
+import { and, eq, inArray, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
+import { ConnectedAccountTable, InvitationTable, MemberTable, OrganizationTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { db } from "./db.js"
 import { withGatewayUsageEntitlementMutation } from "@openwork-ee/den-db/gateway-usage-limits"
 import { organizationRoleValueSatisfies } from "./organization-role-hierarchy.js"
@@ -26,9 +26,26 @@ export function withOrganizationMembershipUsageMutation<T>(
   mutation: (tx: TeamMutationTransaction) => Promise<T>,
   memberIds: typeof MemberTable.$inferSelect.id[] | ((tx: TeamMutationTransaction) => Promise<typeof MemberTable.$inferSelect.id[]>),
 ) {
-  return withOrganizationTeamMutation(organizationId, async (tx) =>
-    withGatewayUsageEntitlementMutation(tx, organizationId, () => mutation(tx), typeof memberIds === "function" ? await memberIds(tx) : memberIds),
-  )
+  return withOrganizationTeamMutation(organizationId, async (tx) => {
+    const affected = [...new Set(typeof memberIds === "function" ? await memberIds(tx) : memberIds)]
+    const memberships = () => affected.length === 0 ? Promise.resolve([]) : tx
+      .select({ memberId: TeamMemberTable.orgMembershipId, teamId: TeamMemberTable.teamId })
+      .from(TeamMemberTable)
+      .innerJoin(TeamTable, and(eq(TeamTable.id, TeamMemberTable.teamId), eq(TeamTable.organizationId, organizationId)))
+      .where(inArray(TeamMemberTable.orgMembershipId, affected))
+    const before = await memberships()
+    const result = await withGatewayUsageEntitlementMutation(tx, organizationId, () => mutation(tx), affected)
+    const after = new Set((await memberships()).map((row) => `${row.memberId}:${row.teamId}`))
+    const removed = [...new Set(before.flatMap((row) => row.memberId && !after.has(`${row.memberId}:${row.teamId}`) ? [row.memberId] : []))]
+    // Inspect actual lost associations, not a returned Response's truthiness:
+    // denied edits and identical member-list replacements must preserve keys.
+    if (removed.length > 0) await tx.delete(ConnectedAccountTable).where(and(
+      eq(ConnectedAccountTable.organizationId, organizationId),
+      eq(ConnectedAccountTable.tokenType, "api_key"),
+      inArray(ConnectedAccountTable.orgMembershipId, removed),
+    ))
+    return result
+  })
 }
 
 export function effectiveOrganizationRole(directRole: string, adminTeams: readonly OrganizationAdminTeam[]) {

@@ -10,7 +10,8 @@ import {
 } from "@openwork/enterprise-mcp-client"
 import { env } from "../env.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
-import type { ExternalMcpConnectionRow } from "./external-mcp-connections.js"
+import { rejectMemberApiKey, resolveMemberApiKey, type ExternalMcpConnectionRow } from "./external-mcp-connections.js"
+import { memberApiKeyAuthorization } from "./member-api-key.js"
 import {
   EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
   type ExternalMcpLifecycleDeadline,
@@ -32,11 +33,11 @@ import {
   type ExternalMcpToolCallInspector,
 } from "./external-mcp-tool-inspection.js"
 
-function toEnterpriseConnection(
+async function toEnterpriseConnection(
   connection: ExternalMcpConnectionRow,
   member: ExternalMcpMemberContext | undefined,
   tracker: ExternalMcpDiagnosticTracker,
-): EnterpriseMcpConnection {
+): Promise<EnterpriseMcpConnection> {
   if (connection.kind !== "external_mcp") {
     throw new Error("Native provider connectors do not expose an MCP server.")
   }
@@ -66,11 +67,16 @@ function toEnterpriseConnection(
     }
   }
   if (connection.authType === "apikey") {
+    if (connection.credentialMode === "per_member") {
+      if (!member) throw new Error("A member identity is required for this connection.")
+      const credential = await resolveMemberApiKey(connection, member.orgMembershipId)
+      return { id: connection.id, serverUrl: connection.url, authorization: { type: "api-key", token: credential.key, scheme: connection.apiKeyAuthScheme } }
+    }
     if (!connection.apiKey) throw new Error(`Connection "${connection.id}" does not have an API key.`)
     return {
       id: connection.id,
       serverUrl: connection.url,
-      authorization: { type: "api-key", token: connection.apiKey },
+      authorization: { type: "api-key", token: connection.apiKey, scheme: connection.apiKeyAuthScheme },
     }
   }
   return {
@@ -192,6 +198,7 @@ function translateEnterpriseMcpError(
 
 function createOperationClient(input: {
   connection: ExternalMcpConnectionRow
+  member?: ExternalMcpMemberContext
   diagnosticReferenceId?: string
   lifecycleDeadline?: ExternalMcpLifecycleDeadline
   operationTimeoutMs?: number
@@ -201,8 +208,22 @@ function createOperationClient(input: {
     authType: input.connection.authType,
     credentialMode: input.connection.credentialMode,
   })
+  const fetchForCaller: typeof guardedFetch = input.connection.authType === "apikey" && input.connection.credentialMode === "per_member"
+    ? async (resource, init) => {
+      if (!input.member) throw new Error("A member identity is required for this connection.")
+      const credential = await resolveMemberApiKey(input.connection, input.member.orgMembershipId)
+      const request = new Request(resource, init)
+      // Never forward a personal token to a discovery URL or redirect target.
+      if (request.url !== new URL(input.connection.url).href || request.headers.get("authorization") !== memberApiKeyAuthorization(credential.key, input.connection.apiKeyAuthScheme)) {
+        throw new Error("Connection credentials or destination changed. Reconnect and retry.")
+      }
+      const response = await guardedFetch(resource, { ...init, redirect: "error" })
+      if (response.status === 401) await rejectMemberApiKey(input.connection, input.member.orgMembershipId, credential)
+      return response
+    }
+    : guardedFetch
   const diagnosticFetch = createExternalMcpDiagnosticFetch({
-    fetch: guardedFetch,
+    fetch: fetchForCaller,
     endpoint: input.connection.url,
     tracker,
   })
@@ -227,6 +248,7 @@ function createOperationClient(input: {
 
 async function runEnterpriseMcpOperation<T>(input: {
   connection: ExternalMcpConnectionRow
+  member?: ExternalMcpMemberContext
   diagnosticReferenceId?: string
   lifecycleDeadline?: ExternalMcpLifecycleDeadline
   operationTimeoutMs?: number
@@ -250,9 +272,10 @@ export async function connectExternalMcp(
 ): Promise<ExternalMcpConnectResult> {
   return runEnterpriseMcpOperation({
     connection,
+    member,
     diagnosticReferenceId,
-    operation: (client, tracker) => client.connect({
-      connection: toEnterpriseConnection(connection, member, tracker),
+    operation: async (client, tracker) => client.connect({
+      connection: await toEnterpriseConnection(connection, member, tracker),
       redirectUri,
       authorizationId: signedState,
     }),
@@ -271,9 +294,10 @@ export async function completeExternalMcpAuth(
   if (!signedState) throw new Error("The enterprise MCP OAuth callback requires its signed state transaction.")
   await runEnterpriseMcpOperation({
     connection,
+    member,
     diagnosticReferenceId,
-    operation: (client, tracker) => client.completeAuthorization({
-      connection: toEnterpriseConnection(connection, member, tracker),
+    operation: async (client, tracker) => client.completeAuthorization({
+      connection: await toEnterpriseConnection(connection, member, tracker),
       redirectUri,
       code,
       authorizationId: signedState,
@@ -290,9 +314,10 @@ export async function abandonExternalMcpAuth(
 ): Promise<void> {
   await runEnterpriseMcpOperation({
     connection,
+    member,
     diagnosticReferenceId,
-    operation: (client, tracker) => client.abandonAuthorization({
-      connection: toEnterpriseConnection(connection, member, tracker),
+    operation: async (client, tracker) => client.abandonAuthorization({
+      connection: await toEnterpriseConnection(connection, member, tracker),
       authorizationId: signedState,
       reason: "provider-rejected",
     }),
@@ -309,11 +334,12 @@ export async function listExternalMcpTools(
 ) {
   return runEnterpriseMcpOperation({
     connection,
+    member,
     diagnosticReferenceId,
     lifecycleDeadline,
     operationTimeoutMs,
-    operation: (client, tracker) => client.listTools({
-      connection: toEnterpriseConnection(connection, member, tracker),
+    operation: async (client, tracker) => client.listTools({
+      connection: await toEnterpriseConnection(connection, member, tracker),
       redirectUri,
     }),
   })
@@ -335,12 +361,13 @@ function runExternalMcpToolCall(
 ) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
+    member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
     operationTimeoutMs: EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
     toolCallInspector,
-    operation: (client, tracker) => client.callTool({
-      connection: toEnterpriseConnection(input.connection, input.member, tracker),
+    operation: async (client, tracker) => client.callTool({
+      connection: await toEnterpriseConnection(input.connection, input.member, tracker),
       redirectUri: input.redirectUri,
       toolName: input.toolName,
       arguments: input.args,
@@ -355,11 +382,12 @@ export function callExternalMcpTool(input: ExternalMcpToolCallInput) {
 export function callExternalMcpToolRaw(input: ExternalMcpToolCallInput) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
+    member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
     operationTimeoutMs: EXTERNAL_MCP_TOOL_CALL_TIMEOUT_MS,
-    operation: (client, tracker) => client.callToolRaw({
-      connection: toEnterpriseConnection(input.connection, input.member, tracker),
+    operation: async (client, tracker) => client.callToolRaw({
+      connection: await toEnterpriseConnection(input.connection, input.member, tracker),
       redirectUri: input.redirectUri,
       toolName: input.toolName,
       arguments: input.args,
@@ -378,10 +406,11 @@ type ExternalMcpResourceInput = {
 export function describeExternalMcpServer(input: ExternalMcpResourceInput) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
+    member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
-    operation: (client, tracker) => client.describeServer({
-      connection: toEnterpriseConnection(input.connection, input.member, tracker),
+    operation: async (client, tracker) => client.describeServer({
+      connection: await toEnterpriseConnection(input.connection, input.member, tracker),
       redirectUri: input.redirectUri,
     }),
   })
@@ -390,10 +419,11 @@ export function describeExternalMcpServer(input: ExternalMcpResourceInput) {
 export function listExternalMcpResources(input: ExternalMcpResourceInput) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
+    member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
-    operation: (client, tracker) => client.listResources({
-      connection: toEnterpriseConnection(input.connection, input.member, tracker),
+    operation: async (client, tracker) => client.listResources({
+      connection: await toEnterpriseConnection(input.connection, input.member, tracker),
       redirectUri: input.redirectUri,
     }),
   })
@@ -402,10 +432,11 @@ export function listExternalMcpResources(input: ExternalMcpResourceInput) {
 export function listExternalMcpResourceTemplates(input: ExternalMcpResourceInput) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
+    member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
-    operation: (client, tracker) => client.listResourceTemplates({
-      connection: toEnterpriseConnection(input.connection, input.member, tracker),
+    operation: async (client, tracker) => client.listResourceTemplates({
+      connection: await toEnterpriseConnection(input.connection, input.member, tracker),
       redirectUri: input.redirectUri,
     }),
   })
@@ -414,10 +445,11 @@ export function listExternalMcpResourceTemplates(input: ExternalMcpResourceInput
 export function readExternalMcpResource(input: ExternalMcpResourceInput & { uri: string }) {
   return runEnterpriseMcpOperation({
     connection: input.connection,
+    member: input.member,
     diagnosticReferenceId: input.diagnosticReferenceId,
     lifecycleDeadline: input.lifecycleDeadline,
-    operation: (client, tracker) => client.readResource({
-      connection: toEnterpriseConnection(input.connection, input.member, tracker),
+    operation: async (client, tracker) => client.readResource({
+      connection: await toEnterpriseConnection(input.connection, input.member, tracker),
       redirectUri: input.redirectUri,
       uri: input.uri,
     }),

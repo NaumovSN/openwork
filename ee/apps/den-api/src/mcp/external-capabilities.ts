@@ -505,7 +505,9 @@ export function buildExternalConnectionStatus(input: {
   const surface = actor === "member"
     ? "openwork_your_connections"
     : "openwork_organization_connections"
-  const actionType = input.state === "needs_connection"
+  const actionType = input.connection.authType === "apikey" && input.connection.credentialMode === "per_member"
+    ? "update_credentials"
+    : input.state === "needs_connection"
     ? "connect"
     : input.connection.authType === "oauth"
       ? "reconnect"
@@ -692,21 +694,25 @@ async function probeExternalMcpConnection(input: {
       orgMembershipId: input.member.orgMembershipId,
       providerId: connection.id,
     })
-    if (!account?.accessToken) {
+    if (!account?.accessToken || (connection.authType === "apikey" && (account.tokenType !== "api_key" || account.credentialHealth?.status === "reconnect_required"))) {
       // Granted but not yet connected: surface the connection itself (not
       // its tools — we can't list them without the member's credential) so
       // the agent can tell the human exactly what to do.
       const nameTokens = tokenize(connection.name)
       const score = scoreText(nameTokens, nameTokens, input.queryTokens)
       if (score > 0) {
-        const message = `You haven't connected your ${connection.name} account yet.`
+        const rejected = connection.authType === "apikey" && account?.credentialHealth?.status === "reconnect_required"
+        const message = rejected ? `Your ${connection.name} key was rejected. Replace your own key in Connect or Your Connections. Never paste a key into chat or tool arguments.`
+          : `You haven't connected your ${connection.name} account yet.`
         add(statusMatch({
           connection,
           score,
-          summary: `[${connection.name}] Available to you, but you haven't connected your ${connection.name} account yet.`,
+          summary: `[${connection.name}] ${message}`,
           status: "needs_connection",
-          hint: `Ask the user to click Connect on the "${connection.name}" card in OpenWork desktop, then search again. In clients without inline connection controls, use OpenWork Cloud -> Your Connections. ${CONNECTION_CARD_HINT}`,
-          connectionStatus: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
+          hint: connection.authType === "apikey"
+            ? "Ask the user to open the member settings link in connectionStatus.action.url and add or replace their own key in Your Connections, then search again. Never request a key in chat or tool arguments. This is not an OAuth sign-in flow."
+            : `Ask the user to click Connect on the "${connection.name}" card in OpenWork desktop, then search again. In clients without inline connection controls, use OpenWork Cloud -> Your Connections. ${CONNECTION_CARD_HINT}`,
+          connectionStatus: buildExternalConnectionStatus({ connection, state: rejected ? "reauth_required" : "needs_connection", errorCode: rejected ? "unauthorized" : "not_connected", message }),
         }))
       }
       return matches
@@ -739,7 +745,10 @@ async function probeExternalMcpConnection(input: {
     credentialMode: connection.credentialMode,
     ...(connection.credentialMode === "per_member" ? { orgMembershipId: input.member.orgMembershipId } : {}),
   }
-  const cachedProbe = getExternalToolsSearchCache(cacheKey)
+  // Personal keys can be replaced or revoked independently of connection
+  // configuration. Do not reuse a credential-dependent catalog or failure.
+  const cacheable = connection.authType !== "apikey" || connection.credentialMode !== "per_member"
+  const cachedProbe = cacheable ? getExternalToolsSearchCache(cacheKey) : undefined
   try {
     if (cachedProbe?.outcome === "failure") throw cachedProbe.error
     if (cachedProbe?.outcome === "success") {
@@ -753,10 +762,10 @@ async function probeExternalMcpConnection(input: {
         input.deadline,
         EXTERNAL_MCP_SEARCH_REQUEST_TIMEOUT_MS,
       )
-      setExternalToolsSearchCache(cacheKey, { outcome: "success", tools })
+      if (cacheable) setExternalToolsSearchCache(cacheKey, { outcome: "success", tools })
     }
   } catch (error) {
-    if (!cachedProbe) setExternalToolsSearchCache(cacheKey, { outcome: "failure", error })
+    if (cacheable && !cachedProbe) setExternalToolsSearchCache(cacheKey, { outcome: "failure", error })
     const message = upstreamErrorMessage(error)
     const diagnostic = error instanceof ExternalMcpDiagnosticError ? error.diagnostic : undefined
     const nameTokens = tokenize(connection.name)
@@ -1070,12 +1079,14 @@ export async function probeExternalConnectionStatus(input: {
       orgMembershipId: input.member.orgMembershipId,
       providerId: connection.id,
     })
-    if (!account?.accessToken) {
-      const message = `You haven't connected your ${connection.name} account yet.`
+    if (!account?.accessToken || (connection.authType === "apikey" && (account.tokenType !== "api_key" || account.credentialHealth?.status === "reconnect_required"))) {
+      const rejected = connection.authType === "apikey" && account?.credentialHealth?.status === "reconnect_required"
+      const message = rejected ? `Your ${connection.name} key was rejected. Replace your own key in Connect or Your Connections. Never paste a key into chat or tool arguments.`
+        : `You haven't connected your ${connection.name} account yet.`
       return {
         ok: true,
         connected: false,
-        status: buildExternalConnectionStatus({ connection, state: "needs_connection", errorCode: "not_connected", message }),
+        status: buildExternalConnectionStatus({ connection, state: rejected ? "reauth_required" : "needs_connection", errorCode: rejected ? "unauthorized" : "not_connected", message }),
       }
     }
   } else if (!hasSharedCredential(connection)) {
@@ -1195,7 +1206,16 @@ async function prepareExternalCapability(input: {
       orgMembershipId: input.member.orgMembershipId,
       providerId: connection.id,
     })
-    if (!account?.accessToken) {
+    if (!account?.accessToken || (connection.authType === "apikey" && (account.tokenType !== "api_key" || account.credentialHealth?.status === "reconnect_required"))) {
+      if (connection.authType === "apikey") {
+        const rejected = account?.credentialHealth?.status === "reconnect_required"
+        const message = rejected
+          ? `Your ${connection.name} key was rejected. Replace your own key in Connect or Your Connections, then retry. Never paste a key into chat or tool arguments.`
+          : `Add your own ${connection.name} key in Connect or Your Connections. Never paste a key into chat or tool arguments.`
+        return { ok: false, error: "needs_connection", message,
+          connectionStatus: buildExternalConnectionStatus({ connection, state: rejected ? "reauth_required" : "needs_connection",
+            errorCode: rejected ? "unauthorized" : "not_connected", message }) }
+      }
       return {
         ok: false,
         error: "needs_connection",

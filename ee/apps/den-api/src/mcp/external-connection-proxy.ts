@@ -17,6 +17,7 @@ import type { Context, Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
 import {
   getExternalMcpConnection,
+  externalMcpConnectionReadyForMember,
   memberCanUseExternalMcpConnection,
   type ExternalMcpConnectionRow,
 } from "../capability-sources/external-mcp-connections.js"
@@ -468,7 +469,7 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       userId: principal.userId,
       organizationId,
     })
-    if (!member) throw new McpError(ErrorCode.InvalidRequest, "The MCP connection is not available.")
+    if (!member) return c.json({ error: "connection_not_available" }, 403)
 
     const connection = await getExternalMcpConnection({ organizationId, connectionId })
     const allowed = connection && await memberCanUseExternalMcpConnection({
@@ -476,7 +477,11 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       orgMembershipId: member.orgMembershipId,
       teamIds: member.teamIds,
     })
-    if (!connection || !allowed) throw new McpError(ErrorCode.InvalidRequest, "The MCP connection is not available.")
+    if (!connection || !allowed) return c.json({ error: "connection_not_available" }, 403)
+    if (connection.authType === "apikey" && connection.credentialMode === "per_member"
+      && !await externalMcpConnectionReadyForMember(connection, member.orgMembershipId)) {
+      return c.json({ error: "connection_not_available", message: "Connect your personal API key in Your Connections." }, 403)
+    }
 
     // The direct provider catalog is a member-facing MCP surface, so it obeys
     // the same organization flag as the member-facing connection list.
