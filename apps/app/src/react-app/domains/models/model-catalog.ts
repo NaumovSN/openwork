@@ -63,6 +63,11 @@ export function publicModelTitle(model: ModelRef & { title?: string }): string |
   return title;
 }
 
+/** The free Auto row's meta line, the same in Settings and the Connect a provider sheet. */
+export function autoProviderSubtitle(signedIn: boolean) {
+  return signedIn ? "Auto · Free · weekly limit for your account" : "Auto · Free · No account needed · weekly limit on this device";
+}
+
 export function modelSubtitle(model: ModelOption, exhausted = false) {
   if (isAutoModel(model)) return exhausted ? "Limit used up" : "OpenWork picks the model";
   // Gateway models assigned to the member that wait on their own provider sign-in.

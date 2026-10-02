@@ -211,18 +211,20 @@ function CloudProviderListItem({ actionId, row, onRetry }: CloudProviderListItem
 
   return (
     <SettingsListItem>
-      <ProviderIcon providerId={row.imported?.sourceProviderId ?? row.provider?.providerId ?? ""} providerName={row.name} size={20} />
-      <SettingsListItemContent>
-        <SettingsListTitle>
-          <SettingsListItemTitle>{row.name}</SettingsListItemTitle>
-          <SettingsPill className={statusBadgeVariants({ tone: cloudProviderStatusTone(status) })}>
-            {cloudProviderStatusLabel(status)}
-          </SettingsPill>
-        </SettingsListTitle>
-        <SettingsListItemDescription>
-          {row.detail}
-        </SettingsListItemDescription>
-      </SettingsListItemContent>
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <ProviderIcon providerId={row.imported?.sourceProviderId ?? row.provider?.providerId ?? ""} providerName={row.name} size={20} />
+        <SettingsListItemContent>
+          <SettingsListTitle>
+            <SettingsListItemTitle>{row.name}</SettingsListItemTitle>
+            <SettingsPill className={statusBadgeVariants({ tone: cloudProviderStatusTone(status) })}>
+              {cloudProviderStatusLabel(status)}
+            </SettingsPill>
+          </SettingsListTitle>
+          <SettingsListItemDescription>
+            {row.detail}
+          </SettingsListItemDescription>
+        </SettingsListItemContent>
+      </div>
       {row.status === "error" && row.provider ? (
         <SettingsListItemActions>
           <Button
@@ -396,8 +398,7 @@ export function CloudProvidersSection({ actionError, actionId, busy, rows, onRef
   const verified = lastVerifiedAt ? new Date(lastVerifiedAt) : null;
   const timestamp = verified && Number.isFinite(verified.getTime()) ? formatRelativeTime(verified.getTime()) : null;
   return <SettingsSection>
-    <SettingsSectionHeader><SettingsSectionHeaderContent><SettingsSectionHeaderTitle>From {activeOrgName || "your organization"}</SettingsSectionHeaderTitle></SettingsSectionHeaderContent><SettingsSectionHeaderActions>{onOpenDen ? <Button variant="ghost" size="sm" onClick={onOpenDen}>Open in Den</Button> : null}</SettingsSectionHeaderActions></SettingsSectionHeader>
-    <span className="text-xs text-muted-foreground">Managed in Den</span>
+    <SettingsSectionHeader><SettingsSectionHeaderContent><SettingsSectionHeaderTitle>From {activeOrgName || "your organization"}<SettingsPill>Managed in Den</SettingsPill></SettingsSectionHeaderTitle></SettingsSectionHeaderContent><SettingsSectionHeaderActions>{onOpenDen ? <Button variant="ghost" size="sm" onClick={onOpenDen}>Open in Den</Button> : null}</SettingsSectionHeaderActions></SettingsSectionHeader>
     {actionError ? <SettingsNotice tone="error">{actionError}</SettingsNotice> : null}
     {busy && !rows.length && !additionalCount ? <div role="status" aria-label="Loading organization providers" className="grid gap-3">{[0, 1].map((key) => <div key={key} className="h-12 animate-pulse rounded-md bg-muted" />)}</div> : null}
     {!busy && !rows.length && !additionalCount ? <SettingsListEmptyState>{hasActiveOrg ? t("den.no_cloud_providers") : t("den.choose_org_for_providers")}</SettingsListEmptyState> : null}

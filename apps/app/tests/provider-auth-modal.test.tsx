@@ -94,7 +94,7 @@ describe("connect providers gateway visibility", () => {
     expect(included?.textContent).toContain("Included");
     expect(included?.querySelector("button")).toBeNull();
     expect(dialog().textContent).not.toContain("Subscribe");
-    expect(dialog().textContent).toContain("2 providers from Example Team");
+    expect(dialog().textContent).toContain("2 providers already included by Example Team");
     expect(providerButton("google")?.textContent).toContain("Also available from Example Team");
     expect(props.onSelect).not.toHaveBeenCalled();
   });

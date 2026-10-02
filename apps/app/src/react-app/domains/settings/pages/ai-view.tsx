@@ -6,7 +6,7 @@ import type { DesktopFreePreferences } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
 import { gatewayConnectCopy, gatewayConnectProviderKey, type GatewayConnectProvider, isCloudManagedProviderKey, OPENWORK_GATEWAY_BADGE_LABEL } from "../../connections/provider-auth/cloud-provider-config";
 import type { ProviderLoadState } from "../../connections/provider-auth/store";
-import { AUTO_PROVIDER_ID } from "@/react-app/domains/models/model-catalog";
+import { AUTO_PROVIDER_ID, autoProviderSubtitle } from "@/react-app/domains/models/model-catalog";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { SettingsNotice } from "../settings-section";
 import { LayoutSection, LayoutSectionHeader, LayoutSectionTitle, LayoutStack } from "../settings-layout";
@@ -93,18 +93,18 @@ export function AiSettingsView(props: AiSettingsViewProps) {
   return <LayoutStack>
     {props.onOpenModelConnections ? <Button variant="outline" className="self-start" onClick={props.onOpenModelConnections}>My Model Connections</Button> : null}
     <LayoutSection>
-      <LayoutSectionHeader><div className="flex items-center justify-between gap-3">
-        <LayoutSectionTitle>AI Providers</LayoutSectionTitle>
-        <Button disabled={locked || props.busy || props.providerAuthBusy || !ready} onClick={() => void props.onOpenProviderAuth()}>{locked ? <Lock className="size-4" /> : null}Connect a provider</Button>
-      </div></LayoutSectionHeader>
+
       {locked ? <p className="text-xs text-muted-foreground">Provider connections are managed by your organization administrator.</p> : null}
       {error ? <SettingsNotice tone="error" className="flex flex-wrap items-center justify-between gap-3"><div role="alert"><p>{error}</p>{props.connectedProviders.length ? <p>{t("settings.providers_not_refreshed")}</p> : null}</div><Button variant="outline" disabled={props.busy || loading} aria-busy={loading} onClick={() => void props.onRetryProviders()}>{t("settings.providers_retry")}</Button></SettingsNotice> : null}
       {loading && !props.connectedProviders.length ? <div role="status" aria-label={t("settings.loading_providers")} className="grid gap-3 py-3">{[0, 1, 2].map((key) => <div key={key} className="h-12 animate-pulse rounded-md bg-muted" />)}</div> : null}
-      <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-medium">On this device</h3>{ready ? <span className="text-xs text-muted-foreground">{local.length + Number(showAuto)} providers</span> : null}</div>
+      <LayoutSectionHeader><div className="flex items-center justify-between gap-3">
+        <LayoutSectionTitle>On this device</LayoutSectionTitle>
+        <div className="flex items-center gap-3">{ready ? <span className="text-xs text-muted-foreground">{local.length + Number(showAuto)} providers</span> : null}<Button disabled={locked || props.busy || props.providerAuthBusy || !ready} onClick={() => void props.onOpenProviderAuth()}>{locked ? <Lock className="size-4" /> : null}Connect a provider</Button></div>
+      </div></LayoutSectionHeader>
       <p className="text-xs text-muted-foreground">{props.organizationName ? "Signed in or pasted by you. Keys never leave this device and only you can disconnect them." : "Works without an account. Keys you paste never leave this device and only you can disconnect them."}</p>
       <div className="divide-y divide-border">
         {showAuto ? <div className="flex min-h-12 items-center justify-between gap-3 px-4 py-3" data-testid="settings-auto-provider">
-          <div className="flex min-w-0 items-center gap-3"><ProviderIcon providerId="openwork" size={20} /><div><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">OpenWork Models</span><span className="text-xs text-muted-foreground">{autoOff ? "Turned off" : props.autoError ? "Could not verify" : autoAvailable ? "Included" : "Unavailable"}</span></div><p className="text-xs text-muted-foreground">{props.organizationName ? "Auto · Free · weekly limit for your account" : "Auto · Free · No account needed · weekly limit on this device"}</p></div></div>
+          <div className="flex min-w-0 items-center gap-3"><ProviderIcon providerId="openwork" size={20} /><div><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-medium">OpenWork Models</span><span className="text-xs text-muted-foreground">{autoOff ? "Turned off" : props.autoError ? "Could not verify" : autoAvailable ? "Included" : "Unavailable"}</span></div><p className="text-xs text-muted-foreground">{autoProviderSubtitle(Boolean(props.organizationName))}</p></div></div>
           {props.onSetAutoEnabled ? <Button variant="ghost" disabled={props.autoBusy || (autoOff && !props.autoPreferences?.canEnable)} onClick={() => void props.onSetAutoEnabled?.(autoOff)}>{autoOff ? "Turn on" : "Turn off"}</Button> : null}
         </div> : null}
         {local.map((provider) => <div key={provider.id} className="flex min-h-12 items-center justify-between gap-3 px-4 py-3" data-provider-scope="device">

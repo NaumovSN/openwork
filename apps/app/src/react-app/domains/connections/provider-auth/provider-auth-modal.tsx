@@ -31,6 +31,7 @@ import { isDesktopRuntime } from "@/app/utils";
 import { compareProviders } from "@/app/utils/providers";
 import { Button } from "@/components/ui/button";
 import { ProviderIcon } from "../../../design-system/provider-icon";
+import { autoProviderSubtitle } from "../../models/model-catalog";
 import { TextInput } from "../../../design-system/text-input";
 import type {
   ProviderAuthMethod,
@@ -728,7 +729,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                   {(!searchQuery.trim() || "OpenWork Models Auto".toLowerCase().includes(searchQuery.trim().toLowerCase())) && (props.openWorkModelsState || props.connectedProviderIds.includes("openwork-free")) ? (
                     <div className="flex items-center gap-3 border-b border-border px-3 py-3" data-testid="included-openwork-provider">
                       <ProviderIcon providerId="openwork" size={20} />
-                      <div className="min-w-0 flex-1"><div className="text-sm font-medium">OpenWork Models</div><div className="text-xs text-muted-foreground">Auto · Free · No key needed</div></div>
+                      <div className="min-w-0 flex-1"><div className="text-sm font-medium">OpenWork Models</div><div className="text-xs text-muted-foreground">{autoProviderSubtitle(Boolean(props.organizationName))}</div></div>
                       <span className="text-xs text-muted-foreground">{props.openWorkModelsState === "off" ? "Turned off in settings" : props.openWorkModelsState === "unavailable" ? "Unavailable on this device" : "Included"}</span>
                     </div>
                   ) : null}
@@ -1038,8 +1039,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
           ) : null}
         </div>
 
-        <DialogFooter className="shrink-0 flex-col gap-3">
-          {resolvedView === "list" && props.organizationProviderCount !== undefined ? <div className="flex w-full items-center justify-between gap-3 text-xs text-muted-foreground"><span>{props.organizationProviderCount} providers from {props.organizationName || "your organization"}</span>{props.onOpenDen ? <Button size="sm" variant="ghost" onClick={props.onOpenDen}>Manage in Den</Button> : null}</div> : null}
+        <DialogFooter className="shrink-0 flex-col gap-3 sm:flex-col sm:justify-start">
+          {resolvedView === "list" && props.organizationProviderCount !== undefined ? <div className="flex w-full items-center justify-between gap-3 text-xs text-muted-foreground"><span className="min-w-0">{props.organizationProviderCount} providers already included by {props.organizationName || "your organization"}</span>{props.onOpenDen ? <Button size="sm" variant="ghost" onClick={props.onOpenDen}>Manage in Den</Button> : null}</div> : null}
           <div className="min-h-[16px] text-xs text-gray-10">
             {props.submitting ? submittingLabel() : null}
           </div>
