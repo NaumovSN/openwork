@@ -49,10 +49,18 @@ platform capability are rechecked while processing each turn.
   progress across streams, so Stop keeps working. Closing text that has no open
   stream is posted as a plain reply. Titles sync to Slack once; user title-change
   events rename only the matching member's native session.
-- Slack Stop cancels the signed actor's run, including replies moved into a DM.
+- Slack Stop cancels the signed actor's running task, including replies moved into a DM.
+  Messages the member sent while it ran are kept and start next. A message sent
+  while an earlier task runs in the thread gets one reply saying it will be done
+  right after, and waiting messages run in the order they were sent.
+- Headless tasks stream live progress for four minutes, then post one line
+  saying they will report back, an hourly "Still working on it" line, and the
+  final answer alone as a new reply that mentions the member.
   Pending runtime permissions/questions suspend the stream and link to Web; no
   permission is approved through Slack. The member continues in Web.
-- Requests time out after fifteen minutes (sixty on the headless runner).
+- Requests time out after fifteen minutes; headless tasks have no time limit and
+  end with their answer, Stop, a failure, or the runner's stuck check. The runner
+  pauses a long turn every 50 minutes and the read resumes it with a fresh MCP token.
   Transient errors retry up to twenty times; Slack Retry-After is respected. A
   run that gives up logs `slack_assistant_failed` with the error code. Five terminal failures within five
   minutes pause new requests for that installation until the window expires.

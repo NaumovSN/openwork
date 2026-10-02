@@ -118,7 +118,19 @@ test("turns have no step limit unless one is configured", () => {
   assert.equal(loadConfig(base).limits.maxSteps, Number.POSITIVE_INFINITY)
   assert.equal(loadConfig({ ...base, HEADLESS_MAX_STEPS: "0" }).limits.maxSteps, Number.POSITIVE_INFINITY)
   assert.equal(loadConfig({ ...base, HEADLESS_MAX_STEPS: "500" }).limits.maxSteps, 500)
-  assert.equal(loadConfig(base).limits.turnTimeoutMs, 60 * 60_000)
+})
+
+test("turns have no time limit by default and refresh credentials before Den's 60-minute tokens expire", () => {
+  const base = {
+    HEADLESS_API_TOKEN: TOKEN,
+    HEADLESS_MODEL_PROTOCOL: "anthropic",
+    HEADLESS_MODEL_BASE_URL: "https://gateway.openworklabs.com/api/v1/providers/ipr_x",
+    HEADLESS_MODEL: "gwm_x",
+  }
+  assert.equal(loadConfig(base).limits.turnTimeoutMs, Number.POSITIVE_INFINITY)
+  assert.equal(loadConfig({ ...base, HEADLESS_TURN_TIMEOUT_MS: "7200000" }).limits.turnTimeoutMs, 7_200_000)
+  assert.throws(() => loadConfig({ ...base, HEADLESS_TURN_TIMEOUT_MS: "5000" }))
+  assert.equal(loadConfig(base).limits.credentialRefreshMs, 50 * 60_000)
 })
 
 test("a poller can read a turn's steps without its tool outputs", async () => {

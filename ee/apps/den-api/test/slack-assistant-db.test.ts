@@ -97,13 +97,13 @@ suite("Slack assistant: real database and signed HTTP journey", () => {
       await worker.processSlackEvent(event, deps)
     }
   }
-  async function ingress(id: string, user: string, text = "Summarize this thread") {
+  async function ingress(id: string, user: string, text = "Summarize this thread", threadTs = "100.1") {
     const raw = JSON.stringify({
       type: "event_callback",
       team_id: "TTEST",
       api_app_id: "ATEST",
       event_id: id,
-      event: { type: "app_mention", user, channel: "CSHARED", thread_ts: "100.1", ts: `${Date.now()}.1`, text },
+      event: { type: "app_mention", user, channel: "CSHARED", thread_ts: threadTs, ts: `${Date.now()}.1`, text },
     })
     const timestamp = String(Math.floor(Date.now() / 1000))
     const signature = `v0=${createHmac("sha256", signingSecret).update(`v0:${timestamp}:${raw}`).digest("hex")}`
@@ -311,6 +311,109 @@ suite("Slack assistant: real database and signed HTTP journey", () => {
     expect(rows.find((event) => event.slackUserId === slackUsers[1])?.cancelled).toBe(false)
     await drain()
   })
+  /** Deps whose runtime keeps the task running until `release()`; reads otherwise behave like `deps`. */
+  function holdingDeps() {
+    let held = true
+    return {
+      release: () => {
+        held = false
+      },
+      deps: {
+        ...deps,
+        remote: async (actor: { userId: string }, action: string, body: Record<string, unknown>) => {
+          const result = await deps.remote(actor, action, body)
+          return action === "read" && held ? { ...result, status: "busy", finalAssistantText: "" } : result
+        },
+      },
+    }
+  }
+  async function threadEvents(threadTs: string) {
+    return db
+      .select()
+      .from(Event)
+      .where(and(eq(Event.connectionId, connectionId), eq(Event.threadTs, threadTs)))
+      .orderBy(Event.createdAt)
+  }
+  async function processOnly(eventId: string, run: typeof deps) {
+    await db.update(Event).set({ availableAt: new Date(Date.now() + 3_600_000) }).where(eq(Event.connectionId, connectionId))
+    await db.update(Event).set({ availableAt: new Date(Date.now() - 1000) }).where(eq(Event.id, eventId))
+    const event = await repository.claimSlackEvent()
+    if (event?.id !== eventId) throw new Error(`expected to claim ${eventId}`)
+    await worker.processSlackEvent(event, run)
+  }
+
+  test("a message sent while a task runs gets one reply saying so, then runs right after it, in the order sent", async () => {
+    const { deps: holding, release } = holdingDeps()
+    await ingress("EQUEUE1", slackUsers[1], "first task", "300.1")
+    const [first] = await threadEvents("300.1")
+    if (!first) throw new Error("first event missing")
+    for (let i = 0; i < 4; i++) await processOnly(first.id, holding)
+    expect(remoteCalls.filter((call) => call.body.messageId === `msg_${first.id}` && call.action === "send")).toHaveLength(1)
+
+    await ingress("EQUEUE2", slackUsers[1], "second", "300.1")
+    await ingress("EQUEUE3", slackUsers[1], "third", "300.1")
+    const [, second, third] = await threadEvents("300.1")
+    if (!second || !third) throw new Error("queued events missing")
+    for (let i = 0; i < 2; i++) {
+      await processOnly(second.id, holding)
+      await processOnly(third.id, holding)
+    }
+    const notices = slackCalls.filter(
+      (call) => call.method === "chat.postMessage" && String(call.body.text).startsWith("Got it. I'll do this right after the current task."),
+    )
+    expect(notices.map((call) => [call.body.channel, call.body.thread_ts])).toEqual([
+      ["CSHARED", "300.1"],
+      ["CSHARED", "300.1"],
+    ])
+
+    release()
+    for (let i = 0; i < 3 && (await threadEvents("300.1"))[0]?.status !== "done"; i++) await processOnly(first.id, holding)
+    expect((await threadEvents("300.1"))[0]?.status).toBe("done")
+
+    // The newer message is picked up first, but the older one still goes first.
+    const sendsBefore = remoteCalls.filter((call) => call.action === "send").length
+    await processOnly(third.id, holding)
+    expect(remoteCalls.filter((call) => call.action === "send")).toHaveLength(sendsBefore)
+    for (const event of [second, third])
+      for (let i = 0; i < 6 && (await threadEvents("300.1")).find((row) => row.id === event.id)?.status !== "done"; i++)
+        await processOnly(event.id, holding)
+    const sent = remoteCalls
+      .filter((call) => call.action === "send" && [first, second, third].some((event) => call.body.messageId === `msg_${event.id}`))
+      .map((call) => call.body.messageId)
+    expect(sent).toEqual([`msg_${first.id}`, `msg_${second.id}`, `msg_${third.id}`])
+    expect(slackCalls.filter((call) => String(call.body.text).startsWith("Got it."))).toHaveLength(2)
+  })
+
+  test("Stop ends the running task; a message sent while it ran starts next instead of being dropped", async () => {
+    const { deps: holding } = holdingDeps()
+    await ingress("ESTOP1", slackUsers[1], "long task", "400.1")
+    const [running] = await threadEvents("400.1")
+    if (!running) throw new Error("running event missing")
+    for (let i = 0; i < 4; i++) await processOnly(running.id, holding)
+    await ingress("ESTOP2", slackUsers[1], "do this instead", "400.1")
+    const [, waiting] = await threadEvents("400.1")
+    if (!waiting) throw new Error("waiting event missing")
+    await processOnly(waiting.id, holding)
+
+    const installation = await repository.getInstallation(connectionId)
+    if (!installation) throw new Error("installation missing")
+    await repository.cancelSlackThread(installation, {
+      type: "agent_session_stopped",
+      user: slackUsers[1],
+      channel: "CSHARED",
+      thread_ts: "400.1",
+    })
+    const [stopped, next] = await threadEvents("400.1")
+    expect([stopped?.cancelled, next?.cancelled]).toEqual([true, false])
+
+    await processOnly(running.id, holding)
+    expect(remoteCalls.some((call) => call.action === "stop" && call.body.messageId === `msg_${running.id}`)).toBe(true)
+    expect((await threadEvents("400.1"))[0]?.status).toBe("done")
+    for (let i = 0; i < 4; i++) await processOnly(waiting.id, holding)
+    expect(remoteCalls.some((call) => call.action === "send" && call.body.messageId === `msg_${waiting.id}`)).toBe(true)
+    await drain()
+  })
+
   test("a second member cannot bind an already-bound Slack user", async () => {
     const connection = (
       await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, connectionId))

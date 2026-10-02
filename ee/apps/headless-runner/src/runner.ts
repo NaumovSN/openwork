@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { FILE_TOOLS, FILE_TOOL_NAMES, runFileTool } from "./files.js"
 import type { McpConnector, ToolSession } from "./mcp.js"
 import { ModelError, type ModelClient } from "./model.js"
@@ -9,7 +10,11 @@ export const DEFAULT_SYSTEM_PROMPT = `You are OpenWork, an assistant running in 
 - Use the OpenWork tools (for example search_capabilities, then execute_capability) to reach the person's connected apps and skills.
 - Prefer reading and drafting. Only change data in the person's apps (send, post, create, update, delete) when their message explicitly asks for that exact action.
 - You have a small scratch workspace (list_files, read_file, write_file, edit_file, delete_file) that persists for this conversation. Use it for notes and drafts.
+- On a long task the person may only see your final message, so make it a complete answer on its own.
 - Reply concisely in Markdown.`
+
+/** A step that repeats the same calls and gets the same results this many times in a row ends the turn. */
+export const MAX_IDENTICAL_STEPS = 5
 
 export type RunnerOptions = {
   store: Store
@@ -17,7 +22,16 @@ export type RunnerOptions = {
   defaultModel: string
   defaultModelApiKey?: string
   mcp?: McpConnector
-  limits: { maxConcurrentTurns: number; maxSteps: number; turnTimeoutMs: number; contextCharBudget: number }
+  limits: {
+    maxConcurrentTurns: number
+    /** Infinity for no step limit. */
+    maxSteps: number
+    /** Infinity for no turn timeout. */
+    turnTimeoutMs: number
+    /** A turn using a caller's MCP token pauses between steps after this long, to be resumed with a fresh one. */
+    credentialRefreshMs: number
+    contextCharBudget: number
+  }
   systemPrompt?: string
   now?: () => number
 }
@@ -206,12 +220,16 @@ export class Runner {
     const key = `${sessionId}:${messageId}`
     const credentials = this.credentials.get(key) ?? {}
     this.credentials.delete(key)
-    const timeout = setTimeout(() => controller.abort(new Error("turn_timeout")), limits.turnTimeoutMs)
+    const timeout = Number.isFinite(limits.turnTimeoutMs)
+      ? setTimeout(() => controller.abort(new Error("turn_timeout")), limits.turnTimeoutMs)
+      : undefined
     const signal = controller.signal
     let tools: ToolSession | null = null
     const startedAt = Date.now()
     let steps = 0
     let toolCalls = 0
+    let lastStep = ""
+    let identicalSteps = 0
     console.log(`[headless-runner] turn started ${JSON.stringify({ sessionId, messageId })}`)
 
     const turnMessages = () =>
@@ -261,6 +279,12 @@ export class Runner {
 
       for (let step = 0; step < limits.maxSteps; step += 1) {
         signal.throwIfAborted()
+        // Between steps, never mid-call, so no tool is cut off. The caller resumes the turn right away with a
+        // fresh MCP token; a caller that stopped supervising simply never resumes it.
+        if (tools && step > 0 && Date.now() - startedAt >= limits.credentialRefreshMs) {
+          store.setTurnStatus(sessionId, messageId, "interrupted", "credentials_refresh")
+          return
+        }
         const result = await this.options.model.complete({
           system,
           messages: buildContext(store.messages(sessionId), messageId, limits.contextCharBudget),
@@ -277,6 +301,7 @@ export class Runner {
           store.setTurnStatus(sessionId, messageId, "completed")
           return
         }
+        const outcomes: ToolResult[] = []
         for (const call of result.toolCalls) {
           signal.throwIfAborted()
           const outcome: ToolResult = call.inputError
@@ -297,6 +322,17 @@ export class Runner {
             isError: outcome.isError,
             ...(outcome.images?.length ? { images: outcome.images } : {}),
           })
+          outcomes.push(outcome)
+        }
+        // Same calls, same inputs, same results, again and again: the model is stuck, not making progress.
+        const signature = createHash("sha256")
+          .update(JSON.stringify(result.toolCalls.map((call, index) => [call.name, call.input, outcomes[index]?.output, outcomes[index]?.isError])))
+          .digest("hex")
+        identicalSteps = signature === lastStep ? identicalSteps + 1 : 1
+        lastStep = signature
+        if (identicalSteps >= MAX_IDENTICAL_STEPS) {
+          store.setTurnStatus(sessionId, messageId, "failed", "stuck_repeating")
+          return
         }
       }
       store.setTurnStatus(sessionId, messageId, "failed", "max_steps_exceeded")
