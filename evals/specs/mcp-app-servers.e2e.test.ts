@@ -462,6 +462,8 @@ chatTest("an owner follows App creation progress and opens the finished App besi
     expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(0);
     await user.click({ role: "button", label: "Undo" });
     expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(1);
+    pricer = await focus(pricerTitle);
+    await pricer.see({ testId: "order-line" }, { text: pricedLine, timeoutMs: 90_000 });
     await user.click({ role: "button", label: `App options for ${pricerTitle}` });
     await user.click({ role: "menuitem", label: `Remove ${pricerTitle} from dashboard` });
     expect((await probe.dom('[data-dashboard-tile^="personal:"]')).elements).toHaveLength(0);
@@ -541,6 +543,8 @@ async function creationJourney({ world, agent, user, probe, step, evidence }: Sp
       await world.prepareLifecycleTurn(prompt, "failure");
       await agent.send(prompt);
       await user.see({ text: "Needs a fix" }, { timeoutMs: 120_000 });
+      await user.see({ text: "The App could not be created." }, { timeoutMs: 30_000 });
+      await user.notSee({ role: "button", label: "Stop" });
       expect((await probe.dom('[data-built-app-preview]')).elements).toHaveLength(0);
       evidence.recordAssertionEvidence("A real compilation failure never becomes readiness", `${name}: create_app rejects invalid source; the creation step says Needs a fix and opens no App.`, true);
       await user.screenshot();
@@ -550,8 +554,7 @@ async function creationJourney({ world, agent, user, probe, step, evidence }: Sp
       await world.prepareLifecycleTurn(prompt, "interrupt");
       await world.holdCreation(true);
       await agent.send(prompt);
-      await user.see({ text: "Writing the app" }, { timeoutMs: 120_000 });
-      expect(await probe.eventually(async () => (await probe.dom('[data-app-creation-step="writing"][data-step-status="running"]')).elements, { within: 30_000, intervalMs: 200, label: "the interrupted turn is actually writing before Stop", until: elements => elements.length === 1 })).toHaveLength(1);
+      expect(await probe.eventually(async () => (await probe.dom('[data-app-creation-step="writing"][data-step-status="running"]')).elements, { within: 60_000, intervalMs: 200, label: "the interrupted turn is actually writing before Stop", until: elements => elements.length === 1 && elements[0].rect.height > 0 })).toHaveLength(1);
       await user.click({ role: "button", label: "Stop" });
       await user.see({ text: "Paused" }, { timeoutMs: 30_000 });
       expect((await probe.dom('[data-app-builder-step] [data-step-status="running"]')).elements).toHaveLength(0);
