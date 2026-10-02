@@ -551,6 +551,7 @@ async function creationJourney({ world, agent, user, probe, step, evidence }: Sp
       await world.holdCreation(true);
       await agent.send(prompt);
       await user.see({ text: "Writing the app" }, { timeoutMs: 120_000 });
+      expect(await probe.eventually(async () => (await probe.dom('[data-app-creation-step="writing"][data-step-status="running"]')).elements, { within: 30_000, intervalMs: 200, label: "the interrupted turn is actually writing before Stop", until: elements => elements.length === 1 })).toHaveLength(1);
       await user.click({ role: "button", label: "Stop" });
       await user.see({ text: "Paused" }, { timeoutMs: 30_000 });
       expect((await probe.dom('[data-app-builder-step] [data-step-status="running"]')).elements).toHaveLength(0);

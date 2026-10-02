@@ -251,7 +251,7 @@ function validateAgentWorkloads(value) {
       if (!step.arguments || typeof step.arguments !== "object" || Array.isArray(step.arguments)) {
         throw new Error(`agent workload ${promptMarker} tool ${step.tool} needs object arguments`);
       }
-      if (step.argumentsFrom !== undefined && !["computer-mention", "skill-catalog", "capability-search", "skill-list", "app-preparation"].includes(step.argumentsFrom)) {
+      if (step.argumentsFrom !== undefined && !["computer-mention", "skill-catalog", "capability-search", "skill-list", "app-preparation", "app-read"].includes(step.argumentsFrom)) {
         throw new Error(`agent workload ${promptMarker} has an unknown argument source`);
       }
       if (step.allowUnadvertisedTool !== undefined && typeof step.allowUnadvertisedTool !== "boolean") {
@@ -521,6 +521,16 @@ function appPreparationStepArguments(messages, argumentsValue) {
   return { ...argumentsValue, ...prepared };
 }
 
+// Optimistic updates must carry the revision the model actually read.
+function appReadStepArguments(messages, argumentsValue) {
+  let payload = JSON.parse(lastToolText(messages));
+  if (Array.isArray(payload.content)) payload = JSON.parse(agentContentText(payload));
+  const app = payload.app ?? payload.structuredContent?.app;
+  if (typeof app?.revisionId !== "string") throw new Error("read_app did not return a revision id");
+  if (typeof argumentsValue.code === "string") return { ...argumentsValue, code: argumentsValue.code.replace('"__APP_REVISION_ID__"', JSON.stringify(app.revisionId)) };
+  return { ...argumentsValue, expectedRevisionId: app.revisionId };
+}
+
 // list_skills handoff: the next get_skill reads the one skill the catalog returned.
 function skillListArguments(messages) {
   let payload = JSON.parse(lastToolText(messages));
@@ -680,7 +690,8 @@ async function handleAgentCompletion(req, res, entry) {
     : step.argumentsFrom === "skill-catalog" ? skillCatalogArguments(messages, step.arguments.skill)
     : step.argumentsFrom === "capability-search" ? { ...step.arguments, ...capabilitySearchArguments(scopedMessages) }
     : step.argumentsFrom === "skill-list" ? { ...step.arguments, ...skillListArguments(scopedMessages) }
-    : step.argumentsFrom === "app-preparation" ? appPreparationStepArguments(scopedMessages, step.arguments) : step.arguments;
+    : step.argumentsFrom === "app-preparation" ? appPreparationStepArguments(scopedMessages, step.arguments)
+    : step.argumentsFrom === "app-read" ? appReadStepArguments(scopedMessages, step.arguments) : step.arguments;
   if (step.argumentsFrom === "skill-catalog" && toolArguments === null) {
     entry.agentCompletion = { ...baseRequest, kind: "final", promptMarker: workload.promptMarker, toolName: null, arguments: {} };
     agentStream(res, model, [agentChunk(model, { role: "assistant" }),

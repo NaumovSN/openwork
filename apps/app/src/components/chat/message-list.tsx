@@ -1740,7 +1740,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
 
   return (
     <ParentRunActiveContext.Provider value={runActive}>
-    <BuiltAppPreviewSync key={sessionId} messages={messages} active={runActive} />
+    <BuiltAppPreviewSync key={sessionId} messages={messages} active={runActive}>
     <CurrentToolLifecycleProvider
       activityStatus={activityStatus}
       currentToolCallIds={currentToolCallIds}
@@ -1809,6 +1809,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
         {error && !hasSessionErrorMessage && !sessionErrorHandled ? <ErrorMessage error={error} /> : null}
       </ProgressiveMessageList>
     </CurrentToolLifecycleProvider>
+    </BuiltAppPreviewSync>
     </ParentRunActiveContext.Provider>
   )
 }

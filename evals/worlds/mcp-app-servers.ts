@@ -622,7 +622,7 @@ export async function mcpAppServersChat(seed: Seed, benchmark: boolean | { place
       const built = catalog.find(app => app.title === pricerTitle);
       if (!built) throw new Error("Created App is missing from the accessible catalog");
       const steps = kind === "edit"
-        ? [toolStep("update_app", { ...appSource("revision two", { title: pricerTitle, sampleOrder: true }), appId: field(built, "connectionId") })]
+        ? [toolStep("read_app", { appId: field(built, "connectionId") }), { ...toolStep("update_app", { ...appSource("revision two", { title: pricerTitle, sampleOrder: true }), appId: field(built, "connectionId"), ...(engine === "v2" ? { expectedRevisionId: "__APP_REVISION_ID__" } : {}) }), argumentsFrom: "app-read" }]
         : kind === "failure"
           ? [toolStep("create_app", { title: "Broken App", reactSource: "export default function App( {", tools, textFallback: "The App is unavailable." })]
           : [toolStep("prepare_app", { title: "Interrupted App", tools }), { ...toolStep("create_app", { ...appSource("interrupted", { title: "Interrupted App", sampleOrder: true }), tools, ...(engine === "v2" ? { preparationId: "__APP_PREPARATION_ID__" } : {}) }), argumentsFrom: "app-preparation", holdUntilReleased: true }];

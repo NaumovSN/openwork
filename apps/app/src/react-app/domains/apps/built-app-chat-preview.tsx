@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, type ReactNode } from "react";
 import type { DynamicToolUIPart, UIMessage } from "ai";
 import { PanelRightOpen } from "lucide-react";
 import { useMessageList } from "@/components/chat/message-list-provider";
@@ -11,8 +11,11 @@ import {
   latestBuiltAppParts,
 } from "./built-mcp-app-model";
 
+const LatestBuiltAppPartsContext = createContext<DynamicToolUIPart[]>([]);
+
 export function BuiltAppChatPreview({ part, compact = false }: { part: DynamicToolUIPart; compact?: boolean }) {
   const { sessionId, mcpAppOrigin } = useMessageList();
+  const latestParts = useContext(LatestBuiltAppPartsContext);
   const app = builtAppSummary(part);
   if (!app) return null;
   return (
@@ -27,14 +30,16 @@ export function BuiltAppChatPreview({ part, compact = false }: { part: DynamicTo
         disabled={!mcpAppOrigin}
         onClick={() => {
           if (!mcpAppOrigin) return;
+          const currentPart = latestParts.find(candidate => builtAppSummary(candidate)?.appId === app.appId) ?? part;
+          const currentApp = builtAppSummary(currentPart) ?? app;
           usePanelTabStore
             .getState()
             .openTab(sessionId, {
               type: "mcp-app",
               id: `mcp-app:${app.appId}`,
               appId: app.appId,
-              label: app.title,
-              part,
+              label: currentApp.title,
+              part: currentPart,
               origin: mcpAppOrigin,
             });
           useUiStateStore.getState().setSidePanelState(sessionId, "panel");
@@ -51,13 +56,16 @@ export function BuiltAppChatPreview({ part, compact = false }: { part: DynamicTo
 export function BuiltAppPreviewSync({
   messages,
   active,
+  children,
 }: {
   messages: UIMessage[];
   active: boolean;
+  children?: ReactNode;
 }) {
   const { sessionId, mcpAppOrigin, readOnly } = useMessageList();
   const seen = useRef<Set<string> | null>(null);
   const pending = useRef(new Set<string>());
+  const latestParts = useMemo(() => latestBuiltAppParts(messages), [messages]);
   useEffect(() => {
     const updating = new Set<string>();
     const latestTurn = messages.slice(Math.max(0, messages.findLastIndex(message => message.role === "user")));
@@ -124,5 +132,5 @@ export function BuiltAppPreviewSync({
       }
     }
   }, [messages, mcpAppOrigin, readOnly, sessionId, active]);
-  return null;
+  return <LatestBuiltAppPartsContext.Provider value={latestParts}>{children}</LatestBuiltAppPartsContext.Provider>;
 }

@@ -109,8 +109,9 @@ async function render(
         onMcpReconnect={() => Promise.reject(new Error("unused"))}
         onMcpReopenAuthorization={() => Promise.resolve()}
       >
-        <BuiltAppPreviewSync messages={messages} active={active} />
+        <BuiltAppPreviewSync messages={messages} active={active}>
         {progress ? <AppBuilderStep run={appCreationRuns(messages)[0]} active={active} /> : null}
+        </BuiltAppPreviewSync>
       </MessageListProvider>,
     ),
   );
@@ -162,6 +163,10 @@ for (const engine of ["v1", "v2"] as const)
     usePanelTabStore.getState().closeTab("session", `mcp-app:${appId}`);
     await render([created, edited], false, engine);
     expect(usePanelTabStore.getState().sessions.session?.tabs).toHaveLength(0);
+    await render([created, edited], false, engine, false, true);
+    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.includes("Open preview"))?.click());
+    expect(usePanelTabStore.getState().sessions.session?.tabs).toHaveLength(1);
+    expect(usePanelTabStore.getState().sessions.session?.tabs[0]).toMatchObject({ part: edited });
   });
 test("opening history and read-only runs do not take over the pane", async () => {
   await render([builder("old", "1")], false);
