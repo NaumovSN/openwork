@@ -1,6 +1,7 @@
 import {
   createDenClient,
   denOriginComparisonKey,
+  initializeDenBootstrapConfig,
   readDenBootstrapConfig,
   readDenSettings,
   resolveDenBaseUrlsForDestination,
@@ -12,6 +13,8 @@ import {
   type DenEnterpriseActivation,
 } from "./den";
 import { dispatchDenSessionUpdated } from "./den-session-events";
+import { getDesktopBootstrapConfig, setDesktopBootstrapConfig } from "./desktop";
+import { isDesktopRuntime } from "./runtime-env";
 import {
   clearDesktopSignInIntent,
   clearOrgSelectionPending,
@@ -210,9 +213,24 @@ export async function exchangeHandoffAndSignIn(
     // current enrollment stays authoritative until the destination bootstrap
     // is persisted and confirmed.
     const previousBootstrap = readDenBootstrapConfig();
+    // The renderer snapshot can include runtime-discovered routing that has
+    // never been written to disk. Rollback must restore the actual host record.
+    const previousDurable = isDesktopRuntime() ? await getDesktopBootstrapConfig().catch(() => null) : null;
+    if (isDesktopRuntime() && !previousDurable) return fail(fallback, { grantConsumed: true });
+    const restoreBootstrap = async () => {
+      if (previousDurable) {
+        await setDesktopBootstrapConfig(previousDurable);
+        await initializeDenBootstrapConfig();
+      } else {
+        await setDenBootstrapConfig(bootstrapRestorePayload(previousBootstrap));
+      }
+    };
     const bootstrapChangesOrigin =
       denOriginComparisonKey(previousBootstrap.baseUrl) !== destinationKey;
-    const needsBootstrapCommit = bootstrapChangesOrigin || options.bootstrap !== undefined;
+    // The resolved renderer bootstrap may already contain a runtime-discovered
+    // API URL that was never persisted. Explicit sign-in destinations must also
+    // become authoritative for native host requests.
+    const needsBootstrapCommit = bootstrapChangesOrigin || options.apiBaseUrl !== undefined || options.bootstrap !== undefined;
     if (needsBootstrapCommit) {
       // Branding, claim links, and prepared-workspace state belong to the
       // origin that wrote them; they carry through same-origin commits only.
@@ -253,8 +271,9 @@ export async function exchangeHandoffAndSignIn(
               : null,
         });
       } catch (error) {
-        // Nothing was activated: the previous enrollment (origin, token, and
-        // organization) is still complete and authoritative.
+        // Nothing was activated. A persist can fail after writing, so restore
+        // the actual prior host record before returning the safe failure.
+        await restoreBootstrap().catch(() => undefined);
         const message = error instanceof Error ? error.message : fallback;
         return fail(message, { grantConsumed: true });
       }
@@ -262,9 +281,16 @@ export async function exchangeHandoffAndSignIn(
       // Confirm the committed bootstrap is the intended destination before
       // promoting the credential. A divergent read-back means the durable
       // state is not what this transaction validated.
-      if (denOriginComparisonKey(readDenBootstrapConfig().baseUrl) !== destinationKey) {
-        await setDenBootstrapConfig(bootstrapRestorePayload(previousBootstrap)).catch(() => undefined);
+      const committed = isDesktopRuntime() ? await getDesktopBootstrapConfig().catch(() => null) : readDenBootstrapConfig();
+      if (!committed || denOriginComparisonKey(committed.baseUrl) !== destinationKey || committed.apiBaseUrl !== apiBaseUrl) {
+        await restoreBootstrap().catch(() => undefined);
         return fail(fallback, { grantConsumed: true });
+      }
+      if (attempt !== handoffAttemptCounter) {
+        await restoreBootstrap().catch(() => undefined);
+        return fail("This sign-in was superseded by a newer attempt.", {
+          grantConsumed: true, stale: true, publishError: false,
+        });
       }
     }
 
@@ -322,7 +348,7 @@ export async function exchangeHandoffAndSignIn(
       }
     } catch (error) {
       if (needsBootstrapCommit) {
-        await setDenBootstrapConfig(bootstrapRestorePayload(previousBootstrap)).catch(() => undefined);
+        await restoreBootstrap().catch(() => undefined);
       }
       const message = error instanceof Error ? error.message : fallback;
       return fail(message, { grantConsumed: true });

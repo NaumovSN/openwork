@@ -378,6 +378,7 @@ export type DenOrgLlmProvider = {
 };
 
 export type DenExternalMcpConnection = {
+  credentialHealth?: "unknown" | "ready" | "reconnect_required";
   id: string;
   name: string;
   url: string;
@@ -2218,6 +2219,8 @@ function parseDenExternalMcpConnection(value: unknown): DenExternalMcpConnection
 
   return {
     id: value.id,
+    ...(value.credentialHealth === "unknown" || value.credentialHealth === "ready" || value.credentialHealth === "reconnect_required"
+      ? { credentialHealth: value.credentialHealth } : {}),
     name: value.name,
     url: value.url,
     authType: value.authType,
