@@ -6673,6 +6673,9 @@ function importedObjectMetadata(input: { objectType: ConnectorMappingRow["object
   const frontmatterName = frontmatter?.data.name ?? frontmatter?.data.title
   const frontmatterDescription = frontmatter?.data.description ?? frontmatter?.data.summary
 
+  const isJson = fileName.toLowerCase().endsWith(".json")
+  const normalizedPayloadJson = isJson ? parseJsonObject(input.rawSourceText) : undefined
+
   const metadata: Record<string, unknown> = {
     name: frontmatterName?.trim() || preferredName,
     relativePath: input.path,
@@ -6684,20 +6687,70 @@ function importedObjectMetadata(input: { objectType: ConnectorMappingRow["object
     metadata.frontmatter = frontmatter.data
   }
 
+  if (input.objectType === "mcp" && normalizedPayloadJson) {
+    const serverNames = importedMcpServerNames(normalizedPayloadJson)
+    metadata.name = importedMcpObjectName({
+      nameFromFile,
+      pathSegments,
+      payload: normalizedPayloadJson,
+      serverNames,
+    })
+    if (!readPayloadString(normalizedPayloadJson, "description")) {
+      metadata.description = serverNames.length > 1
+        ? `${serverNames.length} MCP servers imported from ${input.path}.`
+        : `MCP server imported from ${input.path}.`
+    }
+  } else if (isJson && !readPayloadString(normalizedPayloadJson, "description")) {
+    // Without this the projection falls back to the file's second line, which
+    // for JSON is a fragment such as `"hooks": {`.
+    metadata.description = `Imported from ${input.path}.`
+  }
+
   return {
     metadata,
-    normalizedPayloadJson: (() => {
-      if (!fileName.endsWith(".json")) {
-        return undefined
-      }
-      try {
-        const parsed = JSON.parse(input.rawSourceText) as unknown
-        return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined
-      } catch {
-        return undefined
-      }
-    })(),
+    normalizedPayloadJson,
   }
+}
+
+function parseJsonObject(rawSourceText: string): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(rawSourceText)
+    return isRecord(parsed) ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function readPayloadString(payload: Record<string, unknown> | undefined, key: string) {
+  const value = payload?.[key]
+  return typeof value === "string" && value.trim() ? value.trim() : null
+}
+
+function importedMcpServerNames(payload: Record<string, unknown>) {
+  return [payload.mcpServers, payload.mcp].flatMap((container) => (
+    isRecord(container)
+      ? Object.entries(container).filter(([name, config]) => name.trim() && isRecord(config)).map(([name]) => name.trim())
+      : []
+  ))
+}
+
+/**
+ * A `.mcp.json` file names its servers by key, so the file name (".mcp") is
+ * never a useful title. Prefer the single server's key, then the file's own
+ * name, then the folder that holds it (normally the plugin directory).
+ */
+function importedMcpObjectName(input: {
+  nameFromFile: string
+  pathSegments: string[]
+  payload: Record<string, unknown>
+  serverNames: string[]
+}) {
+  if (input.serverNames.length === 1) return input.serverNames[0]
+  const declaredName = readPayloadString(input.payload, "name") ?? readPayloadString(input.payload, "title")
+  if (declaredName) return declaredName
+  const parentName = input.pathSegments.length > 1 ? input.pathSegments[input.pathSegments.length - 2]?.trim() : ""
+  if (parentName && parentName !== ".claude-plugin") return parentName
+  return input.nameFromFile.replace(/^\.+/, "") || "mcp"
 }
 
 export function deriveGithubImportedObjectProjection(input: { objectType: ConnectorMappingRow["objectType"]; path: string; rawSourceText: string }) {
