@@ -50,6 +50,10 @@ async function afterSign(context) {
     run("xcrun", ["notarytool", "submit", notaryZipPath, "--key", keyPath, "--key-id", keyId, "--issuer", issuer, "--wait"]);
     // Tickets can take minutes to reach Apple's CDN; stapler transiently fails with status 65 until then.
     await runWithRetry("xcrun", ["stapler", "staple", appPath], 5);
+    // Offline checks on the signed, notarized, stapled bundle, as the desktop's
+    // hook does; they never launch the app on the build machine.
+    run("codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath]);
+    run("spctl", ["--assess", "--type", "execute", "--verbose=2", appPath]);
     run("xcrun", ["stapler", "validate", appPath]);
   } finally {
     rmSync(notaryTempDir, { recursive: true, force: true });

@@ -699,6 +699,7 @@ test("shared afterSign retains Coworker's opt-in, credentials, notarization and 
       { command: "xcrun", args: ["notarytool", "submit", archive, "--key", credentials.APPLE_API_KEY_PATH, "--key-id", credentials.APPLE_API_KEY, "--issuer", credentials.APPLE_API_ISSUER, "--wait"] },
       { command: "xcrun", args: ["stapler", "staple", appPath] },
       { command: "xcrun", args: ["stapler", "staple", appPath] },
+      { command: "spctl", args: ["--assess", "--type", "execute", "--verbose=2", appPath] },
       { command: "xcrun", args: ["stapler", "validate", appPath] },
     ]);
     assert.deepEqual(success.waits, [30_000]);
