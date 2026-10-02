@@ -47,15 +47,33 @@ afterAll(async () => {
   if (ownedDom) await GlobalRegistrator.unregister();
 });
 
-async function mountCatalogActions(extraProviders: Array<{ id: string; name: string; connected: boolean; models: Record<string, { name: string }> }> = []) {
+async function mountCatalogActions(
+  extraProviders: Array<{ id: string; name: string; connected: boolean; models: Record<string, { name: string }> }> = [],
+  chatEngine: "v1" | "v2" = "v1",
+) {
   const requests: Array<{ path: string; method: string; directory: string | null }> = [];
+  let engineStatusReads = 0;
   const unavailable = new Set<string>();
   const names: Record<string, string> = { one: "GPT-6 Luna", two: "Local Luna" };
   const server = Bun.serve({
     hostname: "127.0.0.1", port: 0,
     fetch(request) {
       const url = new URL(request.url);
+      // The owning server's chat engine, read once per catalog lookup.
+      if (url.pathname === "/experimental/engine-v2-preview/status") {
+        engineStatusReads += 1;
+        return NativeResponse.json({ enabled: chatEngine === "v2", running: chatEngine === "v2", chatRouting: chatEngine === "v2",
+          mirroredProviderIds: [], skippedProviderIds: [], catalogModelIds: [] });
+      }
       requests.push({ path: url.pathname, method: request.method, directory: url.searchParams.get("directory") });
+      // v2's native catalog: models and provider names are separate reads.
+      const v2 = /^\/workspace\/([^/]+)\/opencode2\/api\/(model|model\/default|provider)$/.exec(url.pathname);
+      if (v2?.[1] && v2[2]) {
+        if (unavailable.has(v2[1])) return NativeResponse.json({ message: "Unavailable" }, { status: 503 });
+        if (v2[2] === "model") return NativeResponse.json({ data: [{ id: "native", providerID: "provider", name: `Native ${names[v2[1]]}` }] });
+        if (v2[2] === "provider") return NativeResponse.json({ data: [{ id: "provider", name: `Engine provider ${v2[1]}` }] });
+        return NativeResponse.json({ data: [] });
+      }
       const id = /^\/workspace\/([^/]+)\/opencode\/provider$/.exec(url.pathname)?.[1];
       if (!id || unavailable.has(id)) return NativeResponse.json({ message: "Unavailable" }, { status: 503 });
       return NativeResponse.json({ connected: ["provider", ...extraProviders.filter((provider) => provider.connected).map((provider) => provider.id)], default: {}, all: [
@@ -95,7 +113,7 @@ async function mountCatalogActions(extraProviders: Array<{ id: string; name: str
   cleanups.push(async () => { await act(async () => root.unmount()); host.remove(); });
   const api = window.__openworkControl;
   if (!api) throw new Error("Control API unavailable");
-  return { api, requests, unavailable, names };
+  return { api, requests, unavailable, names, engineStatusReads: () => engineStatusReads };
 }
 
 async function listedModels(api: OpenworkControlAPI, workspaceId?: string) {
@@ -124,6 +142,17 @@ test("renderer models.list reads a nonselected workspace and excludes disconnect
     result: { ok: true, workspaceId: "two", models: [{ providerId: "provider", modelId: "opaque", displayName: "Local Luna", providerName: "Provider two", available: true }] },
   });
   expect(requests.map((request) => request.path)).toEqual(["/workspace/two/opencode/provider"]);
+});
+
+test("renderer models.list reads the v2 catalog when the workspace's chat runs on v2", async () => {
+  const { api, requests, engineStatusReads } = await mountCatalogActions([], "v2");
+  expect(await api.query({ id: "models.list", args: { workspaceId: "two" } })).toMatchObject({
+    ok: true,
+    result: { ok: true, workspaceId: "two", models: [{ providerId: "provider", modelId: "native", displayName: "Native Local Luna", providerName: "Engine provider two", available: true }] },
+  });
+  expect(engineStatusReads()).toBe(1);
+  expect(requests.some((request) => request.path.includes("/opencode/"))).toBe(false);
+  expect(requests.map((request) => request.path)).toContain("/workspace/two/opencode2/api/model");
 });
 
 test("renderer refreshes names and scopes catalog reads to the requested workspace", async () => {

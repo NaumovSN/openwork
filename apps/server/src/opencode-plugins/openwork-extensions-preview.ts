@@ -1,4 +1,5 @@
-import { openworkReadTransport } from "./openwork-read-transport.js";
+import { openworkReadTransport, type OpenworkEngine, type OpenworkEngineReader } from "./openwork-read-transport.js";
+import { createV2ReadAdapter, readV2SessionActivity } from "../opencode-v2-read-adapter.js";
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { ApiError } from "../errors.js";
@@ -176,6 +177,8 @@ type SessionSearchMatchMode = NonNullable<SessionSearchArgs["match"]>;
 type SessionSearchSnippet = { before: string; match: string; after: string };
 type SessionSearchResult = {
   workspaceId: string;
+  /** Engine that holds the session; session.read finds it on either one. */
+  engine: OpenworkEngine;
   workspace: string;
   sessionId: string;
   title: string;
@@ -536,9 +539,10 @@ function sessionArchived(session: SessionInfo): boolean {
   return typeof archived === "number" && archived > 0;
 }
 
-function sessionMetadata(workspace: OpenWorkWorkspace, session: SessionInfo) {
+function sessionMetadata(workspace: OpenWorkWorkspace, session: SessionInfo, engine: OpenworkEngine) {
   return {
     workspaceId: workspace.id,
+    engine,
     workspace: workspaceLabel(workspace),
     sessionId: session.id,
     title: sessionTitle(session),
@@ -609,19 +613,19 @@ function findTextMatch(text: string, queryLower: string, mode: SessionSearchMatc
   return Number.isFinite(firstIndex) ? { index: firstIndex, length: firstLength, phrase: false } : null;
 }
 
-function titleSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, queryLower: string, mode: SessionSearchMatchMode): SessionSearchResult | null {
+function titleSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, engine: OpenworkEngine, queryLower: string, mode: SessionSearchMatchMode): SessionSearchResult | null {
   const text = `${sessionTitle(session)} ${workspaceLabel(workspace)}`;
   const match = findTextMatch(text, queryLower, mode);
   if (!match) return null;
   return {
-    ...sessionMetadata(workspace, session),
+    ...sessionMetadata(workspace, session, engine),
     kind: "title",
     phrase: match.phrase,
     snippet: buildSessionSnippet(text, match.index, match.length),
   };
 }
 
-function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, messages: SessionMessage[], queryLower: string, mode: SessionSearchMatchMode): SessionSearchResult | null {
+function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo, engine: OpenworkEngine, messages: SessionMessage[], queryLower: string, mode: SessionSearchMatchMode): SessionSearchResult | null {
   let fallback: SessionSearchResult | null = null;
   for (const [index, message] of messages.entries()) {
     const role = message.info.role;
@@ -631,7 +635,7 @@ function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo,
     const match = findTextMatch(text, queryLower, mode);
     if (!match) continue;
     const result: SessionSearchResult = {
-      ...sessionMetadata(workspace, session),
+      ...sessionMetadata(workspace, session, engine),
       kind: "message",
       phrase: match.phrase,
       role,
@@ -666,10 +670,40 @@ function filterWorkspaces(workspaces: OpenWorkWorkspace[], workspaceId?: string)
   });
 }
 
-async function listWorkspaceSessions(workspace: OpenWorkWorkspace, limit: number): Promise<SessionInfo[]> {
+/** The engine this affordance runs on: the read transport's, or v1 when v1 launched the plugin. */
+function ownEngineReader(): OpenworkEngineReader {
+  const transport = openworkReadTransport.getStore();
+  if (!transport) return { engine: "v1", get: serverGet };
+  const activity = transport.activity;
+  return {
+    engine: transport.engine ?? "v1",
+    get: (path) => transport.get(path),
+    ...(activity ? { activity: (workspaceId: string, sessionId: string) => activity(workspaceId, sessionId) } : {}),
+  };
+}
+
+/**
+ * Both engines run while v1 is retired, and the v1 history import is
+ * one-shot, so a session created on either engine afterwards exists only
+ * there. Reads try this affordance's own engine first, then the other one.
+ * Every read still passes through the host's engine mount, which keeps its
+ * workspace ownership and session-home checks.
+ */
+function engineReaders(): OpenworkEngineReader[] {
+  const own = ownEngineReader();
+  const transport = openworkReadTransport.getStore();
+  if (transport) return transport.other ? [own, transport.other] : [own];
+  return [own, {
+    engine: "v2",
+    get: createV2ReadAdapter(serverGet),
+    activity: (workspaceId, sessionId) => readV2SessionActivity(serverGet, workspaceId, sessionId),
+  }];
+}
+
+async function listWorkspaceSessions(reader: OpenworkEngineReader, workspace: OpenWorkWorkspace, limit: number): Promise<SessionInfo[]> {
   const query = new URLSearchParams({ roots: "true", limit: String(limit) });
   return z.array(sessionInfoSchema).parse(
-    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/opencode/session?${query.toString()}`),
+    await reader.get(`/workspace/${encodeURIComponent(workspace.id)}/opencode/session?${query.toString()}`),
   );
 }
 
@@ -691,9 +725,9 @@ async function assertSessionInWorkspace(workspace: OpenWorkWorkspace, session: S
   throw new Error(`Session ${session.id} not found in workspace ${workspaceLabel(workspace)}`);
 }
 
-async function readWorkspaceSession(workspace: OpenWorkWorkspace, sessionId: string): Promise<SessionInfo> {
+async function readWorkspaceSession(workspace: OpenWorkWorkspace, sessionId: string, reader = ownEngineReader()): Promise<SessionInfo> {
   const session = sessionInfoSchema.parse(
-    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(sessionId)}`),
+    await reader.get(`/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(sessionId)}`),
   );
   await assertSessionInWorkspace(workspace, session);
   return session;
@@ -705,7 +739,7 @@ const sessionChildrenSchema = z.array(z.object({
   time: z.object({ archived: z.number().optional() }).optional(),
 }).passthrough());
 
-async function readSessionDescendantIds(base: string, sessionId: string): Promise<{ ids: string[]; unknown: number }> {
+async function readSessionDescendantIds(get: (path: string) => Promise<unknown>, base: string, sessionId: string): Promise<{ ids: string[]; unknown: number }> {
   const queue = [sessionId];
   const seen = new Set(queue);
   const ids: string[] = [];
@@ -713,7 +747,7 @@ async function readSessionDescendantIds(base: string, sessionId: string): Promis
   let index = 0;
   for (; index < queue.length && index < MAX_SESSION_DESCENDANTS; index += 1) {
     const parsed = sessionChildrenSchema.safeParse(
-      await serverGet(`${base}/session/${encodeURIComponent(queue[index])}/children`).catch(() => null),
+      await get(`${base}/session/${encodeURIComponent(queue[index])}/children`).catch(() => null),
     );
     if (!parsed.success) {
       unknown += 1;
@@ -734,24 +768,23 @@ async function readSessionDescendantIds(base: string, sessionId: string): Promis
   return { ids, unknown };
 }
 
-async function readSessionActivity(workspace: OpenWorkWorkspace, session: SessionInfo): Promise<SessionActivity> {
-  const transport = openworkReadTransport.getStore();
-  if (transport?.activity) return transport.activity(workspace.id, session.id);
+async function readSessionActivity(reader: OpenworkEngineReader, workspace: OpenWorkWorkspace, session: SessionInfo): Promise<SessionActivity> {
+  if (reader.activity) return reader.activity(workspace.id, session.id);
   const base = `/workspace/${encodeURIComponent(workspace.id)}/opencode`;
-  const probe = (path: string) => serverGet(`${base}${path}`).catch(() => null);
+  const probe = (path: string) => reader.get(`${base}${path}`).catch(() => null);
   const [statuses, permissions, questions, descendants] = await Promise.all([
     probe("/session/status"), probe("/permission"), probe("/question"),
-    session.time?.archived ? { ids: [], unknown: 0 } : readSessionDescendantIds(base, session.id),
+    session.time?.archived ? { ids: [], unknown: 0 } : readSessionDescendantIds((path) => reader.get(path), base, session.id),
   ]);
   return sessionActivityFrom(statuses, permissions, questions, session.id, descendants.ids, descendants.unknown);
 }
 
 // The engine returns the newest `limit` messages; without a limit it returns
 // the whole transcript, oldest first.
-async function readSessionMessages(workspace: OpenWorkWorkspace, sessionId: string, limit?: number): Promise<SessionMessage[]> {
+async function readSessionMessages(reader: OpenworkEngineReader, workspace: OpenWorkWorkspace, sessionId: string, limit?: number): Promise<SessionMessage[]> {
   const query = limit === undefined ? "" : `?${new URLSearchParams({ limit: String(limit) }).toString()}`;
   return z.array(sessionMessageSchema).parse(
-    await serverGet(`/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(sessionId)}/message${query}`),
+    await reader.get(`/workspace/${encodeURIComponent(workspace.id)}/opencode/session/${encodeURIComponent(sessionId)}/message${query}`),
   );
 }
 
@@ -781,15 +814,28 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
     return { ok: false, error: args.workspaceId ? `No workspace matched ${args.workspaceId}` : "No OpenWork workspaces are available" };
   }
 
-  const sessions: Array<{ workspace: OpenWorkWorkspace; session: SessionInfo }> = [];
+  const sessions: Array<{ workspace: OpenWorkWorkspace; session: SessionInfo; reader: OpenworkEngineReader }> = [];
   const workspaceErrors: Array<{ workspaceId: string; workspace: string; error: string }> = [];
+  const readers = engineReaders();
   await Promise.all(workspaces.map(async (workspace) => {
-    try {
-      const items = await listWorkspaceSessions(workspace, SESSION_SEARCH_TITLE_LIST_LIMIT);
-      for (const session of items) if (sessionPassesFilters(session, args)) sessions.push({ workspace, session });
-    } catch (error) {
-      workspaceErrors.push({ workspaceId: workspace.id, workspace: workspaceLabel(workspace), error: unknownErrorMessage(error) });
-    }
+    const listed = await Promise.all(readers.map((reader, index) =>
+      listWorkspaceSessions(reader, workspace, SESSION_SEARCH_TITLE_LIST_LIMIT).catch((error: unknown) => {
+        // The other engine is best effort: it may be stopped or never used.
+        if (index === 0) workspaceErrors.push({ workspaceId: workspace.id, workspace: workspaceLabel(workspace), error: unknownErrorMessage(error) });
+        return [];
+      })));
+    // The v1 history import keeps session ids, so an imported chat is listed
+    // by both engines; the affordance's own engine wins.
+    const seen = new Set<string>();
+    listed.forEach((items, index) => {
+      const reader = readers[index];
+      if (!reader) return;
+      for (const session of items) {
+        if (seen.has(session.id)) continue;
+        seen.add(session.id);
+        if (sessionPassesFilters(session, args)) sessions.push({ workspace, session, reader });
+      }
+    });
   }));
 
   sessions.sort((left, right) => sessionUpdatedAt(right.session) - sessionUpdatedAt(left.session));
@@ -798,8 +844,8 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   const titleMatched = new Set<string>();
 
   // Title phase: every filtered root session, one list call per workspace.
-  for (const { workspace, session } of sessions.slice(scanLimit)) {
-    const titleMatch = titleSearchResult(workspace, session, queryLower, mode);
+  for (const { workspace, session, reader } of sessions.slice(scanLimit)) {
+    const titleMatch = titleSearchResult(workspace, session, reader.engine, queryLower, mode);
     if (!titleMatch) continue;
     titleMatched.add(session.id);
     matches.push(titleMatch);
@@ -807,12 +853,12 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
 
   // Transcript phase: only the scanLimit newest sessions are read. A message
   // match wins the snippet, but the title match still owns the rank.
-  await forEachWithConcurrency(sessionsToScan, SESSION_SEARCH_CONCURRENCY, async ({ workspace, session }) => {
-    const titleMatch = titleSearchResult(workspace, session, queryLower, mode);
+  await forEachWithConcurrency(sessionsToScan, SESSION_SEARCH_CONCURRENCY, async ({ workspace, session, reader }) => {
+    const titleMatch = titleSearchResult(workspace, session, reader.engine, queryLower, mode);
     if (titleMatch) titleMatched.add(session.id);
     try {
-      const messages = await readSessionMessages(workspace, session.id, messageLimit);
-      const messageMatch = messageSearchResult(workspace, session, messages, queryLower, mode);
+      const messages = await readSessionMessages(reader, workspace, session.id, messageLimit);
+      const messageMatch = messageSearchResult(workspace, session, reader.engine, messages, queryLower, mode);
       if (messageMatch) matches.push(messageMatch);
       else if (titleMatch) matches.push(titleMatch);
     } catch {
@@ -872,10 +918,25 @@ function readableMessages(messages: SessionMessage[]): ReadableMessage[] {
     .filter((message) => message.text.trim().length > 0);
 }
 
-async function readWorkspaceModels(workspace: OpenWorkWorkspace): Promise<OpenworkCatalogModel[]> {
-  return openworkCatalogModels(openworkEngineProviderCatalogSchema.parse(await serverGet(
+async function readWorkspaceModels(reader: OpenworkEngineReader, workspace: OpenWorkWorkspace): Promise<OpenworkCatalogModel[]> {
+  return openworkCatalogModels(openworkEngineProviderCatalogSchema.parse(await reader.get(
     `/workspace/${encodeURIComponent(workspace.id)}/opencode/provider`,
   )));
+}
+
+async function readSessionOnEitherEngine(
+  workspace: OpenWorkWorkspace,
+  sessionId: string,
+  readers: OpenworkEngineReader[],
+): Promise<{ session: SessionInfo; reader: OpenworkEngineReader } | null> {
+  for (const reader of readers) {
+    try {
+      return { session: await readWorkspaceSession(workspace, sessionId, reader), reader };
+    } catch {
+      // Not on this engine, or not owned by this workspace there.
+    }
+  }
+  return null;
 }
 
 async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
@@ -890,20 +951,26 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
     return { ok: false, error: args.workspaceId ? `No workspace matched ${args.workspaceId}` : "No OpenWork workspaces are available" };
   }
 
+  const readers = engineReaders();
   for (const workspace of workspaces) {
     try {
-      const session = await readWorkspaceSession(workspace, args.sessionId);
+      const located = await readSessionOnEitherEngine(workspace, args.sessionId, readers);
+      if (!located) {
+        if (args.workspaceId) break;
+        continue;
+      }
+      const { session, reader } = located;
       // Reading from the start or summarizing needs the whole transcript.
       const needsFullTranscript = summary || from === "start";
       const [messages, activity, catalog] = await Promise.all([
-        readSessionMessages(workspace, args.sessionId, needsFullTranscript ? undefined : count),
-        readSessionActivity(workspace, session),
-        readWorkspaceModels(workspace).catch(() => []),
+        readSessionMessages(reader, workspace, args.sessionId, needsFullTranscript ? undefined : count),
+        readSessionActivity(reader, workspace, session),
+        readWorkspaceModels(reader, workspace).catch(() => []),
       ]);
       const lastError = lastAssistantError(messages);
       const readable = readableMessages(messages);
       const metadata = {
-        ...sessionMetadata(workspace, session),
+        ...sessionMetadata(workspace, session, reader.engine),
         ...activity,
         lastError,
       };

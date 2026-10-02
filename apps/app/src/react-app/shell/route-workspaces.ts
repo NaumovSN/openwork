@@ -58,7 +58,7 @@ export const v2RouteSessionList: RouteSessionListTransport = async ({ endpoint, 
   }).listSessionsPage({ limit, cursor });
 
 /** Resolve the owning server's engine even when this workspace isn't selected. */
-async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promise<ResolvedWorkspaceEndpoint> {
+export async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promise<ResolvedWorkspaceEndpoint> {
   const status = await endpoint.client.getEngineV2PreviewStatus().catch((error: unknown) => {
     // Servers predating the preview endpoint still use v1.
     if (error instanceof OpenworkServerError && error.status === 404) return null;
