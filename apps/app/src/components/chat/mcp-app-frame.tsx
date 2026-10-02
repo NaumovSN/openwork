@@ -421,7 +421,7 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, i
     checkpoint("resource-resolved")
     if (!readOnly && !app.launchId) {
       fail("MCP_APP_LAUNCH_CONTEXT_MISSING", "resource-resolution", null,
-        "This App has no live launch context. Update OpenWork and reopen the App before using its actions.")
+        "This artifact has no live launch context. Update OpenWork and reopen the artifact before using its actions.")
       return
     }
     const sandbox = openworkServerClient.mcpAppSandbox(app, window.location.origin)
@@ -514,23 +514,23 @@ export function McpAppSandboxView({ origin, app, resolveLiveActions, toolName, i
       try {
         if (resolveLiveActions) {
           liveActions ??= resolveLiveActions().then(live => {
-            if (disposed || failed) throw new Error("This App view has closed or changed.")
+            if (disposed || failed) throw new Error("This artifact view has closed or changed.")
             if (live.origin.readOnly || !live.app.launchId || live.app.serverName !== app.serverName
               || live.app.toolName !== app.toolName || live.app.resourceUri !== app.resourceUri) {
-              throw new Error("This App view needs a new live binding.")
+              throw new Error("This artifact view needs a new live binding.")
             }
             actions.dispose()
             actions = createMcpAppActions(live.origin, live.app)
           })
           await liveActions
-          if (disposed || failed) throw new Error("This App view has closed or changed.")
+          if (disposed || failed) throw new Error("This artifact view has closed or changed.")
         }
         const userInteraction = _meta?.["openwork/userInteraction"] === true
         if (connectionController) return await connectionController.callTool(actions, app, name, args, userInteraction)
         return standardMcpToolResult(await actions.callTool(name, args, userInteraction))
       } catch (cause) {
         if (cause instanceof OpenworkServerError && ["missing_launch_context", "stale_launch_context", "inactive_session"].includes(cause.code)) {
-          fail("MCP_APP_LAUNCH_CONTEXT_STALE", "resource-resolution", cause, "Reopen the App in its original conversation before trying again.")
+          fail("MCP_APP_LAUNCH_CONTEXT_STALE", "resource-resolution", cause, "Reopen the artifact in its original conversation before trying again.")
         }
         throw cause
       }
@@ -927,7 +927,7 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
           setApp(cached)
           setPreviewActions(() => async () => {
             const current = await live.promise
-            if (!previewActive || cancelled) throw new Error("This App view has closed or changed.")
+            if (!previewActive || cancelled) throw new Error("This artifact view has closed or changed.")
             return current
           })
         })
@@ -944,15 +944,15 @@ function EmbeddedMcpAppFrame({ part, origin: surfaceOrigin }: { part: DynamicToo
   const revisionId = result?._meta?.viewRevisionId
   if (app && resolvedFor.current === resolution && typeof viewId === "string" && typeof revisionId === "string" && app.resourceUri === `ui://openwork/artifacts/${viewId}/views/${revisionId}/index.html`) {
     const artifact = result?.structuredContent?.artifact
-    const title = typeof result?._meta?.appTitle === "string" ? result._meta.appTitle : isRecord(artifact) && typeof artifact.title === "string" ? artifact.title : "App preview"
+    const title = typeof result?._meta?.appTitle === "string" ? result._meta.appTitle : isRecord(artifact) && typeof artifact.title === "string" ? artifact.title : "Artifact preview"
     const receiptId = isRecord(artifact) && typeof artifact.receiptId === "string" ? artifact.receiptId : undefined
     return <AppChatArtifact key={`${viewId}:${revisionId}:${receiptId}`} appId={viewId} revisionId={revisionId} title={title} receiptId={receiptId} />
   }
   if (!result) return null
-  if (!origin) return <p role="status">This App is missing its conversation origin. Reopen the conversation to use it.</p>
+  if (!origin) return <p role="status">This artifact is missing its conversation origin. Reopen the conversation to use it.</p>
   if (error) return <McpAppDiagnosticNotice error={error} notice={CHAT_MCP_APP_UNAVAILABLE_NOTICE} onRetry={() => setResolveToken((token) => token + 1)} />
   if (!app || resolvedFor.current !== resolution) return launch && resolvedFor.current !== resolution
-    ? <p role="status">Opening App…</p> : null
+    ? <p role="status">Opening artifact…</p> : null
   return (
     <McpAppSandboxView
       origin={previewActions && previewOrigin ? previewOrigin : origin}

@@ -58,7 +58,7 @@ export function DashboardTileShell({ title, entryId, subtitle, badge, onRefresh,
       {actionsPlacement !== "header" && (renderActions || (compact && onRefresh)) ? (
         <div className={cn("absolute right-1 top-1 z-10", compact && "opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/tile:opacity-100 focus-within:opacity-100")}>
           {renderActions ? renderActions({ onRefresh, refreshing, badge }) : <DropdownMenu>
-            <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="size-7 bg-background/90" aria-label={`App options for ${title}`} title={`App options for ${title}`} />}>
+            <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="size-7 bg-background/90" aria-label={`Artifact options for ${title}`} title={`Artifact options for ${title}`} />}>
               <MoreHorizontal className="size-4" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">

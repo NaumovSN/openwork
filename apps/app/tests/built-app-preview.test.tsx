@@ -34,11 +34,11 @@ function builder(
     toolCallId: id,
     input: { title: "Order calculator" },
     state: "output-available",
-    output: "App ready",
+    output: "Artifact ready",
     callProviderMetadata: {
       openwork: {
         mcpResult: {
-          content: [{ type: "text", text: "App ready" }],
+          content: [{ type: "text", text: "Artifact ready" }],
           structuredContent: {
             app: {
               appId,
@@ -119,7 +119,7 @@ async function render(
 test("a finished creation is one line and can reveal its raw calls", async () => {
   await render([builder("create", "1")], false, "v1", false, true);
   const row = container.querySelector("[data-app-builder-step]");
-  expect(row?.getAttribute("aria-label")).toBe("Created app “Order calculator”");
+  expect(row?.getAttribute("aria-label")).toBe("Created artifact “Order calculator”");
   const details = container.querySelector<HTMLButtonElement>('[data-app-builder-step] [data-testid="tool-details-toggle"]');
   expect(details?.getAttribute("aria-expanded")).toBe("false");
   await act(async () => details?.click());
@@ -163,7 +163,7 @@ for (const engine of ["v1", "v2"] as const)
     await render([created, edited], false, engine);
     expect(usePanelTabStore.getState().sessions.session?.tabs).toHaveLength(0);
     await render([created, edited], false, engine, false, true);
-    await act(async () => Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.includes("Open preview"))?.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Open preview"]')?.click());
     expect(usePanelTabStore.getState().sessions.session?.tabs).toHaveLength(1);
     expect(usePanelTabStore.getState().sessions.session?.tabs[0]).toMatchObject({ part: edited });
   });
@@ -177,7 +177,7 @@ test("opening history and read-only runs do not take over the pane", async () =>
     0,
   );
 });
-test("failed and mismatched MCP results cannot open an App", () => {
+test("failed and mismatched MCP results cannot open an artifact", () => {
   const part = builder("failed", "1");
   expect(builtAppSummary(part)).not.toBeNull();
   expect(

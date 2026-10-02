@@ -32,8 +32,8 @@ test("renders probe branding and accessible human labels in every state", () => 
     expect(html).toContain('data-connector-name="Notion"');
     expect(html).toContain("/ext-notion.svg");
     expect(html).toContain(label);
-    // Failures open the recovery card; other states name the row on its details icon.
-    expect(html).toContain(part.state === "output-error" ? `aria-label="${label}.` : `technical details for ${label}"`);
+    // Every state, failures included, names the row on its details icon.
+    expect(html).toContain(`technical details for ${label}"`);
     expect(html).not.toContain("Used *");
     expect(html).not.toContain("mcp:emc_probe:*");
     expect(html).not.toContain("Waiting for your action");

@@ -47,7 +47,7 @@ export function TaskRecovery(props: {
           {props.title}
         </p>
         {props.description ? <span className="min-w-0 text-xs leading-6 text-muted-foreground">{props.description}</span> : null}
-        <div className="ms-auto flex shrink-0 items-center gap-1 text-foreground">
+        <div className="flex shrink-0 items-center gap-1 text-foreground">
           {props.onRetry ? (
             <Button variant="ghost" size="xs" aria-label={props.retryLabel ?? "Retry task"} title={props.retryLabel ?? "Retry task"}
               data-testid={props.retryTestId} disabled={props.retryDisabled} onClick={props.onRetry}>

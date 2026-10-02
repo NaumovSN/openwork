@@ -238,6 +238,7 @@ export function getCapabilityCallSentence(
       service: null,
       present: `Searching your connections for${quoted || " capabilities"}`,
       past: `Searched your connections for${quoted || " capabilities"}`,
+      failure: "Couldn't search your connections",
     }
   }
 

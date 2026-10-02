@@ -20,13 +20,15 @@ export function BuiltAppChatPreview({ part, compact = false }: { part: DynamicTo
   if (!app) return null;
   return (
     <div
-      className="mt-2 flex items-center gap-2 text-sm"
+      // Compact sits on a rail row: same line, same small type as the row.
+      className={compact ? "flex shrink-0 items-center" : "mt-2 flex items-center gap-2 text-sm"}
       data-built-app-result={app.appId}
     >
       {!compact ? <span className="min-w-0 flex-1 truncate">{app.title}</span> : null}
       <Button
         variant="ghost"
-        size="sm"
+        size={compact ? "xs" : "sm"}
+        aria-label="Open preview"
         disabled={!mcpAppOrigin}
         onClick={() => {
           if (!mcpAppOrigin) return;
@@ -45,8 +47,8 @@ export function BuiltAppChatPreview({ part, compact = false }: { part: DynamicTo
           useUiStateStore.getState().setSidePanelState(sessionId, "panel");
         }}
       >
-        <PanelRightOpen className="size-4" />
-        Open preview
+        <PanelRightOpen className={compact ? "size-3.5" : "size-4"} />
+        {compact ? "Open" : "Open preview"}
       </Button>
     </div>
   );
