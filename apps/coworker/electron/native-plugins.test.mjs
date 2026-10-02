@@ -248,7 +248,7 @@ test("published native tools preserve trusted identity, broker payloads, file im
       for (const value of [{ observation_id: "observation" }, { observation_id: "observation", action: key, actions: [key] }, { observation_id: "observation", actions: Array(9).fill(key) }]) {
         await assert.rejects(Effect.runPromise(act.execute(value, context)), /Invalid native tool arguments/);
       }
-      const args = { observation_id: "observation", actions: [{ type: "triple_click", x: 2, y: 3, modifiers: ["shift"] }, key, { type: "wait", ms: 50 }] };
+      const args = { observation_id: "observation", actions: [{ type: "triple_click", x: 2, y: 3, modifiers: ["shift"] }, key, { type: "wait", ms: 50 }], intent: "selecting the title" };
       await Effect.runPromise(act.execute(args, context));
       assert.deepEqual(requests.at(-1).body.args, args);
       assert.equal(f.tools.get("coworker_computer_observe").input["~standard"].validate({ elements: "all", include_image: false }).issues, undefined);

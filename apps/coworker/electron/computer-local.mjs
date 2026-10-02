@@ -338,14 +338,20 @@ export function createLocalComputerAdapter({
       return record.starting;
     },
     dismissSetup,
-    async connect({ onUi = () => {}, onClose = () => {} } = {}) {
+    async connect({ onUi = () => {}, onClose = () => {}, presence } = {}) {
       await dismissSetup();
       const state = await inspect();
       if (state.readiness !== "ready") throw new Error(state.detail);
       const { Client, StdioClientTransport, uiNotificationSchema } = await mcp();
       const client = new Client({ name: "open-coworker-computer", version: "1.0.0" }, { capabilities: {}, enforceStrictCapabilities: true });
       // Only this trusted host gets embedded presentation; Continue stays human-only.
-      const transport = new StdioClientTransport({ command: state.binary, args: ["mcp-coworker-hosted"], env, stderr: "ignore" });
+      // Name and color for the on-desktop cursor; display only, never authority.
+      const hex = (value) => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value);
+      const shown = typeof presence?.name === "string" && hex(presence.color)
+        ? { OPENWORK_COMPUTER_USE_PRESENCE: JSON.stringify({ name: presence.name.slice(0, 32), color: presence.color,
+          ...(hex(presence.fill) && hex(presence.edge) ? { fill: presence.fill, edge: presence.edge } : {}),
+          ...(typeof presence.glasses === "string" ? { glasses: presence.glasses.slice(0, 16) } : {}) }) } : {};
+      const transport = new StdioClientTransport({ command: state.binary, args: ["mcp-coworker-hosted"], env: { ...env, ...shown }, stderr: "ignore" });
       let closed = false;
       let terminationConfirmed = false;
       let busy = false;

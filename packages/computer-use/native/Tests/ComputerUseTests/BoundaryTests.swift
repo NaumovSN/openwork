@@ -238,6 +238,13 @@ final class BoundaryTests: XCTestCase {
         XCTAssertThrowsError(try budget.timeout())
     }
 
+    func testHostAppsAndPermissionSurfacesCannotBeControlled() {
+        for id in ["com.differentai.opencoworker", "com.differentai.openwork", "com.apple.systempreferences", "com.apple.Terminal", "com.1password.1password"] {
+            XCTAssertFalse(AppIdentity.isAllowed(bundleID: id), id)
+        }
+        XCTAssertTrue(AppIdentity.isAllowed(bundleID: "com.apple.TextEdit"))
+    }
+
     @MainActor
     func testCoworkerPolicyDoesNotChangeDesktopSchemaOrObservationShape() throws {
         func schema(_ name: String, _ policy: RuntimePolicy) throws -> [String: Any] {
@@ -254,6 +261,10 @@ final class BoundaryTests: XCTestCase {
         XCTAssertFalse(variants.contains { ($0["properties"] as? [String: Any])?["modifiers"] != nil })
         let coworker = try schema("computer_act", .coworker)
         XCTAssertNotNil((coworker["properties"] as? [String: Any])?["actions"])
+        XCTAssertNotNil((coworker["properties"] as? [String: Any])?["intent"])
+        XCTAssertNil(properties["intent"])
+        XCTAssertNotNil(MCPServer.schemas(policy: .coworker).first { $0["name"] as? String == "computer_zoom" })
+        XCTAssertNil(MCPServer.schemas(policy: .desktop).first { $0["name"] as? String == "computer_zoom" })
         XCTAssertNil(coworker["oneOf"])
         XCTAssertEqual(RuntimePolicy.desktop.observationSeconds, 15)
         XCTAssertEqual(RuntimePolicy.coworker.observationSeconds, 60)

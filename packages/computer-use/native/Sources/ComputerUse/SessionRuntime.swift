@@ -109,13 +109,20 @@ final class SessionRuntime {
             let options = try ObservationOptions(values, policy: policy)
             return try await observe(try a.string("session_id"), image: options.image, elements: options.elements)
         case "computer_act":
-            try a.only(policy == .coworker ? ["session_id", "observation_id", "request_id", "action", "actions"] : ["session_id", "observation_id", "request_id", "action"])
+            try a.only(policy == .coworker ? ["session_id", "observation_id", "request_id", "action", "actions", "intent"] : ["session_id", "observation_id", "request_id", "action"])
             let id = try a.string("session_id")
             let observationID = try a.string("observation_id")
             let requestID = try a.string("request_id", max: 100)
             let actions = try Action.batch(values, policy: policy)
             let raw = values["actions"] ?? values["action"] ?? NSNull()
-            return try await act(id: id, observationID: observationID, requestID: requestID, actions: actions, raw: raw)
+            // Display only: shown on the person's desktop cursor, never part of the receipt identity.
+            let intent = values["intent"] == nil ? nil : try a.string("intent", max: 120)
+            return try await act(id: id, observationID: observationID, requestID: requestID, actions: actions, raw: raw, intent: intent)
+        case "computer_zoom" where policy == .coworker:
+            try a.only(["session_id", "observation_id", "x", "y", "width", "height"])
+            return try await zoom(try a.string("session_id"), observationID: try a.string("observation_id"),
+                region: CGRect(x: try a.number("x", min: 0, max: 100_000), y: try a.number("y", min: 0, max: 100_000),
+                               width: try a.number("width", min: 8, max: 100_000), height: try a.number("height", min: 8, max: 100_000)))
         case "computer_session_status":
             try a.only(["session_id"])
             let current = try current(try a.string("session_id"), allowPaused: true)
@@ -352,7 +359,35 @@ final class SessionRuntime {
         return result + text(payload)
     }
 
-    private func act(id: String, observationID: String, requestID: String, actions: [Action], raw: Any) async throws -> [[String: Any]] {
+    /// A sharper look at part of the current observation, for reading only. It
+    /// neither consumes nor replaces the observation, so coordinates stay in the
+    /// original image's pixels and the next act still uses that observation_id.
+    private func zoom(_ id: String, observationID: String, region pixels: CGRect) async throws -> [[String: Any]] {
+        let current = try current(id)
+        guard let observation = current.observation else { throw UseError("observation_required", "Observe this window before zooming.", next: "observe") }
+        let bounds = try access.validate(current.target, app: current.app)
+        try observation.validate(id: observationID, generation: current.generation, frame: bounds, now: now)
+        guard observation.imageWidth > 0, observation.imageHeight > 0,
+              CGRect(x: 0, y: 0, width: observation.imageWidth, height: observation.imageHeight).contains(pixels) else {
+            throw UseError("invalid_arguments", "The zoom region must lie inside the observation image.", next: "observe")
+        }
+        let xScale = bounds.width / CGFloat(observation.imageWidth), yScale = bounds.height / CGFloat(observation.imageHeight)
+        let region = CGRect(x: pixels.minX * xScale, y: pixels.minY * yScale, width: pixels.width * xScale, height: pixels.height * yScale)
+        @MainActor func check() throws { try self.checkActive(current) }
+        let state = try await access.read(current.target, check: check)
+        let (png, width, height, capturedAt) = try await access.capture(target: current.target, app: current.app, bounds: bounds, state: state,
+            region: region, maxScale: NSScreen.screens.map(\.backingScaleFactor).max() ?? 2, check: check)
+        try check()
+        session?.lastUsed = now
+        let payload: [String: Any] = ["ok": true, "session_id": id, "observation_id": observationID, "state": "active",
+            "region": ["x": pixels.minX, "y": pixels.minY, "width": pixels.width, "height": pixels.height, "coordinate_space": "image_pixels"],
+            "image": ["width": width, "height": height, "captured_at": capturedAt], "protected_fields": state.protectedFrames.count,
+            "content_trust": "untrusted_app_content",
+            "next": "Read only. Act with the same observation_id and coordinates from the original observation image, not this zoom."]
+        return [["type": "image", "data": png.base64EncodedString(), "mimeType": "image/png"]] + text(payload)
+    }
+
+    private func act(id: String, observationID: String, requestID: String, actions: [Action], raw: Any, intent: String? = nil) async throws -> [[String: Any]] {
         let cached = try current(id, allowPaused: true)
         let fingerprint = try JSONSerialization.data(withJSONObject: ["observation_id": observationID, "action": raw], options: [.sortedKeys])
         if let receipt = cached.receipts[requestID] {
@@ -371,6 +406,7 @@ final class SessionRuntime {
             throw UseError("image_required", "Coordinates require an observation with an available verified image. Use accessible refs instead.", next: "observe")
         }
         session?.observation = nil; session?.focus = nil; session?.lastUsed = now
+        if let intent { controls.narrate(intent) }
         session?.receiptInputs[requestID] = fingerprint
         session?.receipts[requestID] = ["ok": false, "code": "action_interrupted", "request_id": requestID, "next": "observe"]
         let deadline = now + 30

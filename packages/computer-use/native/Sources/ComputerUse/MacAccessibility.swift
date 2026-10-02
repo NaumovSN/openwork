@@ -89,7 +89,8 @@ struct AppIdentity {
             "com.mitchellh.ghostty", "com.apple.ScriptEditor2", "com.apple.systempreferences",
             "com.apple.SecurityAgent", "com.apple.loginwindow", "com.apple.keychainaccess",
             "com.apple.Passwords", "com.1password.1password", "com.agilebits.onepassword7"]
-        return !protected.contains(id) && !id.hasPrefix("com.differentai.openwork")
+        // Never the host apps either: a coworker must not grant itself access or approve its own requests.
+        return !protected.contains(id) && !id.hasPrefix("com.differentai.openwork") && !id.hasPrefix("com.differentai.opencoworker")
             && !id.hasPrefix("com.openwork") && !id.hasPrefix("com.openai")
     }
 }
@@ -412,7 +413,8 @@ final class MacAccessibility {
         throw UseError("unverified_target", "The target's protected ancestry could not be verified inside the approved window.", next: "observe")
     }
 
-    func capture(target: WindowTarget, app: AppIdentity, bounds: CGRect, state: WindowState,
+    /// `region` is window-local points (top-left origin); nil captures the whole window.
+    func capture(target: WindowTarget, app: AppIdentity, bounds: CGRect, state: WindowState, region: CGRect? = nil, maxScale: CGFloat = 1,
                  check: () throws -> Void = {}) async throws -> (Data, Int, Int, Int64) {
         try state.requireCapture()
         guard Geometry.valid(bounds) else { throw UseError("invalid_geometry", "The window has invalid capture bounds.", next: "observe") }
@@ -422,9 +424,14 @@ final class MacAccessibility {
         guard let window = content.windows.first(where: { $0.windowID == target.id && $0.owningApplication?.processID == app.pid }),
               window.frame == bounds else { throw UseError("stale_observation", "The selected window moved before capture.", next: "observe") }
         let config = SCStreamConfiguration()
-        let ratio = min(1, 1600 / max(bounds.width, bounds.height))
-        config.width = max(1, Int(bounds.width * ratio))
-        config.height = max(1, Int(bounds.height * ratio))
+        let source = region ?? CGRect(origin: .zero, size: bounds.size)
+        guard Geometry.valid(source), CGRect(origin: .zero, size: bounds.size).contains(source) else {
+            throw UseError("invalid_arguments", "The region must lie inside the window.", next: "observe")
+        }
+        let ratio = min(maxScale, 1600 / max(source.width, source.height))
+        config.width = max(1, Int(source.width * ratio))
+        config.height = max(1, Int(source.height * ratio))
+        if let region { config.sourceRect = region }
         config.showsCursor = false
         config.ignoreShadowsSingleWindow = true
         let image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: window), configuration: config)
@@ -443,13 +450,15 @@ final class MacAccessibility {
         }
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         context.setFillColor(CGColor(gray: 0.15, alpha: 1))
+        // Protected fields are masked in whatever part of the window was captured.
+        let captured = source.offsetBy(dx: bounds.minX, dy: bounds.minY)
         for rect in state.protectedFrames {
-            let clipped = rect.intersection(bounds)
+            let clipped = rect.intersection(captured)
             guard !clipped.isNull, !clipped.isEmpty else { continue }
-            let xScale = CGFloat(image.width) / bounds.width
-            let yScale = CGFloat(image.height) / bounds.height
-            context.fill(CGRect(x: (clipped.minX - bounds.minX) * xScale,
-                y: CGFloat(image.height) - (clipped.maxY - bounds.minY) * yScale,
+            let xScale = CGFloat(image.width) / captured.width
+            let yScale = CGFloat(image.height) / captured.height
+            context.fill(CGRect(x: (clipped.minX - captured.minX) * xScale,
+                y: CGFloat(image.height) - (clipped.maxY - captured.minY) * yScale,
                 width: clipped.width * xScale, height: clipped.height * yScale).insetBy(dx: -2, dy: -2))
         }
         guard let redacted = context.makeImage(), let data = NSBitmapImageRep(cgImage: redacted).representation(using: .png, properties: [:]) else {

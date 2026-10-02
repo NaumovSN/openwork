@@ -195,47 +195,56 @@ export function ComputerControl({ slug, threadId, statusSlot, floatingSlot, open
       ) : null}
       {open && anchor ? (
         <ComputerControlPopover anchor={anchor} id={id} onClose={() => setOpen(false)}>
-          <p>Enable Computer to authorize your coworker to use supported apps for tasks you request in this discussion: see window content, click, type, hover, and select. That content can be sent to your selected AI model provider.</p>
+          <p>Let your coworker use Mac apps for tasks you ask for here. It sees only the window it is given, and that content goes to your AI model provider.</p>
+          <div className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-3">
+            <span aria-hidden="true" className={`mt-1.5 size-2.5 shrink-0 rounded-full ${needsAttention ? "bg-amber" : snapshot?.enabled ? "bg-ready shadow-[0_0_8px_rgba(74,222,128,0.6)]" : "bg-white/25"}`} />
+            <div className="min-w-0 flex-1 space-y-0.5">
+              <p className="text-sm font-medium text-snow" role="status" data-testid="coworker-computer-status">{readError && snapshot ? `Last known: ${status}` : status}</p>
+              {snapshot ? <p data-testid="coworker-computer-readiness" data-state={snapshot.readiness}>{[target?.label, readiness].filter(Boolean).join(" · ")}</p> : null}
+            </div>
+          </div>
           {readError ? <div role="alert" data-testid="coworker-computer-read-error"><ErrorNote>{snapshot ? "Updates unavailable. Last known state is shown; a connection failure does not confirm a stop. " : "Computer control is unavailable. "}{readError}</ErrorNote></div> : null}
           {actionError ? <div role="alert" data-testid="coworker-computer-action-error"><ErrorNote>{actionError}</ErrorNote></div> : null}
-          <div className="space-y-1.5">
-            <label htmlFor={`${id}-target`}>Current target</label>
-            <select
-              id={`${id}-target`}
-              className={`${inputClass} bg-panel text-xs disabled:cursor-not-allowed disabled:opacity-60`}
-              value={snapshot?.targetId ?? ""}
-              disabled={!canSelectTarget || busy !== null}
-              aria-busy={busy === "target"}
-              aria-describedby={canStop ? `${id}-placement` : undefined}
-              data-testid="coworker-computer-target"
-              onChange={(event) => void act("target", event.target.value)}
-            >
-              {!snapshot ? <option value="">{readError ? "Unavailable" : "Checking targets..."}</option> : null}
-              {snapshot?.targets.map((item) => <option key={item.id} value={item.id} disabled={!item.available} title={item.reason} data-testid={!item.available ? "coworker-computer-target-unavailable" : undefined}>{item.label} ({item.placement === "desktop" ? "This computer" : "Remote"}){item.available ? "" : " - unavailable"}</option>)}
-            </select>
-            {canStop ? <p id={`${id}-placement`}>Stop &amp; revoke before choosing another computer.</p> : null}
-          </div>
-          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5">
-            {target ? <><dt>Placement</dt><dd className="text-snow" data-testid="coworker-computer-placement">{target.placement === "desktop" ? "This computer" : "Remote"}</dd></> : null}
-            <dt>{readError && snapshot ? "Last known access" : "Access"}</dt>
-            <dd className="text-snow" role="status" data-testid="coworker-computer-status">{status}</dd>
-            {snapshot ? <><dt>Readiness</dt><dd data-testid="coworker-computer-readiness" data-state={snapshot.readiness}>{readiness}</dd></> : null}
-          </dl>
-          {snapshot?.detail ? <p>{snapshot.detail}</p> : null}
+          {snapshot?.detail && (snapshot.readiness !== "ready" || snapshot.cleanupPending) ? <p>{snapshot.detail}</p> : null}
           {snapshot?.cleanupPending ? <p className="text-amber" data-testid="coworker-computer-cleanup-pending">Native cleanup is still pending. A stop is not yet confirmed.</p> : null}
-          {!canStop ? <p>{snapshot?.readiness === "ready" ? "Enabling does not start work. Ask for a task; a single eligible window opens automatically. If there are several, choose one in the Computer view." : "Set up macOS permissions first, then enable app access for this discussion."}</p> : null}
           {snapshot && target?.placement === "desktop" ? (
-            <label className={`flex items-start gap-2 ${canAlwaysAllow && busy === null ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}>
-              <input type="checkbox" className="mt-0.5 accent-ready" checked={snapshot.alwaysAllowed === true} disabled={!canAlwaysAllow || busy !== null} aria-busy={busy === "always"} data-testid="coworker-computer-always-allow" onChange={() => void act("always")} />
-              <span><span className="text-snow">Always allow this coworker</span><br />Every discussion with this coworker can use This Mac without asking again. Stop &amp; revoke still turns it off for one discussion; sensitive actions still require your authorization.</span>
-            </label>
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-snow">Always allow this coworker</p>
+                <p>Every discussion can use This Mac without asking again. You will see its cursor on screen and can take over anytime.</p>
+              </div>
+              <button type="button" role="switch" aria-checked={snapshot.alwaysAllowed === true} aria-label="Always allow this coworker" aria-busy={busy === "always"}
+                disabled={!canAlwaysAllow || busy !== null} data-testid="coworker-computer-always-allow" onClick={() => void act("always")}
+                className={`relative mt-0.5 inline-flex h-6 w-10 shrink-0 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ready/60 disabled:opacity-60 ${snapshot.alwaysAllowed ? "bg-ready" : "bg-white/12"}`}>
+                <span aria-hidden="true" className={`inline-block size-5 rounded-full bg-white shadow transition-transform ${snapshot.alwaysAllowed ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+              </button>
+            </div>
           ) : null}
+          {!canStop ? <p>{snapshot?.readiness === "ready" ? "Or allow just this discussion. Then ask for a task; your coworker opens the app window it needs." : "Set up macOS permissions first, then allow app access."}</p> : null}
           <div className="flex flex-wrap gap-2">
             {!canStop && snapshot?.readiness === "ready" ? <Button type="button" variant="primary" className="text-xs" disabled={!canAllow || busy !== null} aria-busy={busy === "allow"} data-testid="coworker-computer-allow" onClick={() => void act("allow")}>Enable for this discussion</Button> : null}
-            {snapshot?.targetId === "this-mac" ? <Button type="button" variant={!canStop && snapshot.readiness === "setup-required" ? "primary" : "ghost"} className="text-xs" disabled={busy !== null} data-testid="coworker-computer-setup" onClick={() => { setOpen(false); setSetupOpen(true); }}>{snapshot.readiness === "setup-required" ? "Set up permissions" : "Setup & permissions"}</Button> : null}
             {canStop ? <Button type="button" variant="danger" className="text-xs" disabled={busy !== null} aria-busy={busy === "stop"} data-testid="coworker-computer-stop" onClick={() => void act("stop")}>Stop &amp; revoke</Button> : null}
+            {snapshot?.targetId === "this-mac" ? <Button type="button" variant={!canStop && snapshot.readiness === "setup-required" ? "primary" : "ghost"} className="text-xs" disabled={busy !== null} data-testid="coworker-computer-setup" onClick={() => { setOpen(false); setSetupOpen(true); }}>{snapshot.readiness === "setup-required" ? "Set up permissions" : "Permissions"}</Button> : null}
             <Button type="button" variant="ghost" className="text-xs" disabled={refreshing || busy !== null} aria-busy={refreshing} data-testid="coworker-computer-refresh" onClick={() => void refresh()}>Check status</Button>
           </div>
+          {snapshot && (snapshot.targets.filter((item) => item.available).length > 1 || target?.placement !== "desktop") ? (
+            <div className="space-y-1.5">
+              <label htmlFor={`${id}-target`}>Computer</label>
+              <select
+                id={`${id}-target`}
+                className={`${inputClass} bg-panel text-xs disabled:cursor-not-allowed disabled:opacity-60`}
+                value={snapshot.targetId}
+                disabled={!canSelectTarget || busy !== null}
+                aria-busy={busy === "target"}
+                aria-describedby={canStop ? `${id}-placement` : undefined}
+                data-testid="coworker-computer-target"
+                onChange={(event) => void act("target", event.target.value)}
+              >
+                {snapshot.targets.map((item) => <option key={item.id} value={item.id} disabled={!item.available} title={item.reason} data-testid={!item.available ? "coworker-computer-target-unavailable" : undefined}>{item.label} ({item.placement === "desktop" ? "This computer" : "Remote"}){item.available ? "" : " - unavailable"}</option>)}
+              </select>
+              {canStop ? <p id={`${id}-placement`}>Stop &amp; revoke before choosing another computer.</p> : null}
+            </div>
+          ) : null}
           {snapshot?.session ? (
             <section className="space-y-2 rounded-xl border border-white/10 bg-white/5 p-3" aria-label="Computer session" data-testid="coworker-computer-session">
               <h3 className="font-semibold text-snow">Current app</h3>

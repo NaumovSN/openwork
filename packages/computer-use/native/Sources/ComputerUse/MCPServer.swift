@@ -123,6 +123,7 @@ final class MCPServer {
         var actRequired = ["session_id", "observation_id", "request_id", "action"]
         if policy == .coworker {
             actFields["actions"] = ["type": "array", "minItems": 1, "maxItems": Action.batchLimit, "items": ["oneOf": variants]]
+            actFields["intent"] = ["type": "string", "minLength": 1, "maxLength": 120, "description": "A few words for the person watching, such as \"opening the Export menu\". Shown on your cursor; not an instruction."]
             actRequired.removeLast()
         }
         func tool(_ name: String, _ description: String, _ properties: [String: Any], _ required: [String], readOnly: Bool) -> [String: Any] {
@@ -136,7 +137,7 @@ final class MCPServer {
         let actionDescription = policy == .coworker
             ? "Provide exactly one of action or actions (1–8). Steps use pinned observed refs/focus and stop at the first failure. A coordinate step must be the first input; only a click/press on an observed text field can continue into typing. Other presses, pointer steps, Enter/Tab/Escape and app shortcuts end the sequence: observe before more input. The receipt lists dispatched, uncertain and skipped steps; partial failures have ok=false. Short waits are pacing, not readiness proof."
             : "Perform one action against a fresh observation. Prefer press/set_value on observed refs. move sends scoped hover without guaranteeing system-cursor movement."
-        return [
+        var tools: [[String: Any]] = [
             tool("computer_discover", "List installed and running app identities, permissions, modes, keys and limits. Does not read window content or grant access.", [:], [], readOnly: true),
             tool("computer_open_session", "Open the exact installed app if needed, then ask the person in OpenWork to choose one window and allow a mode for up to 15 minutes. Use observe for reading, assist for accessible controls, control for visual mouse/keyboard. Allow and start begins control immediately. A denied request must not be retried without the person asking.",
                  ["app_id": string, "pid": ["type": "integer", "minimum": 1, "maximum": Int32.max], "mode": ["type": "string", "enum": AccessMode.allCases.map(\.rawValue)], "purpose": ["type": "string", "minLength": 1, "maxLength": 500]], ["app_id", "mode", "purpose"], readOnly: false),
@@ -145,5 +146,12 @@ final class MCPServer {
             tool("computer_session_status", "Read this connection's session mode, pause state, action count and expiry. Cannot resume or extend a grant.", ["session_id": string], ["session_id"], readOnly: true),
             tool("computer_close_session", "Stop this session, release control and discard observations and action receipts.", ["session_id": string], ["session_id"], readOnly: false),
         ]
+        if policy == .coworker {
+            let pixels: [String: Any] = ["type": "number", "minimum": 0]
+            tools.insert(tool("computer_zoom", "Capture part of the current observation image again at full display resolution, to read small text or inspect detail. Read only: it neither consumes nor replaces the observation; act with the same observation_id and the original image coordinates. Protected fields stay masked.",
+                ["session_id": string, "observation_id": string, "x": pixels, "y": pixels, "width": ["type": "number", "minimum": 8], "height": ["type": "number", "minimum": 8]],
+                ["session_id", "observation_id", "x", "y", "width", "height"], readOnly: true), at: 3)
+        }
+        return tools
     }
 }

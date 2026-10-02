@@ -728,6 +728,28 @@ test("native voice uses the pinned account, validates bounds, and really closes 
   assert.equal((await voice.status()).access, "unavailable");
 });
 
+test("zoom returns a sharper image of the current observation without consuming it or unlocking input", async () => {
+  const f = fixture({ callTool: (name) => {
+    if (name === "computer_open_session") return result({ ok: true, session_id: "native-session", state: "active", expires_in_seconds: 900 });
+    if (name === "computer_observe") return observationResult();
+    if (name === "computer_zoom") return { ...result({ ok: true, observation_id: "observation", state: "active" }),
+      content: [{ type: "image", mimeType: "image/png", data: "ZOOM_DATA" }, ...result({ ok: true, observation_id: "observation", state: "active" }).content] };
+    return result({ ok: true, state: "active", status: "dispatched" });
+  } });
+  await f.enable();
+  await f.execute("open", openArgs);
+  await f.execute("observe");
+  const zoomed = await f.execute("zoom", { observation_id: "observation", x: 10, y: 20, width: 200, height: 80 });
+  assert.equal(zoomed.isError, false);
+  assert.ok(zoomed.content.some((part) => part.type === "image" && part.data === "ZOOM_DATA"));
+  assert.deepEqual(f.sent.at(-1), { name: "computer_zoom", args: { observation_id: "observation", x: 10, y: 20, width: 200, height: 80, session_id: "native-session" }, options: f.sent.at(-1).options });
+  await assert.rejects(f.execute("zoom", { observation_id: "observation", x: 1, y: 1, width: 9, height: 9, scale: 4 }), /Only native computer arguments/);
+  // The observation still authorizes the next act.
+  await f.execute("act", { observation_id: "observation", action: { type: "press", ref: "e1" } });
+  assert.equal(f.sent.findLast((item) => item.name === "computer_act")?.args.observation_id, "observation");
+  await f.broker.reset(true);
+});
+
 test("opt-in and revisions isolate conversations and coworkers; remote never falls back to local", async () => {
   const f = fixture();
   await assert.rejects(f.broker.setup({ permission: "mcp" }), /Choose Accessibility/);

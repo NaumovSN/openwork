@@ -127,9 +127,20 @@ retry. Cancellation, sleep, takeover and Stop invalidate observations.
 | `computer_discover` | App identities, permission status, modes, keys, modifiers, blocked shortcuts and limits; no window text |
 | `computer_open_session` | Launch if needed, then person approval of app/window/mode |
 | `computer_observe` | Interactive (or all) elements plus optional window PNG |
-| `computer_act` | One action or an ordered batch, validated per step, with session, observation and request IDs |
+| `computer_act` | One action or an ordered batch, validated per step, with session, observation and request IDs; Coworker policy also takes a display-only `intent` shown on the desktop cursor |
+| `computer_zoom` | Coworker policy only: a region of the current observation at full display resolution, masked like observations; read only, it neither consumes nor replaces the observation |
 | `computer_session_status` | State, scope, action count and expiry |
 | `computer_close_session` | Revoke the grant and release control |
+
+While a Coworker session runs (or any host passes presence, below), the helper
+draws on-desktop presence (`AgentCursor.swift`):
+a frame around the approved window, the acting coworker's named cursor that
+springs to each dispatched input, and a pill over the window's buttons with
+Take over, Continue and Stop. Every overlay ignores capture, and the frame and
+cursor ignore mouse events. Hosts may pass `OPENWORK_COMPUTER_USE_PRESENCE`
+(JSON: `name`, `color`, optional `fill`, `edge`, `glasses`) to show who is
+acting; otherwise it shows "OpenWork". The helper never targets its host apps
+(`com.differentai.openwork*`, `com.differentai.opencoworker*`).
 
 Tool failures use MCP `isError: true` with machine-readable `code` and `next`
 fields. The server negotiates supported MCP protocol versions. The stdio

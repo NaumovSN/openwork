@@ -180,7 +180,13 @@ final class SessionControls: NSObject {
         previewState.textColor = isPaused || previewNeedsRefresh || age > 15 ? .systemOrange : .secondaryLabelColor
         previewView?.setAccessibilityHelp("\(previewAge.stringValue). \(previewState.stringValue). A marker shows a dispatched action, not a verified result.")
     }
+    func narrate(_ text: String?) { AgentCursor.shared.narrate(text) }
     func showAction(_ action: Action, observation: ObservationLease, records: [ElementRecord], policy: RuntimePolicy = .desktop) {
+        switch action {
+        case .press(let ref), .setValue(let ref, _):
+            if let record = records.first(where: { $0.ref == ref }) { AgentCursor.shared.highlight(screenRect: record.frame) }
+        default: break
+        }
         guard Self.hosted || Self.coworkerPresentation else { return }
         let point: CGPoint?
         let label: String
@@ -465,7 +471,18 @@ final class SessionControls: NSObject {
 
     func show(app: AppIdentity, target: WindowTarget, mode: AccessMode, purpose: String) {
         isPaused = false; canContinue = true
-        AgentCursor.shared.begin(windowFrame: target.frame)
+        let presence = AgentCursor.shared
+        presence.onTakeOver = { [weak self] in
+            guard let self, !self.isPaused else { return }
+            self.onPause?("You have control. Click Continue when you are ready.")
+        }
+        // The person's own click on the badge: the same human-only Continue as the native controls.
+        presence.onContinue = { [weak self] in
+            guard let self, self.isPaused, self.canContinue else { return }
+            self.onResume?()
+        }
+        presence.onStop = { [weak self] in self?.onStop?() }
+        presence.begin(windowFrame: target.frame, windowID: target.id, appName: app.name)
         if Self.embeddedCoworker {
             showCoworkerMenu()
             publish(["phase": "working", "appName": app.name, "appID": app.bundleID, "pid": Int(app.pid),
@@ -560,7 +577,7 @@ final class SessionControls: NSObject {
     func update(_ message: String, paused: Bool, canContinue: Bool = true, recoverable: Bool = false) {
         publish(["phase": paused ? "paused" : "working", "status": message, "canContinue": canContinue, "recoverable": recoverable])
         self.canContinue = canContinue
-        AgentCursor.shared.setPaused(paused)
+        AgentCursor.shared.setPaused(paused, canContinue: canContinue)
         if paused { previewNeedsRefresh = true }
         isPaused = paused; status?.stringValue = message; toggle?.title = paused ? "Continue" : "Take over"
         toggle?.isEnabled = !paused || canContinue

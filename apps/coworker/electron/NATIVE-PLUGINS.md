@@ -333,7 +333,7 @@ native tool IDs (these are **not** Code Mode paths):
   `coworker_browser_snapshot`, `coworker_browser_click`, `coworker_browser_fill`,
   `coworker_browser_eval`, `coworker_browser_navigate`, `coworker_browser_screenshot`.
 - Computer: `coworker_computer_discover`, `coworker_computer_open`,
-  `coworker_computer_observe`, `coworker_computer_act`,
+  `coworker_computer_observe`, `coworker_computer_act`, `coworker_computer_zoom`,
   `coworker_computer_status`, `coworker_computer_close`.
 - Delegation/management: `coworker_team_consult`, `coworker_worker_spawn`,
   `coworker_worker_steer`, `coworker_worker_pause`, `coworker_worker_resume`,

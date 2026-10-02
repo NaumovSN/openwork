@@ -8,6 +8,7 @@ export const COMPUTER_TOOLS = Object.freeze({
   coworker_computer_open: "computer_open_session",
   coworker_computer_observe: "computer_observe",
   coworker_computer_act: "computer_act",
+  coworker_computer_zoom: "computer_zoom",
   coworker_computer_status: "computer_session_status",
   coworker_computer_close: "computer_close_session",
 });
@@ -111,7 +112,7 @@ function deadline(ms) {
  * Deliberately conservative: one controller across all targets, not one per OS. */
 /** standing is the person's saved per-coworker "Always allow" choice, owned by main
  * storage outside every workspace so a coworker can never grant itself access. */
-export function createComputerControl({ adapters, adapter, discussionFor, resolveContext, onRevoke = () => {}, standing = { allowed: async () => false, set: async () => {} }, cleanupMs = 3000, operationMs = 120_000, pollMs = 750, now = Date.now }) {
+export function createComputerControl({ adapters, adapter, discussionFor, resolveContext, onRevoke = () => {}, standing = { allowed: async () => false, set: async () => {} }, presenceFor = async () => null, cleanupMs = 3000, operationMs = 120_000, pollMs = 750, now = Date.now }) {
   if (adapters && adapter) throw new Error("Provide adapters or adapter, not both.");
   const configured = adapters ?? (adapter ? [adapter] : []);
   if (!Array.isArray(configured) || !configured.length) throw new Error("At least one trusted computer adapter is required.");
@@ -679,7 +680,8 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
         if (closed || resetting || cancelled() || !grant.enabled || grant.adapter !== selectedAdapter || grant.revision !== revision || trusted.entry.workspaceId !== grant.workspaceId) throw new Error("Computer control is disabled, revoked, or belongs to another workspace.");
       };
       check();
-      const allowed = name === "coworker_computer_open" ? ["app_id", "pid", "mode", "purpose"] : name === "coworker_computer_observe" ? ["include_image", "elements"] : name === "coworker_computer_act" ? ["observation_id", "action", "actions"] : [];
+      const allowed = name === "coworker_computer_open" ? ["app_id", "pid", "mode", "purpose"] : name === "coworker_computer_observe" ? ["include_image", "elements"] : name === "coworker_computer_act" ? ["observation_id", "action", "actions", "intent"]
+        : name === "coworker_computer_zoom" ? ["observation_id", "x", "y", "width", "height"] : [];
       if (!args || Array.isArray(args) || typeof args !== "object" || Object.keys(args).some((key) => !allowed.includes(key))) throw new Error("Only native computer arguments are accepted; session and receipt identities belong to the broker.");
       if (name === "coworker_computer_act" && (args.action === undefined) === (args.actions === undefined)) throw new Error("Provide exactly one of action or actions.");
       const previous = calls.get(key);
@@ -717,8 +719,10 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
           progress();
           if (!current.transport) {
             try {
+              const presence = await Promise.resolve().then(() => presenceFor(grant.slug)).catch(() => null);
+              progress();
               current.transport = await current.adapter.connect({
-                signal,
+                signal, presence,
                 onUi: (value) => receiveUi(current, value),
                 onClose: () => {
                   clearPresentation(current); current.uiEnded = true;
@@ -767,7 +771,8 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
           }
           progress();
           if (nativeStopped(current, result)) return result;
-          if (name === "coworker_computer_observe" && !result.isError && state.ok && !needsPerson(result)) {
+          // A zoom image follows the same withholding as an observation, but never unlocks input.
+          if ((name === "coworker_computer_observe" || name === "coworker_computer_zoom") && !result.isError && state.ok && !needsPerson(result)) {
             call.observation = { current, generation, sessionId: current.sessionId, observationGeneration };
             // A late read must not overwrite takeover state or unlock input,
             // even when the person already continued before it arrived.
@@ -844,7 +849,7 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
           if (!current.handoffFailed && continued.state !== "active") throw new Error("The native handoff did not confirm active control.");
           if (name === "coworker_computer_act" || result.isError) return withHandoff(result, status);
           if (current.handoffFailed) return status;
-          if (name === "coworker_computer_observe") return withHandoff(failure("observation_required", "The previous observation predates the handoff. Observe again."), status);
+          if (name === "coworker_computer_observe" || name === "coworker_computer_zoom") return withHandoff(failure("observation_required", "The previous observation predates the handoff. Observe again."), status);
           return { ...status, content: [{ type: "text", text: JSON.stringify({ ...state, ...continued, next: "observe", fresh_observation_required: true }) }] };
         });
         const work = current.work;

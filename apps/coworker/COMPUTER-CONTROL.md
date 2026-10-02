@@ -102,22 +102,55 @@ off until re-enabled. Turning Always allow off revokes every discussion of that
 coworker; retiring the coworker clears it. Window-scoped consent, Take over,
 Continue, Worker approval and sensitive-action authorization are unchanged.
 
-**On-desktop agent cursor.** Input is posted to the approved app, not the system
-pointer, so the shared helper (`packages/computer-use/.../AgentCursor.swift`)
-draws a click-through overlay on the screen holding the approved window: a
-glowing outline around that window, a blue agent cursor that glides to each
-dispatched input, click ripples and a short action label (Click, Typing,
-Scrolling). It dims to orange while the person has control and disappears when
-the session closes. The overlay ignores mouse events and is excluded from screen
-capture, so it never changes observations or blocks the person's input. It is
-shared with Desktop's helper.
+**On-desktop presence.** Input is posted to the approved app, not the system
+pointer, so the shared helper draws multiplayer-style presence in the coworker's
+own look (`packages/computer-use/.../AgentCursor.swift`, `CoworkerFace.swift`):
+- a frame in the coworker's avatar color around the approved window, drawn in
+  when the session starts and following the window if the person moves it;
+- the coworker's cursor with a name tag showing its cut-paper face (glasses
+  included), springing to each dispatched input with click ripples, a typing
+  indicator, drag trails and a brief outline of the control it pressed or filled;
+- narration: `coworker_computer_act` takes an optional `intent` (≤120 chars)
+  shown on the tag ("Ada · opening the Export menu"); display only, never part of
+  the receipt identity;
+- a pill over the window's close/minimize/zoom buttons (face, name, a
+  "controlling this window" glyph) that widens on hover to say what the coworker
+  is doing and opens Take over, Continue and Stop on click;
+- a dashed frame, curious face, a small bounce and an orange "Your turn" pill
+  while the person has control, and a happy "all yours" fade when it ends;
+- a thinking wiggle with "thinking •••" while the model decides its next step,
+  and the ripple landing as the cursor arrives (aim, then click);
+- when the window is minimized or on another Space, the pill moves to the top
+  of that screen with the coworker and app name, so work stays visible and
+  stoppable.
+
+The face, name and color come from the coworker record through the trusted
+adapter's launch environment; the helper falls back to a plain blue "Coworker".
+The frame and cursor ignore mouse events; every overlay is excluded from capture,
+so it never changes observations. The pill is a non-activating panel, so clicking
+it neither activates the helper nor counts as takeover; its Continue is the same
+human-only Continue as the native menu. The helper is shared with Desktop, which
+shows presence only if it passes the presence environment.
+
+**Zoom.** `coworker_computer_zoom` recaptures a region of the current
+observation (image pixels) at full display resolution for reading small text.
+It applies the same protected-field masks, is withheld after a takeover like any
+observation, and neither consumes nor replaces the observation: act keeps the
+same `observation_id` and the original image coordinates.
+
+**Host apps are never targets.** The helper refuses Open Coworker
+(`com.differentai.opencoworker`) and OpenWork apps, so a coworker cannot turn on
+its own Always allow, approve its own Worker, or pick its own window.
 
 **Work loop.** The `coworker_computer_open` description names a done condition;
 `coworker_computer_act` loops act → read returned observation → next step until
 an observation shows it, changes route on failure instead of repeating, asks only
 when consent, sensitive actions, takeover or missing information block it, and
-ends by stating what the final observation shows. Session safety rules are stated
-once, on open, instead of on every computer tool.
+ends by stating what the final observation shows. It prefers assist mode (works
+while the person keeps using their computer), zooms instead of guessing at small
+text, asks rather than guesses when the request lacks a needed detail, and checks
+every part of the request against the final observation. Session safety rules are
+stated once, on open, instead of on every computer tool.
 
 ## Reuse, not another computer runtime
 

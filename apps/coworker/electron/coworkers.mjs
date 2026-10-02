@@ -301,8 +301,7 @@ tokens, IDs and raw instructions unless asked.
 
 ${computer ? `For native setup, point to Computer in the discussion rail, then Set up
 permissions (macOS Accessibility and Screen Recording for the OpenWork Computer
-Use helper), Check permissions, then Enable for this discussion or Always allow
-this coworker. Each app still
+Use helper), Check permissions, then Enable or Always allow. Each app still
 needs its own approval; report permissions only from a fresh check and explain
 only the missing step. No remote computers or silent fallback to This Mac.
 

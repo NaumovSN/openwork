@@ -1135,6 +1135,15 @@ const messageReactions = createMessageReactionRuntime({
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("coworker:reactions-changed", { scope, revision });
   },
 });
+// Avatar palettes from packages/ui coworker-avatar-artwork: [fill, edge, depth]. The
+// depth tone colors the desktop cursor and stays legible under white text.
+const COMPUTER_CURSOR_PALETTES = {
+  blue: ["#b8c9f0", "#91a9dc", "#7389b7"], violet: ["#c8c1e2", "#aaa1d0", "#81789f"], mint: ["#b2d5cb", "#8dbbae", "#668e84"],
+  orange: ["#e4c3ad", "#cda589", "#9d7961"], rose: ["#e2c1cb", "#cda1ae", "#9c7682"], slate: ["#e3e6ea", "#c2c8d0", "#939aa4"],
+  sand: ["#ded0b0", "#c1ae86", "#95825c"], sage: ["#becab4", "#9eaf91", "#788b6c"], sky: ["#a1d0fd", "#63b1f9", "#4c8bc5"],
+  lagoon: ["#73dfe0", "#25c2c3", "#1d989a"], lime: ["#addb88", "#89bd5b", "#6b9544"], lemon: ["#e4ca5f", "#c5aa2b", "#9c851a"],
+  coral: ["#fdb6ac", "#f2897c", "#bf6b60"], grape: ["#e3b6ff", "#c692e6", "#9c72b6"],
+};
 // The person's per-coworker "Always allow" for Computer. Kept in app data,
 // outside every coworker workspace, so no coworker can grant itself access.
 const computerStanding = (() => {
@@ -1174,6 +1183,12 @@ const computerControl = createComputerControl({
   resolveContext: (slug, context, expected) => resolveControlContext(slug, context, expected, "computer"),
   onRevoke: (scope) => { void workerControls.revokeOrigin(scope); },
   standing: computerStanding,
+  // The coworker's name and face, drawn on its desktop cursor.
+  presenceFor: async (slug) => {
+    const coworker = await getCoworker(coworkersDir, slug);
+    const [fill, edge, color] = COMPUTER_CURSOR_PALETTES[coworker.avatarColor] ?? COMPUTER_CURSOR_PALETTES.blue;
+    return { name: coworker.name, color, fill, edge, glasses: coworker.avatarGlasses };
+  },
 });
 let browserTools;
 const browserControl = createBrowserControl({
