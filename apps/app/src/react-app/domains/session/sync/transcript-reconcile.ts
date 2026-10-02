@@ -30,7 +30,42 @@ export function reconcileTranscriptMessages(input: ReconcileTranscriptInput): UI
   if (current.length === 0) return snapshot;
   if (snapshot.length === 0) return current;
 
-  return mergeSnapshotIntoCachedMessages(snapshot, current);
+  return dropDuplicateTurnErrors(mergeSnapshotIntoCachedMessages(snapshot, current), snapshot);
+}
+
+/**
+ * One failed turn shows one error. The live `session.error` event keys its
+ * error to the session id when the turn has no rendered assistant message yet
+ * or to a live-only assistant id (OpenCode v2 errored turns arrive without
+ * parts), while the snapshot keys the same failure to the errored assistant
+ * message. A turn ends at its error, so two synthetic errors between the same
+ * pair of user messages describe one failure: keep the snapshot's durable
+ * copy and drop the live-only one.
+ */
+function dropDuplicateTurnErrors(messages: UIMessage[], snapshot: UIMessage[]): UIMessage[] {
+  const snapshotIds = new Set(snapshot.map((message) => message.id));
+  const result: UIMessage[] = [];
+  let turnErrorIndex = -1;
+  for (const message of messages) {
+    if (message.role === "user") turnErrorIndex = -1;
+    if (isSyntheticMessageId(message.id)) {
+      const kept = turnErrorIndex >= 0 ? result[turnErrorIndex] : undefined;
+      if (kept) {
+        const keptDurable = snapshotIds.has(kept.id);
+        const currentDurable = snapshotIds.has(message.id);
+        if (keptDurable && !currentDurable) continue;
+        if (currentDurable && !keptDurable) {
+          result.splice(turnErrorIndex, 1);
+          turnErrorIndex = result.length;
+          result.push(message);
+          continue;
+        }
+      }
+      turnErrorIndex = result.length;
+    }
+    result.push(message);
+  }
+  return result.length === messages.length ? messages : result;
 }
 
 /**

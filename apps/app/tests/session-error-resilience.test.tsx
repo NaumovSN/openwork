@@ -12,6 +12,7 @@ import { TaskRecovery } from "../src/components/chat/task-recovery"
 import { MessageListProvider } from "../src/components/chat/message-list-provider"
 import { getReactQueryClient } from "../src/react-app/infra/query-client"
 import { createSessionErrorUIMessage } from "../src/react-app/domains/session/sync/usechat-adapter"
+import { reconcileTranscriptMessages } from "../src/react-app/domains/session/sync/transcript-reconcile"
 import {
   presentOpencodeSessionError,
   sessionErrorPresentationFromUIMessage,
@@ -39,7 +40,7 @@ test("the quiet retry control preserves the recovery callback and disabled state
     await act(async () => root.render(<TaskRecovery state="paused" title="Response interrupted" onRetry={retry} />))
     const button = container.querySelector<HTMLButtonElement>('button[aria-label="Retry task"]')
     if (!button) throw new Error("Missing retry control")
-    expect(button.textContent).toBe("")
+    expect(button.textContent).toBe("Retry")
     await act(async () => { button.focus(); button.click() })
     expect(retry).toHaveBeenCalledTimes(1)
     await act(async () => root.render(<TaskRecovery state="paused" title="Response interrupted" onRetry={retry} retryDisabled />))
@@ -70,6 +71,71 @@ describe("session error resilience", () => {
     expect(result.description).toBeTruthy()
     expect(result.technicalDetails).toContain(data.message)
     if (["provider-credentials", "conversation-too-long", "attachment-unsupported"].includes(kind)) expect(result.recoveryPrompt).toBeNull()
+  })
+
+  test.each([
+    { message: "ConnectionRefused: Unable to connect. Is the computer able to access the url?", kind: "provider-unreachable", title: "Couldn’t reach the model provider" },
+    { message: "getaddrinfo ENOTFOUND gateway.openworklabs.com", kind: "network-unavailable", title: "Can’t reach the model service" },
+    { message: "getaddrinfo ETIMEOUT gateway.openworklabs.com", kind: "network-unavailable", title: "Can’t reach the model service" },
+    { message: "ECONNRESET: The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()", kind: "provider-connection-dropped", title: "Connection to the model dropped" },
+  ])("explains a v2 transport failure ($kind) instead of echoing the fetch text", ({ message, kind, title }) => {
+    const result = presentOpencodeSessionError({ name: "UnknownError", data: { message } })
+    expect(result.kind).toBe(kind)
+    expect(result.title).toBe(title)
+    expect(result.description).toBeTruthy()
+    expect(result.technicalDetails).toContain(message)
+    expect(result.recoveryPrompt).not.toBeNull()
+  })
+
+  test("a failed turn keeps one error when the live event and the snapshot key it differently", () => {
+    const user: UIMessage = { id: "msg_user", role: "user", parts: [{ type: "text", text: "Summarize the doc" }] }
+    const presentation = presentOpencodeSessionError({ name: "UnknownError", data: { message: "ConnectionRefused: Unable to connect. Is the computer able to access the url?" } })
+    const live = createSessionErrorUIMessage("ses_123", presentation)
+    const durable = createSessionErrorUIMessage("msg_assistant", presentation)
+    const merged = reconcileTranscriptMessages({ currentMessages: [user, live], snapshotMessages: [user, durable] })
+    expect(merged.map((message) => message.id)).toEqual(["msg_user", "session-error:msg_assistant"])
+  })
+
+  test("an empty live assistant message between the two copies does not keep both", () => {
+    const user: UIMessage = { id: "msg_user", role: "user", parts: [{ type: "text", text: "Summarize the doc" }] }
+    const liveAssistant: UIMessage = { id: "msg_live", role: "assistant", parts: [] }
+    const presentation = presentOpencodeSessionError({ name: "UnknownError", data: { message: "ConnectionRefused: Unable to connect. Is the computer able to access the url?" } })
+    const merged = reconcileTranscriptMessages({
+      currentMessages: [user, liveAssistant, createSessionErrorUIMessage("msg_live", presentation)],
+      snapshotMessages: [user, createSessionErrorUIMessage("msg_assistant", presentation)],
+    })
+    expect(merged.filter((message) => message.id.startsWith("session-error:")).map((message) => message.id)).toEqual(["session-error:msg_assistant"])
+  })
+
+  test("errors from two different turns both stay", () => {
+    const presentation = presentOpencodeSessionError({ name: "UnknownError", data: { message: "getaddrinfo ENOTFOUND gateway.openworklabs.com" } })
+    const first: UIMessage = { id: "msg_u1", role: "user", parts: [{ type: "text", text: "one" }] }
+    const second: UIMessage = { id: "msg_u2", role: "user", parts: [{ type: "text", text: "two" }] }
+    const snapshot = [first, createSessionErrorUIMessage("msg_a1", presentation), second, createSessionErrorUIMessage("msg_a2", presentation)]
+    expect(reconcileTranscriptMessages({ currentMessages: snapshot, snapshotMessages: snapshot })).toHaveLength(4)
+  })
+
+  test("a missing model never shows its internal provider and model ids", () => {
+    const message = "Model unavailable: ipr_01m292yddve0pbd5rnb30rk3ap/gwm_01m292ydevejz88xgn8dhsdy22_01m292yde8escv5k6jkfwq8y1n"
+    const result = presentOpencodeSessionError({ name: "UnknownError", data: { message } })
+    expect(result.kind).toBe("model-unavailable")
+    expect(result.title).toBe("This model isn’t available")
+    expect(result.title).not.toContain("ipr_")
+    expect(result.technicalDetails).toContain("gwm_")
+  })
+
+  test.each([
+    { status: 502, kind: "provider-unavailable" },
+    { status: 429, kind: "rate-limited" },
+    { status: 401, kind: "provider-credentials" },
+    { status: 403, kind: "provider-access-denied" },
+  ])("reads the HTTP $status inside a v2 provider failure message", ({ status, kind }) => {
+    expect(presentOpencodeSessionError({ name: "UnknownError", data: { message: `Provider request failed with HTTP ${status}` } }).kind).toBe(kind)
+    expect(presentOpencodeSessionError({ name: "APIError", data: { message: `Provider request failed with HTTP ${status}` } }).kind).toBe(kind)
+  })
+
+  test("a refused local workspace stays a workspace problem, not a provider one", () => {
+    expect(presentOpencodeSessionError({ name: "UnknownError", data: { message: "openwork:desktop connect ECONNREFUSED 127.0.0.1:4096" } }).kind).toBe("workspace-unavailable")
   })
 
   test("an explicit Stop is not mistaken for a timeout mentioned by the provider", () => {
@@ -362,7 +428,7 @@ describe("session error resilience", () => {
     expect(html).toContain('data-testid="session-error-interruption-warning"')
     expect(html).toContain("Some steps may have finished. Check before continuing.")
     expect(html).toContain('data-testid="session-error-resume"')
-    expect(html).not.toContain('data-testid="session-error-details-toggle"')
+    expect(html).not.toContain('data-testid="session-error-details"')
     expect(html).not.toContain(code)
     expect(html).not.toContain("Status: 200")
     expect(html).not.toContain("managed-interruption-diagnostic")
@@ -603,7 +669,7 @@ describe("session error resilience", () => {
       expect(details.textContent).toBe("")
       expect(details.getAttribute("aria-label")).toBe("Technical details")
       expect(container.querySelector('[data-testid="session-retrying"] .lucide-triangle-alert')).toBeNull()
-      expect(container.querySelector('[data-testid="session-retrying"] .animate-spin')).toBeNull()
+      expect(container.querySelector('[data-testid="session-retrying"] .animate-spin')).not.toBeNull()
       await act(async () => details.click())
       expect(container.querySelector('[data-testid="session-error-details"]')?.textContent).toContain("attempt 4")
       expect(container.querySelector('[role="status"]')?.textContent).not.toContain("attempt")
@@ -666,11 +732,12 @@ describe("session error technical details", () => {
     } finally { spy.mockRestore() }
   })
 
-  test("end users see only the plain error card", () => {
+  test("end users see the plain error card, with the full error one quiet click away", () => {
     const html = renderErrorTranscript(providerFailure, false)
 
     expect(html).toContain("This model is receiving too many requests")
-    expect(html).not.toContain('data-testid="session-error-details-toggle"')
+    expect(html).toContain('data-testid="session-error-details-toggle"')
+    expect(html).not.toContain('data-testid="session-error-details"')
     expect(html).not.toContain("Status: 429")
     expect(html).not.toContain("req_01JZK4W9N7X2Q8M3V5T6B1C0DE")
   })
@@ -692,7 +759,7 @@ describe("session error technical details", () => {
     }, false)
     expect(html).toContain("Some steps may have finished. Check before continuing.")
     expect(html).not.toContain('data-testid="session-error-resume"')
-    expect(html).not.toContain('data-testid="session-error-details-toggle"')
+    expect(html).not.toContain('data-testid="session-error-details"')
     expect(html).not.toContain("upstream_incomplete")
   })
 
@@ -704,7 +771,7 @@ describe("session error technical details", () => {
     expect(html).not.toContain("SqlError")
     expect(html).not.toContain("runLoop")
     expect(html).not.toContain("ENOSPC")
-    expect(html).not.toContain('data-testid="session-error-details-toggle"')
+    expect(html).not.toContain('data-testid="session-error-details"')
     expect(renderErrorTranscript(raw, true)).toContain('data-testid="session-error-details-toggle"')
   })
 
