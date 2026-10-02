@@ -2,6 +2,7 @@
 import { useEffect } from "react"
 import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
+  REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
   REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
 } from "@openwork/types/automations"
 import type {
@@ -81,21 +82,27 @@ function ActivatedAutomationRunnerBridge() {
               platform,
               concurrency: 1,
             })
-            try {
-              return await client.mintAutomationRunnerToken(organizationId, registration([
+            // Older/self-hosted Den versions reject capabilities they do not
+            // know with a 400. Step down one capability set at a time so
+            // Automation delivery keeps working until that server upgrades.
+            const capabilitySets: AutomationDesktopRunnerCapability[][] = [
+              [
                 AUTOMATION_MODEL_ATTENTION_CAPABILITY,
                 REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
-              ]))
-            } catch (error) {
-              // Older/self-hosted Den versions accept at most the original
-              // capability. Preserve existing Automation delivery until that
-              // server upgrades; it will not advertise remote-session presence.
-              if (!(error instanceof DenApiError) || error.status !== 400) throw error
-              return client.mintAutomationRunnerToken(
-                organizationId,
-                registration([AUTOMATION_MODEL_ATTENTION_CAPABILITY]),
-              )
+                REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
+              ],
+              [AUTOMATION_MODEL_ATTENTION_CAPABILITY, REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY],
+              [AUTOMATION_MODEL_ATTENTION_CAPABILITY],
+            ]
+            for (const [index, capabilities] of capabilitySets.entries()) {
+              try {
+                return await client.mintAutomationRunnerToken(organizationId, registration(capabilities))
+              } catch (error) {
+                const last = index === capabilitySets.length - 1
+                if (last || !(error instanceof DenApiError) || error.status !== 400) throw error
+              }
             }
+            throw new Error("automation_runner_registration_unreachable")
           }
           let runner: Awaited<ReturnType<typeof client.mintAutomationRunnerToken>>
           try {

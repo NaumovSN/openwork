@@ -37,6 +37,12 @@ export interface HeadlessThreadMessagePart {
   tool?: string;
   callId?: string;
   toolStatus?: string;
+  /** The tool call's input, as the engine recorded it. */
+  toolInput?: unknown;
+  /** The tool call's output text, once it completed. */
+  toolOutput?: string;
+  /** The tool call's error text, when it failed. */
+  toolError?: string;
   synthetic?: boolean;
   ignored?: boolean;
 }

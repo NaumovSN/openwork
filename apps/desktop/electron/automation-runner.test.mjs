@@ -9,7 +9,12 @@ import {
   REMOTE_SESSION_FIRST_TURN_WINDOW_MS,
   executeDesktopAutomation as executeAutomation,
   executeDesktopRemoteSession as executeRemoteSession,
+  executeRemoteSessionRequest as executeRequest,
   normalizeRunnerBaseUrl,
+  REMOTE_SESSION_REQUEST_POLL,
+  REMOTE_SESSION_REQUEST_TIMEOUT_MS,
+  remoteSessionTranscriptPage,
+  remoteSessionTurnVisible,
   REMOTE_SESSION_WATCH,
   remoteSessionObservation,
   remoteSessionThreadIdentity,
@@ -41,6 +46,7 @@ const createDesktopAutomationRunner = (options) => createRunner(legacyLocalServe
 const executeDesktopAutomation = (assignment, options) => executeAutomation(assignment, legacyLocalServer(options))
 const executeDesktopRemoteSession = (assignment, options) => executeRemoteSession(assignment, legacyLocalServer(options))
 const watchRemoteSession = (options) => watchSession(legacyLocalServer(options))
+const executeRemoteSessionRequest = (assignment, options) => executeRequest(assignment, legacyLocalServer(options))
 
 function runnerTokenFor(audience, organizationId = "org-1") {
   const payload = Buffer.from(JSON.stringify({
@@ -48,6 +54,18 @@ function runnerTokenFor(audience, organizationId = "org-1") {
     o: organizationId,
     m: "member-1",
     r: "runner-1",
+    a: audience,
+  })).toString("base64url")
+  return `${payload}.test-signature`
+}
+
+function controlRunnerTokenFor(audience) {
+  const payload = Buffer.from(JSON.stringify({
+    v: 2,
+    o: "org-1",
+    m: "member-1",
+    r: "runner-1",
+    c: ["model_attention_v1", "remote_session_v1", "remote_session_control_v1"],
     a: audience,
   })).toString("base64url")
   return `${payload}.test-signature`
@@ -2459,4 +2477,425 @@ test("observations ignore replies to earlier turns and read thread identity defe
   }), { engine: "v2", model: { providerId: "provider", modelId: "model" } })
   assert.deepEqual(remoteSessionThreadIdentity({ engine: "v3", model: { providerId: 1 } }), {})
   assert.deepEqual(remoteSessionThreadIdentity(null), {})
+})
+
+// ---------------------------------------------------------------------------
+// Den requests for delivered remote sessions: read, send, stop.
+// ---------------------------------------------------------------------------
+
+function headlessMessage(id, role, text, extra = {}) {
+  return { id, role, createdAt: 1, parts: text === null ? [] : [{ id: `${id}-part`, type: "text", text }], ...extra }
+}
+
+function pageOf(messages, input, status = { type: "idle" }, waitingFor = null) {
+  return remoteSessionTranscriptPage({ title: "Desktop handoff", status, messages }, input, waitingFor)
+}
+
+test("remote-session requests are bounded to 15 s and polled every 2 s for 30 minutes of remote use", () => {
+  assert.equal(REMOTE_SESSION_REQUEST_TIMEOUT_MS, 15_000)
+  assert.equal(REMOTE_SESSION_REQUEST_POLL.pollMs, 2_000)
+  assert.equal(REMOTE_SESSION_REQUEST_POLL.activeWindowMs, 30 * 60_000)
+})
+
+test("transcript pages walk backward from the end and forward from the start by message id", () => {
+  const messages = [
+    headlessMessage("m1", "user", "one"),
+    headlessMessage("m2", "assistant", "two"),
+    { id: "m-sys", role: "system", parts: [] },
+    headlessMessage("m3", "user", "three"),
+    headlessMessage("m4", "assistant", "four"),
+    headlessMessage("m5", "user", "five"),
+  ]
+  const last = pageOf(messages, { from: "end", cursor: null, limit: 2 })
+  assert.deepEqual(last.messages.map((message) => message.id), ["m4", "m5"])
+  assert.equal(last.nextCursor, "m4")
+  assert.equal(last.messageCount, 5)
+  assert.equal(last.from, "end")
+  const earlier = pageOf(messages, { from: "end", cursor: "m4", limit: 2 })
+  assert.deepEqual(earlier.messages.map((message) => message.id), ["m2", "m3"])
+  const first = pageOf(messages, { from: "end", cursor: "m2", limit: 2 })
+  assert.deepEqual(first.messages.map((message) => message.id), ["m1"])
+  assert.equal(first.nextCursor, null)
+
+  const start = pageOf(messages, { from: "start", cursor: null, limit: 3 })
+  assert.deepEqual(start.messages.map((message) => message.id), ["m1", "m2", "m3"])
+  assert.equal(start.nextCursor, "m3")
+  const rest = pageOf(messages, { from: "start", cursor: "m3", limit: 3 })
+  assert.deepEqual(rest.messages.map((message) => message.id), ["m4", "m5"])
+  assert.equal(rest.nextCursor, null)
+
+  assert.throws(
+    () => pageOf(messages, { from: "start", cursor: "m-gone", limit: 3 }),
+    (error) => error instanceof Error && Reflect.get(error, "code") === "invalid_cursor",
+  )
+})
+
+test("transcript pages cap text and tool summaries and flag what was cut", () => {
+  const longInput = { command: "x".repeat(5_000) }
+  const page = pageOf([
+    headlessMessage("m1", "user", "y".repeat(25_000)),
+    headlessMessage("m2", "assistant", "Done", {
+      parts: [
+        { id: "t1", type: "tool", tool: "bash", toolStatus: "completed", toolInput: longInput, toolOutput: "ok" },
+        { id: "t2", type: "tool", tool: "read", toolStatus: "error", toolInput: { path: "a" }, toolError: "missing" },
+        { id: "p-text", type: "text", text: "Done" },
+      ],
+      error: null,
+    }),
+  ], { from: "start", cursor: null, limit: 10 })
+  const [user, assistant] = page.messages
+  assert.equal(user.text.length, 20_000)
+  assert.equal(user.truncated, true)
+  assert.equal(assistant.text, "Done")
+  assert.equal(assistant.truncated, false)
+  assert.equal(assistant.toolCalls[0].input.length, 2_000)
+  assert.deepEqual({ ...assistant.toolCalls[0], input: undefined }, {
+    id: "t1", name: "bash", status: "completed", input: undefined, output: "ok", error: null, truncated: true,
+  })
+  assert.deepEqual(assistant.toolCalls[1], {
+    id: "t2", name: "read", status: "error", input: "{\"path\":\"a\"}", output: null, error: "missing", truncated: false,
+  })
+})
+
+test("a transcript page stops early to stay within Den's 256 KB result limit", () => {
+  const messages = Array.from({ length: 30 }, (_, index) => headlessMessage(`m${index}`, "assistant", "z".repeat(20_000)))
+  const page = pageOf(messages, { from: "start", cursor: null, limit: 100 })
+  assert.ok(page.messages.length > 1 && page.messages.length < 30, `page held ${page.messages.length} messages`)
+  assert.ok(Buffer.byteLength(JSON.stringify(page)) < 256 * 1024)
+  assert.equal(page.nextCursor, page.messages.at(-1).id)
+
+  const toolHeavy = pageOf([headlessMessage("m1", "assistant", "w".repeat(20_000), {
+    parts: Array.from({ length: 250 }, (_, index) => ({
+      id: `t${index}`, type: "tool", tool: "bash", toolStatus: "completed", toolInput: "i".repeat(3_000), toolOutput: "o".repeat(3_000),
+    })),
+  })], { from: "start", cursor: null, limit: 1 })
+  const [message] = toolHeavy.messages
+  assert.equal(message.toolCalls.length, 200)
+  assert.equal(message.truncated, true)
+  assert.equal(message.toolCalls.at(-1).input, null, "summaries past the per-message budget are dropped")
+  assert.ok(Buffer.byteLength(JSON.stringify(toolHeavy)) < 256 * 1024)
+})
+
+test("transcript pages report waiting and the latest turn's error", () => {
+  const waiting = pageOf([headlessMessage("m1", "user", "go")], { from: "end", cursor: null, limit: 5 }, { type: "busy" }, "question")
+  assert.equal(waiting.status, "waiting")
+  assert.equal(waiting.waitingFor, "question")
+  const failed = pageOf([
+    headlessMessage("m1", "user", "go"),
+    headlessMessage("m2", "assistant", null, { error: { name: "ProviderAuthError", message: "Invalid API key" } }),
+  ], { from: "end", cursor: null, limit: 5 })
+  assert.equal(failed.status, "error")
+  assert.deepEqual(failed.lastError, { code: "provider_auth_failed", message: "The model provider rejected its credentials." })
+  assert.deepEqual(failed.messages[1].error, { code: "provider_auth_failed", message: "The model provider rejected its credentials." })
+})
+
+function requestAssignment(action, input, overrides = {}) {
+  return {
+    requestId: "request-1",
+    kind: "remote_session_request",
+    commandId: "command-1",
+    sessionId: "session-1",
+    workspaceId: "workspace-1",
+    engine: null,
+    expiresAt: Date.now() + 60_000,
+    action,
+    input,
+    ...overrides,
+  }
+}
+
+/** A local OpenWork server double for one session; records prompt and abort calls. */
+function localSessionDouble(initialMessages, initialStatus = { type: "idle" }) {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const messages = [...initialMessages]
+  const session = { status: initialStatus }
+  const prompts = []
+  const aborts = []
+  const fetchImpl = async (url, options = {}) => {
+    const parsed = new URL(url)
+    if (parsed.pathname === sessionPaths.prompt) {
+      const body = JSON.parse(String(options.body))
+      prompts.push(body)
+      messages.push(userMessage(body.messageID ?? `msg_new${prompts.length}`, body.parts[0].text))
+      session.status = { type: "busy" }
+      return new Response(null, { status: 204 })
+    }
+    if (parsed.pathname === sessionPaths.abort) {
+      aborts.push(parsed.pathname)
+      return Response.json(true)
+    }
+    if (parsed.pathname === "/workspace/workspace-1/opencode/permission") return Response.json([])
+    if (parsed.pathname === "/workspace/workspace-1/opencode/question") return Response.json([])
+    const snapshot = respondToSnapshotRequest(parsed, sessionPaths, { status: session.status, messages, session: { id: "session-1", title: "Desktop handoff" } })
+    if (snapshot) return snapshot
+    return Response.json({ message: "Not found" }, { status: 404 })
+  }
+  return { fetchImpl, prompts, aborts, messages, session }
+}
+
+const LOCAL_RUNTIME = async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" })
+
+test("a read request returns a transcript page with tool calls from the local session", async () => {
+  const local = localSessionDouble([
+    userMessage("msg_u1", "Inspect the repo"),
+    {
+      info: { id: "msg_a1", role: "assistant" },
+      parts: [
+        { id: "prt_tool", type: "tool", tool: "bash", state: { status: "completed", input: { command: "ls" }, output: "src" } },
+        { id: "prt_text", type: "text", text: "One folder." },
+      ],
+    },
+  ])
+  const outcome = await executeRemoteSessionRequest(
+    requestAssignment("read", { from: "end", cursor: null, limit: 20 }),
+    { getLocalRuntime: LOCAL_RUNTIME, fetchImpl: local.fetchImpl, signal: new AbortController().signal },
+  )
+  assert.equal(outcome.action, "read")
+  assert.equal(outcome.result.title, "Desktop handoff")
+  assert.equal(outcome.result.status, "idle")
+  assert.deepEqual(outcome.result.messages.map((message) => [message.role, message.text]), [
+    ["user", "Inspect the repo"],
+    ["assistant", "One folder."],
+  ])
+  assert.deepEqual(outcome.result.messages[1].toolCalls, [{
+    id: "prt_tool", name: "bash", status: "completed", input: "{\"command\":\"ls\"}", output: "src", error: null, truncated: false,
+  }])
+})
+
+test("a send request is idempotent by message id", async () => {
+  const local = localSessionDouble([userMessage("msg_u1", "Inspect the repo"), assistantMessage("msg_a1", "Done")])
+  const options = { getLocalRuntime: LOCAL_RUNTIME, fetchImpl: local.fetchImpl, signal: new AbortController().signal }
+  const assignment = requestAssignment("send", {
+    prompt: "Now add tests",
+    messageId: "msg_follow",
+    model: { providerId: "provider", modelId: "model", variant: null },
+  })
+  const first = await executeRemoteSessionRequest(assignment, options)
+  assert.deepEqual(first.result, { messageId: "msg_follow", alreadyPresent: false })
+  assert.deepEqual(first.turn, { messageId: "msg_follow", previousUserMessageId: null })
+  const retried = await executeRemoteSessionRequest(assignment, options)
+  assert.deepEqual(retried.result, { messageId: "msg_follow", alreadyPresent: true })
+  assert.equal(local.prompts.length, 1)
+  assert.equal(local.prompts[0].messageID, "msg_follow")
+  assert.deepEqual(local.prompts[0].model, { providerID: "provider", modelID: "model" })
+
+  const anonymous = await executeRemoteSessionRequest(
+    requestAssignment("send", { prompt: "And docs", messageId: null, model: null }),
+    options,
+  )
+  assert.deepEqual(anonymous.turn, { messageId: null, previousUserMessageId: "msg_follow" })
+  assert.equal(local.prompts.length, 2)
+})
+
+test("a stop request aborts the session unless a newer turn replaced the guarded one", async () => {
+  const local = localSessionDouble([userMessage("msg_u1", "One"), userMessage("msg_u2", "Two")], { type: "busy" })
+  const options = { getLocalRuntime: LOCAL_RUNTIME, fetchImpl: local.fetchImpl, signal: new AbortController().signal }
+  const stale = await executeRemoteSessionRequest(requestAssignment("stop", { messageId: "msg_u1" }), options)
+  assert.deepEqual(stale.result, { stopped: false, reason: "different_turn" })
+  assert.equal(local.aborts.length, 0)
+  const guarded = await executeRemoteSessionRequest(requestAssignment("stop", { messageId: "msg_u2" }), options)
+  assert.deepEqual(guarded.result, { stopped: true, reason: null })
+  const unguarded = await executeRemoteSessionRequest(requestAssignment("stop", { messageId: null }), options)
+  assert.deepEqual(unguarded.result, { stopped: true, reason: null })
+  assert.equal(local.aborts.length, 2)
+})
+
+test("a follow-up's turn is visible only once its user message appears", () => {
+  const before = { messages: [{ id: "u1", role: "user" }, { id: "a1", role: "assistant" }] }
+  const after = { messages: [...before.messages, { id: "u2", role: "user" }] }
+  assert.equal(remoteSessionTurnVisible(before, { messageId: null, previousUserMessageId: "u1" }), false)
+  assert.equal(remoteSessionTurnVisible(after, { messageId: null, previousUserMessageId: "u1" }), true)
+  assert.equal(remoteSessionTurnVisible(before, { messageId: "u2", previousUserMessageId: null }), false)
+  assert.equal(remoteSessionTurnVisible(after, { messageId: "u2", previousUserMessageId: null }), true)
+})
+
+/**
+ * A control-capable runner whose Den offers `requests` (assignments by id)
+ * through the work poll and the pending route.
+ */
+function remoteSessionRequestRunner({ requests, local, token = controlRunnerTokenFor("https://den.example.com"), extra = {} }) {
+  const denPaths = []
+  const completions = []
+  const reports = []
+  const offered = new Map(requests.map((assignment) => [assignment.requestId, assignment]))
+  const runner = createDesktopAutomationRunner({
+    getLocalRuntime: LOCAL_RUNTIME,
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(url)
+      if (parsed.origin === "http://127.0.0.1:3000") return local.fetchImpl(url, options)
+      denPaths.push(parsed.pathname)
+      const pending = () => [...offered.keys()].map((requestId) => ({ kind: "remote_session_request", requestId }))
+      if (parsed.pathname === "/v1/automation-runner/work") return Response.json({ items: pending() })
+      if (parsed.pathname === "/v1/remote-session-requests/pending") return Response.json({ items: pending() })
+      const match = /^\/v1\/remote-session-requests\/([^/]+)\/(claim|complete)$/.exec(parsed.pathname)
+      if (match?.[2] === "claim") {
+        const assignment = offered.get(match[1])
+        offered.delete(match[1])
+        return assignment
+          ? Response.json({ assignment })
+          : Response.json({ error: "request_claim_conflict" }, { status: 409 })
+      }
+      if (match?.[2] === "complete") {
+        completions.push({ requestId: match[1], body: JSON.parse(String(options.body)) })
+        return Response.json({ request: { id: match[1], status: "done" } })
+      }
+      if (parsed.pathname === "/v1/remote-session-commands/command-1/session") {
+        reports.push({ at: completions.length, body: JSON.parse(String(options.body)) })
+        return Response.json({ ok: true })
+      }
+      throw new Error(`Unexpected Den request ${parsed.pathname}`)
+    },
+    waitBeforeReconnect: () => new Promise(() => {}),
+    remoteSessionWatch: FAST_WATCH,
+    ...extra,
+  })
+  runner.configure({ baseUrl: "https://den.example.com", token, runnerId: "runner-1" })
+  return { runner, denPaths, completions, reports }
+}
+
+test("the runner answers a read request from the work poll without taking its slot", async () => {
+  const local = localSessionDouble([userMessage("msg_u1", "Inspect the repo"), assistantMessage("msg_a1", "Done")])
+  const { runner, completions } = remoteSessionRequestRunner({
+    requests: [requestAssignment("read", { from: "end", cursor: null, limit: 5 })],
+    local,
+  })
+  try {
+    await waitFor(() => completions.length === 1, "the read request was never completed")
+  } finally {
+    runner.stop()
+  }
+  assert.equal(completions[0].requestId, "request-1")
+  assert.equal(completions[0].body.status, "done")
+  assert.equal(completions[0].body.outcome.action, "read")
+  assert.deepEqual(completions[0].body.outcome.result.messages.map((message) => message.id), ["msg_u1", "msg_a1"])
+})
+
+test("a sent follow-up restarts the command's progress watch after Den records the completion", async () => {
+  const local = localSessionDouble([userMessage("msg_u1", "Inspect the repo"), assistantMessage("msg_a1", "First answer")])
+  const { runner, completions, reports } = remoteSessionRequestRunner({
+    requests: [requestAssignment("send", { prompt: "Now add tests", messageId: "msg_follow", model: null })],
+    local,
+  })
+  try {
+    await waitFor(() => completions.length === 1, "the send request was never completed")
+    // The follow-up has no reply yet; the watcher must not report the first answer.
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    assert.ok(reports.every((report) => report.body.finalText !== "First answer"), "the previous turn's answer was reported")
+    assert.ok(reports.some((report) => report.body.status === "running"), "the follow-up was not reported running")
+    local.messages.push(assistantMessage("msg_a2", "Tests added."))
+    local.session.status = { type: "idle" }
+    await waitFor(() => reports.some((report) => report.body.status === "idle"), "the follow-up's answer was never reported")
+  } finally {
+    runner.stop()
+  }
+  assert.deepEqual(completions[0].body, { status: "done", outcome: { action: "send", result: { messageId: "msg_follow", alreadyPresent: false } } })
+  assert.equal(local.prompts.length, 1)
+  assert.ok(reports.every((report) => report.at >= 1), "the watcher reported before the completion")
+  assert.equal(reports.at(-1).body.finalText, "Tests added.")
+})
+
+test("an expired request is reported without touching the local session", async () => {
+  const local = localSessionDouble([userMessage("msg_u1", "Inspect the repo")])
+  const { runner, completions } = remoteSessionRequestRunner({
+    requests: [requestAssignment("send", { prompt: "Late", messageId: null, model: null }, { expiresAt: Date.now() - 1 })],
+    local,
+  })
+  try {
+    await waitFor(() => completions.length === 1, "the expired request was never completed")
+  } finally {
+    runner.stop()
+  }
+  assert.deepEqual(completions[0].body, {
+    status: "failed",
+    error: { code: "request_expired", message: "The request expired before the desktop ran it." },
+  })
+  assert.equal(local.prompts.length, 0)
+})
+
+test("a request that outlives its timeout fails as desktop_timeout and the runner moves on", async () => {
+  const hanging = { fetchImpl: (_url, options = {}) => new Promise((_resolve, reject) => {
+    options.signal?.addEventListener("abort", () => reject(options.signal.reason), { once: true })
+  }) }
+  const local = localSessionDouble([userMessage("msg_u1", "Inspect the repo")])
+  let calls = 0
+  const { runner, completions } = remoteSessionRequestRunner({
+    requests: [
+      requestAssignment("read", { from: "end", cursor: null, limit: 5 }),
+      requestAssignment("stop", { messageId: null }, { requestId: "request-2" }),
+    ],
+    local: { fetchImpl: (url, options) => (calls++ < 4 ? hanging.fetchImpl(url, options) : local.fetchImpl(url, options)) },
+    extra: { remoteSessionRequestTimeoutMs: 30 },
+  })
+  try {
+    await withTimeout(new Promise((resolve) => {
+      const check = () => (completions.length === 2 ? resolve() : setTimeout(check, 5))
+      check()
+    }), "both requests were not completed")
+  } finally {
+    runner.stop()
+  }
+  assert.deepEqual(completions[0].body, {
+    status: "failed",
+    error: { code: "desktop_timeout", message: "The desktop did not finish the request in time." },
+  })
+  assert.deepEqual(completions[1].body, { status: "done", outcome: { action: "stop", result: { stopped: true, reason: null } } })
+})
+
+test("a session missing locally fails as unknown_session", async () => {
+  const { runner, completions } = remoteSessionRequestRunner({
+    requests: [requestAssignment("read", { from: "end", cursor: null, limit: 5 }, { sessionId: "session-gone" })],
+    local: localSessionDouble([]),
+  })
+  try {
+    await waitFor(() => completions.length === 1, "the read request was never completed")
+  } finally {
+    runner.stop()
+  }
+  assert.equal(completions[0].body.status, "failed")
+  assert.equal(completions[0].body.error.code, "unknown_session")
+})
+
+test("a runner without the control capability never polls for session requests", async () => {
+  const local = localSessionDouble([])
+  const { runner, denPaths, completions } = remoteSessionRequestRunner({
+    requests: [requestAssignment("read", { from: "end", cursor: null, limit: 5 })],
+    local,
+    token: runnerTokenFor("https://den.example.com"),
+    extra: { remoteSessionRequestPoll: { pollMs: 1, activeWindowMs: 60_000 } },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  runner.stop()
+  assert.equal(denPaths.filter((path) => path === "/v1/remote-session-requests/pending").length, 0)
+  assert.equal(completions.length, 0)
+})
+
+test("pending requests are polled quickly only during active remote use", async () => {
+  const local = localSessionDouble([])
+  const idle = remoteSessionRequestRunner({
+    requests: [],
+    local,
+    extra: { remoteSessionRequestPoll: { pollMs: 1, activeWindowMs: 60_000 } },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  idle.runner.stop()
+  // Only the initial work poll ran; nothing made the desktop active.
+  assert.equal(idle.denPaths.filter((path) => path === "/v1/remote-session-requests/pending").length, 0)
+
+  const active = remoteSessionRequestRunner({
+    requests: [requestAssignment("read", { from: "end", cursor: null, limit: 5 })],
+    local: localSessionDouble([userMessage("msg_u1", "Hi")]),
+    extra: { remoteSessionRequestPoll: { pollMs: 1, activeWindowMs: 60_000 } },
+  })
+  try {
+    await waitFor(() => active.completions.length === 1, "the first request was never completed")
+    // Having just answered a request, the desktop keeps polling for the next one.
+    const pendingPolls = active.denPaths.filter((path) => path === "/v1/remote-session-requests/pending").length
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.ok(
+      active.denPaths.filter((path) => path === "/v1/remote-session-requests/pending").length > pendingPolls,
+      "the active desktop stopped polling for requests",
+    )
+  } finally {
+    active.runner.stop()
+  }
 })

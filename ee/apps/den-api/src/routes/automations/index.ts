@@ -5,6 +5,7 @@ import { streamSSE } from "hono/streaming"
 import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
   AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER,
+  REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
   REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
   automationDesktopRunnerAssignmentSchema,
   automationDesktopRunnerRegistrationSchema,
@@ -27,6 +28,10 @@ import {
   remoteSessionCommandCompleteResponseSchema,
   remoteSessionCommandSessionReportResponseSchema,
   remoteSessionCommandSessionReportSchema,
+  remoteSessionRequestClaimResponseSchema,
+  remoteSessionRequestCompleteRequestSchema,
+  remoteSessionRequestCompleteResponseSchema,
+  remoteSessionRequestPendingResponseSchema,
   updateAutomationSchema,
 } from "@openwork/types/automations"
 import {
@@ -42,6 +47,7 @@ import { automationRunnerAudienceFromRequest, automationRunnerAuth } from "../..
 import { env } from "../../env.js"
 import { OpenWorkWebAccessRequiredError } from "../../openwork-web-runtime-access.js"
 import { databaseRemoteSessionCommandStore, type RemoteSessionCommandStore } from "../../remote-sessions/commands.js"
+import { databaseRemoteSessionRequestStore, type RemoteSessionRequestStore } from "../../remote-sessions/requests.js"
 import {
   RUNNER_KEEPALIVE_INTERVAL_MS,
   RUNNER_NOTIFICATION_POLL_MIN_MS,
@@ -127,11 +133,17 @@ const routeDescription = [
 
 export function registerAutomationRoutes<T extends { Variables: RouteVariables }>(
   app: Hono<T>,
-  options: { service?: AutomationService; commandStore?: RemoteSessionCommandStore; enabled?: boolean } = {},
+  options: {
+    service?: AutomationService
+    commandStore?: RemoteSessionCommandStore
+    requestStore?: RemoteSessionRequestStore
+    enabled?: boolean
+  } = {},
 ) {
   if (options.enabled === false) return
   const service = options.service ?? automationService
   const commandStore = options.commandStore ?? databaseRemoteSessionCommandStore
+  const requestStore = options.requestStore ?? databaseRemoteSessionRequestStore
 
   app.post(
     "/v1/automation-runners/token",
@@ -210,6 +222,23 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
   })
   const runnerConflictResponse = jsonResponse("The run lease was lost or the request conflicts with the run's current state.", runnerErrorSchema)
 
+  const pendingRequestItems = async (identity: {
+    organizationId: string
+    ownerMemberId: string
+    runnerId: string
+    capabilities: readonly string[]
+  }): Promise<Array<{ kind: "remote_session_request"; requestId: string }>> => {
+    if (!identity.capabilities.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY)) return []
+    const requests = await requestStore.listPendingForRunner({
+      organizationId: identity.organizationId,
+      ownerMemberId: identity.ownerMemberId,
+      runnerId: identity.runnerId,
+      now: Date.now(),
+      limit: 5,
+    })
+    return requests.map((request) => ({ kind: "remote_session_request", requestId: request.id }))
+  }
+
   app.get(
     "/v1/automation-runners/events",
     runnerRoute({
@@ -281,11 +310,16 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     // Automation run items keep their long-standing wire shape untouched;
     // remote-session command items are only appended for runners that
     // registered the remote_session_v1 capability, so released runners never
-    // see the new item kind.
+    // see the new item kind. Session requests are listed first, and only for
+    // runners that registered remote_session_control_v1: they are short and
+    // interactive, and the runner answers them without taking its slot.
     const automationItems = await service.discoverDesktopRunnerWork(identity)
+    const requestItems = await pendingRequestItems(identity)
     const items: Array<
-      (typeof automationItems)[number] | { kind: "remote_session_create"; commandId: string }
-    > = [...automationItems]
+      | (typeof automationItems)[number]
+      | { kind: "remote_session_create"; commandId: string }
+      | { kind: "remote_session_request"; requestId: string }
+    > = [...requestItems, ...automationItems]
     if (identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
       const commands = await commandStore.listPendingForRunner({
         organizationId: identity.organizationId,
@@ -401,6 +435,101 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       if (result === "not_found") return c.json({ error: "command_not_found" }, 404)
       if (result === "conflict") return c.json({ error: "command_session_conflict" }, 409)
       return c.json(remoteSessionCommandSessionReportResponseSchema.parse({ ok: true }))
+    },
+  )
+
+  app.get(
+    "/v1/remote-session-requests/pending",
+    runnerRoute({
+      summary: "List remote-session requests for this runner",
+      description: "A read-only poll for read, send, and stop requests addressed to this runner. "
+        + "Runners without the remote_session_control_v1 capability always get an empty list.",
+      responses: { 200: jsonResponse("Pending requests.", remoteSessionRequestPendingResponseSchema) },
+    }),
+    async (c) => {
+      const identity = await authenticateRunner(c)
+      if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      return c.json(remoteSessionRequestPendingResponseSchema.parse({ items: await pendingRequestItems(identity) }))
+    },
+  )
+
+  app.post(
+    "/v1/remote-session-requests/:id/claim",
+    runnerRoute({
+      summary: "Claim a remote-session request",
+      responses: {
+        200: jsonResponse("The claimed request assignment.", remoteSessionRequestClaimResponseSchema),
+        403: jsonResponse("The runner did not register the remote-session control capability.", runnerErrorSchema),
+        409: jsonResponse("The request is not addressed to this runner, already claimed, or expired.", runnerErrorSchema),
+      },
+    }),
+    paramValidator(idParamsSchema),
+    async (c) => {
+      const identity = await authenticateRunner(c)
+      if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      if (!identity.capabilities.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY)) {
+        return c.json({ error: "runner_capability_missing" }, 403)
+      }
+      const request = await requestStore.claim({
+        requestId: c.req.valid("param").id,
+        organizationId: identity.organizationId,
+        ownerMemberId: identity.ownerMemberId,
+        runnerId: identity.runnerId,
+        now: Date.now(),
+      })
+      if (!request) return c.json({ error: "request_claim_conflict" }, 409)
+      return c.json(remoteSessionRequestClaimResponseSchema.parse({
+        assignment: {
+          requestId: request.id,
+          kind: "remote_session_request",
+          commandId: request.commandId,
+          sessionId: request.sessionId,
+          workspaceId: request.workspaceId,
+          engine: request.engine,
+          expiresAt: request.expiresAt,
+          action: request.action,
+          input: request.input,
+        },
+      }))
+    },
+  )
+
+  app.post(
+    "/v1/remote-session-requests/:id/complete",
+    runnerRoute({
+      summary: "Complete a remote-session request",
+      responses: {
+        200: jsonResponse("The completed request.", remoteSessionRequestCompleteResponseSchema),
+        403: jsonResponse("The runner did not register the remote-session control capability.", runnerErrorSchema),
+        409: jsonResponse("The request is not claimed by this runner, or the result answers another action.", runnerErrorSchema),
+      },
+    }),
+    paramValidator(idParamsSchema), jsonValidator(remoteSessionRequestCompleteRequestSchema),
+    async (c) => {
+      const identity = await authenticateRunner(c)
+      if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      if (!identity.capabilities.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY)) {
+        return c.json({ error: "runner_capability_missing" }, 403)
+      }
+      const body = c.req.valid("json")
+      const now = Date.now()
+      const request = await requestStore.complete({
+        requestId: c.req.valid("param").id,
+        organizationId: identity.organizationId,
+        ownerMemberId: identity.ownerMemberId,
+        runnerId: identity.runnerId,
+        now,
+        ...body,
+      })
+      if (!request) return c.json({ error: "request_complete_conflict" }, 409)
+      if (request.outcome?.action === "send" && !request.outcome.result.alreadyPresent) {
+        // The runner restarts its progress watcher only after this returns,
+        // so a fast reply can never be overwritten by this reset.
+        await commandStore.markTurnStarted({ commandId: request.commandId, runnerId: identity.runnerId, now })
+      }
+      return c.json(remoteSessionRequestCompleteResponseSchema.parse({
+        request: { id: request.id, status: request.status },
+      }))
     },
   )
 

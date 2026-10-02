@@ -386,6 +386,24 @@ describe("getThreadSnapshot", () => {
 
     expect(snapshot.status).toEqual({ type: "idle" });
   });
+
+  test("carries tool input, output, and error text when the engine recorded them", async () => {
+    const messages: MessageWire[] = [{
+      info: { id: "msg_a", role: "assistant", time: { created: 1 } },
+      parts: [
+        { id: "prt_ok", type: "tool", tool: "bash", callID: "call_1", state: { status: "completed", input: { command: "ls" }, output: "a\nb" } },
+        { id: "prt_bad", type: "tool", tool: "read", state: { status: "error", input: { path: "x" }, error: "missing" } },
+        { id: "prt_odd", type: "tool", tool: "edit", state: { status: "running", output: 42 } },
+      ],
+    }];
+    const snapshot = await createClient(createOpenworkDouble({ messages })).getThreadSnapshot(SESSION_ID);
+
+    expect(snapshot.messages[0]?.parts).toEqual([
+      { id: "prt_ok", type: "tool", tool: "bash", callId: "call_1", toolStatus: "completed", toolInput: { command: "ls" }, toolOutput: "a\nb" },
+      { id: "prt_bad", type: "tool", tool: "read", toolStatus: "error", toolInput: { path: "x" }, toolError: "missing" },
+      { id: "prt_odd", type: "tool", tool: "edit", toolStatus: "running" },
+    ]);
+  });
 });
 
 describe("waitForThread", () => {

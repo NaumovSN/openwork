@@ -10,6 +10,7 @@ import type {
 } from "../src/mcp/remote-session-capabilities.js"
 import type { CloudWorkerAccess } from "../src/workers/worker-access.js"
 import type { RemoteSessionCommand, RemoteSessionCommandStore } from "../src/remote-sessions/commands.js"
+import type { RemoteSessionRequestStore } from "../src/remote-sessions/requests.js"
 
 mock.module("../src/auth.js", () => ({
   auth: {},
@@ -72,11 +73,25 @@ const unavailableCommandStore: RemoteSessionCommandStore = {
   report: async () => { throw new Error("command store not stubbed for this test") },
   get: async () => { throw new Error("command store not stubbed for this test") },
   listPendingForRunner: async () => { throw new Error("command store not stubbed for this test") },
+  // No session in these tests was created through a desktop command.
+  findDesktopSession: async () => null,
+  listDesktopSessions: async () => { throw new Error("command store not stubbed for this test") },
+  markTurnStarted: async () => { throw new Error("command store not stubbed for this test") },
+}
+
+const unavailableRequestStore: RemoteSessionRequestStore = {
+  enqueue: async () => { throw new Error("request store not stubbed for this test") },
+  claim: async () => { throw new Error("request store not stubbed for this test") },
+  complete: async () => { throw new Error("request store not stubbed for this test") },
+  get: async () => { throw new Error("request store not stubbed for this test") },
+  listPendingForRunner: async () => { throw new Error("request store not stubbed for this test") },
 }
 
 const inactiveDesktopDeps = {
   commandStore: unavailableCommandStore,
   desktopPresence: async () => ({ connected: false, ownerMemberId: null }),
+  requestStore: unavailableRequestStore,
+  desktopRunner: async () => { throw new Error("desktop runner not stubbed for this test") },
 }
 
 function readyDeps(client: Partial<RemoteSessionThreadClient>): RemoteSessionExecuteDeps {
@@ -112,10 +127,12 @@ function executeInput(action: "create" | "send" | "read", body: unknown, hasWrit
   }
 }
 
-test("capability names parse for exactly the three actions", () => {
+test("capability names parse for exactly the remote-session actions", () => {
   expect(parseRemoteSessionCapabilityName("remote-session:create")).toBe("create")
   expect(parseRemoteSessionCapabilityName("remote-session:send")).toBe("send")
   expect(parseRemoteSessionCapabilityName("remote-session:read")).toBe("read")
+  expect(parseRemoteSessionCapabilityName("remote-session:stop")).toBe("stop")
+  expect(parseRemoteSessionCapabilityName("remote-session:list")).toBe("list")
   expect(parseRemoteSessionCapabilityName("remote-session:delete")).toBeNull()
   expect(parseRemoteSessionCapabilityName("remote-session:")).toBeNull()
   expect(parseRemoteSessionCapabilityName("mcp:conn:tool")).toBeNull()
@@ -620,7 +637,7 @@ for (const deployment of noCloudDeployments) {
         expect(context.remoteSessionsEnabled).toBe(true)
         const source = registry.CAPABILITY_SOURCES.remoteSession
         expect((await source.search(context, "remote session desktop", 10)).map((match) => match.name).sort()).toEqual([
-          "remote-session:create", "remote-session:read", "remote-session:send",
+          "remote-session:create", "remote-session:list", "remote-session:read", "remote-session:send", "remote-session:stop",
         ])
         expect(await source.enumerate(context)).toEqual([])
         const createInput = { name: "remote-session:create", body: { target: "desktop", title: command.title, prompt: command.prompt } }

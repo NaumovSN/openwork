@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, lte } from "@openwork-ee/den-db/drizzle"
+import { and, asc, desc, eq, gt, inArray, isNotNull, lte } from "@openwork-ee/den-db/drizzle"
 import { RemoteSessionCommandTable } from "@openwork-ee/den-db/schema/remote-session-commands"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type {
@@ -79,6 +79,19 @@ type ReportInput = RemoteSessionCommandSessionReport & {
 
 export type RemoteSessionReportResult = "reported" | "not_found" | "conflict"
 
+/** A delivered desktop session and the runner that owns it. */
+export type RemoteSessionDesktopSession = {
+  commandId: string
+  ownerMemberId: string
+  runnerId: string
+  sessionId: string
+  workspaceId: string
+  title: string
+  engine: "v1" | "v2" | null
+  status: RemoteSessionProgress["status"] | null
+  updatedAt: number
+}
+
 export interface RemoteSessionCommandStore {
   enqueue(input: EnqueueInput): Promise<RemoteSessionCommand>
   claim(input: ClaimInput): Promise<RemoteSessionCommand | null>
@@ -95,6 +108,29 @@ export interface RemoteSessionCommandStore {
     now: number
     limit: number
   }): Promise<RemoteSessionCommand[]>
+  /**
+   * Finds the delivered command that created this session for the caller, so
+   * read, send, and stop can be routed to the desktop that owns it. Null keeps
+   * the Cloud path.
+   */
+  findDesktopSession(input: {
+    organizationId: string
+    createdByUserId: string
+    sessionId: string
+    workspaceId?: string
+  }): Promise<RemoteSessionDesktopSession | null>
+  /** Desktop sessions the caller created through remote-session commands, newest first. */
+  listDesktopSessions(input: {
+    organizationId: string
+    createdByUserId: string
+    workspaceId?: string
+    limit: number
+  }): Promise<RemoteSessionDesktopSession[]>
+  /**
+   * A follow-up was accepted: show the session as running again so callers
+   * polling the command do not read the previous turn's answer as final.
+   */
+  markTurnStarted(input: { commandId: string; runnerId: string; now: number }): Promise<void>
 }
 
 type CommandRow = typeof RemoteSessionCommandTable.$inferSelect
@@ -158,6 +194,42 @@ function mapCommand(row: CommandRow): RemoteSessionCommand {
     createdAt: row.created_at.getTime(),
     updatedAt: row.updated_at.getTime(),
   }
+}
+
+function mapDesktopSession(row: CommandRow): RemoteSessionDesktopSession | null {
+  if (!row.claimed_by_runner_id || !row.session_id || !row.workspace_id) return null
+  return {
+    commandId: row.id,
+    ownerMemberId: row.owner_member_id,
+    runnerId: row.claimed_by_runner_id,
+    sessionId: row.session_id,
+    workspaceId: row.workspace_id,
+    title: row.title,
+    engine: row.session_engine,
+    status: row.session_status,
+    updatedAt: row.updated_at.getTime(),
+  }
+}
+
+function desktopSessionScope(input: { organizationId: string; createdByUserId: string; workspaceId?: string }) {
+  // Scope ids come from the MCP principal; one that is not a Den id owns no
+  // desktop session rather than failing the call.
+  let organizationId: DenTypeId<"organization">
+  let createdByUserId: DenTypeId<"user">
+  try {
+    organizationId = normalizeDenTypeId("organization", input.organizationId)
+    createdByUserId = normalizeDenTypeId("user", input.createdByUserId)
+  } catch {
+    return null
+  }
+  return and(
+    eq(RemoteSessionCommandTable.org_id, organizationId),
+    eq(RemoteSessionCommandTable.created_by_user_id, createdByUserId),
+    eq(RemoteSessionCommandTable.status, "delivered"),
+    isNotNull(RemoteSessionCommandTable.claimed_by_runner_id),
+    isNotNull(RemoteSessionCommandTable.session_id),
+    ...(input.workspaceId ? [eq(RemoteSessionCommandTable.workspace_id, input.workspaceId)] : []),
+  )
 }
 
 async function commandById(commandId: string): Promise<RemoteSessionCommand | null> {
@@ -308,5 +380,47 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       gt(RemoteSessionCommandTable.expires_at, new Date(input.now)),
     )).orderBy(asc(RemoteSessionCommandTable.created_at), asc(RemoteSessionCommandTable.id)).limit(input.limit)
     return rows.map(mapCommand)
+  },
+
+  async findDesktopSession(input) {
+    const scope = desktopSessionScope(input)
+    if (!scope) return null
+    const rows = await db.select().from(RemoteSessionCommandTable).where(and(
+      scope,
+      eq(RemoteSessionCommandTable.session_id, input.sessionId),
+    )).orderBy(desc(RemoteSessionCommandTable.updated_at), desc(RemoteSessionCommandTable.id)).limit(1)
+    return rows[0] ? mapDesktopSession(rows[0]) : null
+  },
+
+  async listDesktopSessions(input) {
+    const scope = desktopSessionScope(input)
+    if (!scope) return []
+    const rows = await db.select().from(RemoteSessionCommandTable)
+      .where(scope)
+      .orderBy(desc(RemoteSessionCommandTable.updated_at), desc(RemoteSessionCommandTable.id))
+      .limit(input.limit)
+    return rows.flatMap((row) => {
+      const session = mapDesktopSession(row)
+      return session ? [session] : []
+    })
+  },
+
+  async markTurnStarted(input) {
+    const commandId = commandIdOrNull(input.commandId)
+    if (!commandId) return
+    const now = new Date(input.now)
+    await db.update(RemoteSessionCommandTable).set({
+      session_status: "running",
+      session_waiting_for: null,
+      session_final_text: null,
+      session_error_code: null,
+      session_error_message: null,
+      session_observed_at: now,
+      updated_at: now,
+    }).where(and(
+      eq(RemoteSessionCommandTable.id, commandId),
+      eq(RemoteSessionCommandTable.claimed_by_runner_id, input.runnerId),
+      eq(RemoteSessionCommandTable.status, "delivered"),
+    ))
   },
 }

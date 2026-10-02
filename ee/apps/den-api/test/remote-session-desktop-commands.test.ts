@@ -105,6 +105,9 @@ function fakeStore(overrides: Partial<RemoteSessionCommandStore> = {}): RemoteSe
     report: overrides.report ?? unavailable,
     get: overrides.get ?? unavailable,
     listPendingForRunner: overrides.listPendingForRunner ?? unavailable,
+    findDesktopSession: overrides.findDesktopSession ?? (async () => null),
+    listDesktopSessions: overrides.listDesktopSessions ?? unavailable,
+    markTurnStarted: overrides.markTurnStarted ?? unavailable,
   }
 }
 
@@ -124,6 +127,14 @@ function deps(input: {
     }),
     resolveRuntime: input.resolveRuntime ?? (async () => ({ ok: true, runtime: RUNTIME })),
     createClient: input.createClient ?? (() => { throw new Error("client not stubbed for this test") }),
+    requestStore: {
+      enqueue: async () => { throw new Error("request store not stubbed for this test") },
+      claim: async () => { throw new Error("request store not stubbed for this test") },
+      complete: async () => { throw new Error("request store not stubbed for this test") },
+      get: async () => { throw new Error("request store not stubbed for this test") },
+      listPendingForRunner: async () => { throw new Error("request store not stubbed for this test") },
+    },
+    desktopRunner: async () => { throw new Error("desktop runner not stubbed for this test") },
   }
 }
 

@@ -4,7 +4,12 @@ import { MemberTable } from "@openwork-ee/den-db/schema/org"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 import { desktopRunnerConnected } from "@openwork/automations"
-import { REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY } from "@openwork/types/automations"
+import {
+  REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
+  REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
+  REMOTE_SESSION_TRANSCRIPT_PAGE_MAX,
+  type RemoteSessionRequestInput,
+} from "@openwork/types/automations"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import {
@@ -23,7 +28,14 @@ import {
   databaseRemoteSessionCommandStore,
   DEFAULT_TTL_MS,
   type RemoteSessionCommandStore,
+  type RemoteSessionDesktopSession,
 } from "../remote-sessions/commands.js"
+import {
+  databaseRemoteSessionRequestStore,
+  REMOTE_SESSION_REQUEST_TTL_MS,
+  type RemoteSessionRequest,
+  type RemoteSessionRequestStore,
+} from "../remote-sessions/requests.js"
 import { cloudRuntimeAvailable } from "../workers/cloud-runtime.js"
 import { resolveCloudRuntimeAccess, type CloudWorkerAccess } from "../workers/worker-access.js"
 import { fetchPreviewNoRedirect, previewFetch } from "../workers/preview-fetch.js"
@@ -36,7 +48,7 @@ import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
  */
 
 export const REMOTE_SESSION_CAPABILITY_PREFIX = "remote-session:"
-export const REMOTE_SESSION_ACTIONS = ["create", "send", "read", "stop"] as const
+export const REMOTE_SESSION_ACTIONS = ["create", "send", "read", "stop", "list"] as const
 export type RemoteSessionAction = (typeof REMOTE_SESSION_ACTIONS)[number]
 
 export function remoteSessionCapabilityName(action: RemoteSessionAction): string {
@@ -62,11 +74,18 @@ const createBodySchema = z.object({
   model: modelSchema.optional(),
 })
 
-const stopBodySchema = z.object({ sessionId: z.string().trim().min(1), messageId: z.string().optional() })
+const desktopWorkspaceSchema = z.string().trim().min(1).max(240).optional()
+
+const stopBodySchema = z.object({
+  sessionId: z.string().trim().min(1),
+  workspaceId: desktopWorkspaceSchema,
+  messageId: z.string().optional(),
+})
 
 const sendBodySchema = z.object({
   messageId: z.string().regex(/^msg_[a-zA-Z0-9]+$/).optional(),
   sessionId: z.string().trim().min(1),
+  workspaceId: desktopWorkspaceSchema,
   prompt: z.string().min(1).max(100_000),
   model: modelSchema.optional(),
 })
@@ -75,14 +94,26 @@ const readBodySchema = z.object({
   messageId: z.string().optional(),
   sessionId: z.string().trim().min(1).optional(),
   commandId: z.string().trim().min(1).optional(),
-  limit: z.number().int().min(1).max(100).optional(),
+  requestId: z.string().trim().min(1).optional(),
+  workspaceId: desktopWorkspaceSchema,
+  from: z.enum(["start", "end"]).optional(),
+  cursor: z.string().trim().min(1).max(160).optional(),
+  limit: z.number().int().min(1).max(REMOTE_SESSION_TRANSCRIPT_PAGE_MAX).optional(),
 }).superRefine((body, context) => {
-  if (Number(body.sessionId !== undefined) + Number(body.commandId !== undefined) !== 1) {
+  const ids = [body.sessionId, body.commandId, body.requestId].filter((id) => id !== undefined)
+  if (ids.length !== 1) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      message: "Exactly one of sessionId or commandId is required.",
+      message: "Exactly one of sessionId, commandId, or requestId is required.",
     })
   }
+})
+
+const LIST_DEFAULT_LIMIT = 20
+const listBodySchema = z.object({
+  target: z.literal("desktop"),
+  workspaceId: z.string().trim().min(1).max(240).optional(),
+  limit: z.number().int().min(1).max(50).optional(),
 })
 
 const BODY_SCHEMAS: Record<RemoteSessionAction, z.ZodTypeAny> = {
@@ -90,6 +121,7 @@ const BODY_SCHEMAS: Record<RemoteSessionAction, z.ZodTypeAny> = {
   send: sendBodySchema,
   read: readBodySchema,
   stop: stopBodySchema,
+  list: listBodySchema,
 }
 
 type RemoteSessionDefinition = {
@@ -112,12 +144,13 @@ const MODEL_ARGUMENT_SCHEMA = {
 const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "stop",
-    summary: "Stop a running remote session on your own OpenWork Web instance.",
+    summary: "Stop a running remote session on your OpenWork Web instance, or on your desktop for a session created with target \"desktop\". A desktop that has not answered within about 20 seconds returns state \"pending\" with a requestId to collect through remote-session:read.",
     searchExtraTokens: "remote session stop abort cancel running",
     argumentsSchema: {
       type: "object",
       properties: {
-        sessionId: { type: "string" },
+        sessionId: { type: "string", description: "Session id from remote-session:create, from remote-session:read with a desktop commandId, or from remote-session:list." },
+        workspaceId: { type: "string", description: "Desktop sessions: the session's workspaceId, when one session id could exist in several workspaces." },
         messageId: { type: "string", description: "Optional guard: stop only if this is still the latest user turn." },
       },
       required: ["sessionId"],
@@ -142,13 +175,14 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "send",
     summary:
-      "Send a follow-up prompt to an existing remote session on your OpenWork Web instance. Returns an acceptance receipt; poll remote-session:read for the reply.",
+      "Send a follow-up prompt to an existing remote session on your OpenWork Web instance, or on your desktop for a session created with target \"desktop\". Returns an acceptance receipt; poll remote-session:read for the reply (for a desktop session, read with its commandId until session.status settles again). A desktop that has not answered within about 20 seconds returns state \"pending\" with a requestId to collect through remote-session:read.",
     searchExtraTokens:
       "remote session sessions chat thread cloud web instance send prompt message turn continue follow up reply ask tell",
     argumentsSchema: {
       type: "object",
       properties: {
-        sessionId: { type: "string", description: "Session id returned by remote-session:create." },
+        sessionId: { type: "string", description: "Session id from remote-session:create, from remote-session:read with a desktop commandId, or from remote-session:list." },
+        workspaceId: { type: "string", description: "Desktop sessions: the session's workspaceId, when one session id could exist in several workspaces." },
         messageId: { type: "string", description: "Optional stable msg_ id for idempotent retries." },
         prompt: { type: "string" },
         model: MODEL_ARGUMENT_SCHEMA,
@@ -159,18 +193,37 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "read",
     summary:
-      "Read a remote session's recent transcript and status from your OpenWork Web instance, or the status of a desktop command. For a desktop command, poll with commandId until state is failed or expired, or session.status is idle (session.finalText holds the answer) or error (session.lastError). When session.status is waiting, tell the person the desktop needs them to answer a session.waitingFor (permission or question) prompt in OpenWork.",
+      "Read a remote session's recent transcript and status from your OpenWork Web instance, or the status of a desktop command. For a desktop command, poll with commandId until state is failed or expired, or session.status is idle (session.finalText holds the answer) or error (session.lastError). When session.status is waiting, tell the person the desktop needs them to answer a session.waitingFor (permission or question) prompt in OpenWork. With the sessionId of a desktop session, returns a transcript page (full message text, tool calls, status) read from the desktop; page with from and cursor/nextCursor. If the desktop has not answered within about 20 seconds the result is state \"pending\" with a requestId: call remote-session:read with that requestId later to collect it.",
     searchExtraTokens:
       "remote session sessions chat thread cloud web instance read transcript status reply answer poll result output check progress desktop command",
     argumentsSchema: {
       type: "object",
       properties: {
-        sessionId: { type: "string", description: "Session id returned by remote-session:create." },
+        sessionId: { type: "string", description: "Session id from remote-session:create, from remote-session:read with a desktop commandId, or from remote-session:list." },
+        workspaceId: { type: "string", description: "Desktop sessions: the session's workspaceId, when one session id could exist in several workspaces." },
         commandId: { type: "string", description: "Desktop command id returned by remote-session:create. The result includes a session block (status, waitingFor, engine, model, finalText, lastError, messageCount, observedAt) once the desktop reports progress; null until then or for older desktops." },
-        messageId: { type: "string", description: "Only return this user turn and its assistant replies." },
-        limit: { type: "number", description: "Maximum number of recent messages to return. Defaults to 20, max 100." },
+        requestId: { type: "string", description: "Request id from a pending desktop read, send, or stop result. Returns that result once the desktop answers." },
+        messageId: { type: "string", description: "Cloud sessions only: only return this user turn and its assistant replies." },
+        from: { type: "string", enum: ["start", "end"], description: "Desktop sessions: page forward from the first message or backward from the latest. Defaults to \"end\"." },
+        cursor: { type: "string", description: "Desktop sessions: nextCursor from the previous page, with the same from." },
+        limit: { type: "number", description: "Maximum number of messages to return. Defaults to 20, max 100. Desktop pages may hold fewer to stay within 256 KB." },
       },
-      oneOf: [{ required: ["sessionId"] }, { required: ["commandId"] }],
+      oneOf: [{ required: ["sessionId"] }, { required: ["commandId"] }, { required: ["requestId"] }],
+    },
+  },
+  {
+    action: "list",
+    summary:
+      "List the sessions you started on your desktop with remote-session:create target \"desktop\", newest first, with title, sessionId, workspaceId, status, and updatedAt. Use a sessionId with remote-session:read, send, or stop.",
+    searchExtraTokens: "remote session sessions list desktop recent my find which history",
+    argumentsSchema: {
+      type: "object",
+      properties: {
+        target: { type: "string", enum: ["desktop"] },
+        workspaceId: { type: "string", description: "Only sessions in this desktop workspace." },
+        limit: { type: "number", description: "Defaults to 20, max 50." },
+      },
+      required: ["target"],
     },
   },
 ]
@@ -240,6 +293,15 @@ export type RemoteSessionExecuteDeps = {
     organizationId: DenTypeId<"organization">
     userId: string
   }) => Promise<{ connected: boolean; ownerMemberId: string | null }>
+  requestStore: RemoteSessionRequestStore
+  /** Whether the runner that owns a desktop session is connected and can answer requests. */
+  desktopRunner: (scope: {
+    organizationId: string
+    ownerMemberId: string
+    runnerId: string
+  }) => Promise<{ connected: boolean; controlCapable: boolean }>
+  /** How long a desktop request is awaited before returning its requestId. */
+  requestWait?: { timeoutMs: number; pollMs: number }
 }
 
 export type RemoteSessionToolResult = {
@@ -434,13 +496,30 @@ async function defaultDesktopPresence(scope: {
   return { connected: desktopRunnerConnected({ lastSeenAt, now: Date.now() }), ownerMemberId }
 }
 
+async function defaultDesktopRunner(scope: {
+  organizationId: string
+  ownerMemberId: string
+  runnerId: string
+}): Promise<{ connected: boolean; controlCapable: boolean }> {
+  const runner = await automationRepository.desktopRunnerById(scope)
+  if (!runner) return { connected: false, controlCapable: false }
+  return {
+    connected: desktopRunnerConnected({ lastSeenAt: runner.lastSeenAt, now: Date.now() }),
+    controlCapable: runner.capabilities.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY),
+  }
+}
+
 export const DEFAULT_REMOTE_SESSION_DEPS: RemoteSessionExecuteDeps = {
   getOpenWorkWebAccess: getOpenWorkWebRuntimeAccess,
   resolveRuntime: defaultResolveRuntime,
   createClient: defaultCreateClient,
   commandStore: databaseRemoteSessionCommandStore,
   desktopPresence: defaultDesktopPresence,
+  requestStore: databaseRemoteSessionRequestStore,
+  desktopRunner: defaultDesktopRunner,
 }
+
+const DESKTOP_REQUEST_WAIT = { timeoutMs: 20_000, pollMs: 500 }
 
 function jsonResult(payload: Record<string, unknown>, isError = false): RemoteSessionToolResult {
   return {
@@ -498,6 +577,172 @@ function modelInput(model: z.infer<typeof modelSchema> | undefined): HeadlessThr
   }
 }
 
+function desktopRequestResult(request: RemoteSessionRequest): RemoteSessionToolResult {
+  const identity = {
+    target: "desktop",
+    requestId: request.id,
+    sessionId: request.sessionId,
+    workspaceId: request.workspaceId,
+  }
+  if (request.status === "pending" || request.status === "claimed") {
+    return jsonResult({
+      ...identity,
+      action: request.action,
+      state: "pending",
+      note: "The desktop has not answered yet. Call remote-session:read with this requestId to collect the result.",
+    })
+  }
+  if (request.status === "expired") {
+    return errorResult({
+      ...identity,
+      action: request.action,
+      error: "desktop_request_expired",
+      message: "The desktop did not answer in time. Make sure OpenWork is open on that computer, then try again.",
+      retryable: true,
+    })
+  }
+  if (request.status === "failed" || !request.outcome) {
+    const error = request.error ?? { code: "desktop_request_failed", message: "The desktop could not complete the request." }
+    return errorResult({
+      ...identity,
+      action: request.action,
+      error: error.code,
+      message: error.message,
+      retryable: error.code !== "unknown_session" && error.code !== "invalid_cursor",
+    })
+  }
+  const outcome = request.outcome
+  if (outcome.action === "read") {
+    return jsonResult({ ...identity, state: "done", ...outcome.result })
+  }
+  if (outcome.action === "send") {
+    return jsonResult({
+      ...identity,
+      commandId: request.commandId,
+      state: "accepted",
+      messageId: outcome.result.messageId,
+      alreadyPresent: outcome.result.alreadyPresent,
+      note: "The prompt was accepted on the desktop. Poll remote-session:read with commandId until session.status settles, or with sessionId for the transcript.",
+    })
+  }
+  return jsonResult({ ...identity, stopped: outcome.result.stopped, reason: outcome.result.reason })
+}
+
+function bodySessionLocation(body: unknown): { sessionId: string; workspaceId?: string } | null {
+  if (!isRecord(body) || typeof body.sessionId !== "string" || !body.sessionId) return null
+  return {
+    sessionId: body.sessionId,
+    ...(typeof body.workspaceId === "string" && body.workspaceId ? { workspaceId: body.workspaceId } : {}),
+  }
+}
+
+/**
+ * A session created through a desktop command belongs to the runner that
+ * delivered it. Anything else keeps the Cloud path unchanged.
+ */
+async function findDesktopSession(
+  input: RemoteSessionExecuteInput,
+  body: unknown,
+  deps: RemoteSessionExecuteDeps,
+): Promise<RemoteSessionDesktopSession | null> {
+  if (!env.automations.runtimeEnabled) return null
+  const location = bodySessionLocation(body)
+  if (!location) return null
+  return deps.commandStore.findDesktopSession({
+    organizationId: input.organizationId,
+    createdByUserId: input.userId,
+    ...location,
+  })
+}
+
+function desktopRequestInput(action: "read" | "send" | "stop", body: unknown): RemoteSessionRequestInput {
+  if (action === "read") {
+    const read = readBodySchema.parse(body)
+    return {
+      action: "read",
+      input: { from: read.from ?? "end", cursor: read.cursor ?? null, limit: read.limit ?? READ_DEFAULT_MESSAGE_LIMIT },
+    }
+  }
+  if (action === "send") {
+    const send = sendBodySchema.parse(body)
+    return {
+      action: "send",
+      input: {
+        prompt: send.prompt,
+        messageId: send.messageId ?? null,
+        model: send.model
+          ? { providerId: send.model.providerId, modelId: send.model.modelId, variant: send.model.variant ?? null }
+          : null,
+      },
+    }
+  }
+  const stop = stopBodySchema.parse(body)
+  return { action: "stop", input: { messageId: stop.messageId ?? null } }
+}
+
+async function executeDesktopSessionAction(
+  input: RemoteSessionExecuteInput,
+  body: unknown,
+  session: RemoteSessionDesktopSession,
+  deps: RemoteSessionExecuteDeps,
+): Promise<RemoteSessionToolResult> {
+  if (input.action !== "read" && input.action !== "send" && input.action !== "stop") {
+    throw new Error("remote_session_desktop_action_invariant")
+  }
+  const runner = await deps.desktopRunner({
+    organizationId: input.organizationId,
+    ownerMemberId: session.ownerMemberId,
+    runnerId: session.runnerId,
+  })
+  if (!runner.controlCapable) {
+    return errorResult({
+      target: "desktop",
+      sessionId: session.sessionId,
+      error: "desktop_update_required",
+      message: "The desktop that runs this session needs an OpenWork update before it can be read, followed up, or stopped remotely. remote-session:read with its commandId still reports status and the final answer.",
+      commandId: session.commandId,
+      retryable: false,
+    })
+  }
+  if (!runner.connected) {
+    return errorResult({
+      target: "desktop",
+      sessionId: session.sessionId,
+      error: "desktop_offline",
+      message: "The desktop that runs this session is not connected. Open OpenWork on that computer and try again.",
+      retryable: true,
+    })
+  }
+  const request = await deps.requestStore.enqueue({
+    ...desktopRequestInput(input.action, body),
+    organizationId: input.organizationId,
+    ownerMemberId: session.ownerMemberId,
+    createdByUserId: input.userId,
+    commandId: session.commandId,
+    targetRunnerId: session.runnerId,
+    workspaceId: session.workspaceId,
+    sessionId: session.sessionId,
+    engine: session.engine,
+    ttlMs: REMOTE_SESSION_REQUEST_TTL_MS,
+  })
+  const wait = deps.requestWait ?? DESKTOP_REQUEST_WAIT
+  const deadline = Date.now() + wait.timeoutMs
+  let current = request
+  while (current.status === "pending" || current.status === "claimed") {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) break
+    await sleep(Math.min(wait.pollMs, remaining))
+    const next = await deps.requestStore.get({
+      requestId: request.id,
+      organizationId: input.organizationId,
+      createdByUserId: input.userId,
+    })
+    if (!next) break
+    current = next
+  }
+  return desktopRequestResult(current)
+}
+
 export type RemoteSessionExecuteInput = {
   action: RemoteSessionAction
   organizationId: DenTypeId<"organization">
@@ -531,8 +776,39 @@ export async function executeRemoteSessionCapability(
     })
   }
 
+  if (input.action === "list") {
+    const body = listBodySchema.parse(parsedBody.data)
+    const sessions = await deps.commandStore.listDesktopSessions({
+      organizationId: input.organizationId,
+      createdByUserId: input.userId,
+      ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
+      limit: body.limit ?? LIST_DEFAULT_LIMIT,
+    })
+    return jsonResult({
+      target: "desktop",
+      sessions: sessions.map((session) => ({
+        sessionId: session.sessionId,
+        workspaceId: session.workspaceId,
+        commandId: session.commandId,
+        title: session.title,
+        // Null until the desktop first reports progress (older desktops never do).
+        status: session.status,
+        updatedAt: session.updatedAt,
+      })),
+    })
+  }
+
   if (input.action === "read") {
     const body = readBodySchema.parse(parsedBody.data)
+    if (body.requestId) {
+      const request = await deps.requestStore.get({
+        requestId: body.requestId,
+        organizationId: input.organizationId,
+        createdByUserId: input.userId,
+      })
+      if (!request) return errorResult({ error: "unknown_request", retryable: false })
+      return desktopRequestResult(request)
+    }
     if (body.commandId) {
       const command = await deps.commandStore.get({
         commandId: body.commandId,
@@ -565,6 +841,11 @@ export async function executeRemoteSessionCapability(
       message: OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
       retryable: false,
     })
+  }
+
+  if (input.action === "read" || input.action === "send" || input.action === "stop") {
+    const desktopSession = await findDesktopSession(input, parsedBody.data, deps)
+    if (desktopSession) return executeDesktopSessionAction(input, parsedBody.data, desktopSession, deps)
   }
 
   if (input.action === "create") {
@@ -675,6 +956,7 @@ export async function executeRemoteSessionCapability(
     }
   }
 
+  if (input.action !== "read") throw new Error("remote_session_action_invariant")
   const body = readBodySchema.parse(parsedBody.data)
   if (!body.sessionId) throw new Error("remote_session_read_body_invariant")
   try {
