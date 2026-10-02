@@ -600,3 +600,69 @@ test("the runner-path prompt says Slack files and images can be opened", () => {
   expect(headless).toContain("F1")
   expect(buildSlackPrompt(input)).not.toContain("Open them before saying you can't read them")
 })
+
+describe("quiet by default: Slack's working status, then the answer", () => {
+  const base = { messageId: "msg_1", saveSession: async () => {}, title: "t", webHandoff: false, quietAfterMs: LONG_TASK_QUIET_AFTER_MS }
+  const quiet = { phase: "read", channel: "C1", threadTs: "1.0", sessionId: "hs_1", recipientUserId: "U1", startedAt: 0, live: false }
+  function recorder() {
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = []
+    const slack = async (method: string, body: Record<string, unknown>) => {
+      calls.push({ method, body })
+      return { ok: true, ts: "9.0" }
+    }
+    return { calls, slack }
+  }
+  const working: RemoteCall = async () => ({
+    status: "busy",
+    messageCount: 3,
+    finalAssistantText: "No new files in the thread; let me retry the PDF itself.",
+    messages: [{ role: "assistant", toolCalls: [{ id: "c1", name: "Reading checks", status: "running" }] }],
+  })
+
+  test("while it works, nothing is posted: no notes, no steps, no 'still working', not even past four minutes", async () => {
+    const { calls, slack } = recorder()
+    let checkpoint = checkpointSchema.parse(quiet)
+    for (const at of [5_000, 25_000, LONG_TASK_QUIET_AFTER_MS + 1, 2 * 3_600_000]) {
+      const result = await advanceSlackRun({ ...base, checkpoint, remote: working, slack, now: () => at })
+      checkpoint = result.checkpoint
+      expect(result.delayMs).toBe(3_000)
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  test("the answer arrives as one reply without the notes before it, and no extra mention", async () => {
+    const { calls, slack } = recorder()
+    const remote: RemoteCall = async () => ({
+      status: "idle",
+      messageCount: 4,
+      finalAssistantText: "No new files in the thread; let me retry the PDF itself.\n\nThe PDF walks through personal Jira access in six steps.",
+      lastAssistantText: "The PDF walks through personal Jira access in six steps.",
+      messages: [],
+    })
+    const answered = await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse(quiet), remote, slack, now: () => 5 * 60_000 })
+    const finished = await advanceSlackRun({ ...base, checkpoint: answered.checkpoint, remote, slack, now: () => 5 * 60_000 })
+    expect(finished.done).toBe(true)
+    expect(calls.map((call) => call.method)).toEqual(["chat.startStream", "chat.stopStream"])
+    expect(calls[0].body.chunks).toEqual([{ type: "markdown_text", text: "The PDF walks through personal Jira access in six steps." }])
+    expect(JSON.stringify(calls)).not.toContain("let me retry")
+    expect(JSON.stringify(calls[1].body.blocks)).toContain("feedback_buttons")
+  })
+
+  test("a task that cannot finish says so in one reply", async () => {
+    const { calls, slack } = recorder()
+    const remote: RemoteCall = async () => ({ status: "idle", messageCount: 2, finalAssistantText: "", terminalError: { code: "model_http_500" }, messages: [] })
+    const stopped = await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse(quiet), remote, slack, now: () => 30_000 })
+    await advanceSlackRun({ ...base, checkpoint: stopped.checkpoint, remote, slack, now: () => 30_000 })
+    expect(calls.map((call) => call.method)).toEqual(["chat.startStream", "chat.stopStream"])
+    expect(calls[0].body.chunks).toEqual([{ type: "markdown_text", text: "This task couldn't finish. Try again, or ask in a different way." }])
+    expect(calls[1].body).toMatchObject({ session_status: "suspended" })
+  })
+
+  test("with progress turned on, the same task streams its notes and steps as before", async () => {
+    const { calls, slack } = recorder()
+    await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse({ ...quiet, live: true }), remote: working, slack, now: () => 5_000 })
+    expect(calls.map((call) => call.method)).toContain("chat.startStream")
+    expect(JSON.stringify(calls)).toContain("let me retry the PDF")
+  })
+})
+

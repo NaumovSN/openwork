@@ -53,7 +53,11 @@ platform capability are rechecked while processing each turn.
   Messages the member sent while it ran are kept and start next. A message sent
   while an earlier task runs in the thread gets one reply saying it will be done
   right after, and waiting messages run in the order they were sent.
-- Headless tasks stream live progress for four minutes, then post one line
+- Replies are quiet by default: Slack's working status (with its Stop button)
+  shows while a task runs, then the answer arrives as one reply, without the
+  notes the agent wrote on the way. Admins can turn on "Show progress while
+  working" (`progressUpdates`), which applies to tasks started afterwards: steps
+  and notes stream live, and headless tasks then post one line after four minutes
   saying they will report back, an hourly "Still working on it" line, and the
   final answer alone as a new reply that mentions the member.
   Pending runtime permissions/questions suspend the stream and link to Web; no

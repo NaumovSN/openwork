@@ -19,6 +19,8 @@ export const SlackAssistantInstallationTable = mysqlTable(
     dailyLimit: int("daily_limit").notNull().default(100),
     /** Gateway model alias the headless runner uses for this workspace; null means the runner default. */
     model: varchar("model", { length: 255 }),
+    /** Show steps and notes in Slack while a task works; off shows only Slack's working status, then the answer. */
+    progressUpdates: boolean("progress_updates").notNull().default(false),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("slack_assistant_team").on(t.teamId)],

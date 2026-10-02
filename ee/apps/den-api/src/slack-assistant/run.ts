@@ -28,6 +28,8 @@ export const checkpointSchema = z.object({
   lastCheckInAt: z.number().optional(),
   /** A message sent while an earlier task ran was acknowledged once. */
   queuedNoticeShown: z.boolean().default(false),
+  /** Streams live progress. Off: Slack's working status shows until the answer. Set per task when it starts. */
+  live: z.boolean().default(true),
 })
 type Checkpoint = z.infer<typeof checkpointSchema>
 const readSchema = z.object({
@@ -74,6 +76,8 @@ export const LONG_TASK_LINE =
 export const CHECK_IN_EVERY_MS = 60 * 60_000
 /** A quiet task is read less often; nothing is shown until the next check-in or the answer. */
 const QUIET_POLL_MS = 5_000
+/** A task without live progress is read every 3 seconds: nothing is shown until its answer. */
+const NOT_LIVE_POLL_MS = 3_000
 /** The reply to a message sent while an earlier task is still running in the thread. */
 export const QUEUED_LINE = "Got it. I'll do this right after the current task. Press Stop to end that task and start this now."
 
@@ -81,6 +85,13 @@ export function formatElapsed(ms: number) {
   const minutes = Math.max(0, Math.floor(ms / 60_000))
   const hours = Math.floor(minutes / 60)
   return hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`
+}
+
+/** What the thread is told when a task ends without an answer. */
+function failureText(webHandoff: boolean, sessionId: string | undefined, terminalError: unknown) {
+  return webHandoff
+    ? `This task needs attention. [Open in OpenWork Web](${webLink(sessionId ?? "")}).`
+    : headlessFailureText(terminalError)
 }
 
 /** What the thread is told when a headless task ends without an answer. */
@@ -304,6 +315,23 @@ export async function advanceSlackRun(input: {
       await input.persist?.(cp)
     }
     const finished = snapshot.status === "idle" && Boolean(snapshot.finalAssistantText)
+    if (!cp.live) {
+      // Quiet: Slack's working status (with its Stop button) shows until the answer, which arrives on its own.
+      if (snapshot.terminalError) {
+        await appendText(input.slack, cp, failureText(webHandoff, cp.sessionId, snapshot.terminalError), now)
+        cp.finalStatus = "suspended"
+        cp.phase = "finish"
+      } else if (finished) {
+        // Only the answer, not the notes the agent wrote on the way.
+        await appendText(input.slack, cp, snapshot.lastAssistantText || snapshot.finalAssistantText, now, async (part) => {
+          cp.sentText += part
+          cp.firstTextAt ??= now()
+          await input.persist?.(cp)
+        })
+        cp.phase = "finish"
+      }
+      return { checkpoint: cp, delayMs: cp.phase === "finish" ? 0 : NOT_LIVE_POLL_MS }
+    }
     if (cp.quiet) {
       if (snapshot.terminalError) {
         await appendText(input.slack, cp, headlessFailureText(snapshot.terminalError), now)
@@ -394,9 +422,7 @@ export async function advanceSlackRun(input: {
       await appendText(
         input.slack,
         cp,
-        webHandoff
-          ? `\n\nThis task needs attention. [Open in OpenWork Web](${webLink(cp.sessionId ?? "")}).`
-          : `\n\n${headlessFailureText(snapshot.terminalError)}`,
+        `\n\n${failureText(webHandoff, cp.sessionId, snapshot.terminalError)}`,
         now,
       )
       cp.finalStatus = "suspended"
@@ -423,7 +449,8 @@ export async function advanceSlackRun(input: {
       },
     ],
   })
-  if (cp.startedAt !== undefined && cp.completedAt - cp.startedAt > DONE_PING_AFTER_MS && cp.recipientUserId) {
+  // A quiet task's answer is a new reply, which already notifies; only a streamed reply needs the extra mention.
+  if (cp.live && cp.startedAt !== undefined && cp.completedAt - cp.startedAt > DONE_PING_AFTER_MS && cp.recipientUserId) {
     try {
       await input.slack("chat.postMessage", {
         channel: cp.channel,

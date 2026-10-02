@@ -14042,6 +14042,7 @@ export class DenClient extends HeyApiClient {
       shadowMode?: boolean;
       dailyLimit?: number;
       model?: string | null;
+      progressUpdates?: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -14057,6 +14058,7 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "shadowMode" },
             { in: "body", key: "dailyLimit" },
             { in: "body", key: "model" },
+            { in: "body", key: "progressUpdates" },
           ],
         },
       ],

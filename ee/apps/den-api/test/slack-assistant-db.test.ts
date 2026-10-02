@@ -414,6 +414,32 @@ suite("Slack assistant: real database and signed HTTP journey", () => {
     await drain()
   })
 
+  test("tasks are quiet by default; the admin's progress setting turns on live steps and notes for new tasks", async () => {
+    const liveOf = async (threadTs: string) => {
+      const [row] = await threadEvents(threadTs)
+      const checkpoint: unknown = JSON.parse(row?.checkpoint ?? "{}")
+      return typeof checkpoint === "object" && checkpoint !== null && "live" in checkpoint ? checkpoint.live : undefined
+    }
+    const { deps: holding } = holdingDeps()
+    await ingress("EQUIET1", slackUsers[1], "quiet task", "800.1")
+    const [quiet] = await threadEvents("800.1")
+    if (!quiet) throw new Error("quiet event missing")
+    await processOnly(quiet.id, holding)
+    expect(await liveOf("800.1")).toBe(false)
+
+    await db.update(Installation).set({ progressUpdates: true }).where(eq(Installation.connectionId, connectionId))
+    try {
+      await ingress("ELIVE2", slackUsers[1], "detailed task", "801.1")
+      const [detailed] = await threadEvents("801.1")
+      if (!detailed) throw new Error("detailed event missing")
+      await processOnly(detailed.id, holding)
+      expect(await liveOf("801.1")).toBe(true)
+    } finally {
+      await db.update(Installation).set({ progressUpdates: false }).where(eq(Installation.connectionId, connectionId))
+    }
+    await drain()
+  })
+
   test("a second member cannot bind an already-bound Slack user", async () => {
     const connection = (
       await db.select().from(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, connectionId))

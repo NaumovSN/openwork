@@ -251,6 +251,8 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     if (identity.user_id !== event.slackUserId || identity.team_id !== event.teamId || identity.bot_id)
       throw new Error("slack_actor_mismatch")
     cp.startedAt ??= Date.now()
+    // Quiet by default: Slack's working status, then the answer. Admins can turn on live steps and notes.
+    cp.live = installation.progressUpdates
     cp.recipientUserId = event.slackUserId
     cp.recipientTeamId = event.teamId
     cp.privateReply =
