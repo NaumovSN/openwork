@@ -64,7 +64,7 @@ export function publicModelTitle(model: ModelRef & { title?: string }): string |
 }
 
 export function modelSubtitle(model: ModelOption, exhausted = false) {
-  if (isAutoModel(model)) return exhausted ? "Free limit used up" : "Free · OpenWork picks the model";
+  if (isAutoModel(model)) return exhausted ? "Limit used up" : "OpenWork picks the model";
   // Gateway models assigned to the member that wait on their own provider sign-in.
   if (model.gatewayAuthorization) return [model.description?.trim(), "Sign-in required"].filter(Boolean).join(" · ");
   return [model.description?.trim(), model.organizationPinOrder !== undefined ? "pinned by your org" : null].filter(Boolean).join(" · ");

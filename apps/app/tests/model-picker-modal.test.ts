@@ -67,7 +67,7 @@ for (const surface of ["compact", "full"]) {
         await openAdvanced();
         const effort = document.querySelector<HTMLButtonElement>('[data-testid="model-effort"]');
         await act(async () => effort?.click());
-        expect(document.activeElement?.textContent).toBe("Back to models");
+        expect(document.activeElement?.getAttribute("aria-label")).toBe("Back to models");
         await act(async () => document.querySelector<HTMLButtonElement>('[data-slot="model-thinking-submenu"] button')?.click());
         expect(document.activeElement?.getAttribute("data-testid")).toBe("model-effort");
       } else {
@@ -173,8 +173,8 @@ test("compact picker leaves unadvertised effort unavailable but can clear a stal
   const effortButton = () => document.querySelector<HTMLButtonElement>('[data-testid="model-effort"]');
   try {
     await act(async () => render());
-    expect(document.querySelector('[data-testid="model-effort"]')).toBeNull();
-    await openAdvanced();
+    // Effort sits directly in the picker; there is no Advanced options section to expand first.
+    expect(document.querySelector('[data-testid="model-advanced-options"]')).toBeNull();
     expect(effortButton()?.disabled).toBe(true);
     expect(effortButton()?.textContent).toContain("Unavailable");
     value = "retired";
@@ -247,7 +247,9 @@ for (const surface of ["compact", "full"]) {
     try {
       await act(async () => render());
       if (surface === "compact") expect(document.querySelector('[aria-label="Change model"]')?.textContent).toContain("Synthetic model · High");
-      expect(document.querySelector('[aria-label="Fast mode"]')).toBeNull();
+      // The compact picker shows Fast mode directly under Effort; the full picker keeps it in its collapsed settings.
+      if (surface === "compact") expect(document.querySelector('[aria-label="Fast mode"]')).not.toBeNull();
+      else expect(document.querySelector('[aria-label="Fast mode"]')).toBeNull();
       for (const label of ["Fast", "Low", "Fast", "CustomExact", "Fast", "Default", "Fast"]) {
         await openAdvanced();
         if (label === "Fast") {
@@ -505,7 +507,7 @@ test("Auto remains checked while recovery focuses an alternative pin, and immuta
     expect(document.activeElement?.getAttribute("data-model-key")).toBe("ipr_team:gwm_team");
     expect(document.querySelector('button[aria-label="Unpin: Auto"]')).toBeNull();
     expect(document.querySelector('button[aria-label="Unpin: Team model"]')).toBeNull();
-    expect(host.textContent).toContain("Free · OpenWork picks the model");
+    expect(host.textContent).toContain("OpenWork picks the model");
     expect(host.querySelector("svg.lucide-star")).toBeNull();
     const autoRow = () => host.querySelector<HTMLElement>(`[data-model-key="${AUTO_PROVIDER_ID}:${AUTO_MODEL_ID}"]`);
     const orgRow = host.querySelector<HTMLElement>('[data-model-key="ipr_team:gwm_team"]');
@@ -516,8 +518,8 @@ test("Auto remains checked while recovery focuses an alternative pin, and immuta
     }
     expect(autoRow()?.querySelector('[data-slot="model-provider-mark"] svg.lucide-sparkles')).toBeNull();
     expect(autoRow()?.querySelector('[data-slot="model-provider-mark"] img[alt="OpenWork"]')).not.toBeNull();
-    // Auto's mark already says OpenWork; its source column stays empty so the check column lines up (Paper 03, 05).
-    expect(autoRow()?.querySelector('[data-slot="model-source"] svg')).toBeNull();
+    // Auto carries the same cloud source mark as every hosted row, in the same column (Model selector Pass 4, A2).
+    expect(autoRow()?.querySelector('[data-slot="model-source"] svg[aria-label]')).not.toBeNull();
     expect(orgRow?.querySelector('[data-slot="model-provider-mark"] svg')).not.toBeNull();
     expect(orgRow?.querySelector('[data-slot="model-provider-mark"] svg.lucide-cloud')).toBeNull();
     expect(orgRow?.textContent).toContain("Anthropic · pinned by your org");
@@ -526,13 +528,13 @@ test("Auto remains checked while recovery focuses an alternative pin, and immuta
     const statusKey = autoAccessStatusQueryKey(signedOut);
     expect(queryClient.getQueryState(statusKey)).toBeUndefined();
     await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), state: "exhausted" }));
-    expect(autoRow()?.textContent).toContain("Free limit used up");
+    expect(autoRow()?.textContent).toContain("Limit used up");
     expect(autoRow()?.getAttribute("data-checked")).toBe("true");
     await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), state: "exhausted", providerID: "another-provider" }));
-    expect(autoRow()?.textContent).toContain("Free · OpenWork picks the model");
+    expect(autoRow()?.textContent).toContain("OpenWork picks the model");
     await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), state: "ready", minimumVersion: "1.0.0",
       allowance: { limitUsd: 1, usedUsd: 1, remainingUsd: 0, resetsAt: "2026-09-28T00:00:00Z" } }));
-    expect(autoRow()?.textContent).toContain("Free · OpenWork picks the model");
+    expect(autoRow()?.textContent).toContain("OpenWork picks the model");
     expect(queryClient.getQueryState(statusKey)?.fetchStatus).toBe("idle");
     await act(async () => queryClient.setQueryData(statusKey, { ...unavailableDesktopFreeStatus(), code: "free_disabled" }));
     expect(autoRow()).toBeNull();

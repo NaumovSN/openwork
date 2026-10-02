@@ -45,7 +45,7 @@ describe("model sources and pins", () => {
     expect(modelSource(local)).toBe("local");
     expect(modelSource(option("lpr_team", "same"))).toBe("organization");
     expect(modelTitle(auto)).toBe("Auto");
-    expect(modelSubtitle(auto)).toBe("Free · OpenWork picks the model");
+    expect(modelSubtitle(auto)).toBe("OpenWork picks the model");
   });
   test("preserves ordered authorized alias pins through import parsing and runtime option merging", () => {
     const imports = readWorkspaceCloudImports({ cloudImports: { providers: { team: {

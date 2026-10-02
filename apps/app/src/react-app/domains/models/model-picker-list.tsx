@@ -202,7 +202,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
                   onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onKeyDown={(event) => event.stopPropagation()}
                   onClick={(event) => { event.preventDefault(); event.stopPropagation(); toggle(option); }}>{pinned.has(key) ? "Unpin" : "Pin"}</Button> : null}
                 {shortcutLabels.get(key) ? <kbd data-testid="model-shortcut-key" className="shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground">{shortcutLabels.get(key)}</kbd> : null}
-                <span data-slot="model-source" className="flex size-4 shrink-0 items-center justify-center">{isAutoModel(option) ? null : <ModelSourceIcon model={option} />}</span>
+                <span data-slot="model-source" className="flex size-4 shrink-0 items-center justify-center"><ModelSourceIcon model={option} /></span>
                 <span data-slot="model-selection" className="flex size-4 shrink-0 items-center justify-center">{active ? <Check aria-hidden="true" className="size-4 text-muted-foreground" /> : null}</span>
               </ActionContextMenu>;
             }}</CommandCollection>

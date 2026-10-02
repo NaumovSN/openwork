@@ -19,6 +19,14 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
     expect((await probe.dom(`${picker} [data-model-key="${key(model)}"][data-checked="true"]`)).elements).toHaveLength(1);
   };
   const pins = async () => (await probe.dom(`${picker} [data-slot="command-group"]:first-child [data-model-key] [title]`)).elements.map((element) => element.text);
+  // Every row keeps its source mark and selection check in the same two columns, hovered, pinned, or selected (Pin never pushes them).
+  const columnsHoldStill = async () => {
+    for (const slot of ["model-source", "model-selection"]) {
+      const lefts = (await probe.dom(`${picker} [data-model-key] [data-slot="${slot}"]`)).elements.map((element) => Math.round(element.rect.left));
+      expect(lefts.length).toBeGreaterThan(3);
+      expect(new Set(lefts).size, `${slot} column: ${lefts.join(", ")}`).toBe(1);
+    }
+  };
   const rememberedSelection = async (model: { providerID: string; modelID: string }) => {
     expect(await probe.storage("openwork.sessionModels.v1")).toMatchObject({
       [world.session.sessionId]: { model },
@@ -44,7 +52,8 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
     await user.click({ role: "button", label: "Change model" });
     await user.see({ label: "Search all models" });
     await user.see({ placeholder: searchPlaceholder });
-    await user.see(option(world.auto), { text: /Free · OpenWork picks the model/ });
+    await user.see(option(world.auto), { text: /OpenWork picks the model/ });
+    expect((await probe.dom(`${picker} [data-model-key="${key(world.auto)}"]`)).elements[0]?.text).not.toMatch(/Free/);
     await user.see(option(world.byok));
     await user.see({ role: "button", label: "Connect more providers" });
     await user.notSee({ role: "button", label: "Connect a provider" });
@@ -61,6 +70,7 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
     await user.notSee({ text: "GPT-6 Luna" });
     await noPurchase();
     await user.hover(option(world.organization));
+    await columnsHoldStill();
     await user.screenshot();
   });
 
@@ -131,7 +141,7 @@ test("a signed-in member keeps Auto and BYOK accessible while organizing pins wi
   });
 });
 
-test("a signed-in member recovers from an empty search, finds effort only under Advanced options, and switches models from a pinned row's menu", async ({ world, user, probe, step }) => {
+test("a signed-in member recovers from an empty search, sees Effort managed by Auto, and switches models from a pinned row's menu", async ({ world, user, probe, step }) => {
   const draft = "Keep this draft while exploring the picker.";
   const picker = '[data-testid="composer-model-picker"]';
   const key = (model: { providerID: string; modelID: string }) => `${model.providerID}:${model.modelID}`;
@@ -145,7 +155,7 @@ test("a signed-in member recovers from an empty search, finds effort only under 
   });
   const menuItems = async () => (await probe.dom('[role="menuitem"]')).elements.map((element) => element.text);
 
-  await step("before: Auto is selected, Advanced options is collapsed, and Auto exposes no effort or Fast mode controls", async () => {
+  await step("before: Auto is selected, Effort reads Managed by Auto, and Auto has no Fast mode row", async () => {
     await user.type("composer", draft);
     await user.click({ role: "button", label: "Change model" });
     await user.click(option(world.auto));
@@ -153,17 +163,11 @@ test("a signed-in member recovers from an empty search, finds effort only under 
     await user.see({ role: "button", label: "Change model" }, { text: /^Auto$/ });
     await user.click({ role: "button", label: "Change model" });
     await selected(world.auto);
-    await user.see({ text: "Advanced options" });
-    await user.notSee({ testId: "model-effort" });
+    await user.notSee({ text: "Advanced options" });
+    await user.see({ testId: "model-effort" }, { text: /Effort\s*Managed by Auto/ });
+    expect((await probe.dom(`${picker} [data-testid="model-effort"]:disabled`)).elements).toHaveLength(1);
     await user.notSee({ role: "switch", label: "Fast mode" });
     await user.screenshot();
-    await user.click({ text: "Advanced options" });
-    await user.see({ text: "Auto manages its model settings." });
-    await user.notSee({ testId: "model-effort" });
-    await user.notSee({ role: "switch", label: "Fast mode" });
-    await user.screenshot();
-    await user.click({ text: "Advanced options" });
-    await user.notSee({ text: "Auto manages its model settings." });
   });
 
   await step("after: searching for a model nobody has shows No models match and Clear search restores the list", async () => {
@@ -230,8 +234,7 @@ test("a signed-in member recovers from an empty search, finds effort only under 
     await user.click({ role: "button", label: "Change model" });
     await selected(world.favorite);
     expect(await probe.storage("openwork.sessionModels.v1")).toMatchObject({ [world.session.sessionId]: { model: world.favorite } });
-    await user.notSee({ testId: "model-effort" });
-    await user.click({ text: "Advanced options" });
+    await user.notSee({ text: "Advanced options" });
     await user.see({ testId: "model-effort" }, { text: /Unavailable/ });
     await user.notSee({ role: "switch", label: "Fast mode" });
     expect((await probe.dom(`${picker} button:disabled`)).elements.some((button) => button.text.includes("Effort") && button.text.includes("Unavailable"))).toBe(true);
@@ -264,25 +267,24 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
   expect(JSON.stringify(catalog.body)).not.toMatch(/synthetic-(effort|fast)-key|"settings":|"providerOptions":|"headers":/);
   evidence.recordJsonArtifact("MODEL-01 native catalog", catalog);
   const trigger = { role: "button" as const, label: "Change model" };
+  // Effort and Fast mode sit directly in the picker, as before Advanced options existed (Lane 3, C1).
   const openAdvanced = async () => {
-    await user.see({ text: "Advanced options" });
-    await user.click({ text: "Advanced options" });
+    await user.notSee({ text: "Advanced options" });
     await user.see({ testId: "model-effort" });
   };
-  await step("before: Default leaves the closed trigger showing only the model and Advanced options collapsed", async () => {
+  await step("before: Default leaves the closed trigger showing only the model, and the picker shows Effort directly with no Advanced options", async () => {
     await user.see(trigger, { text: /^Reasoning witness$/ });
     await user.screenshot();
     await user.click(trigger);
-    await user.see({ text: "Advanced options" });
-    await user.notSee({ testId: "model-effort" });
+    await openAdvanced();
+    await user.see({ testId: "model-effort" }, { text: /Effort\s*Default/ });
     await user.notSee({ role: "switch", label: "Fast mode" });
     await user.screenshot();
   });
-  await step("after: expanding Advanced options reveals Effort, and only advertised choices are selectable", async () => {
-    await openAdvanced();
-    await user.see({ testId: "model-effort" }, { text: /Default/ });
-    await user.screenshot();
+  await step("after: Effort opens its own menu titled with the model, and only advertised choices are selectable", async () => {
     await user.click({ testId: "model-effort" });
+    await user.see({ role: "button", label: "Back to models" }, { text: /Effort\s*Reasoning witness/ });
+    await user.screenshot();
     await user.see({ role: "button", label: "Default" });
     await user.see({ role: "button", label: "Low" });
     await user.notSee({ role: "button", label: /^Hidden/ });
@@ -432,17 +434,17 @@ effortTest("MODEL-01 selected reasoning effort survives reload and reaches the n
     expect(explicit.body).toMatchObject({ data: { model: { id: world.modelId, providerID: world.providerId, variant: "auto" } } });
     evidence.recordJsonArtifact("MODEL-01 explicit auto variant after reload", explicit);
   });
-  await step("before: Fast mode stays hidden until Advanced options is expanded for a model that offers it", async () => {
+  await step("before: a model that offers Fast shows a Fast mode row with its shortcut right under Effort", async () => {
     await user.click(trigger);
     await user.type({ placeholder: searchPlaceholder }, "Fast witness");
     await user.click({ role: "option", label: /^Fast witness/ });
     await user.see(trigger, { text: /^Fast witness$/ });
     await user.click(trigger);
-    await user.notSee({ testId: "model-effort" });
-    await user.notSee({ role: "switch", label: "Fast mode" });
-    await user.screenshot();
     await openAdvanced();
     await user.see({ role: "switch", label: "Fast mode" });
+    const rows = (await probe.dom('[data-testid="model-behavior-rows"] > *')).elements.map((row) => row.text);
+    expect(rows[0]).toMatch(/^Effort/);
+    expect(rows[1]).toMatch(/^Fast mode/);
     expect((await probe.dom('[role="switch"][aria-label="Fast mode"][aria-checked="false"]')).elements).toHaveLength(1);
     await user.screenshot();
   });
