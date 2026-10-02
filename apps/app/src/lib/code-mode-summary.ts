@@ -18,9 +18,9 @@ export function codeModeSummary(
     // Name what failed when one call did ("Script on OpenWork Cloud failed").
     const only = failedCalls.length === 1 ? failedCalls[0] : undefined;
     const failure = only ? getCapabilityCallSentence(only, { connectionName: options.serviceName(only), includeQuery: false }).failure : undefined;
-    return failure ?? "Couldn't finish this step";
+    return failure ?? "Script failed";
   }
-  if (calls.length === 0) return options.running ? "Working on this step" : "Worked on this step";
+  if (calls.length === 0) return options.running ? "Running a script" : "Ran a script";
 
   const changes = calls.filter((call) => {
     const name = call.toolName.endsWith("_execute_capability") && typeof call.input === "object" && call.input !== null && "name" in call.input

@@ -81,6 +81,22 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
   // person asked for: show nothing rather than "Checked which tools…".
   if (allCalls.length > 0 && calls.length === 0 && !isToolPartInFlight(part) && part.state !== "output-error") return null;
 
+  // A script with no tool calls did no work a person can see: hide it once
+  // it succeeds; while running or after failing it is one quiet row.
+  if (calls.length === 0 && !waiting) {
+    if (!inFlight && !failed) return null;
+    return (
+      <div data-code-mode-call={part.toolCallId} className="group/step min-w-0">
+        <div className="flex min-h-6 min-w-0 items-center gap-2 text-sm text-muted-foreground">
+          <span className={cn("min-w-0 truncate", running && "ow-text-shimmer")}>{label}</span>
+          {duration ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span> : null}
+          <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={label} alwaysVisible={failed} />
+        </div>
+        {detailsOpen ? <TechnicalDetailsPanel part={part} /> : null}
+      </div>
+    );
+  }
+
   // One call is one step: no nested rail, no "1 step", no repeated sentence.
   // The row's details icon opens the script (its source and its error).
   const only = calls.length === 1 && !waiting && !statusUnknown ? calls[0] : undefined;

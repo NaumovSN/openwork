@@ -129,6 +129,8 @@ function sessionErrorKind(
     return "provider-timeout";
   }
   if (/upstream_(?:incomplete|interrupted|malformed_stream|malformed_response|timeout)|connection reset by server/i.test(searchable)) return "provider-incomplete";
+  // v2 reports a provider reply it could not parse as "Decode error (200 POST <url>)".
+  if (/^Decode error \(\d{3} [A-Z]+ /i.test(message ?? "")) return "provider-incomplete";
   if (responseBody?.includes("FreeUsageLimitError") || message?.includes("FreeUsageLimitError")) {
     return "free-model-limit";
   }

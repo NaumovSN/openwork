@@ -95,12 +95,9 @@ export function TechnicalDetailsPanel({ part }: { part: DynamicToolUIPart }) {
       {part.state === "output-error" && part.errorText ? (
         <p className="whitespace-pre-wrap wrap-break-word text-foreground">{part.errorText}</p>
       ) : null}
-      <div className="font-mono text-[11px] text-muted-foreground">
-        {part.toolName} · {part.toolCallId}
-      </div>
       {script ? (
         <pre className="max-h-60 overflow-auto whitespace-pre font-mono leading-5">{script.code}</pre>
-      ) : part.input !== undefined && part.input !== null ? (
+      ) : part.input !== undefined && part.input !== null && !(typeof part.input === "object" && Object.keys(part.input).length === 0) ? (
         <pre className="max-h-40 overflow-auto whitespace-pre-wrap wrap-break-word">
           {formatTechnicalValue(part.input)}
         </pre>
