@@ -376,58 +376,37 @@ test(`${engine}: Run task on the sessionless New task route creates the session 
   });
   const sessionsBefore = await readSessions();
 
-  for (const newerDraft of ["", "Keep this newer continuation intact."]) {
-    await step(newerDraft ? "creation failure preserves a newer draft and guards restoration of the unsent prompt" : "creation failure restores the unsent prompt without creating a session", async () => {
-      await user.type("composer", prompt);
-      await using rejected = await world.transition(evidence.dir);
-      evidence.recordJsonArtifact("Creation failure recording", { engine, newerDraft: Boolean(newerDraft), path: rejected.filmPath });
-      await user.press("Enter");
-      await probe.eventually(() => rejected.read(), {
-        within: 10_000, label: "creation held before rejection", until: (state) => state.held === 1,
-      });
-      if (newerDraft) await user.type("composer", newerDraft);
-      await rejected.fail();
-      const recovered = await probe.eventually(async () => ({ composer: await probe.composer(), recovery: await world.recovery() }), {
-        within: 15_000, label: "failed creation preserves editable content and exposes its error",
-        until: (state) => state.composer.composerEditable && state.composer.draftText === (newerDraft || prompt)
-          && !state.recovery.starting && state.recovery.error.length > 0,
-      });
-      evidence.recordJsonArtifact("Creation failure restoration", recovered);
-      expect(await world.route()).toBe(world.sessionlessRoute);
-      expect(recovered.composer.userMessageCount).toBe(0);
-      expect(recovered.recovery.restoreVisible).toBe(Boolean(newerDraft));
-      expect(recovered.recovery.restoreDisabled).toBe(Boolean(newerDraft));
-      expect(rejected.read()).toMatchObject({ creation: 1, prompt: 0, expired: false });
-      expect(await readSessions()).toEqual(sessionsBefore);
-      expect(await world.requests()).toHaveLength(0);
-      await user.looks(newerDraft ? [
-        `The New task hero shows the creation error "Session creation rejected by OPE-51 fixture." and the composer contains "${newerDraft}".`,
-        "The action 'Clear the current draft to restore the unsent message' is visible below the error; there is no submitted user-message bubble or Starting indicator.",
-      ] : [
-        "The New task hero shows the creation error 'Session creation rejected by OPE-51 fixture.' and the original prompt beginning 'Summarize this workspace in one sentence.' is restored inside the composer.",
-        "There is no submitted user-message bubble, Starting indicator, or 'Clear the current draft to restore the unsent message' action.",
-      ]);
-      await user.click({ placeholder: "Describe your task..." });
-      await user.press(world.app.handle.hostKind !== "daytona" && process.platform === "darwin" ? "Meta+A" : "Control+A");
-      await user.press("Backspace");
-      if (newerDraft) {
-        await user.click({ role: "button", label: "Clear the current draft to restore the unsent message" });
-        await user.see("composer", { text: prompt, editable: true });
-        expect((await world.recovery()).restoreVisible).toBe(false);
-        await user.looks([
-          "The original prompt beginning 'Summarize this workspace in one sentence.' is visible inside the New task composer, with the creation error still visible above it.",
-          "The newer text 'Keep this newer continuation intact.' and the 'Clear the current draft to restore the unsent message' action are absent; there is no submitted user-message bubble or Starting indicator.",
-        ]);
-        await user.click({ placeholder: "Describe your task..." });
-        await user.press(world.app.handle.hostKind !== "daytona" && process.platform === "darwin" ? "Meta+A" : "Control+A");
-        await user.press("Backspace");
-      }
-      expect((await probe.composer()).draftText).toBe("");
-      evidence.recordAssertionEvidence("Rejected creation retains recoverable content without admitting a session or prompt",
-        newerDraft ? "Newer draft remains editable; restoration stays disabled until it is cleared, then restores the original prompt exactly." : "Original prompt is restored automatically; no session or provider request is created.", true);
+  // Since #5167 a first send renders in the conversation at once; a creation failure stays inline
+  // with Retry (DESIGN P11) instead of moving the prompt back into the composer.
+  await step("creation failure keeps the sent message in the conversation with Retry and creates no session", async () => {
+    await user.type("composer", prompt);
+    await using rejected = await world.transition(evidence.dir);
+    evidence.recordJsonArtifact("Creation failure recording", { engine, path: rejected.filmPath });
+    await user.press("Enter");
+    await probe.eventually(() => rejected.read(), {
+      within: 10_000, label: "creation held before rejection", until: (state) => state.held === 1,
     });
-  }
+    await rejected.fail();
+    const failed = await probe.eventually(async () => ({ composer: await probe.composer(), recovery: await world.recovery() }), {
+      within: 15_000, label: "failed creation keeps the sent message and exposes its error",
+      until: (state) => state.composer.userMessageCount === 1 && !state.recovery.starting && state.recovery.error.length > 0,
+    });
+    evidence.recordJsonArtifact("Creation failure state", failed);
+    expect(failed.recovery.error).toContain("Couldn’t send your message");
+    await user.see({ text: prompt });
+    await user.see({ role: "button", label: "Retry sending" });
+    expect(rejected.read()).toMatchObject({ creation: 1, prompt: 0, expired: false });
+    expect(await readSessions()).toEqual(sessionsBefore);
+    expect(await world.requests()).toHaveLength(0);
+    await user.looks([
+      "The conversation shows the sent prompt beginning 'Summarize this workspace in one sentence.' as a user message, with 'Couldn’t send your message' and a 'Retry sending' action below it.",
+      "There is no Starting indicator and no assistant reply.",
+    ]);
+    evidence.recordAssertionEvidence("Rejected creation keeps the sent message recoverable without admitting a session or prompt",
+      "The sent message stays in the conversation with Retry; no session or provider request is created.", true);
+  });
 
+  await world.openNewTask();
   await user.reload();
   await user.see("composer", { text: "", editable: true });
   expect((await world.recovery()).error).toBe("");
