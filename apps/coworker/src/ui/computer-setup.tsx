@@ -14,7 +14,7 @@ export function ComputerSetup({ snapshot, readError, actionError, refreshing, bu
   readError: string;
   actionError: string;
   refreshing: boolean;
-  busy: "allow" | "stop" | "target" | ComputerPermission | null;
+  busy: "allow" | "always" | "stop" | "target" | ComputerPermission | null;
   canAllow: boolean;
   canStop: boolean;
   onPermission: (permission: ComputerPermission) => void;

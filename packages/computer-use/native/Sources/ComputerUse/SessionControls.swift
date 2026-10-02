@@ -104,6 +104,7 @@ final class SessionControls: NSObject {
         ]], frame: true)
     }
     func inputFeedback(_ feedback: InputFeedback) {
+        AgentCursor.shared.feedback(action: feedback.action, phase: feedback.phase, screenPoint: feedback.screenPoint, windowFrame: feedback.frame)
         guard Self.embeddedCoworker, Self.active === self,
               ["working", "paused"].contains(hostState["phase"] as? String ?? "") else { return }
         inputSequence += 1
@@ -464,6 +465,7 @@ final class SessionControls: NSObject {
 
     func show(app: AppIdentity, target: WindowTarget, mode: AccessMode, purpose: String) {
         isPaused = false; canContinue = true
+        AgentCursor.shared.begin(windowFrame: target.frame)
         if Self.embeddedCoworker {
             showCoworkerMenu()
             publish(["phase": "working", "appName": app.name, "appID": app.bundleID, "pid": Int(app.pid),
@@ -558,6 +560,7 @@ final class SessionControls: NSObject {
     func update(_ message: String, paused: Bool, canContinue: Bool = true, recoverable: Bool = false) {
         publish(["phase": paused ? "paused" : "working", "status": message, "canContinue": canContinue, "recoverable": recoverable])
         self.canContinue = canContinue
+        AgentCursor.shared.setPaused(paused)
         if paused { previewNeedsRefresh = true }
         isPaused = paused; status?.stringValue = message; toggle?.title = paused ? "Continue" : "Take over"
         toggle?.isEnabled = !paused || canContinue
@@ -583,6 +586,7 @@ final class SessionControls: NSObject {
     }
     func close() {
         cancelConsent()
+        AgentCursor.shared.end()
         if !Self.embeddedCoworker || (Self.active === self && hostState["phase"] as? String != "closed") {
             publish(["phase": "closed", "status": "Access ended.", "canContinue": false])
         }

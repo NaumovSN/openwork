@@ -386,9 +386,13 @@ struct InputFeedback {
     let phase: Phase
     let point: CGPoint?
     let at: Int64
+    /// Global Quartz coordinates for the on-desktop agent cursor; never published to hosts.
+    let screenPoint: CGPoint?
+    let frame: CGRect
 
     init(action: String, phase: Phase, screenPoint: CGPoint? = nil, frame: CGRect) {
         self.action = action; self.phase = phase
+        self.screenPoint = screenPoint; self.frame = frame
         at = Int64(Date().timeIntervalSince1970 * 1000)
         if let screenPoint, Geometry.valid(frame) {
             let x = (screenPoint.x - frame.minX) / frame.width

@@ -56,6 +56,7 @@ function fixture(overrides = {}) {
     connect: async (channel) => { connects++; channels.push(channel); if (overrides.connect) await overrides.connect(); return transport; } };
   const broker = createComputerControl({ adapters: [adapter, ...(overrides.adapters ?? [])], cleanupMs: overrides.cleanupMs ?? 20, operationMs: overrides.operationMs ?? 1000, pollMs: 2,
     onRevoke: overrides.onRevoke,
+    standing: overrides.standing,
     now: overrides.now,
     discussionFor: async (slug, threadId, options) => {
       discussionReads++;
@@ -754,6 +755,36 @@ test("opt-in and revisions isolate conversations and coworkers; remote never fal
     await assert.rejects(f.execute("observe", {}, other), /disabled/);
   }
   assert.equal((await f.snapshot()).session.windowTitle, "Document");
+  await f.broker.reset(true);
+});
+
+test("Always allow covers every discussion of that coworker only, re-arms safety stops at the next turn and keeps the person's Stop", async () => {
+  const saved = new Set();
+  const f = fixture({ standing: { allowed: async (slug) => saved.has(slug), set: async (slug, allowed) => { if (allowed) saved.add(slug); else saved.delete(slug); } } });
+  const two = { slug: "scout", threadId: "two" };
+  assert.equal((await f.snapshot()).enabled, false);
+  assert.equal((await f.broker.alwaysAllow({ ...f.scope, allowed: true })).alwaysAllowed, true);
+  assert.equal((await f.snapshot()).enabled, true);
+  // A discussion never opened since launch is admitted without a per-discussion grant.
+  await f.execute("open", openArgs, two);
+  await f.broker.endTurn({ id: "execution-scout-two", state: "succeeded", owner: { kind: "private", slug: "scout", threadId: "two" } });
+  assert.equal((await f.broker.snapshot({ slug: "editor", threadId: "one" })).enabled, false, "another coworker still asks");
+  // An automatic safety stop holds for the turn, then re-arms.
+  f.setExecution("turn-2", "user-2");
+  await f.execute("open", openArgs);
+  f.disconnect();
+  assert.equal((await f.snapshot()).enabled, false);
+  await f.broker.endTurn({ id: "turn-2", state: "succeeded", owner: { kind: "private", ...f.scope } });
+  assert.equal((await f.snapshot()).enabled, true);
+  // The person's own Stop keeps that discussion off.
+  await f.broker.stop({ ...f.scope, expectedRevision: (await f.snapshot()).revision });
+  await f.broker.endTurn({ id: "turn-3", state: "succeeded", owner: { kind: "private", ...f.scope } });
+  assert.equal((await f.snapshot()).enabled, false);
+  assert.equal((await f.broker.snapshot(two)).enabled, true);
+  // Turning it off returns every discussion to asking first.
+  await f.broker.alwaysAllow({ ...f.scope, allowed: false });
+  assert.equal((await f.broker.snapshot(two)).enabled, false);
+  assert.equal(saved.size, 0);
   await f.broker.reset(true);
 });
 

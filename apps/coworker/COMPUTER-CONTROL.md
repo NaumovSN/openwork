@@ -26,7 +26,9 @@ candidate, not a release claim.
    checks are unverified, not granted. The guide rechecks while open, on return
    to the app, and through **Check permissions**. Granting macOS permissions
    does not enable the discussion.
-3. Choose **Enable for this discussion**, then ask for the task normally.
+3. Choose **Enable for this discussion**, or check **Always allow this coworker**
+   so every discussion with that coworker starts allowed on This Mac, including
+   after a restart. Then ask for the task normally.
 4. The coworker discovers available app identities and asks for a scoped session.
    The broker validates the exact admitted app, mode, purpose and ownership
    before opening a single eligible window or accepting a multiple-window choice.
@@ -90,6 +92,33 @@ closes its native session; discussion opt-in can remain until revoked or the app
 restarts. A later turn needs its own validated, scoped app/window open. Native
 Stop revokes discussion opt-in when observed, including during cleanup.
 
+**Always allow** is the person's saved per-coworker choice, kept in app data
+(`computer-always-allow.json`) outside every coworker workspace, so a coworker
+cannot grant it to itself. It covers This Mac only. New discussions start
+allowed; an automatic stop (native Stop, helper exit, failed handoff, cancelled
+turn) holds for the rest of that turn and re-arms at the next one. The person's
+own **Stop & revoke**, a denied window or switching it Off keeps that discussion
+off until re-enabled. Turning Always allow off revokes every discussion of that
+coworker; retiring the coworker clears it. Window-scoped consent, Take over,
+Continue, Worker approval and sensitive-action authorization are unchanged.
+
+**On-desktop agent cursor.** Input is posted to the approved app, not the system
+pointer, so the shared helper (`packages/computer-use/.../AgentCursor.swift`)
+draws a click-through overlay on the screen holding the approved window: a
+glowing outline around that window, a blue agent cursor that glides to each
+dispatched input, click ripples and a short action label (Click, Typing,
+Scrolling). It dims to orange while the person has control and disappears when
+the session closes. The overlay ignores mouse events and is excluded from screen
+capture, so it never changes observations or blocks the person's input. It is
+shared with Desktop's helper.
+
+**Work loop.** The `coworker_computer_open` description names a done condition;
+`coworker_computer_act` loops act → read returned observation → next step until
+an observation shows it, changes route on failure instead of repeating, asks only
+when consent, sensitive actions, takeover or missing information block it, and
+ends by stating what the final observation shows. Session safety rules are stated
+once, on open, instead of on every computer tool.
+
 ## Reuse, not another computer runtime
 
 The local adapter launches the same native helper used by OpenWork. It inherits
@@ -111,7 +140,7 @@ introduced.
 | Layer | Owner |
 |---|---|
 | Compact discussion UI, watch view and typed IPC | `src/ui/computer-control.tsx`, `src/ui/computer-panel.tsx`, `src/lib/bridge.ts` |
-| Ephemeral opt-in, target pinning, receipts and cleanup | `electron/computer-control.mjs` |
+| Discussion opt-in, Always allow, target pinning, receipts and cleanup | `electron/computer-control.mjs` |
 | Engine-native tool identity and image attachment delivery | `electron/computer-plugin.mjs` |
 | Native helper discovery, readiness, dedicated MCP lifetime | `electron/computer-local.mjs` |
 | Admission, turn cancellation and terminal cleanup | `electron/main.mjs`, `electron/collaboration.mjs` |

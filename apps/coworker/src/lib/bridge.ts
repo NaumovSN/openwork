@@ -511,6 +511,8 @@ export type ComputerSnapshot = {
   targetId: string;
   targets: Array<{ id: string; label: string; placement: "desktop" | "cloud"; available: boolean; reason?: string }>;
   enabled: boolean;
+  /** The person's saved "Always allow" for this coworker on This Mac. */
+  alwaysAllowed?: boolean;
   readiness: "ready" | "setup-required" | "unsupported" | "unavailable";
   permissions?: Record<ComputerPermission, boolean>;
   detail: string;
@@ -639,6 +641,7 @@ export const coworkerBridge = {
     interact: (input: { slug: string; threadId: string; id: string; action: "approve" | "deny" | "takeover" | "resume"; windowId?: number }) => invoke<void>("computer.interact", input),
     configure: (input: { slug: string; threadId: string; expectedRevision: number; enabled: boolean; targetId: string }) => invoke<ComputerSnapshot>("computer.configure", input),
     stop: (input: { slug: string; threadId: string; expectedRevision: number }) => invoke<ComputerSnapshot>("computer.stop", input),
+    alwaysAllow: (input: { slug: string; threadId: string; allowed: boolean }) => invoke<ComputerSnapshot>("computer.alwaysAllow", input),
     setup: (targetId: string, permission: ComputerPermission) => invoke<void>("computer.setup", { targetId, permission }),
   },
   collaboration: {

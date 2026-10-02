@@ -11,7 +11,7 @@ import { readAllHands, updateAllHands, prepareAllHands, claimAllHands } from "./
  */
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { createServer as createPortProbe } from "node:net";
 import path from "node:path";
@@ -1135,6 +1135,31 @@ const messageReactions = createMessageReactionRuntime({
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("coworker:reactions-changed", { scope, revision });
   },
 });
+// The person's per-coworker "Always allow" for Computer. Kept in app data,
+// outside every coworker workspace, so no coworker can grant itself access.
+const computerStanding = (() => {
+  const file = () => path.join(app.getPath("userData"), "computer-always-allow.json");
+  let loaded = null;
+  let writes = Promise.resolve();
+  const load = () => loaded ??= readFile(file(), "utf8").then((raw) => {
+    const slugs = JSON.parse(raw)?.slugs;
+    return new Set(Array.isArray(slugs) ? slugs.filter((slug) => typeof slug === "string" && slug) : []);
+  }).catch(() => new Set());
+  return {
+    allowed: async (slug) => (await load()).has(slug),
+    set: (slug, allowed) => writes = writes.catch(() => {}).then(async () => {
+      const slugs = await load();
+      if (allowed === slugs.has(slug)) return;
+      const next = new Set(slugs);
+      if (allowed) next.add(slug); else next.delete(slug);
+      const temporary = `${file()}.${process.pid}.tmp`;
+      await mkdir(path.dirname(file()), { recursive: true });
+      await writeFile(temporary, `${JSON.stringify({ slugs: [...next] }, null, 2)}\n`, "utf8");
+      await rename(temporary, file());
+      loaded = Promise.resolve(next);
+    }),
+  };
+})();
 const computerControl = createComputerControl({
   adapters: [createLocalComputerAdapter({
     // "Back to Coworker" in the native permission coach: the coach is an accessory
@@ -1148,6 +1173,7 @@ const computerControl = createComputerControl({
   discussionFor: computerDiscussion,
   resolveContext: (slug, context, expected) => resolveControlContext(slug, context, expected, "computer"),
   onRevoke: (scope) => { void workerControls.revokeOrigin(scope); },
+  standing: computerStanding,
 });
 let browserTools;
 const browserControl = createBrowserControl({
@@ -3122,6 +3148,7 @@ const commands = {
   "computer.interact": (input) => computerControl.interact(input),
   "computer.configure": (input) => computerControl.configure(input),
   "computer.stop": (input) => computerControl.stop(input),
+  "computer.alwaysAllow": (input) => computerControl.alwaysAllow(input),
   "computer.setup": (input) => computerControl.setup(input),
   "collaboration.receipts": async (scope) => collaboration.receipts(scope),
   "collaboration.cancel": async ({ id }) => { await collaboration.cancel(id); return { ok: true }; },
@@ -3371,6 +3398,8 @@ const commands = {
       );
     }
     if (!await computerControl.revoke({ slug })) throw new Error(COMPUTER_STOP_GUIDANCE);
+    // A later coworker reusing this name must ask again.
+    await computerStanding.set(slug, false);
     const coworker = await getCoworker(coworkersDir, slug).catch(() => null);
 
     const retired = await retireCoworker(coworkersDir, slug);

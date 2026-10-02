@@ -23,7 +23,7 @@ export function ComputerControl({ slug, threadId, statusSlot, floatingSlot, open
   const [readError, setReadError] = useState("");
   const [actionError, setActionError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  const [busy, setBusy] = useState<"allow" | "stop" | "target" | ComputerPermission | null>(null);
+  const [busy, setBusy] = useState<"allow" | "always" | "stop" | "target" | ComputerPermission | null>(null);
   const [visible, setVisible] = useState(document.visibilityState === "visible");
   const request = useRef(0);
   const reading = useRef<number | null>(null);
@@ -80,10 +80,13 @@ export function ComputerControl({ slug, threadId, statusSlot, floatingSlot, open
   const canSelectTarget = snapshot !== null && !canStop && !readError;
   const canAllow = canSelectTarget && snapshot?.readiness === "ready" && target?.available === true;
 
-  async function act(action: "allow" | "stop" | "target" | ComputerPermission, targetId = "") {
+  const canAlwaysAllow = snapshot !== null && !readError && target?.placement === "desktop" && (snapshot.alwaysAllowed || snapshot.readiness === "ready");
+
+  async function act(action: "allow" | "always" | "stop" | "target" | ComputerPermission, targetId = "") {
     if (changing.current || !snapshot) return;
     if (action === "allow" && !canAllow) return;
     if (action === "stop" && !canStop) return;
+    if (action === "always" && !canAlwaysAllow) return;
     const permission = action === "accessibility" || action === "screenRecording" ? action : null;
     if (permission && (canStop || readError || snapshot.targetId !== "this-mac" || !snapshot.permissions)) return;
     if (action === "target" && (!canSelectTarget || targetId === snapshot.targetId || !snapshot.targets.some((item) => item.id === targetId && item.available))) return;
@@ -100,6 +103,8 @@ export function ComputerControl({ slug, threadId, statusSlot, floatingSlot, open
         await coworkerBridge.computer.setup(snapshot.targetId, permission);
         if (version !== request.current) return;
         next = await coworkerBridge.computer.snapshot(slug, threadId);
+      } else if (action === "always") {
+        next = await coworkerBridge.computer.alwaysAllow({ slug, threadId, allowed: !snapshot.alwaysAllowed });
       } else if (action === "allow" || action === "target") {
         next = await coworkerBridge.computer.configure({ slug, threadId, expectedRevision: snapshot.revision, enabled: action === "allow", targetId: action === "target" ? targetId : snapshot.targetId });
       } else {
@@ -111,7 +116,7 @@ export function ComputerControl({ slug, threadId, statusSlot, floatingSlot, open
     } catch (cause) {
       if (version !== request.current) return;
       failed = true;
-      const label = action === "allow" ? "Allowing access" : action === "stop" ? "Stop & revoke" : action === "target" ? "Changing target" : "Setup";
+      const label = action === "allow" ? "Allowing access" : action === "always" ? "Always allow" : action === "stop" ? "Stop & revoke" : action === "target" ? "Changing target" : "Setup";
       setActionError(`${label} was not confirmed. ${cause instanceof Error ? cause.message : String(cause)} Check the latest state before trying again.`);
     } finally {
       if (version === request.current) {
@@ -124,7 +129,7 @@ export function ComputerControl({ slug, threadId, statusSlot, floatingSlot, open
   }
 
   const status = snapshot
-    ? snapshot.cleanupPending ? "Native cleanup pending" : snapshot.enabled ? "Allowed for this discussion" : "Off for this discussion"
+    ? snapshot.cleanupPending ? "Native cleanup pending" : snapshot.enabled ? snapshot.alwaysAllowed ? "Always allowed for this coworker" : "Allowed for this discussion" : "Off for this discussion"
     : readError ? "Unavailable" : "Checking...";
   const readiness = snapshot ? { ready: "Ready", "setup-required": "Setup required", unsupported: "Unsupported", unavailable: "Unavailable" }[snapshot.readiness] : "";
   const expires = snapshot?.session?.expiresAt ? new Date(snapshot.session.expiresAt) : null;
@@ -219,6 +224,12 @@ export function ComputerControl({ slug, threadId, statusSlot, floatingSlot, open
           {snapshot?.detail ? <p>{snapshot.detail}</p> : null}
           {snapshot?.cleanupPending ? <p className="text-amber" data-testid="coworker-computer-cleanup-pending">Native cleanup is still pending. A stop is not yet confirmed.</p> : null}
           {!canStop ? <p>{snapshot?.readiness === "ready" ? "Enabling does not start work. Ask for a task; a single eligible window opens automatically. If there are several, choose one in the Computer view." : "Set up macOS permissions first, then enable app access for this discussion."}</p> : null}
+          {snapshot && target?.placement === "desktop" ? (
+            <label className={`flex items-start gap-2 ${canAlwaysAllow && busy === null ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}>
+              <input type="checkbox" className="mt-0.5 accent-ready" checked={snapshot.alwaysAllowed === true} disabled={!canAlwaysAllow || busy !== null} aria-busy={busy === "always"} data-testid="coworker-computer-always-allow" onChange={() => void act("always")} />
+              <span><span className="text-snow">Always allow this coworker</span><br />Every discussion with this coworker can use This Mac without asking again. Stop &amp; revoke still turns it off for one discussion; sensitive actions still require your authorization.</span>
+            </label>
+          ) : null}
           <div className="flex flex-wrap gap-2">
             {!canStop && snapshot?.readiness === "ready" ? <Button type="button" variant="primary" className="text-xs" disabled={!canAllow || busy !== null} aria-busy={busy === "allow"} data-testid="coworker-computer-allow" onClick={() => void act("allow")}>Enable for this discussion</Button> : null}
             {snapshot?.targetId === "this-mac" ? <Button type="button" variant={!canStop && snapshot.readiness === "setup-required" ? "primary" : "ghost"} className="text-xs" disabled={busy !== null} data-testid="coworker-computer-setup" onClick={() => { setOpen(false); setSetupOpen(true); }}>{snapshot.readiness === "setup-required" ? "Set up permissions" : "Setup & permissions"}</Button> : null}
