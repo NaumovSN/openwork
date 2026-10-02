@@ -34,11 +34,11 @@ function builder(
     toolCallId: id,
     input: { title: "Order calculator" },
     state: "output-available",
-    output: "App ready",
+    output: "Artifact ready",
     callProviderMetadata: {
       openwork: {
         mcpResult: {
-          content: [{ type: "text", text: "App ready" }],
+          content: [{ type: "text", text: "Artifact ready" }],
           structuredContent: {
             app: {
               appId,
@@ -119,7 +119,7 @@ async function render(
 test("a finished creation is one line and can reveal its raw calls", async () => {
   await render([builder("create", "1")], false, "v1", false, true);
   const row = container.querySelector("[data-app-builder-step]");
-  expect(row?.getAttribute("aria-label")).toBe("Created app “Order calculator”");
+  expect(row?.getAttribute("aria-label")).toBe("Created artifact “Order calculator”");
   const details = container.querySelector<HTMLButtonElement>('[data-app-builder-step] [data-testid="tool-details-toggle"]');
   expect(details?.getAttribute("aria-expanded")).toBe("false");
   await act(async () => details?.click());
@@ -177,7 +177,7 @@ test("opening history and read-only runs do not take over the pane", async () =>
     0,
   );
 });
-test("failed and mismatched MCP results cannot open an App", () => {
+test("failed and mismatched MCP results cannot open an artifact", () => {
   const part = builder("failed", "1");
   expect(builtAppSummary(part)).not.toBeNull();
   expect(

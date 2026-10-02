@@ -137,7 +137,7 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
             <span className="text-xs text-muted-foreground">From your company</span>
           </header>
           {dashboard.elements.length === 0 ? (
-            <p className="text-xs text-muted-foreground">This dashboard has no apps yet.</p>
+            <p className="text-xs text-muted-foreground">This dashboard has no artifacts yet.</p>
           ) : (
             <DashboardMasonry>
               {dashboard.elements.map((element) => {

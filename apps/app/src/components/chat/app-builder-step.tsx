@@ -86,14 +86,14 @@ export function AppBuilderStep({
   // calls behind the details icon.
   const title = `“${progress.title}”`;
   const sentence = progress.app || progress.builtUnrecorded
-    ? `${editing ? "Updated" : "Created"} app ${title}`
+    ? `${editing ? "Updated" : "Created"} artifact ${title}`
     : progress.failed
-      ? `Couldn’t ${editing ? "update" : "create"} app ${title}`
+      ? `Couldn’t ${editing ? "update" : "create"} artifact ${title}`
       : progress.stage === "checking"
-        ? `Checking app ${title}`
+        ? `Checking artifact ${title}`
         : progress.stage === "writing"
-          ? `${editing ? "Updating" : "Writing"} app ${title}`
-          : `Preparing app ${title}`;
+          ? `${editing ? "Updating" : "Writing"} artifact ${title}`
+          : `Preparing artifact ${title}`;
   const state = progress.failed
     ? latestProblem
     : progress.builtUnrecorded

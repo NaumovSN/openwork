@@ -26,7 +26,7 @@ let grants: DenLibraryAccessGrant[];
 let directory: DenLibraryOrgDirectory = {
   currentMemberId: "owner",
   members: [
-    { id: "owner", name: "App owner", email: null },
+    { id: "owner", name: "Artifact owner", email: null },
     { id: "teammate", name: "Teammate", email: null },
   ],
   teams: [],
@@ -168,11 +168,11 @@ test("a member owner can share with people but does not get the org-wide control
   expect(document.body.textContent).toContain("Add person");
   expect(document.querySelector('[role="switch"]') === null).toBe(true);
 });
-test("viewers cannot change the App's audience", async () => {
+test("viewers cannot change the artifact's audience", async () => {
   owner = false;
   await open();
   expect(document.body.textContent).toContain(
-    "Only this app's owner can share it",
+    "Only this artifact's owner can share it",
   );
   expect(document.body.textContent?.includes("Add person")).toBe(false);
   expect(client.grantPluginAccess).not.toHaveBeenCalled();

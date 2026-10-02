@@ -163,7 +163,7 @@ test("the transcript has one visible creation rail with genuine writing and chec
   expect(markup.split("data-app-builder-step").length - 1).toBe(1);
   expect(markup).toContain('data-app-creation-stage="checking"');
   // One plain rail row that names the current state.
-  expect(markup).toContain("Checking app “");
+  expect(markup).toContain("Checking artifact “");
 });
 
 test("both engine projections preserve preparation and recorded build timing", () => {
@@ -244,7 +244,7 @@ test("degraded sync does not claim that creation is still running", () => {
 });
 
 
-test("an explicit App request shows actual discovery before preparation and keeps one rail", () => {
+test("an explicit artifact request shows actual discovery before preparation and keeps one rail", () => {
   const search: DynamicToolUIPart = { type: "dynamic-tool", toolCallId: "search", toolName: "openwork-cloud_search_capabilities", state: "input-available", input: { query: "Inventory lookup unit price" } };
   const message = { id: "assistant", role: "assistant" as const, parts: [search] };
   expect(appCreationRuns([message])).toHaveLength(0);
@@ -252,7 +252,7 @@ test("an explicit App request shows actual discovery before preparation and keep
   expect(discovered).toHaveLength(1);
   expect(appCreationProgress(discovered[0], true)).toMatchObject({ stage: "needs", prepared: false, running: true });
   const markup = renderToStaticMarkup(provider(<AppBuilderStep run={discovered[0]} active />));
-  expect(markup).toContain("Preparing app");
+  expect(markup).toContain("Preparing artifact");
   const readyToWrite = appCreationRuns([{ ...message, parts: [search, prepare()] }], true);
   expect(readyToWrite).toHaveLength(1);
   expect(readyToWrite[0].id).toBe("search");

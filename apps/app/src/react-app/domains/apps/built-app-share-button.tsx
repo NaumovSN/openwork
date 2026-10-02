@@ -41,7 +41,7 @@ export function BuiltAppShareButton({
             />
           ) : (
             <p role="status" className="text-sm">
-              Sign in to share this app.
+              Sign in to share this artifact.
             </p>
           )}
         </DialogContent>
@@ -63,7 +63,7 @@ function AppSharing({
 }) {
   // The caller verifies these before mounting. Avoid retaining another member's grants.
   if (!context.client || !context.orgId)
-    throw new Error("Sign in to share this app.");
+    throw new Error("Sign in to share this artifact.");
   const library = useLibraryCloud({
     client: context.client,
     organizationId: context.orgId,
@@ -92,7 +92,7 @@ function AppSharing({
   if (!plugin || !library.ownedPluginIds.has(pluginId))
     return (
       <p role="status" className="text-sm">
-        Only this app's owner can share it. Ask them for access.
+        Only this artifact's owner can share it. Ask them for access.
       </p>
     );
   if (!library.grantsReadyFor(pluginId))

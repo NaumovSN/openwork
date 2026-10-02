@@ -269,10 +269,10 @@ function McpAppTileContent({
     const next = await attempt?.promise;
     // A successful refresh retires the cached iframe. Its queued startup reads
     // belong to that old document; only the replacement may use the new lease.
-    if (!document?.active) throw new Error("This App view has closed or changed.");
+    if (!document?.active) throw new Error("This artifact view has closed or changed.");
     if (!attempt || attempt.controller.signal.aborted || launchRef.current !== attempt
       || next?.phase !== "ready" || !next.lifetime.active || next.origin.readOnly || !next.app.launchId) {
-      throw new Error("This App's workspace is still unavailable. Refresh the tile to reconnect.");
+      throw new Error("This artifact's workspace is still unavailable. Refresh the tile to reconnect.");
     }
     return { origin: next.origin, app: next.app };
   }, []);
@@ -349,7 +349,7 @@ function McpAppTileContent({
     if (!ownerRemoved && !pendingOwnerRemoved) return;
     retiredNonceRef.current = nonceRef.current;
     attempt?.controller.abort();
-    clearDocument({ phase: "error", message: "This app view is unavailable until its workspace reconnects. Use refresh to launch it again." });
+    clearDocument({ phase: "error", message: "This artifact view is unavailable until its workspace reconnects. Use refresh to launch it again." });
     releaseLaunches();
     updateRefresh("failed");
   }, [launchEndpoints, clearDocument, releaseLaunches, updateRefresh]);
@@ -368,7 +368,7 @@ function McpAppTileContent({
     const launchIsApproved = dashboardTileLaunchIsApproved(entry.organizationAutoLaunch === true, memberApproved);
     const isCurrent = () => lifetime.current.active && !attempt.controller.signal.aborted && launchRef.current === attempt && retiredNonceRef.current !== nonce;
     const assertActive = () => {
-      if (!isCurrent()) throw new Error("This App launch has closed or changed. Run the tile again.");
+      if (!isCurrent()) throw new Error("This artifact launch has closed or changed. Run the tile again.");
     };
     const endpointIsActive = (endpoint: DashboardLaunchEndpoint) => isCurrent()
       && endpointsRef.current.some(current => sameLaunchEndpoint(current, endpoint));
@@ -385,7 +385,7 @@ function McpAppTileContent({
       assertActive();
       attempt.admitted = true;
       discardInvalidDocument();
-      if (attempt.candidates.length === 0) throw new Error("No connected workspace is available to launch this app.");
+      if (attempt.candidates.length === 0) throw new Error("No connected workspace is available to launch this artifact.");
       const argumentsSnapshot = snapshotMcpAppArguments(launchArguments);
       const launch = entry.connectionId
         ? { connectionId: entry.connectionId, toolName: entry.toolName, resourceUri: entry.resourceUri, arguments: {} }
@@ -414,7 +414,7 @@ function McpAppTileContent({
               expectedResourceDigest: current.app.refresh.resourceDigest,
             });
             assertActive();
-            if (!current.lifetime.active || current.lifetime.failed) throw new Error("This App view has closed or changed. Run the tile again.");
+            if (!current.lifetime.active || current.lifetime.failed) throw new Error("This artifact view has closed or changed. Run the tile again.");
             target = { endpoint: current.endpoint, app: current.app };
             reused = current;
           } catch (cause) {
@@ -442,10 +442,10 @@ function McpAppTileContent({
             target = null;
           }
           assertActive();
-          if (!target) return { phase: "error", message: "This tool no longer advertises an interactive app." };
+          if (!target) return { phase: "error", message: "This tool no longer advertises an interactive artifact." };
           const { endpoint, app } = target;
           attempt.endpoint = endpoint;
-          if (!app.launchId) throw new OpenworkServerError(422, "missing_launch_context", "This App has no live launch context. Update OpenWork and run the tile again.");
+          if (!app.launchId) throw new OpenworkServerError(422, "missing_launch_context", "This artifact has no live launch context. Update OpenWork and run the tile again.");
           acquiredLaunchId = app.launchId;
           ownedLaunches.current.set(app.launchId, endpoint);
           const request = {
@@ -460,20 +460,20 @@ function McpAppTileContent({
             if (!(cause instanceof OpenworkServerError) || cause.code !== "tool_requires_approval") throw cause;
             approvalWasRequired = true;
             if (!userInitiated || fallbackEndpoint) return { phase: "idle", revokeAutoLaunch: true };
-            if (!endpointIsActive(endpoint)) throw new Error("This App launch has closed or changed. Run the tile again.");
+            if (!endpointIsActive(endpoint)) throw new Error("This artifact launch has closed or changed. Run the tile again.");
             onAutoLaunchDisabledRef.current?.();
             result = await endpoint.client.callMcpAppTool(endpoint.workspaceId, { ...request, approved: true });
           }
         }
         assertActive();
-        if (!result || !endpointIsActive(target.endpoint)) throw new Error("This App launch has closed or changed. Run the tile again.");
+        if (!result || !endpointIsActive(target.endpoint)) throw new Error("This artifact launch has closed or changed. Run the tile again.");
         const connection = tileConnectionState(entry, result, launchArguments);
         if (connection) return connection;
         if (result.isError) return {
           phase: "error", preservePrevious: true, message: launchFailureMessage(result.content)
             ?? (entry.launchArguments
-              ? "This app could not start with the saved launch input. Remove the tile and add it again with corrected input."
-              : "This app could not start without input, which this tile does not provide."),
+              ? "This artifact could not start with the saved launch input. Remove the tile and add it again with corrected input."
+              : "This artifact could not start without input, which this tile does not provide."),
         };
         const preserved = {
           content: result.content,
@@ -509,7 +509,7 @@ function McpAppTileContent({
       if (next.phase === "ready") {
         if (!next.lifetime.active || !endpointIsActive(next.endpoint)) {
           next.lifetime.active = false;
-          clearDocument({ phase: "error", message: "This app view is unavailable until its workspace reconnects. Use refresh to launch it again." });
+          clearDocument({ phase: "error", message: "This artifact view is unavailable until its workspace reconnects. Use refresh to launch it again." });
           releaseLaunches();
           updateRefresh("failed");
           return;
@@ -556,7 +556,7 @@ function McpAppTileContent({
       // authority, policy or resource problem removes it.
       if (invalidatesTileDocument(cause) || current.phase !== "ready" || !current.lifetime.active || current.lifetime.failed
         || current.argumentsSignature !== argumentsSignature || !appMatchesEntry(current.app, entry)) {
-        clearDocument({ phase: "error", message: cause instanceof Error && cause.message ? cause.message : "The app could not be launched." });
+        clearDocument({ phase: "error", message: cause instanceof Error && cause.message ? cause.message : "The artifact could not be launched." });
         releaseLaunches();
       }
       updateRefresh("failed");
@@ -654,7 +654,7 @@ function McpAppTileContent({
             <Play className="size-6 text-muted-foreground" aria-hidden />
             <p className="max-w-xs text-xs text-muted-foreground">
               {entry.requiresApproval === true
-                ? "This app modifies data when it runs, so it only runs when you ask."
+                ? "This artifact modifies data when it runs, so it only runs when you ask."
                 : "Run once to enable automatic loading and refresh for this tile."}
             </p>
             <Button variant="outline" size="sm" onClick={run} aria-label={`Run ${entry.title}`}>
@@ -670,7 +670,7 @@ function McpAppTileContent({
         ) : null}
         {state.phase === "closed" ? (
           <p className="pt-3 text-xs text-muted-foreground" role="status">
-            This app closed its view. Use refresh to launch it again.
+            This artifact closed its view. Use refresh to launch it again.
           </p>
         ) : null}
         {state.phase === "ready" && measuredGeometryIdentity === geometryIdentity ? (
@@ -685,7 +685,7 @@ function McpAppTileContent({
                 inputArguments={launchArguments}
                 result={state.result}
                 updateMode="notify"
-                unavailableNotice="This app view is unavailable."
+                unavailableNotice="This artifact view is unavailable."
                 presentation="dashboard"
                 onRetry={run}
                 initialHeight={geometry.initialHeight ?? lastHeight.current}
@@ -718,7 +718,7 @@ function McpAppTileContent({
             </div>
           : (
             <p className="pt-3 text-xs text-muted-foreground" role="status">
-              This saved app view is unavailable until its workspace reconnects.
+              This saved artifact view is unavailable until its workspace reconnects.
             </p>
           )
         ) : null}

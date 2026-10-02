@@ -68,7 +68,7 @@ export function useBuiltDashboardApps() {
     ),
     queryFn: async () => {
       if (!context.client || !context.orgId)
-        throw new Error("Sign in to browse apps.");
+        throw new Error("Sign in to browse artifacts.");
       try {
         return await context.client.listBuiltMcpApps(context.orgId);
       } catch (error) {
@@ -141,12 +141,12 @@ export function BuiltAppPicker({
       onValueChange={setSearch}
     >
       <CommandInput
-        aria-label="Search apps"
-        placeholder="Search apps by name or tool"
+        aria-label="Search artifacts"
+        placeholder="Search artifacts by name or tool"
         className="h-14 border-b! pr-10"
       />
-      <p className="px-4 pt-3 text-xs text-muted-foreground">{search.trim() ? "Matches" : "Apps available to you"} <span className="ml-1 tabular-nums">{matching.length}</span></p>
-      <CommandEmpty>No apps match your search.</CommandEmpty>
+      <p className="px-4 pt-3 text-xs text-muted-foreground">{search.trim() ? "Matches" : "Artifacts available to you"} <span className="ml-1 tabular-nums">{matching.length}</span></p>
+      <CommandEmpty>No artifacts match your search.</CommandEmpty>
       <CommandList>
         {(app: BuiltMcpAppCatalogEntry) => (
           <CommandItem
@@ -172,7 +172,7 @@ export function BuiltAppPicker({
           </CommandItem>
         )}
       </CommandList>
-      <div className="flex justify-between gap-3 border-t px-4 py-3 text-xs text-muted-foreground"><span>Only apps you can open show here.</span><span aria-hidden="true">↑↓ to move · ↵ to add</span></div>
+      <div className="flex justify-between gap-3 border-t px-4 py-3 text-xs text-muted-foreground"><span>Only artifacts you can open show here.</span><span aria-hidden="true">↑↓ to move · ↵ to add</span></div>
     </Command>
   );
 }
@@ -195,7 +195,7 @@ export function BuiltDashboardTiles({
     return (
       <div className="mb-4 flex items-center gap-2">
         <p role="alert" className="text-sm">
-          Shared apps could not be loaded.
+          Shared artifacts could not be loaded.
         </p>
         <Button
           variant="outline"
@@ -208,7 +208,7 @@ export function BuiltDashboardTiles({
     );
   if (!personal.length) return null;
   return (
-    <section className="mb-8" aria-label="Apps added by you">
+    <section className="mb-8" aria-label="Artifacts added by you">
       <DashboardMasonry>
         {personal.map((app) => (
           <McpAppTile
@@ -230,7 +230,7 @@ export function BuiltDashboardTiles({
                   title={app.title}
                 />
                 <DropdownMenu>
-                  <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`App options for ${app.title}`} />}><MoreHorizontal className="size-4" /></DropdownMenuTrigger>
+                  <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`Artifact options for ${app.title}`} />}><MoreHorizontal className="size-4" /></DropdownMenuTrigger>
                   <DropdownMenuContent align="end"><DropdownMenuGroup>
                     {onRefresh ? <DropdownMenuItem disabled={refreshing} aria-label={`Refresh ${app.title}`} onClick={onRefresh}><RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />Refresh</DropdownMenuItem> : null}
                     <DropdownMenuItem aria-label={`Remove ${app.title} from dashboard`} onClick={() => {
@@ -243,7 +243,7 @@ export function BuiltDashboardTiles({
             )}
           />
         ))}
-        {onAdd ? <button type="button" onClick={onAdd} className="flex min-h-64 w-full flex-col items-center justify-center gap-3 rounded-xl border border-dashed text-sm text-muted-foreground hover:bg-muted/30 focus-visible:outline-2 focus-visible:outline-ring"><Plus className="size-5" />Add an app{built.apps.length > personal.length ? <span className="text-xs">{built.apps.length - personal.length} more available to you</span> : null}</button> : null}
+        {onAdd ? <button type="button" onClick={onAdd} className="flex min-h-64 w-full flex-col items-center justify-center gap-3 rounded-xl border border-dashed text-sm text-muted-foreground hover:bg-muted/30 focus-visible:outline-2 focus-visible:outline-ring"><Plus className="size-5" />Add an artifact{built.apps.length > personal.length ? <span className="text-xs">{built.apps.length - personal.length} more available to you</span> : null}</button> : null}
       </DashboardMasonry>
     </section>
   );
