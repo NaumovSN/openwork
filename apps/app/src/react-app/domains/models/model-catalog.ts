@@ -16,7 +16,7 @@ export type RetainedModelSelection = {
 };
 export function retainedModelCopy(reason: RetainedModelSelection["reason"]) {
   switch (reason) {
-    case "policy": return { subtitle: "blocked by your organization", detail: "Your organization decides which providers are allowed here. Ask your workspace owner or admin." };
+    case "policy": return { subtitle: "blocked by your organization", detail: "Your organization decides which providers are allowed here." };
     case "disabled": return { subtitle: "disabled in AI providers", detail: "Turn this provider back on in AI providers, or choose another model." };
     case "signed-out": return { subtitle: "sign in to verify access", detail: "Sign in to verify access to your saved model, or choose a connected provider." };
     case "unavailable": return { subtitle: "no longer available here", detail: "Your saved model isn’t available here anymore." };

@@ -516,7 +516,8 @@ test("Auto remains checked while recovery focuses an alternative pin, and immuta
     }
     expect(autoRow()?.querySelector('[data-slot="model-provider-mark"] svg.lucide-sparkles')).toBeNull();
     expect(autoRow()?.querySelector('[data-slot="model-provider-mark"] img[alt="OpenWork"]')).not.toBeNull();
-    expect(autoRow()?.querySelector('[data-slot="model-source"] svg.lucide-cloud')).not.toBeNull();
+    // Auto's mark already says OpenWork; its source column stays empty so the check column lines up (Paper 03, 05).
+    expect(autoRow()?.querySelector('[data-slot="model-source"] svg')).toBeNull();
     expect(orgRow?.querySelector('[data-slot="model-provider-mark"] svg')).not.toBeNull();
     expect(orgRow?.querySelector('[data-slot="model-provider-mark"] svg.lucide-cloud')).toBeNull();
     expect(orgRow?.textContent).toContain("Anthropic · pinned by your org");

@@ -131,8 +131,8 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
           </div> : null}
         </details>
         <div className="flex items-center justify-between border-t border-border px-2 py-1">
-          {!restrictToCloud ? <Button variant="ghost" size="sm" className="h-9" onClick={openProvider}>Connect more providers</Button> : <span />}
-          <Button variant="ghost" size="sm" className="h-9" onClick={() => { onOpenChange(false); window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId } })); }}>All models</Button>
+          {!restrictToCloud ? <Button variant="ghost" size="sm" className="h-9 font-normal text-muted-foreground" onClick={openProvider}>Connect more providers</Button> : <span />}
+          <Button variant="ghost" size="sm" className="h-9 font-normal text-muted-foreground" onClick={() => { onOpenChange(false); window.dispatchEvent(new CustomEvent(openModelPickerEvent, { detail: { sessionId } })); }}>All models</Button>
         </div>
         <AutoAccessFooter available={autoVisible} syncing={autoVisible && openWorkModelsSyncing} />
       </>} />}

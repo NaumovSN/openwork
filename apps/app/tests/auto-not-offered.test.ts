@@ -81,3 +81,13 @@ test("an older gateway's new-machine cap reads as the free limit, not as Auto be
   expect(wall).toMatchObject({ state: "limit", code: "anonymous_new_identity_capped" });
   expect(autoWallCopy(wall!, false).title).toBe("You’ve reached the free Auto limit");
 });
+
+test("the picker names when a used-up free limit resets and asks signed-out people to sign in", () => {
+  const monday = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+  const signedOut = autoPickerCopy("exhausted", false, null, null, monday);
+  expect(signedOut.subtitle).toMatch(/^Free limit used up · resets \S+/);
+  expect(signedOut.detail).toBe("This week’s free limit is used up. Sign in for a larger free limit.");
+  expect(signedOut.action).toBe("Sign in");
+  expect(autoPickerCopy("exhausted", true).subtitle).toBe("Free limit used up");
+  expect(autoPickerCopy("exhausted", true).action).toBeNull();
+});
