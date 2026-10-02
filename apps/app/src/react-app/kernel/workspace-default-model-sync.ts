@@ -153,10 +153,14 @@ export function useWorkspaceDefaultModelSync(input: UseWorkspaceDefaultModelSync
       return;
     }
     if (pending) return;
+    // With no usable model right now (e.g. Auto is unavailable and nothing
+    // else is set), keep the server's last default instead of clearing it.
+    const payload = workspaceDefaultModelPayload({ providerID, modelID }, variant);
+    if (!payload) return;
     sync.schedule({
       serverKey,
       workspaceKey,
       put: (next) => client.setWorkspaceDefaultModel(workspaceId, next),
-    }, workspaceDefaultModelPayload({ providerID, modelID }, variant));
+    }, payload);
   }, [client, serverKey, workspaceId, workspaceKey, connected, pending, providerID, modelID, variant, sync]);
 }

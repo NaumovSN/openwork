@@ -188,9 +188,9 @@ describe("workspace default model sync", () => {
     await render({ connected: true, pending: false, model: { providerID: "fixture", modelID: "model-b" }, variant: "high" });
     await render({ connected: false, pending: false, model: { providerID: "fixture", modelID: "model-b" }, variant: "high" });
     await render({ connected: true, pending: false, model: { providerID: "fixture", modelID: "model-b" }, variant: "high" });
-    // Auto dropped and nothing else configured: the server default is cleared.
+    // Auto dropped and nothing else configured: the server keeps its last default.
     await render({ connected: true, pending: false, model: null, variant: null });
-    expect(calls).toEqual([["ws_1", modelA], ["ws_1", modelB], ["ws_1", modelB], ["ws_1", null]]);
+    expect(calls).toEqual([["ws_1", modelA], ["ws_1", modelB], ["ws_1", modelB]]);
     await act(async () => { root.unmount(); });
     host.remove();
   });
