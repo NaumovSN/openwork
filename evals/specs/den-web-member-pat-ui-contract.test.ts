@@ -47,10 +47,11 @@ test("Den web renders a private member-key dialog and only exposes generic failu
     expect(memberApiKeyFailureMessage(status)).not.toContain(secret);
   }
   expect(memberApiKeyFailureMessage(403)).toBe(MEMBER_API_KEY_GRANT_HELP);
-  expect(MEMBER_API_KEY_GRANT_HELP).toContain("directly to you, one of your teams, or everyone in your organization");
-  expect(MEMBER_API_KEY_GRANT_HELP).toContain("Plugin-only access cannot add a personal API key");
+  expect(MEMBER_API_KEY_GRANT_HELP).toBe("You can't add a key to this connection yet. Ask an administrator to give you access directly, through your team, or for everyone.");
 
   const dialog = await source("member-api-key-dialog.tsx");
+  expect(dialog).toContain("{MEMBER_API_KEY_DIALOG_SUBTITLE}");
+  expect(dialog).not.toContain("{MEMBER_API_KEY_GRANT_HELP}");
   const data = await source("mcp-connections-data.tsx");
   const saveHook = data.slice(data.indexOf("export function useSaveMyMcpApiKey"), data.indexOf("export function useDisconnectMyProviderAccount"));
   expect(dialog).toContain('kind="secret"');

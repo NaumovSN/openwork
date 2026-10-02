@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { McpCredentialInput } from "./mcp-credential-input";
-import { MEMBER_API_KEY_GRANT_HELP, MEMBER_API_KEY_MAX_LENGTH, validateMemberApiKey } from "./member-api-key";
+import { MEMBER_API_KEY_DIALOG_SUBTITLE, MEMBER_API_KEY_MAX_LENGTH, validateMemberApiKey } from "./member-api-key";
 import { memberApiKeySaveErrorMessage, useSaveMyMcpApiKey } from "./mcp-connections-data";
 
 export type MemberApiKeyTarget = { id: string; name: string; replacing?: boolean };
@@ -104,7 +104,7 @@ export function MemberApiKeyDialog({ target, onClose, onSaved }: {
           <Dialog.Title className="text-[16px] font-semibold leading-6 text-gray-900">
             {saved ? `${target?.name ?? "Connection"}: key saved` : `${target?.replacing ? "Replace" : "Add"} key for ${target?.name ?? "connection"}`}
           </Dialog.Title>
-          {!saved ? <Dialog.Description className="mt-1.5 text-[12px] leading-[18px] text-gray-500">{MEMBER_API_KEY_GRANT_HELP}</Dialog.Description> : null}
+          {!saved ? <Dialog.Description className="mt-1.5 text-[12px] leading-[18px] text-gray-500">{MEMBER_API_KEY_DIALOG_SUBTITLE}</Dialog.Description> : null}
           {saved ? (
             <div className="mt-5 flex justify-end">
               <DenButton size="sm" onClick={close}>Done</DenButton>

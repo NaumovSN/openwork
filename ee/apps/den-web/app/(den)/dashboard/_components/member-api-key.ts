@@ -1,7 +1,8 @@
 import type { ExternalMcpAuthType, ExternalMcpCredentialMode } from "./mcp-connections-data";
 
 export const MEMBER_API_KEY_MAX_LENGTH = 8192;
-export const MEMBER_API_KEY_GRANT_HELP = "An administrator must grant this connection directly to you, one of your teams, or everyone in your organization. Plugin-only access cannot add a personal API key.";
+export const MEMBER_API_KEY_GRANT_HELP = "You can't add a key to this connection yet. Ask an administrator to give you access directly, through your team, or for everyone.";
+export const MEMBER_API_KEY_DIALOG_SUBTITLE = "Add your own key. OpenWork uses it only for your requests.";
 export const MEMBER_API_KEY_UNCERTAIN_MESSAGE = "OpenWork could not confirm whether the key was saved. Check the connection status before retrying because retrying may replace a key that was saved.";
 
 type MemberApiKeyConnection = {
