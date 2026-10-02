@@ -15,7 +15,7 @@ import {
   remoteSessionThreadIdentity,
   resolveAssignmentWorkspace,
   runnerTokenAudience,
-  watchRemoteSession,
+  watchRemoteSession as watchSession,
 } from "./automation-runner.mjs"
 
 // The session client asks the local server which engine chats use and which
@@ -40,6 +40,7 @@ function legacyLocalServer(options) {
 const createDesktopAutomationRunner = (options) => createRunner(legacyLocalServer(options))
 const executeDesktopAutomation = (assignment, options) => executeAutomation(assignment, legacyLocalServer(options))
 const executeDesktopRemoteSession = (assignment, options) => executeRemoteSession(assignment, legacyLocalServer(options))
+const watchRemoteSession = (options) => watchSession(legacyLocalServer(options))
 
 function runnerTokenFor(audience, organizationId = "org-1") {
   const payload = Buffer.from(JSON.stringify({
@@ -1014,6 +1015,7 @@ test("remote-session creation omits nullable prompt and model fields", async () 
     workspaceId: "workspace/first",
     started: false,
     firstTurn: { outcome: "not_started" },
+    engine: "v1",
   })
   assert.deepEqual(requests, [
     { path: "/workspaces", body: null },
@@ -1050,7 +1052,7 @@ test("a remote session starts on v2 when the local server routes chats there", a
     signal: new AbortController().signal,
   })
 
-  assert.deepEqual(result, { sessionId: "ses_v2", workspaceId: "workspace-1", started: true, firstTurn: { outcome: "replied" } })
+  assert.deepEqual(result, { sessionId: "ses_v2", workspaceId: "workspace-1", started: true, firstTurn: { outcome: "replied" }, engine: "v2", model: { providerId: "provider", modelId: "model", variant: "high" } })
   assert.deepEqual(requests.slice(0, 5), [
     "GET /workspaces",
     "GET /experimental/engine-v2-preview/status",
@@ -1204,7 +1206,7 @@ test("a remote session whose first assistant step succeeds is delivered", async 
       status: { type: "busy" },
       messages: [{ info: { id: "msg-1", role: "assistant" }, parts: [{ id: "part-1", type: "reasoning", text: "Looking" }] }],
     })
-  assert.deepEqual(result, { sessionId: "session-1", workspaceId: "workspace-1", started: true, firstTurn: { outcome: "replied" } })
+  assert.deepEqual(result, { sessionId: "session-1", workspaceId: "workspace-1", started: true, firstTurn: { outcome: "replied" }, engine: "v1", model: { providerId: "provider", modelId: "model", variant: "high" } })
 })
 
 test("a remote session still busy when the window ends is delivered", async () => {
@@ -2335,7 +2337,7 @@ test("a delivered remote session reports running, waiting, then idle with its fi
   assert.equal(idle.messageCount, 3)
   assert.deepEqual(idle.model, { providerId: "provider", modelId: "model", variant: "high" })
   assert.equal(typeof idle.observedAt, "number")
-  assert.ok(reports.every((report) => !("engine" in report)), "engine is only sent when the thread reports it")
+  assert.ok(reports.every((report) => report.engine === "v1"), "every report names the engine the thread ran on")
   assert.equal(pollsAfter, pollsAtIdle, "the watcher kept polling after the session settled")
 })
 
