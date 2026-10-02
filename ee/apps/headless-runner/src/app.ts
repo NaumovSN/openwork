@@ -22,6 +22,8 @@ const abortBody = z.object({ messageId: messageIdSchema.optional() }).strict()
 const readQuery = z.object({
   messageId: messageIdSchema.optional(),
   limit: z.coerce.number().int().min(1).max(500).default(100),
+  /** `none` leaves tool outputs out, for callers that poll a long turn and only need its steps. */
+  outputs: z.enum(["full", "none"]).default("full"),
 })
 
 export type ModelCatalog = { defaultModel: string; models: Array<{ id: string; name: string }> }
@@ -83,9 +85,15 @@ export function createApp(input: {
       // Image data stays in the store; callers poll this, so they get a count instead.
       messages: scoped.slice(-query.data.limit).map((entry) => {
         const { seq, messageId, message } = entry
-        if (message.role !== "tool" || !message.images) return { seq, messageId, ...message }
-        const { images, ...rest } = message
-        return { seq, messageId, ...rest, imageCount: images.length }
+        if (message.role !== "tool") return { seq, messageId, ...message }
+        const { images, output, ...rest } = message
+        return {
+          seq,
+          messageId,
+          ...rest,
+          ...(query.data.outputs === "full" ? { output } : { outputLength: output.length }),
+          ...(images ? { imageCount: images.length } : {}),
+        }
       }),
       finalAssistantText,
     })

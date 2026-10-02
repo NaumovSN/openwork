@@ -187,11 +187,12 @@ export async function headlessRemoteCall(
     return status === 200 ? { accepted: true } : { stopped: false }
   }
 
-  // read: map the runner transcript onto the snapshot shape run.ts consumes.
+  // read: map the runner transcript onto the snapshot shape run.ts consumes. This polls every second for the
+  // whole run, so tool outputs (up to 50k characters each) stay on the runner; only their outcome is needed.
   const { status, payload } = await call(
     deps,
     "GET",
-    `/v1/sessions/${encodeURIComponent(sessionId)}?messageId=${encodeURIComponent(messageId)}&limit=500`,
+    `/v1/sessions/${encodeURIComponent(sessionId)}?messageId=${encodeURIComponent(messageId)}&limit=500&outputs=none`,
   )
   if (status === 404) return { error: "unknown_session", retryable: false }
   const snapshot = snapshotSchema.safeParse(payload)

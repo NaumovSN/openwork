@@ -107,3 +107,45 @@ test("config refuses weak tokens and non-https remote endpoints", () => {
   assert.throws(() => loadConfig({ ...base, HEADLESS_API_TOKEN: "short" }))
   assert.throws(() => loadConfig({ ...base, HEADLESS_MCP_URL: "http://evil.example/mcp" }))
 })
+
+test("turns have no step limit unless one is configured", () => {
+  const base = {
+    HEADLESS_API_TOKEN: TOKEN,
+    HEADLESS_MODEL_PROTOCOL: "anthropic",
+    HEADLESS_MODEL_BASE_URL: "https://gateway.openworklabs.com/api/v1/providers/ipr_x",
+    HEADLESS_MODEL: "gwm_x",
+  }
+  assert.equal(loadConfig(base).limits.maxSteps, Number.POSITIVE_INFINITY)
+  assert.equal(loadConfig({ ...base, HEADLESS_MAX_STEPS: "0" }).limits.maxSteps, Number.POSITIVE_INFINITY)
+  assert.equal(loadConfig({ ...base, HEADLESS_MAX_STEPS: "500" }).limits.maxSteps, 500)
+  assert.equal(loadConfig(base).limits.turnTimeoutMs, 60 * 60_000)
+})
+
+test("a poller can read a turn's steps without its tool outputs", async () => {
+  const { model } = scriptedModel([calls({ id: "c1", name: "fetch", input: {} }), text("done")])
+  const { store, runner } = makeRunner({
+    model,
+    mcp: async () => ({
+      tools: [{ name: "fetch", description: "", inputSchema: { type: "object" } }],
+      async call() {
+        return { output: "BIG".repeat(1_000), isError: false }
+      },
+      async close() {},
+    }),
+  })
+  const app = createApp({ store, runner, apiToken: TOKEN })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "go", credentials: { modelApiKey: "k", mcpToken: "t" } })
+  await runner.idle()
+  const read = (query: string) =>
+    app.request(`/v1/sessions/${session.id}?messageId=msg_1${query}`, { headers: { authorization: `Bearer ${TOKEN}` } })
+  const full = await (await read("")).text()
+  assert.ok(full.includes("BIGBIG"))
+  const lean = await (await read("&outputs=none")).text()
+  assert.ok(!lean.includes("BIGBIG"))
+  const tool = z
+    .object({ messages: z.array(z.object({ role: z.string(), callId: z.string().optional(), isError: z.boolean().optional(), outputLength: z.number().optional() })) })
+    .parse(JSON.parse(lean))
+    .messages.find((message) => message.role === "tool")
+  assert.deepEqual(tool, { role: "tool", callId: "c1", isError: false, outputLength: 3_000 })
+})

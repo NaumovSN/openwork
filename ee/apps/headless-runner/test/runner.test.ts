@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
-import { buildContext } from "../src/runner.js"
-import { Store } from "../src/store.js"
+import { buildContext, TRIMMED_TOOL_OUTPUT } from "../src/runner.js"
+import { Store, type StoredMessage } from "../src/store.js"
 import { calls, fakeMcp, makeRunner, scriptedModel, tempDbPath, text, waitForAbort } from "./helpers.js"
 
 const creds = { modelApiKey: "ow_gw_model_secret_value", mcpToken: "ow_mcp_at_secret_value" }
@@ -323,4 +323,31 @@ test("context keeps whole recent turns within budget", () => {
   const messages = [entry(1, "a", "x".repeat(500)), entry(2, "b", "y".repeat(500)), entry(3, "c", "z")]
   const context = buildContext(messages, "c", 700)
   assert.deepEqual(context.map((message) => message.role === "user" && message.text[0]), ["y", "z"])
+})
+
+test("a long turn keeps every call but drops its oldest large outputs, in blocks, to fit the budget", () => {
+  let seq = 0
+  const messages: StoredMessage[] = [{ seq: ++seq, messageId: "m", message: { role: "user", text: "fix the PR" } }]
+  for (let i = 0; i < 20; i += 1) {
+    messages.push({ seq: ++seq, messageId: "m", message: { role: "assistant", text: "", toolCalls: [{ id: `c${i}`, name: "fetch", input: {} }] } })
+    messages.push({ seq: ++seq, messageId: "m", message: { role: "tool", callId: `c${i}`, name: "fetch", output: `${i}:`.padEnd(5_000, "x"), isError: false } })
+  }
+  messages.push({ seq: ++seq, messageId: "m", message: { role: "tool", callId: "short", name: "fetch", output: "ok", isError: false } })
+  const outputs = (budget: number) =>
+    buildContext(messages, "m", budget).flatMap((message) => (message.role === "tool" ? [message.output] : []))
+
+  assert.ok(outputs(1_000_000).every((output) => output !== TRIMMED_TOOL_OUTPUT), "a turn within budget is untouched")
+
+  // About 106,000 characters against a 60,000 budget: 10 outputs must go, which rounds up to two blocks of 8.
+  const fitted = outputs(60_000)
+  assert.equal(fitted.length, 21, "every tool call keeps a result, so the transcript stays valid")
+  assert.equal(fitted.filter((output) => output === TRIMMED_TOOL_OUTPUT).length, 16)
+  assert.ok(fitted.slice(0, 16).every((output) => output === TRIMMED_TOOL_OUTPUT), "the oldest go first")
+  assert.ok(fitted[16].startsWith("16:"), "the newest outputs stay")
+  assert.equal(fitted.at(-1), "ok", "short outputs are never replaced")
+
+  // One more step: the same 16 are trimmed, so the cached prefix is unchanged.
+  messages.push({ seq: ++seq, messageId: "m", message: { role: "assistant", text: "", toolCalls: [{ id: "c20", name: "fetch", input: {} }] } })
+  messages.push({ seq: ++seq, messageId: "m", message: { role: "tool", callId: "c20", name: "fetch", output: "20:".padEnd(5_000, "x"), isError: false } })
+  assert.deepEqual(outputs(60_000).slice(0, 21), fitted)
 })

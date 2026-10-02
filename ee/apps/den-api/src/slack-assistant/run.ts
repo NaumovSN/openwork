@@ -15,6 +15,7 @@ export const checkpointSchema = z.object({
   firstTextAt: z.number().optional(),
   completedAt: z.number().optional(),
   streamCharacters: z.number().default(0),
+  streamStartedAt: z.number().optional(),
   recipientUserId: z.string().optional(),
   recipientTeamId: z.string().optional(),
   wakeShown: z.boolean().default(false),
@@ -70,11 +71,31 @@ export function currentReplyDelta(previous: string, current: string) {
   return current.startsWith(previous) ? current.slice(previous.length) : ""
 }
 /**
- * The reply stream opens with its first real content (a task step or answer text), so a quick answer never
- * starts with a placeholder. Slack's thinking status covers the gap until then.
+ * Slack closes a streamed message on its own after about five minutes, even while it is still being appended
+ * to (`message_not_in_streaming_state`). Long runs continue in a fresh message in the same thread before that.
  */
-async function ensureStream(slack: SlackCall, checkpoint: Checkpoint, chunks: Record<string, unknown>[]) {
-  if (checkpoint.streamTs) return false
+export const STREAM_ROTATE_AFTER_MS = 4 * 60_000
+/** Characters one streamed message carries before the reply continues in a new one. */
+export const STREAM_CHARACTER_LIMIT = 30_000
+export const STREAM_CONTINUED_LINE = "OpenWork task · continued\n\n"
+
+type Chunk = Record<string, unknown>
+const continued = (): Chunk => ({ type: "markdown_text", text: STREAM_CONTINUED_LINE })
+
+function chunkText(chunks: unknown) {
+  return z
+    .array(z.object({ text: z.string().optional() }).loose())
+    .catch([])
+    .parse(chunks)
+    .map((chunk) => chunk.text ?? "")
+    .join("")
+}
+
+function streamClosedBySlack(error: unknown) {
+  return error instanceof SlackApiError && error.code === "message_not_in_streaming_state"
+}
+
+async function startStream(slack: SlackCall, checkpoint: Checkpoint, chunks: Chunk[], now: () => number) {
   const stream = z.object({ ts: z.string() }).parse(
     await slack("chat.startStream", {
       channel: checkpoint.channel,
@@ -86,28 +107,54 @@ async function ensureStream(slack: SlackCall, checkpoint: Checkpoint, chunks: Re
     }),
   )
   checkpoint.streamTs = stream.ts
-  checkpoint.streamCharacters = chunks.reduce(
-    (sum, chunk) => sum + (typeof chunk.text === "string" ? chunk.text.length : 0),
-    0,
-  )
-  return true
+  checkpoint.streamStartedAt = now()
+  checkpoint.streamCharacters = chunkText(chunks).length
 }
+
+/**
+ * Sends chunks to the reply. The stream opens with its first real content (a task step or answer text), so a
+ * quick answer never starts with a placeholder; Slack's thinking status covers the gap until then. A long reply
+ * continues in a new message before Slack's lifetime or size limit, or right after Slack closed it anyway; the
+ * Slack session stays in progress throughout, so the native Stop button keeps working.
+ */
+async function sendChunks(slack: SlackCall, checkpoint: Checkpoint, chunks: Chunk[], now: () => number) {
+  if (!checkpoint.streamTs) return startStream(slack, checkpoint, chunks, now)
+  const size = chunkText(chunks).length
+  // Checkpoints written before streams were timed start their clock now; Slack closing them early is still handled below.
+  checkpoint.streamStartedAt ??= now()
+  if (now() - checkpoint.streamStartedAt >= STREAM_ROTATE_AFTER_MS || checkpoint.streamCharacters + size > STREAM_CHARACTER_LIMIT) {
+    try {
+      await slack("chat.stopStream", { channel: checkpoint.channel, ts: checkpoint.streamTs, session_status: "processing" })
+    } catch (error) {
+      if (!streamClosedBySlack(error)) throw error
+    }
+    return startStream(slack, checkpoint, [continued(), ...chunks], now)
+  }
+  try {
+    await slack("chat.appendStream", { channel: checkpoint.channel, ts: checkpoint.streamTs, chunks })
+    checkpoint.streamCharacters += size
+  } catch (error) {
+    if (!streamClosedBySlack(error)) throw error
+    await startStream(slack, checkpoint, [continued(), ...chunks], now)
+  }
+}
+
 export async function stopSlackStream(slack: SlackCall, checkpoint: Checkpoint, extra: Record<string, unknown> = {}) {
-  if (!checkpoint.streamTs) {
-    // Nothing was streamed yet: deliver any closing text as a plain reply and clear the thinking status.
-    const text = z
-      .array(z.object({ text: z.string().optional() }).loose())
-      .catch([])
-      .parse(extra.chunks)
-      .map((chunk) => chunk.text ?? "")
-      .join("")
-      .trim()
+  // Closing text (a final link, "Stopped.") goes out as a plain reply when there is no open stream to carry it.
+  const postClosingText = async () => {
+    const text = chunkText(extra.chunks).trim()
     if (text && checkpoint.channel) await slack("chat.postMessage", { channel: checkpoint.channel, thread_ts: checkpoint.threadTs, text })
-    await slack("agents.sessions.setStatus", {
+  }
+  const setFinalStatus = () =>
+    slack("agents.sessions.setStatus", {
       channel_id: checkpoint.channel,
       thread_ts: checkpoint.threadTs,
       status: checkpoint.finalStatus,
     })
+  if (!checkpoint.streamTs) {
+    // Nothing was streamed yet: deliver any closing text as a plain reply and clear the thinking status.
+    await postClosingText()
+    await setFinalStatus()
     return
   }
   try {
@@ -118,53 +165,27 @@ export async function stopSlackStream(slack: SlackCall, checkpoint: Checkpoint, 
       ...extra,
     })
   } catch (error) {
-    // Slack can stop the stream before delivering the native Stop event. Its
-    // session lifecycle still needs an explicit transition out of processing.
+    // Slack can stop the stream before delivering the native Stop event, or close it on its own. The session
+    // lifecycle still needs an explicit transition out of processing, and closing text must not be lost.
     if (
       !(error instanceof SlackApiError) ||
       !["message_not_in_streaming_state", "stopped_by_user"].includes(error.code)
     )
       throw error
-    await slack("agents.sessions.setStatus", {
-      channel_id: checkpoint.channel,
-      thread_ts: checkpoint.threadTs,
-      status: checkpoint.finalStatus,
-    })
+    if (streamClosedBySlack(error)) await postClosingText()
+    await setFinalStatus()
   }
 }
 async function appendText(
   slack: SlackCall,
   checkpoint: Checkpoint,
   text: string,
+  now: () => number,
   onPart?: (part: string) => Promise<void>,
 ) {
   for (let offset = 0; offset < text.length; offset += 10_000) {
     const part = text.slice(offset, offset + 10_000)
-    if (await ensureStream(slack, checkpoint, [{ type: "markdown_text", text: part }])) {
-      await onPart?.(part)
-      continue
-    }
-    if (checkpoint.streamCharacters + part.length > 30_000) {
-      await stopSlackStream(slack, checkpoint, { session_status: "processing" })
-      const stream = z.object({ ts: z.string() }).parse(
-        await slack("chat.startStream", {
-          channel: checkpoint.channel,
-          thread_ts: checkpoint.threadTs,
-          recipient_user_id: checkpoint.recipientUserId,
-          recipient_team_id: checkpoint.recipientTeamId,
-          chunks: [{ type: "markdown_text", text: "OpenWork task · continued\n\n" }],
-          task_display_mode: "timeline",
-        }),
-      )
-      checkpoint.streamTs = stream.ts
-      checkpoint.streamCharacters = 0
-    }
-    await slack("chat.appendStream", {
-      channel: checkpoint.channel,
-      ts: checkpoint.streamTs,
-      chunks: [{ type: "markdown_text", text: part }],
-    })
-    checkpoint.streamCharacters += part.length
+    await sendChunks(slack, checkpoint, [{ type: "markdown_text", text: part }], now)
     await onPart?.(part)
   }
 }
@@ -190,7 +211,7 @@ export async function advanceSlackRun(input: {
     if (!cp.sessionId) {
       // Persist the empty native session before submitting any user instruction.
       const result = await input.remote("create", { title: input.title, target: "cloud" })
-      if (result.error) return retryProvisioning(result, cp, input.slack)
+      if (result.error) return retryProvisioning(result, cp, input.slack, now)
       const created = z.object({ sessionId: z.string(), workspaceId: z.string() }).parse(result)
       await input.saveSession(created.sessionId, created.workspaceId)
       cp.sessionId = created.sessionId
@@ -206,7 +227,7 @@ export async function advanceSlackRun(input: {
       messageId: input.messageId,
       ...(input.model ? { model: input.model } : {}),
     })
-    if (result.error) return retryProvisioning(result, cp, input.slack)
+    if (result.error) return retryProvisioning(result, cp, input.slack, now)
     cp.phase = "read"
     cp.prompt = undefined
     return { checkpoint: cp, delayMs: 1_000 }
@@ -217,13 +238,14 @@ export async function advanceSlackRun(input: {
         input.slack,
         cp,
         `\n\nI need your input or approval. [Open in OpenWork Web](${webLink(cp.sessionId)}).`,
+        now,
       )
       cp.finalStatus = "suspended"
       cp.phase = "finish"
       return { checkpoint: cp, delayMs: 0 }
     }
     const result = await input.remote("read", { sessionId: cp.sessionId, messageId: input.messageId, limit: 100 })
-    if (result.error) return retryProvisioning(result, cp, input.slack)
+    if (result.error) return retryProvisioning(result, cp, input.slack, now)
     const snapshot = readSchema.parse(result)
     if (!cp.titleSynced && snapshot.title) {
       await input.slack("agents.sessions.rename", {
@@ -236,9 +258,9 @@ export async function advanceSlackRun(input: {
     }
     const delta = currentReplyDelta(cp.sentText, snapshot.finalAssistantText)
     if (delta)
-      await appendText(input.slack, cp, delta, async (part) => {
+      await appendText(input.slack, cp, delta, now, async (part) => {
         cp.sentText += part
-        cp.firstTextAt ??= Date.now()
+        cp.firstTextAt ??= now()
         await input.persist?.(cp)
       })
     const updates = new Map<
@@ -268,14 +290,13 @@ export async function advanceSlackRun(input: {
     for (let offset = 0; offset < entries.length; offset += 20) {
       const batch = entries.slice(offset, offset + 20)
       const chunks = batch.map(([, { rawStatus, ...chunk }]) => chunk)
-      if (!(await ensureStream(input.slack, cp, chunks)))
-        await input.slack("chat.appendStream", { channel: cp.channel, ts: cp.streamTs, chunks })
+      await sendChunks(input.slack, cp, chunks, now)
       for (const [id, update] of batch) cp.steps[id] = update.rawStatus
       await input.persist?.(cp)
     }
     const noAnswerYet = !cp.sentText && !snapshot.finalAssistantText
     if (noAnswerYet && !cp.stillWorkingShown && cp.startedAt !== undefined && now() - cp.startedAt > STILL_WORKING_AFTER_MS) {
-      await appendText(input.slack, cp, STILL_WORKING_LINE)
+      await appendText(input.slack, cp, STILL_WORKING_LINE, now)
       cp.stillWorkingShown = true
       await input.persist?.(cp)
     }
@@ -286,6 +307,7 @@ export async function advanceSlackRun(input: {
         webHandoff
           ? `\n\nThis task needs attention. [Open in OpenWork Web](${webLink(cp.sessionId ?? "")}).`
           : "\n\nThis task couldn't finish. Try again, or ask in a different way.",
+        now,
       )
       cp.finalStatus = "suspended"
       cp.phase = "finish"
@@ -329,11 +351,11 @@ export class RemoteSessionUnavailableError extends Error {
     super("remote_session_unavailable")
   }
 }
-function retryProvisioning(result: Record<string, unknown>, cp: Checkpoint, slack: SlackCall) {
+function retryProvisioning(result: Record<string, unknown>, cp: Checkpoint, slack: SlackCall, now: () => number) {
   return (async () => {
     if (result.retryable !== true) throw new RemoteSessionUnavailableError()
     if (!cp.wakeShown && String(result.error).startsWith("cloud_runtime_")) {
-      await appendText(slack, cp, "Waking your workspace…\n\n")
+      await appendText(slack, cp, "Waking your workspace…\n\n", now)
       cp.wakeShown = true
     }
     return {

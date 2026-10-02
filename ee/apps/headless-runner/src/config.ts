@@ -27,7 +27,8 @@ const configSchema = z.object({
   HEADLESS_MCP_URL: safeUrl.optional(),
   HEADLESS_MCP_TOOL_ALLOWLIST: csv,
   HEADLESS_MAX_CONCURRENT_TURNS: z.coerce.number().int().min(1).max(1_000).default(32),
-  HEADLESS_MAX_STEPS: z.coerce.number().int().min(1).max(200).default(30),
+  /** Model calls per turn; 0 means no limit, so a long task is bounded by the turn timeout and Stop instead. */
+  HEADLESS_MAX_STEPS: z.coerce.number().int().min(0).default(0),
   HEADLESS_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(128_000).default(8192),
   HEADLESS_TURN_TIMEOUT_MS: z.coerce.number().int().min(10_000).default(60 * 60_000),
   HEADLESS_CONTEXT_CHAR_BUDGET: z.coerce.number().int().min(10_000).default(400_000),
@@ -78,7 +79,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       : undefined,
     limits: {
       maxConcurrentTurns: value.HEADLESS_MAX_CONCURRENT_TURNS,
-      maxSteps: value.HEADLESS_MAX_STEPS,
+      maxSteps: value.HEADLESS_MAX_STEPS === 0 ? Number.POSITIVE_INFINITY : value.HEADLESS_MAX_STEPS,
       turnTimeoutMs: value.HEADLESS_TURN_TIMEOUT_MS,
       contextCharBudget: value.HEADLESS_CONTEXT_CHAR_BUDGET,
     },

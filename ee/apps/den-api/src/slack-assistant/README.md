@@ -42,14 +42,19 @@ platform capability are rechecked while processing each turn.
   ID lets the existing headless client deduplicate a retried send. Only assistant
   messages belonging to that turn are streamed.
 - Streams use Slack `chunks` mode throughout, including Markdown and task updates.
-  Delivered answer chunks are checkpointed. Large answers continue in another
-  stream in the same thread. Titles sync to Slack once; user title-change events
-  rename only the matching member's native session.
+  Delivered answer chunks are checkpointed. Slack closes a streamed message on
+  its own after about five minutes (`message_not_in_streaming_state`), so a reply
+  continues in a new stream in the same thread after four minutes or 30,000
+  characters, or right after Slack closed it early. The Slack session stays in
+  progress across streams, so Stop keeps working. Closing text that has no open
+  stream is posted as a plain reply. Titles sync to Slack once; user title-change
+  events rename only the matching member's native session.
 - Slack Stop cancels the signed actor's run, including replies moved into a DM.
   Pending runtime permissions/questions suspend the stream and link to Web; no
   permission is approved through Slack. The member continues in Web.
-- Requests time out after fifteen minutes. Transient errors retry up to twenty
-  times; Slack Retry-After is respected. Five terminal failures within five
+- Requests time out after fifteen minutes (sixty on the headless runner).
+  Transient errors retry up to twenty times; Slack Retry-After is respected. A
+  run that gives up logs `slack_assistant_failed` with the error code. Five terminal failures within five
   minutes pause new requests for that installation until the window expires.
 - Ingress is limited to 120 events per minute per installation and ten invocations
   per minute per Slack user. The configurable daily limit counts admitted runs

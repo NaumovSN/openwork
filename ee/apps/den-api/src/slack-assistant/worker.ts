@@ -333,6 +333,18 @@ export async function handleSlackEventFailure(event: EventRow, error: unknown, d
     )
     return
   }
+  if (!stopped)
+    appLogger.warn("slack_assistant_failed", {
+      event_id: event.id,
+      attempts: event.attempts,
+      code:
+        error instanceof SlackApiError
+          ? error.code
+          : error instanceof RemoteSessionUnavailableError
+            ? "remote_session_unavailable"
+            : "worker_error",
+      elapsed_ms: Date.now() - event.createdAt.getTime(),
+    })
   await renewSlackLease(event)
   const installation = await getInstallation(event.connectionId)
   const cp = checkpointSchema.parse(event.checkpoint ? JSON.parse(event.checkpoint) : {})

@@ -38,7 +38,41 @@ export const MAX_QUEUED_PER_SESSION = 20
 
 type Job = { sessionId: string; messageId: string }
 
-/** Keeps whole turns, newest first, within a character budget. The current turn is always kept. */
+/** Stands in for an older tool result in a long turn; the call, and whether it failed, stay in context. */
+export const TRIMMED_TOOL_OUTPUT =
+  "[Output removed to keep this long task within the model's context. Run the tool again if you still need it.]"
+/** Outputs shorter than this are kept: removing them saves little. */
+const TRIM_MIN_CHARS = 1_000
+/**
+ * Outputs are removed in blocks, so the context prefix changes only every few steps and the prompt cache keeps
+ * hitting in between.
+ */
+const TRIM_BLOCK = 8
+
+const messageSize = (message: Message) => (message.role === "tool" ? message.output.length + 200 : JSON.stringify(message).length)
+
+/** A turn bigger than the budget on its own keeps every call and its newest outputs; the oldest large outputs go first. */
+function fitTurn(turn: Message[], budget: number): Message[] {
+  let size = turn.reduce((sum, message) => sum + messageSize(message), 0)
+  if (size <= budget) return turn
+  const candidates = turn.flatMap((message, index) =>
+    message.role === "tool" && message.output.length > TRIM_MIN_CHARS ? [{ index, saved: message.output.length - TRIMMED_TOOL_OUTPUT.length }] : [],
+  )
+  let count = 0
+  while (count < candidates.length && size > budget) {
+    size -= candidates[count].saved
+    count += 1
+  }
+  const trimmed = new Set(candidates.slice(0, Math.min(candidates.length, Math.ceil(count / TRIM_BLOCK) * TRIM_BLOCK)).map((candidate) => candidate.index))
+  return turn.map((message, index) =>
+    trimmed.has(index) && message.role === "tool" ? { ...message, output: TRIMMED_TOOL_OUTPUT, images: undefined } : message,
+  )
+}
+
+/**
+ * Keeps whole turns, newest first, within a character budget. The current turn is always kept; when it alone
+ * outgrows the budget (a long task), its oldest large tool outputs are replaced by a short note.
+ */
 export function buildContext(messages: StoredMessage[], currentMessageId: string, budget: number): Message[] {
   const turns: StoredMessage[][] = []
   for (const message of messages) {
@@ -46,25 +80,25 @@ export function buildContext(messages: StoredMessage[], currentMessageId: string
     if (last && last[0].messageId === message.messageId) last.push(message)
     else turns.push([message])
   }
-  const kept: StoredMessage[][] = []
+  const kept: Message[][] = []
   let used = 0
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index]
-    const size = turn.reduce(
-      (sum, entry) => sum + (entry.message.role === "tool" ? entry.message.output.length + 200 : JSON.stringify(entry.message).length),
-      0,
-    )
     const isCurrent = turn[0].messageId === currentMessageId
+    const entries = isCurrent
+      ? fitTurn(turn.map((entry) => entry.message), budget)
+      : // Images are large; the model sees them in the turn that fetched them, earlier turns keep the text.
+        turn.map(({ message }) =>
+          message.role === "tool" && message.images
+            ? { ...message, images: undefined, output: `${message.output}\n[images from an earlier turn not shown]` }
+            : message,
+        )
+    const size = entries.reduce((sum, message) => sum + messageSize(message), 0)
     if (!isCurrent && used + size > budget) break
-    kept.unshift(turn)
+    kept.unshift(entries)
     used += size
   }
-  // Images are large; the model sees them in the turn that fetched them, earlier turns keep the text.
-  return kept.flat().map((entry) =>
-    entry.messageId !== currentMessageId && entry.message.role === "tool" && entry.message.images
-      ? { ...entry.message, images: undefined, output: `${entry.message.output}\n[images from an earlier turn not shown]` }
-      : entry.message,
-  )
+  return kept.flat()
 }
 
 /** Tool calls whose result was never recorded (process crashed or turn was aborted mid-call). */
@@ -175,6 +209,10 @@ export class Runner {
     const timeout = setTimeout(() => controller.abort(new Error("turn_timeout")), limits.turnTimeoutMs)
     const signal = controller.signal
     let tools: ToolSession | null = null
+    const startedAt = Date.now()
+    let steps = 0
+    let toolCalls = 0
+    console.log(`[headless-runner] turn started ${JSON.stringify({ sessionId, messageId })}`)
 
     const turnMessages = () =>
       store.messages(sessionId).filter((entry) => entry.messageId === messageId).map((entry) => entry.message)
@@ -231,6 +269,8 @@ export class Runner {
           apiKey,
           signal,
         })
+        steps += 1
+        toolCalls += result.toolCalls.length
         store.addUsage(sessionId, messageId, result.usage)
         store.appendMessage(sessionId, messageId, { role: "assistant", text: result.text, toolCalls: result.toolCalls })
         if (result.toolCalls.length === 0) {
@@ -274,6 +314,20 @@ export class Runner {
     } finally {
       clearTimeout(timeout)
       await tools?.close()
+      // One line per turn, never content or credentials: how it ended, how long it ran, and what it cost.
+      const turn = store.getTurn(sessionId, messageId)
+      console.log(
+        `[headless-runner] turn ended ${JSON.stringify({
+          sessionId,
+          messageId,
+          status: turn?.status,
+          error: turn?.error,
+          steps,
+          toolCalls,
+          elapsedMs: Date.now() - startedAt,
+          ...turn?.usage,
+        })}`,
+      )
     }
   }
 }
