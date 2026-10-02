@@ -162,18 +162,8 @@ test("the transcript has one visible creation rail with genuine writing and chec
   );
   expect(markup.split("data-app-builder-step").length - 1).toBe(1);
   expect(markup).toContain('data-app-creation-stage="checking"');
-  expect(markup).toContain(
-    'data-app-creation-step="needs" data-step-status="complete"',
-  );
-  expect(markup).toContain(
-    'data-app-creation-step="writing" data-step-status="complete"',
-  );
-  expect(markup).toContain(
-    'data-app-creation-step="checking" data-step-status="running"',
-  );
-  expect(markup).toContain(
-    'data-app-creation-step="ready" data-step-status="pending"',
-  );
+  // One plain rail row that names the current state.
+  expect(markup).toContain("Checking app “");
 });
 
 test("both engine projections preserve preparation and recorded build timing", () => {
@@ -262,8 +252,7 @@ test("an explicit App request shows actual discovery before preparation and keep
   expect(discovered).toHaveLength(1);
   expect(appCreationProgress(discovered[0], true)).toMatchObject({ stage: "needs", prepared: false, running: true });
   const markup = renderToStaticMarkup(provider(<AppBuilderStep run={discovered[0]} active />));
-  expect(markup).toContain("Finding what it needs");
-  expect(markup).toContain("Inventory lookup unit price");
+  expect(markup).toContain("Preparing app");
   const readyToWrite = appCreationRuns([{ ...message, parts: [search, prepare()] }], true);
   expect(readyToWrite).toHaveLength(1);
   expect(readyToWrite[0].id).toBe("search");

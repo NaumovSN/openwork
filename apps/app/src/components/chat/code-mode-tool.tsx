@@ -5,6 +5,7 @@ import { CapabilityCallLine, DetailsToggle, TechnicalDetailsPanel } from "./capa
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { getCapabilityCallSentence } from "@/lib/capability-call";
 import { codeModeSummary } from "@/lib/code-mode-summary";
+import { codeModeScriptError, codeModeToolCalls } from "@/lib/code-mode-tools";
 import type { CurrentToolLifecycle } from "@/lib/current-tool-lifecycle";
 import { formatElapsedSeconds, getToolCallStartedAt, trackToolCallDuration } from "@/lib/tool-call-duration";
 import { isToolPartInFlight } from "@/lib/tool-activity";
@@ -15,6 +16,24 @@ import { resolveConnectorToolIdentity, type ConnectorToolIdentity } from "@/reac
 /** The agent reading its own toolbox: plumbing, not work the person asked for. */
 function isToolLookup(call: DynamicToolUIPart) {
   return call.toolName === "search" || call.toolName.endsWith("search_capabilities");
+}
+
+/**
+ * A finished script that did no visible work (no calls, or only catalog
+ * lookups) renders nothing; callers drop it before layout so it leaves no gap.
+ */
+export function isSilentCodeModePart(part: DynamicToolUIPart): boolean {
+  const calls = codeModeToolCalls(part);
+  if (!calls || isToolPartInFlight(part) || part.state === "output-error") return false;
+  return calls.every(isToolLookup);
+}
+
+/** One short line from a script error, for the row itself. */
+function shortReason(part: DynamicToolUIPart): string | null {
+  const text = codeModeScriptError(part) ?? (part.state === "output-error" ? part.errorText : null);
+  if (!text) return null;
+  const first = text.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s/)[0] ?? "";
+  return first.length > 90 ? `${first.slice(0, 89)}…` : first || null;
 }
 
 export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
@@ -85,10 +104,12 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
   // it succeeds; while running or after failing it is one quiet row.
   if (calls.length === 0 && !waiting) {
     if (!inFlight && !failed) return null;
+    const reason = shortReason(part);
     return (
       <div data-code-mode-call={part.toolCallId} className="group/step min-w-0">
         <div className="flex min-h-6 min-w-0 items-center gap-2 text-sm text-muted-foreground">
-          <span className={cn("min-w-0 truncate", running && "ow-text-shimmer")}>{label}</span>
+          <span className={cn("shrink-0", running && "ow-text-shimmer")}>{label}</span>
+          {failed && reason ? <span className="min-w-0 truncate text-xs text-muted-foreground">{reason}</span> : null}
           {duration ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{duration}</span> : null}
           <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={label} alwaysVisible={failed} />
         </div>

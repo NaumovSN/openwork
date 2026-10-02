@@ -98,7 +98,7 @@ import {
 } from "@/components/ui/message"
 import { Tool } from "@/components/ui/tool"
 import { CapabilityCallLine } from "@/components/chat/capability-call-line"
-import { CodeModeTool } from "@/components/chat/code-mode-tool"
+import { CodeModeTool, isSilentCodeModePart } from "@/components/chat/code-mode-tool"
 import { ConnectionCard } from "@/components/chat/connection-card"
 import { connectionFromChatToolPart } from "@/components/tools/error-attribution"
 import { isReservedConnectionQuestion, type ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
@@ -365,6 +365,18 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
 }
 
 const isEmptyMessage = (message: UIMessage): boolean => message.parts.length === 0
+
+function withoutSilentSteps(messages: UIMessage[]): UIMessage[] {
+  let changed = false
+  const next = messages.flatMap((message) => {
+    if (message.role !== "assistant") return [message]
+    const parts = message.parts.filter((part) => !(part.type === "dynamic-tool" && isSilentCodeModePart(part)))
+    if (parts.length === message.parts.length) return [message]
+    changed = true
+    return parts.length > 0 ? [{ ...message, parts }] : []
+  })
+  return changed ? next : messages
+}
 
 type RetryStatus = Extract<SessionStatus, { type: "retry" }>
 
@@ -1491,7 +1503,9 @@ function MessageGroup({
     const isLastMessage = isLastGroup && item.index === lastItem.index
 
     return (
-      <div key={item.message.id}>
+      // A message whose parts all render nothing (empty reasoning, step
+      // markers, hidden steps) must not take a slot in the list's spacing.
+      <div key={item.message.id} className="[&:not(:has(:is(span,p,img,svg,button,pre,a,li,iframe,video,canvas,input,textarea,hr,table)))]:hidden">
         <MessageComponent
           message={item.message}
           isLastMessage={isLastMessage}
@@ -1734,7 +1748,8 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     return () => window.clearInterval(interval)
   }, [activityActive, runStartedAt, syncDegraded])
   const latestUserMessageId = React.useMemo(() => messages.findLast((message) => message.role === "user")?.id, [messages])
-  const items = React.useMemo(() => groupMessages(dedupeRenderedTurnErrors(messages), status), [messages, status]);
+  // Steps that render nothing are removed before layout, so they leave no gap.
+  const items = React.useMemo(() => groupMessages(dedupeRenderedTurnErrors(withoutSilentSteps(messages)), status), [messages, status]);
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
   const latestAssistantToolParts = React.useMemo(

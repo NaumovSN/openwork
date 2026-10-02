@@ -116,15 +116,14 @@ async function render(
     ),
   );
 }
-test("a finished creation collapses to one line and can reveal its completed steps", async () => {
+test("a finished creation is one line and can reveal its raw calls", async () => {
   await render([builder("create", "1")], false, "v1", false, true);
-  const disclosure = container.querySelector<HTMLButtonElement>('[aria-expanded="false"]');
-  expect(disclosure?.textContent).toContain("Created “Order calculator”");
-  expect(disclosure?.textContent).toContain("4 steps");
-  expect(container.querySelector("ol")?.parentElement?.hidden).toBe(true);
-  await act(async () => disclosure?.click());
-  expect(container.querySelector("ol")?.parentElement?.hidden).toBe(false);
-  expect(container.querySelectorAll('[data-step-status="complete"]')).toHaveLength(4);
+  const row = container.querySelector("[data-app-builder-step]");
+  expect(row?.getAttribute("aria-label")).toBe("Created app “Order calculator”");
+  const details = container.querySelector<HTMLButtonElement>('[data-app-builder-step] [data-testid="tool-details-toggle"]');
+  expect(details?.getAttribute("aria-expanded")).toBe("false");
+  await act(async () => details?.click());
+  expect(details?.getAttribute("aria-expanded")).toBe("true");
 });
 for (const engine of ["v1", "v2"] as const)
   test(`${engine}: a result finishing with the run opens once and an edit updates the same pane`, async () => {

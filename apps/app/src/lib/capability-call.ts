@@ -269,13 +269,28 @@ export function getCapabilityCallSentence(
     // connection id is opaque, so the trailing tool name carries the meaning
     // ("query_granola_meetings" → "Queried granola meetings").
     if (name?.startsWith("mcp:")) {
-      const action = name.split(":").filter(Boolean).at(-1)
-      if (action) {
+      const rawAction = name.split(":").filter(Boolean).at(-1)
+      if (rawAction) {
+        // The connection id is opaque; the resolved connector names the service.
+        const service = options?.connectionName?.trim() || null
+        const action = normalizeAction(rawAction, service ?? "")
+        if (service && /^(?:search|find|query)(?:_|$)/i.test(action)) {
+          const verb = action.split("_")[0]!.toLowerCase()
+          return {
+            service,
+            present: `${PRESENT_TENSE[verb]} ${service}${quoted ? ` for${quoted}` : ""}`,
+            past: `${PAST_TENSE[verb]} ${service}${quoted ? ` for${quoted}` : ""}`,
+            failure: `Couldn't ${verb} ${service}`,
+          }
+        }
         const suffix = quoted ? `:${quoted}` : ""
+        const tail = service ? ` · ${service}` : ""
         return {
-          service: null,
-          present: `${verbPhrase(action, "present")}${suffix}`,
-          past: `${verbPhrase(action, "past")}${suffix}`,
+          service,
+          present: `${verbPhrase(action, "present")}${tail}${suffix}`,
+          past: `${verbPhrase(action, "past")}${tail}${suffix}`,
+          // Without a known service there is nothing specific to say.
+          ...(service ? { failure: `Couldn't ${baseVerbPhrase(action)}${tail}` } : {}),
         }
       }
     }

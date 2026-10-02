@@ -1,6 +1,4 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, ChevronRight, Circle, CircleAlert } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { formatToolCallDuration } from "@/lib/tool-call-duration";
 import { isToolPartInFlight } from "@/lib/tool-activity";
 import { useOptionalMessageList } from "./message-list-provider";
@@ -26,13 +24,6 @@ export function appBuildProblem(part: DynamicToolUIPart): string | null {
     .replace(/\.$/, "")
     .slice(0, 120) || null;
 }
-
-const stages = [
-  { id: "needs", label: "Found what it needs" },
-  { id: "writing", label: "Writing the app" },
-  { id: "checking", label: "Checking it" },
-  { id: "ready", label: "Ready to open" },
-];
 
 export function AppBuilderStep({
   run,
@@ -66,7 +57,6 @@ export function AppBuilderStep({
       : [],
   );
   const [now, setNow] = useState(Date.now);
-  const [expanded, setExpanded] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   // Earlier rejected builds are progress on the same app, not new apps.
   const fixedProblems = [...(run.attempts ?? []), ...run.builds.slice(0, -1)].flatMap((part) => {
@@ -88,150 +78,58 @@ export function AppBuilderStep({
           (progress.running ? now : Math.max(...ends)) - Math.min(...starts),
         )
       : null;
-  const index = stages.findIndex((stage) => stage.id === progress.stage);
   const editing =
     progress.build && /(?:^|_)update_app$/.test(progress.build.toolName);
-  const label = progress.app || progress.builtUnrecorded
-    ? editing
-      ? "Updated"
-      : "Created"
-    : editing
-      ? "Updating"
-      : "Creating";
+  // One plain rail row, like every other step: what is happening to which
+  // app, a short state, Open when there is something to open, and the raw
+  // calls behind the details icon.
+  const title = `“${progress.title}”`;
+  const sentence = progress.app || progress.builtUnrecorded
+    ? `${editing ? "Updated" : "Created"} app ${title}`
+    : progress.failed
+      ? `Couldn’t ${editing ? "update" : "create"} app ${title}`
+      : progress.stage === "checking"
+        ? `Checking app ${title}`
+        : progress.stage === "writing"
+          ? `${editing ? "Updating" : "Writing"} app ${title}`
+          : `Preparing app ${title}`;
+  const state = progress.failed
+    ? latestProblem
+    : progress.builtUnrecorded
+      ? "Open it from your Library"
+      : progress.unavailable
+        ? "Preview unavailable"
+        : !progress.running && !progress.app
+          ? context?.syncDegraded ? "Reconnecting" : lifecycle === "waiting" ? "Waiting for approval" : "Paused"
+          : fixedProblems.length > 0 && progress.running
+            ? `fixed ${fixedProblems.length} ${fixedProblems.length === 1 ? "problem" : "problems"}`
+            : null;
+  const shownElapsed = elapsed !== null && (progress.running || terminal) ? formatToolCallDuration(elapsed) : null;
   return (
     <section
-      className="py-2 text-sm"
+      className="group/step min-w-0"
       data-app-builder-step
       data-app-creation-stage={progress.stage}
-      aria-label={`${label} ${progress.title}`}
+      aria-label={sentence}
     >
-      {progress.app ? (
-        <div className="group/step flex items-center justify-between gap-2">
-        <Button variant="ghost" className="h-auto justify-start gap-2 px-0 py-1 text-sm" aria-expanded={expanded}
-          onClick={() => setExpanded((value) => !value)}>
-          <img src="/openwork-mark.svg" alt="" className="size-5 dark:invert" />
-          <span>{label} “{progress.title}”</span>
-          <span className="font-normal text-muted-foreground">{stages.length} steps{elapsed !== null ? ` · ${formatToolCallDuration(elapsed)}` : ""}</span>
-          <ChevronRight className={`size-4 text-muted-foreground transition-transform ${expanded ? "rotate-90" : ""}`} />
-        </Button>
-        {progress.build ? <BuiltAppChatPreview part={progress.build} compact /> : null}
-        <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={`${label} “${progress.title}”`} />
-        </div>
-      ) : <div className="group/step flex w-full flex-wrap items-center gap-x-3 gap-y-1">
-        <img src="/openwork-mark.svg" alt="" className="size-5 dark:invert" />
-        <span className="font-medium">
-          {label} “{progress.title}”
-        </span>
-        {elapsed !== null ? (
-          <span className="tabular-nums text-muted-foreground">
-            {formatToolCallDuration(elapsed)}
-          </span>
-        ) : null}
-        {progress.running ? <span className="text-xs text-muted-foreground">usually a few minutes</span> : null}
-        {!progress.running && !progress.app ? (
-          <span className="text-muted-foreground">
-            {progress.builtUnrecorded
-              ? "Open it from your Library"
-              : progress.failed
-              ? "Needs a fix"
-              : progress.unavailable
-                ? "Preview unavailable"
-                : context?.syncDegraded
-                  ? "Reconnecting"
-                  : lifecycle === "waiting"
-                    ? "Waiting for approval"
-                    : "Paused"}
-          </span>
-        ) : null}
-        <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)}
-          label={`${label} “${progress.title}”`} alwaysVisible={progress.failed} />
-      </div>}
-      <div hidden={(Boolean(progress.app) && !expanded) || progress.builtUnrecorded}>
-      <ol
-        className="ml-2.5 mt-3 space-y-4 border-l border-border pb-1 pl-7"
-        aria-live="polite"
-      >
-        {stages.map((stage, i) => {
-          // A direct legacy call cannot prove a preparation stage happened.
-          const done = Boolean(
-            progress.app || progress.builtUnrecorded || (i === 0 ? progress.prepared : i < index),
-          );
-          const current = i === index && !progress.app && !progress.builtUnrecorded;
-          const status = done
-            ? "complete"
-            : current && progress.failed
-              ? "failed"
-              : current && progress.running
-                ? "running"
-                : current
-                  ? "paused"
-                  : "pending";
-          const hint =
-            i === 0 && progress.preparation
-              ? progress.preparation.tools
-                  .slice(0, 3)
-                  .map((tool) => tool.description.slice(0, 80))
-                  .join(" · ") || "Self-contained app"
-              : i === 0 && current && run.discoveries?.length
-                ? (() => { const input = run.discoveries.at(-1)?.input; const query = input && typeof input === "object" ? Reflect.get(input, "query") : null; return typeof query === "string" ? query.slice(0, 140) : null; })()
-              : i === 1 && current
-                ? progress.detail || "Building the view and interactions"
-                : i === 2 && current
-                  ? fixedProblems.length > 0
-                    ? `Fixed ${fixedProblems.length} ${fixedProblems.length === 1 ? "problem" : "problems"}, checking again`
-                    : "Validating tools and compiling the app"
-                  : null;
-          return (
-            <li
-              key={stage.id}
-              data-app-creation-step={stage.id}
-              data-step-status={status}
-              className={`flex items-start gap-3 ${done || (current && progress.running) || status === "failed" ? "text-foreground" : "text-muted-foreground"}`}
-            >
-              <span className="mt-0.5 shrink-0" aria-label={status}>
-                {done ? (
-                  <CheckCircle2 className="size-4 text-muted-foreground" />
-                ) : status === "failed" ? (
-                  <CircleAlert className="size-4" />
-                ) : status === "running" ? (
-                  <span className="mx-1 my-1 block size-2 rounded-full bg-foreground" />
-                ) : (
-                  <Circle className="size-4 text-muted-foreground/50" />
-                )}
-              </span>
-              <span>
-                {i === 0 && current ? "Finding what it needs" : stage.label}
-                {hint ? (
-                  <span className="ml-3 text-muted-foreground">{hint}</span>
-                ) : null}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-      {progress.failed ? (
-        <p role="alert" className="ml-10 mt-3 text-muted-foreground">
-          {latestProblem
-            ? latestProblem
-            : progress.build
-              ? "The app could not be checked. Fix the reported error and try again."
-              : "The app’s tools could not be prepared. Check access or choose another tool."}
-        </p>
-      ) : null}
-      {progress.unavailable ? (
-        <p role="status" className="ml-10 mt-3 text-muted-foreground">
-          The build returned without an available preview. See the result for
-          the next step.
-        </p>
-      ) : null}
+      <div className="flex min-h-6 min-w-0 items-center gap-2 text-sm text-muted-foreground">
+        <img src="/openwork-mark.svg" alt="" className="size-4 shrink-0 opacity-80 dark:invert" />
+        <span className={`shrink-0 ${progress.running ? "ow-text-shimmer motion-reduce:animate-none" : ""}`}>{sentence}</span>
+        {state ? <span className="min-w-0 truncate text-xs text-muted-foreground">{state}</span> : null}
+        {shownElapsed ? <span className="shrink-0 text-xs tabular-nums text-muted-foreground/70">{shownElapsed}</span> : null}
+        {progress.app && progress.build ? <BuiltAppChatPreview part={progress.build} compact /> : null}
+        <DetailsToggle open={detailsOpen} onToggle={() => setDetailsOpen(!detailsOpen)} label={sentence} alwaysVisible={progress.failed} />
+      </div>
       {detailsOpen ? (
-        <div className="ml-10 mt-2">
+        <div className="mt-1 flex flex-col gap-2">
+          {fixedProblems.map((problem, index) => (
+            <p key={index} className="text-xs text-muted-foreground">Fixed: {problem}</p>
+          ))}
           {parts.map((part) => (
             <TechnicalDetailsPanel key={part.toolCallId} part={part} />
           ))}
         </div>
       ) : null}
-      </div>
     </section>
   );
 }

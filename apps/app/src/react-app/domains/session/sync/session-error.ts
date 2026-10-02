@@ -239,7 +239,7 @@ function detectGatewayAuthRequired(error: unknown, fields: { message: string | n
 }
 
 function errorRecoveryPrompt(kind: OpencodeSessionErrorKind) {
-  return kind === "aborted" || kind === "provider-timeout" || kind === "provider-incomplete" || kind === "provider-unavailable" || kind === "network-unavailable" || kind === "provider-unreachable" || kind === "provider-connection-dropped" || kind === "rate-limited" || kind === "output-invalid"
+  return kind === "aborted" || kind === "provider-timeout" || kind === "provider-incomplete" || kind === "provider-unavailable" || kind === "network-unavailable" || kind === "provider-unreachable" || kind === "provider-connection-dropped" || kind === "model-unavailable" || kind === "rate-limited" || kind === "output-invalid"
     ? interruptedTaskRecoveryPrompt
     : null;
 }
