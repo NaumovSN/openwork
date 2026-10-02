@@ -31,6 +31,97 @@ export function classifyAutomationExecutionError(error) {
   }
 }
 
+/**
+ * How long a remote session's first turn is watched before it is reported.
+ * Long enough for a provider to reject the request, short enough that the
+ * runner slot held during the window is released promptly.
+ */
+export const REMOTE_SESSION_FIRST_TURN_WINDOW_MS = 20_000
+const REMOTE_SESSION_IDLE_GRACE_MS = 5_000
+const REMOTE_SESSION_POLL_MS = 500
+const REMOTE_SESSION_MESSAGE_LIMIT = 2_000
+
+function isProviderAuthError(error, raw) {
+  if (error?.name === "ProviderAuthError") return true
+  return /invalid\s+api\s+key|authentication\s+failed|unauthori[sz]ed|\b401\b/i.test(raw)
+}
+
+/**
+ * Classifies a remote session's first-turn failure. Desktop Automations keep
+ * `classifyAutomationExecutionError`; this only adds the credential case.
+ */
+export function classifyRemoteSessionError(error) {
+  const raw = serializedError(error)
+  if (isProviderAuthError(error, raw)) {
+    return { code: "provider_auth_failed", message: "The model provider rejected its credentials." }
+  }
+  return classifyAutomationExecutionError(error)
+}
+
+function remoteSessionFailureMessage(sessionId, workspaceId, summary, raw) {
+  const location = `The first reply failed in local session ${sessionId} (workspace ${workspaceId}).`
+  const detail = raw && raw !== summary ? ` Provider error: ${raw}` : ""
+  return `${location} ${summary}${detail}`.slice(0, REMOTE_SESSION_MESSAGE_LIMIT)
+}
+
+function hasAssistantOutput(message) {
+  return (Array.isArray(message?.parts) ? message.parts : []).some((part) => (
+    part?.type === "tool"
+    || ((part?.type === "text" || part?.type === "reasoning") && typeof part.text === "string" && part.text.trim())
+  ))
+}
+
+/**
+ * Watches a freshly prompted session until its first turn shows a reply, an
+ * error, or the window ends. A busy session at the deadline counts as started;
+ * only an explicit error or an idle session without output counts as failed.
+ */
+async function observeRemoteSessionFirstTurn(client, sessionId, workspaceId, options) {
+  const windowMs = options.firstTurnWindowMs ?? REMOTE_SESSION_FIRST_TURN_WINDOW_MS
+  const idleGraceMs = options.idleGraceMs ?? REMOTE_SESSION_IDLE_GRACE_MS
+  const pollIntervalMs = options.pollIntervalMs ?? REMOTE_SESSION_POLL_MS
+  const startedAt = Date.now()
+  const deadlineAt = startedAt + windowMs
+  while (Date.now() < deadlineAt) {
+    const timeoutSignal = AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()))
+    let snapshot = null
+    try {
+      snapshot = await client.getThreadSnapshot(sessionId, {
+        signal: AbortSignal.any([options.signal, timeoutSignal]),
+        limit: 50,
+      })
+    } catch (error) {
+      if (options.signal.aborted) throw error
+      // The session exists and accepted its prompt; an unreadable snapshot
+      // is not evidence of failure, so keep watching until the window ends.
+    }
+    const assistants = Array.isArray(snapshot?.messages)
+      ? snapshot.messages.filter((message) => message?.role === "assistant")
+      : []
+    const failed = [...assistants].reverse().find((message) => message?.error)
+    if (failed) {
+      const classified = classifyRemoteSessionError(failed.error)
+      return {
+        outcome: "failed",
+        code: classified.code,
+        message: remoteSessionFailureMessage(sessionId, workspaceId, classified.message, serializedError(failed.error)),
+      }
+    }
+    if (assistants.some(hasAssistantOutput)) return { outcome: "replied" }
+    if (snapshot?.status?.type === "idle" && Date.now() - startedAt >= idleGraceMs) {
+      return {
+        outcome: "failed",
+        code: "no_reply",
+        message: remoteSessionFailureMessage(sessionId, workspaceId, "The session stopped without replying.", ""),
+      }
+    }
+    const remaining = deadlineAt - Date.now()
+    if (remaining <= 0) break
+    await sleep(Math.min(pollIntervalMs, remaining), options.signal)
+  }
+  return { outcome: "busy" }
+}
+
 function sleep(ms, signal) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -259,7 +350,10 @@ export async function executeDesktopRemoteSession(assignment, options) {
     })
     sessionId = created.id
     const started = created.started
-    return { sessionId, workspaceId, started }
+    const firstTurn = started
+      ? await observeRemoteSessionFirstTurn(client, sessionId, workspaceId, options)
+      : { outcome: "not_started" }
+    return { sessionId, workspaceId, started, firstTurn }
   } catch (error) {
     const contextualError = error instanceof Error ? error : new Error(serializedError(error))
     if (sessionId && Reflect.get(contextualError, "sessionId") === undefined) {
@@ -536,13 +630,20 @@ export function createDesktopAutomationRunner(options) {
         getLocalRuntime: options.getLocalRuntime,
         fetchImpl,
         signal: controller.signal,
+        firstTurnWindowMs: options.remoteSessionFirstTurnWindowMs,
+        idleGraceMs: options.remoteSessionIdleGraceMs,
+        pollIntervalMs: options.remoteSessionPollIntervalMs,
       })
-      result = {
-        status: "delivered",
-        sessionId: output.sessionId,
-        workspaceId: output.workspaceId,
-        resultSummary: "Remote session created",
-      }
+      // Released Den rejects session ids on a failed completion, so the
+      // failure message carries them for a person to find the local session.
+      result = output.firstTurn.outcome === "failed"
+        ? { status: "failed", error: { code: output.firstTurn.code, message: output.firstTurn.message } }
+        : {
+          status: "delivered",
+          sessionId: output.sessionId,
+          workspaceId: output.workspaceId,
+          resultSummary: "Remote session created",
+        }
     } catch (error) {
       result = {
         status: "failed",

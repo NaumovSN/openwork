@@ -3,7 +3,9 @@ import test from "node:test"
 
 import {
   classifyAutomationExecutionError,
+  classifyRemoteSessionError,
   createDesktopAutomationRunner,
+  REMOTE_SESSION_FIRST_TURN_WINDOW_MS,
   executeDesktopAutomation,
   executeDesktopRemoteSession,
   normalizeRunnerBaseUrl,
@@ -849,6 +851,8 @@ test("a remote-session work item creates a local session and completes with its 
           return Response.json({ id: "session-1" }, { status: 201 })
         }
         if (parsed.pathname === sessionPaths.prompt) return new Response(null, { status: 204 })
+        const snapshot = finishedSnapshot(parsed, sessionPaths)
+        if (snapshot) return snapshot
         throw new Error(`Unexpected local request ${parsed.pathname}`)
       }
       denRequests.push({ path: parsed.pathname, authorization, body })
@@ -885,7 +889,9 @@ test("a remote-session work item creates a local session and completes with its 
   )
   runner.stop()
 
-  assert.deepEqual(localRequests, [
+  const snapshotPaths = [sessionPaths.get, sessionPaths.messages, sessionPaths.todo, sessionPaths.status]
+  assert.ok(localRequests.some((request) => request.path === sessionPaths.messages), "first turn was not observed")
+  assert.deepEqual(localRequests.filter((request) => !snapshotPaths.includes(request.path)), [
     { path: "/workspaces", method: "GET", body: null, authorization: "Bearer local-client-token" },
     {
       path: "/workspace/workspace-1/opencode/session",
@@ -934,7 +940,12 @@ test("remote-session creation omits nullable prompt and model fields", async () 
     signal: new AbortController().signal,
   })
 
-  assert.deepEqual(result, { sessionId: "session-not-started", workspaceId: "workspace/first", started: false })
+  assert.deepEqual(result, {
+    sessionId: "session-not-started",
+    workspaceId: "workspace/first",
+    started: false,
+    firstTurn: { outcome: "not_started" },
+  })
   assert.deepEqual(requests, [
     { path: "/workspaces", body: null },
     { path: "/workspace/workspace%2Ffirst/opencode/session", body: { title: "Desktop handoff" } },
@@ -1016,6 +1027,181 @@ test("a local remote-session failure completes as failed without leaking the res
   assert.equal(completions[0].sessionId, undefined)
   assert.equal(completions[0].workspaceId, undefined)
   assert.equal(JSON.stringify(completions[0]).includes(sensitiveToken), false)
+})
+
+function firstTurnFetch(sessionPaths, snapshotFor) {
+  let polls = 0
+  const fetchImpl = async (url, options = {}) => {
+    const parsed = new URL(url)
+    if (parsed.pathname === "/workspaces") {
+      return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
+    }
+    if (parsed.pathname === sessionPaths.create && options.method === "POST") {
+      return Response.json({ id: sessionPaths.get.split("/").at(-1) }, { status: 201 })
+    }
+    if (parsed.pathname === sessionPaths.prompt) return new Response(null, { status: 204 })
+    if (parsed.pathname === sessionPaths.messages) polls += 1
+    const snapshot = respondToSnapshotRequest(parsed, sessionPaths, snapshotFor(polls))
+    if (snapshot) return snapshot
+    throw new Error(`Unexpected request ${parsed.pathname}`)
+  }
+  return { fetchImpl, polls: () => polls }
+}
+
+function observeFirstTurn(sessionPaths, snapshotFor, overrides = {}) {
+  const { fetchImpl } = firstTurnFetch(sessionPaths, snapshotFor)
+  return executeDesktopRemoteSession(remoteSessionAssignment(), {
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local-client-token" }),
+    fetchImpl,
+    signal: new AbortController().signal,
+    firstTurnWindowMs: 1_000,
+    idleGraceMs: 50,
+    pollIntervalMs: 5,
+    ...overrides,
+  })
+}
+
+const providerAuthSnapshot = {
+  status: { type: "idle" },
+  messages: [{
+    info: {
+      id: "msg-auth",
+      role: "assistant",
+      error: { name: "ProviderAuthError", data: { message: "AI Gateway authentication failed: Invalid API key" } },
+    },
+    parts: [],
+  }],
+}
+
+test("the first-turn window defaults to about twenty seconds", () => {
+  assert.equal(REMOTE_SESSION_FIRST_TURN_WINDOW_MS, 20_000)
+})
+
+test("provider credential failures get their own remote-session code", () => {
+  assert.equal(classifyRemoteSessionError({ name: "ProviderAuthError", message: "nope" }).code, "provider_auth_failed")
+  assert.equal(classifyRemoteSessionError({ name: "APIError", message: "Invalid API key" }).code, "provider_auth_failed")
+  assert.equal(classifyRemoteSessionError({ name: "APIError", message: "Request returned 401 Unauthorized" }).code, "provider_auth_failed")
+  assert.equal(classifyRemoteSessionError({ message: "Model not found: provider/model" }).code, "model_access_lost")
+  assert.equal(classifyRemoteSessionError({ message: "Provider overloaded" }).code, "execution_failed")
+  // Desktop Automations keep their existing classification.
+  assert.equal(classifyAutomationExecutionError({ name: "ProviderAuthError", message: "Invalid API key" }).code, "execution_failed")
+})
+
+test("a remote session whose first assistant step succeeds is delivered", async () => {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const result = await observeFirstTurn(sessionPaths, (polls) => polls < 3
+    ? { status: { type: "busy" }, messages: [] }
+    : {
+      status: { type: "busy" },
+      messages: [{ info: { id: "msg-1", role: "assistant" }, parts: [{ id: "part-1", type: "reasoning", text: "Looking" }] }],
+    })
+  assert.deepEqual(result, { sessionId: "session-1", workspaceId: "workspace-1", started: true, firstTurn: { outcome: "replied" } })
+})
+
+test("a remote session still busy when the window ends is delivered", async () => {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const startedAt = Date.now()
+  const result = await observeFirstTurn(sessionPaths, () => ({ status: { type: "busy" }, messages: [] }), {
+    firstTurnWindowMs: 100,
+  })
+  assert.deepEqual(result.firstTurn, { outcome: "busy" })
+  assert.ok(Date.now() - startedAt < 1_000, "the first-turn window was not bounded")
+})
+
+test("a remote session that goes idle without output fails as no_reply after the grace period", async () => {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const startedAt = Date.now()
+  const result = await observeFirstTurn(sessionPaths, () => ({ status: { type: "idle" }, messages: [] }), {
+    idleGraceMs: 60,
+  })
+  assert.ok(Date.now() - startedAt >= 60, "idle was trusted before the grace period")
+  assert.equal(result.firstTurn.outcome, "failed")
+  assert.equal(result.firstTurn.code, "no_reply")
+  assert.match(result.firstTurn.message, /session-1/)
+  assert.match(result.firstTurn.message, /workspace-1/)
+})
+
+test("a first-turn provider auth failure completes as failed with the local session named", async () => {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-auth")
+  const { fetchImpl: localFetch } = firstTurnFetch(sessionPaths, () => providerAuthSnapshot)
+  const completions = []
+  let offered = false
+  let resolveCompleted
+  const completed = new Promise((resolve) => { resolveCompleted = resolve })
+  const runner = createDesktopAutomationRunner({
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local-client-token" }),
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(url)
+      if (parsed.origin === "http://127.0.0.1:3000") return localFetch(url, options)
+      if (parsed.pathname === "/v1/automation-runner/work") {
+        if (offered) return Response.json({ items: [] })
+        offered = true
+        return Response.json({ items: [{ kind: "remote_session_create", commandId: "command-1" }] })
+      }
+      if (parsed.pathname.endsWith("/claim")) return Response.json({ assignment: remoteSessionAssignment() })
+      if (parsed.pathname.endsWith("/complete")) {
+        completions.push(JSON.parse(options.body))
+        resolveCompleted()
+        return Response.json({ command: { id: "command-1", status: "failed" } })
+      }
+      throw new Error(`Unexpected request ${parsed.pathname}`)
+    },
+    waitBeforeReconnect: () => new Promise(() => {}),
+    remoteSessionFirstTurnWindowMs: 1_000,
+    remoteSessionPollIntervalMs: 5,
+  })
+  runner.configure({
+    baseUrl: "https://den.example.com",
+    token: runnerTokenFor("https://den.example.com"),
+    runnerId: "runner-1",
+  })
+  await withTimeout(completed, "failed first-turn completion timed out")
+  runner.stop()
+
+  assert.equal(completions.length, 1)
+  const [completion] = completions
+  assert.equal(completion.status, "failed")
+  assert.equal(completion.error.code, "provider_auth_failed")
+  assert.match(completion.error.message, /session-auth/)
+  assert.match(completion.error.message, /workspace-1/)
+  assert.match(completion.error.message, /rejected its credentials/)
+  assert.match(completion.error.message, /Invalid API key/)
+  assert.ok(completion.error.message.length <= 2_000)
+  assert.equal("sessionId" in completion, false)
+  assert.equal("workspaceId" in completion, false)
+})
+
+test("a long provider error is truncated without losing the local session ids", async () => {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-long")
+  const result = await observeFirstTurn(sessionPaths, () => ({
+    status: { type: "idle" },
+    messages: [{
+      info: { id: "msg-long", role: "assistant", error: { name: "APIError", data: { message: "y".repeat(5_000) } } },
+      parts: [],
+    }],
+  }))
+  assert.equal(result.firstTurn.code, "execution_failed")
+  assert.equal(result.firstTurn.message.length, 2_000)
+  assert.match(result.firstTurn.message, /session-long/)
+})
+
+test("aborting during the first-turn window stops observing", async () => {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const controller = new AbortController()
+  const { fetchImpl, polls } = firstTurnFetch(sessionPaths, () => ({ status: { type: "busy" }, messages: [] }))
+  const pending = executeDesktopRemoteSession(remoteSessionAssignment(), {
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local-client-token" }),
+    fetchImpl,
+    signal: controller.signal,
+    firstTurnWindowMs: 60_000,
+    pollIntervalMs: 5,
+  })
+  await waitFor(() => polls() > 0, "first turn was not observed")
+  controller.abort(new Error("Automation runner configuration changed"))
+  await assert.rejects(
+    withTimeout(pending, "abort did not stop the first-turn window"),
+    (error) => error instanceof Error && !/abort did not stop/.test(error.message) && Reflect.get(error, "sessionId") === "session-1",
+  )
 })
 
 test("a work poll left hanging by a suspended machine times out and retries", async () => {
