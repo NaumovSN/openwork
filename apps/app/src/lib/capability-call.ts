@@ -299,20 +299,27 @@ export function getCapabilityCallSentence(
     }
 
     // Native camelCase capabilities, e.g.
-    // "getCapabilitiesGoogleWorkspaceCalendarEvents".
+    // "native:<connection>:getCapabilitiesGoogleWorkspaceCalendarEvents".
     if (name) {
-      const words = name.split(/(?=[A-Z])|[-_.\s]+/).filter(Boolean)
+      const nativeName = name.replace(/^native:[^:]+:/, "")
+      const words = nativeName.split(/(?=[A-Z])|[-_.\s]+/).filter(Boolean)
       const first = words[0]?.toLowerCase()
       const verbPast = first ? PAST_TENSE[first] : undefined
       const verbPresent = first ? PRESENT_TENSE[first] : undefined
       let rest = words.slice(1)
       if (/^capabilit(y|ies)$/i.test(rest[0] ?? "")) rest = rest.slice(1)
+      // "GoogleWorkspaceCalendarEvents" → service "Google Workspace", "calendar events".
+      const nativeService = /^GoogleWorkspace/.test(rest.join("")) ? "Google Workspace"
+        : /^Microsoft365/.test(rest.join("")) ? "Microsoft 365" : null
+      if (nativeService) rest = rest.slice(nativeService === "Google Workspace" ? 2 : 1)
       if (verbPast && verbPresent && rest.length > 0) {
-        const phrase = rest.join(" ")
+        const phrase = rest.join(" ").toLowerCase()
+        const suffix = nativeService ? ` · ${nativeService}` : ""
         return {
-          service: null,
-          present: `${verbPresent} ${phrase}`,
-          past: `${verbPast} ${phrase}`,
+          service: nativeService,
+          present: `${verbPresent} ${phrase}${suffix}`,
+          past: `${verbPast} ${phrase}${suffix}`,
+          failure: `Couldn't ${first} ${phrase}${suffix}`,
         }
       }
     }

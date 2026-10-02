@@ -28,6 +28,8 @@ type CapabilityCallLineProps = ChatToolReconnectCallbacks & {
   resultUnavailable?: boolean
   statusUnknown?: boolean
   quietFailure?: boolean
+  /** Calls inside a script have no recorded timing; don't invent one. */
+  hideDuration?: boolean
   shimmer?: boolean
 }
 
@@ -152,6 +154,7 @@ export function CapabilityCallLine({
 
   statusUnknown = false,
   quietFailure = false,
+  hideDuration = false,
   shimmer = false,
   onReconnect,
   onReopenAuthorization,
@@ -160,7 +163,7 @@ export function CapabilityCallLine({
   const [detailsOpen, setDetailsOpen] = useState(false)
   const inFlight = !statusUnknown && isToolPartInFlight(part)
   const isFailed = part.state === "output-error"
-  const duration = statusUnknown ? null : trackToolCallDuration(part)
+  const duration = statusUnknown || hideDuration ? null : trackToolCallDuration(part)
   const { reconnectAction, reconnectState, reconnectError, reconnectPresentation, handleReconnect } =
     useChatToolReconnect(part, { onReconnect, onReopenAuthorization })
   const ReconnectIcon = reconnectState === "opening"

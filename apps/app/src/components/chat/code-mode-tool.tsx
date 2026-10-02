@@ -111,6 +111,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
           part={merged}
           connector={resolveConnectorToolIdentity(only, connectors)}
           quietFailure
+          hideDuration
           shimmer={running}
           statusUnknown={isToolPartInFlight(only) && (!running || !inFlight)}
         />
@@ -144,6 +145,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
               connector={resolveConnectorToolIdentity(call, connectors)}
               statusUnknown={isToolPartInFlight(call) && (!running || !inFlight)}
               quietFailure
+              hideDuration
               shimmer={running && call.toolCallId === current?.toolCallId}
             />
           ))}
