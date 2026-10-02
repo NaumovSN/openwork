@@ -422,7 +422,7 @@ export function SettingsPageHeading({ activeTab }: Pick<SettingsPageProps, "acti
 export function SettingsPage(props: SettingsPageProps) {
   return (
     <SettingsContent>
-      {props.activeTab !== "extensions" ? <SettingsPanel>
+      {props.activeTab !== "extensions" && props.activeTab !== "ai" ? <SettingsPanel>
         <SettingsPageHeading activeTab={props.activeTab} />
 
         {props.showUpdateToolbar && props.activeTab === "general" ? (

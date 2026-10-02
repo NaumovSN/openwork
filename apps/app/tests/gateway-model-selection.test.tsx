@@ -241,9 +241,9 @@ test("exact alias readiness rejects a different set, deferred reload, pending sk
   expect(isGatewayModelReady(provider, model, { ...snapshot, cloudProviderServerSync: { reloadPending: false, skippedProviders: { [`${provider.cloudProviderId}:${provider.credentialSetId}`]: provider } } })).toBe(false);
 });
 
-test("Settings gateway OAuth row says Login", () => {
+test("Settings gateway OAuth row asks the member to sign in to that provider", () => {
   const html = renderToStaticMarkup(<GatewayConnectRow provider={providers[0]!} busy={false} onConnect={() => undefined} />);
-  expect(html).toContain("Login");
+  expect(html).toContain(`Sign in to ${providers[0]!.name}`);
   expect(html).not.toContain(">Connect<");
 });
 

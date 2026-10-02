@@ -180,6 +180,7 @@ import { assignedModelOptions } from "@/react-app/domains/connections/provider-a
 import { withImportedModelMetadata, isAutoModel, shouldSelectInitialAuto, EXPLICIT_MODEL_CHOICE_KEY } from "@/react-app/domains/models/model-catalog";
 import {
   filterEntitledModelOptions,
+  keylessProviderIds,
   resolveOrgDefaultModelReplacement,
   type ModelEntitlementOption,
 } from "@/react-app/domains/connections/provider-auth/provider-policy";
@@ -3827,6 +3828,7 @@ export function SessionRoute() {
           (provider) => !isDesktopProviderBlocked({ providerId: provider.id, checkRestriction: checkDesktopRestriction }),
         ),
         connectedProviderIds: providerConnectedIds,
+        keylessProviderIds: keylessProviderIds(providers),
         gatewayProviderIds,
         authMethods: Object.fromEntries(
           Object.entries(sessionProviderAuthSnapshot.providerAuthMethods).filter(

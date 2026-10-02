@@ -85,6 +85,7 @@ import {
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
 import ProviderAuthModal, { PROVIDER_LABELS } from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
+import { keylessProviderIds } from "@/react-app/domains/connections/provider-auth/provider-policy";
 import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 // Side-effect imports: register extension config components into the registry.
@@ -2506,6 +2507,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               }
             }}
             canAddProviders={!providerAuthStore.isProviderAddRestricted()}
+            signedIn={cloudSession.isSignedIn}
             organizationName={cloudSession.activeOrgName}
             cloudProviderIds={new Set([
               ...Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).map((p) => p.providerId),
@@ -2514,7 +2516,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             gatewayProviderIds={gatewayProviderIds}
             gatewayConnectProviders={gatewayConnectProviders}
             connectingGatewayProviderId={connectingGatewayProviderId}
-            onOpenModelConnections={cloudSession.isSignedIn ? () => { void platform.openLink(new URL("/dashboard/model-connections", readDenSettings().baseUrl).toString()); } : undefined}
             onCancelGatewayConnect={() => {
               gatewayConnectAbort.current?.abort();
               setConnectingGatewayProviderId(null);
@@ -2534,6 +2535,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 key={`${cloudSession.baseUrl}:${cloudSession.activeOrganization?.id ?? "signed-out"}`}
                 embedded
                 onOpenDen={openProvidersInDen}
+                onOpenModelConnections={() => { void platform.openLink(new URL("/dashboard/model-connections", readDenSettings().baseUrl).toString()); }}
                 gatewayConnectProviders={gatewayConnectProviders}
                 connectingGatewayProviderId={connectingGatewayProviderId}
                 onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
@@ -2954,6 +2956,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
             }),
         )}
         connectedProviderIds={providerConnectedIds}
+        keylessProviderIds={keylessProviderIds(providers)}
         gatewayProviderIds={gatewayProviderIds}
         authMethods={Object.fromEntries(
           Object.entries(providerAuthSnapshot.providerAuthMethods).filter(

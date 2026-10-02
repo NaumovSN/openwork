@@ -604,7 +604,7 @@ launched mocks are loopback-only and therefore unreachable from a remote Den.
 | Composer | `[contenteditable="true"][data-lexical-editor="true"]` | `domains/session/surface/composer/editor.tsx` |
 | AI Providers | button text `AI Providers` | `domains/settings/shell/settings-page.tsx` |
 | Connect provider | button text `Connect provider` | `domains/settings/pages/ai-view.tsx` |
-| Provider search | `input[placeholder="Filter providers by name or ID"]` | `domains/connections/provider-auth/provider-auth-modal.tsx` |
+| Provider search | `input[placeholder="Search providers"]` | `domains/connections/provider-auth/provider-auth-modal.tsx` |
 | Manual key | button containing `Manually enter API Key` | `provider-auth-modal.tsx` |
 | API key | `input[type="password"][placeholder="sk-..."]` | `provider-auth-modal.tsx` |
 | Save key | button text `Save key` | `provider-auth-modal.tsx` |

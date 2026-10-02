@@ -23,7 +23,15 @@ test("device and organization providers have distinct ownership without invented
 
 test("Auto off remains visible with a real re-enable action and no readiness claim", () => {
   const html = renderToStaticMarkup(<AiSettingsView {...props} autoPreferences={{ enabled: false, available: false, canEnable: true }} onSetAutoEnabled={() => {}} />);
-  expect(html).toContain("OpenWork Models"); expect(html).toContain("Turned off"); expect(html).toContain("Turn on"); expect(html).not.toContain("Ready to use");
+  const auto = html.slice(html.indexOf('data-testid="settings-auto-provider"'), html.indexOf('data-provider-scope="device"', html.indexOf('data-testid="settings-auto-provider"') + 60));
+  expect(auto).toContain("OpenWork Models"); expect(auto).toContain("Turned off"); expect(auto).toContain("Turn on"); expect(auto).not.toContain("Ready to use");
+});
+
+test("built-in Zen without a key is not listed as a connected device provider", () => {
+  const html = renderToStaticMarkup(<AiSettingsView {...props} connectedProviders={[...props.connectedProviders, { id: "opencode", name: "OpenCode Zen", source: "custom" }]} />);
+  expect(html).not.toContain("OpenCode Zen");
+  const keyed = renderToStaticMarkup(<AiSettingsView {...props} connectedProviders={[...props.connectedProviders, { id: "opencode", name: "OpenCode Zen", source: "api" }]} />);
+  expect(keyed).toContain("OpenCode Zen");
 });
 
 test("policy-blocked connect remains visible with its owner and cold load uses a skeleton", () => {

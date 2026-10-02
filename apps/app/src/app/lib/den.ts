@@ -340,6 +340,12 @@ export type DenOrgLlmProviderModel = {
   createdAt: string | null;
 };
 
+export type DenOrgLlmProviderAccess = {
+  allMembers: boolean;
+  teamNames: string[];
+  memberCount: number;
+};
+
 export type DenOrgLlmProvider = {
   id: string;
   source: "models_dev" | "custom" | "openwork";
@@ -359,6 +365,10 @@ export type DenOrgLlmProvider = {
    * provider list; `hasApiKey` is always false for per-member providers.
    */
   hasMyCredential?: boolean;
+  /** "per_member": each member signs in with their own account; absent on older Den servers. */
+  credentialMode?: "shared" | "per_member";
+  /** Who Den grants this provider to; absent on older Den servers. */
+  access?: DenOrgLlmProviderAccess;
   models: DenOrgLlmProviderModel[];
   pinnedModelIds?: string[];
   createdAt: string | null;
@@ -2107,6 +2117,15 @@ function parseDenOrgLlmProviderModel(value: unknown): DenOrgLlmProviderModel | n
   };
 }
 
+function parseDenOrgLlmProviderAccess(value: Record<string, unknown>): DenOrgLlmProviderAccess {
+  const teams = Array.isArray(value.teams) ? value.teams : [];
+  return {
+    allMembers: value.allMembers === true,
+    teamNames: teams.flatMap((team) => isRecord(team) && typeof team.name === "string" && team.name.trim() ? [team.name.trim()] : []),
+    memberCount: Array.isArray(value.members) ? value.members.length : 0,
+  };
+}
+
 function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
   if (
     !isRecord(value) ||
@@ -2130,6 +2149,8 @@ function parseDenOrgLlmProvider(value: unknown): DenOrgLlmProvider | null {
     runtimeEnvKeys: parseStringList(value.runtimeEnvKeys),
     pinnedModelIds: [...new Set(parseStringList(value.pinnedModelIds))],
     ...(typeof value.hasMyCredential === "boolean" ? { hasMyCredential: value.hasMyCredential } : {}),
+    ...(value.credentialMode === "shared" || value.credentialMode === "per_member" ? { credentialMode: value.credentialMode } : {}),
+    ...(isRecord(value.access) ? { access: parseDenOrgLlmProviderAccess(value.access) } : {}),
     models: Array.isArray(value.models)
       ? value.models.flatMap((model) => {
           const parsed = parseDenOrgLlmProviderModel(model);

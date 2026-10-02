@@ -81,9 +81,7 @@ describe("connect providers gateway visibility", () => {
   }
 
   function providerButton(id: string) {
-    return [...dialog().querySelectorAll<HTMLButtonElement>("button")].find((button) =>
-      [...button.querySelectorAll("div")].some((element) => element.textContent === id),
-    );
+    return dialog().querySelector<HTMLButtonElement>(`button[data-provider-id="${id}"]`) ?? undefined;
   }
 
   test("OpenWork Models is the first included non-credential row even when a legacy caller requests promotion", async () => {
@@ -94,8 +92,8 @@ describe("connect providers gateway visibility", () => {
     expect(included?.textContent).toContain("Included");
     expect(included?.querySelector("button")).toBeNull();
     expect(dialog().textContent).not.toContain("Subscribe");
-    expect(dialog().textContent).toContain("2 providers already included by Example Team");
-    expect(providerButton("google")?.textContent).toContain("Also available from Example Team");
+    expect(dialog().textContent).toContain("2 included by Example Team");
+    expect(providerButton("google")?.textContent).toContain("also available from Example Team");
     expect(props.onSelect).not.toHaveBeenCalled();
   });
 
@@ -112,21 +110,31 @@ describe("connect providers gateway visibility", () => {
     expect(dialog().textContent).toContain("Available to add");
   });
 
-  test("labels OAuth providers Login while API-key providers keep Connect", async () => {
+  test("says how each provider connects: sign-in for OAuth, a pasted key otherwise", async () => {
     const props = createProps();
     props.connectedProviderIds = [];
     props.authMethods.openai = [{ type: "oauth", label: "Account sign-in", methodIndex: 0 }];
     await act(async () => root.render(<ProviderAuthModal {...props} />));
-    expect(providerButton("openai")?.textContent).toContain("Login");
+    expect(providerButton("openai")?.textContent).toContain("Sign in with ChatGPT in the browser");
+    expect(providerButton("openai")?.textContent).toContain("Connect");
+    expect(providerButton("google")?.textContent).toContain("Paste an API key");
     expect(providerButton("google")?.textContent).toContain("Connect");
-    expect(providerButton("google")?.textContent).not.toContain("Login");
     expect(props.onSelect).not.toHaveBeenCalled();
+  });
+
+  test("built-in Zen without a key is offered under Available to add, not as connected", async () => {
+    const props = createProps();
+    props.authMethods.opencode = apiMethods;
+    props.connectedProviderIds = [...props.connectedProviderIds, "opencode"];
+    await act(async () => root.render(<ProviderAuthModal {...props} keylessProviderIds={new Set(["opencode"])} />));
+    expect(providerButton("opencode")?.textContent).toContain("Paste an API key");
+    expect(providerButton("opencode")?.textContent).not.toContain("Connected");
   });
 
   test.each(["gateway-openai", "Managed OpenAI", "Managed credential"])("search cannot surface gateway providers by %s", async (query) => {
     const props = createProps();
     await act(async () => root.render(<ProviderAuthModal {...props} />));
-    const input = dialog().querySelector<HTMLInputElement>('input[placeholder="Filter providers by name or ID"]');
+    const input = dialog().querySelector<HTMLInputElement>('input[placeholder="Search providers"]');
     if (!input) throw new Error("Expected the provider search input");
     await act(async () => {
       input.focus();
@@ -148,7 +156,7 @@ describe("connect providers gateway visibility", () => {
     const props = createProps();
     await act(async () => root.render(<ProviderAuthModal {...props} preferredProviderId="gateway-openai" />));
 
-    expect(dialog().querySelector('input[placeholder="Filter providers by name or ID"]')).not.toBeNull();
+    expect(dialog().querySelector('input[placeholder="Search providers"]')).not.toBeNull();
     expect(dialog().textContent).not.toContain("Choose how you'd like to connect.");
     expect(dialog().textContent).not.toContain("Managed OpenAI");
     expect(providerButton("openai")).toBeDefined();
@@ -198,7 +206,7 @@ describe("connect providers gateway visibility", () => {
     // The row's keyboard action must still select that row after resetState.
     await act(async () => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     expect(dialog().textContent).toContain("Google");
-    expect(dialog().querySelector('input[placeholder="Filter providers by name or ID"]')).toBeNull();
+    expect(dialog().querySelector('input[placeholder="Search providers"]')).toBeNull();
     expect(props.onSubmitApiKey).not.toHaveBeenCalled();
     expect(props.onSelect).not.toHaveBeenCalled();
   });
@@ -232,7 +240,7 @@ describe("connect providers gateway visibility", () => {
     await act(async () => providerButton("google")?.click());
     const api = [...dialog().querySelectorAll("button")].find((button) => button.textContent?.startsWith("API key"));
     await act(async () => api?.click());
-    for (const expected of ["Choose how you'd like to connect.", "Filter providers by name or ID"]) {
+    for (const expected of ["Choose how you'd like to connect.", "Search providers"]) {
       const back = [...dialog().querySelectorAll("button")].find((button) => button.textContent?.trim() === "Back");
       await act(async () => back?.click());
       expect(dialog().contains(document.activeElement)).toBe(true);
