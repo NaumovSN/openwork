@@ -281,7 +281,7 @@ test.each(["dashboard", "artifact"])("%s members see no management controls or p
   await render(surface);
   expect(container.textContent).toContain(detail.previewNotice);
   expect(findButton("Update app")).toBeUndefined();
-  expect(findButton("Add")).toBeUndefined();
+  expect(findButton("Add to dashboard")).toBeUndefined();
   expect(findButton("Share")).toBeUndefined();
   if (surface === "dashboard") {
     await openMenu();
@@ -485,7 +485,7 @@ test.each(["admin", "owner", "member", "unknown"])("%s only sees dashboard add, 
   workingDetail();
   await render("dashboard");
   await act(async () => cache.setQueryData(["saved-apps", ...scope], { enabled: true, sharingEnabled: true, items: [detail] }));
-  expect(findButton("Add") !== undefined).toBe(isAdmin);
+  expect(findButton("Add to dashboard") !== undefined).toBe(isAdmin);
   expect(findButton("Share") !== undefined).toBe(isAdmin);
   detail.view.activeRevisionId = null;
   await render("artifact");
@@ -506,7 +506,7 @@ test("unverified organization authority hides management without blocking previe
   client.listOrgs.mockImplementation(async () => { throw new Error("Role unavailable"); });
   workingDetail();
   await render("dashboard");
-  expect(findButton("Add")).toBeUndefined();
+  expect(findButton("Add to dashboard")).toBeUndefined();
   expect(container.querySelector("[data-preview]")).not.toBeNull();
   await openMenu();
   expect(document.querySelector(`[aria-label="Delete ${detail.view.title}"]`)).toBeNull();
@@ -798,7 +798,7 @@ test("a member adds a shared built App with fuzzy search, refreshes it and remov
   client.listBuiltMcpApps.mockImplementation(async () => [builtFixture, { ...builtFixture, connectionId: `cob_0${"c".repeat(25)}`, title: "Sales report" }]);
   await render("dashboard");
   expect(container.textContent).toContain("Pin the apps you check every day");
-  await act(async () => button("Add").click());
+  await act(async () => button("Add to dashboard").click());
   const input = document.querySelector<HTMLInputElement>('[aria-label="Search apps"]');
   if (!input) throw new Error("App search missing");
   await act(async () => {
@@ -811,8 +811,11 @@ test("a member adds a shared built App with fuzzy search, refreshes it and remov
   await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
   expect(container.querySelector('[aria-label="Bug dashboard"]')).not.toBeNull();
   expect(container.querySelector('[data-live-tool="open_app"]')?.getAttribute("data-auto-launch")).toBe("true");
-  expect(container.querySelector('[aria-label="App options for Bug dashboard"]')?.closest("header")).not.toBeNull();
+  // Personal tiles match company tiles: no header chrome, sharing sits in the hover menu.
+  expect(container.querySelector('[aria-label="App options for Bug dashboard"]')?.closest("header")).toBeNull();
+  expect(findButton("Share")).toBeUndefined();
   await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="App options for Bug dashboard"]')?.click());
+  expect(document.querySelector('[role="menuitem"][aria-label="Share Bug dashboard"]')).not.toBeNull();
   await act(async () => document.querySelector<HTMLElement>('[aria-label="Refresh Bug dashboard"]')?.click());
   expect(refresh).toHaveBeenCalledTimes(1);
   expect(client.setAppOnDashboard).not.toHaveBeenCalled();
@@ -848,7 +851,7 @@ test("built App placements survive reopening but do not cross members or revocat
 test("built Apps retain the existing saved app and creation paths for admins", async () => {
   client.listBuiltMcpApps.mockImplementation(async () => [builtFixture]);
   await render("dashboard");
-  await act(async () => button("Add").click());
+  await act(async () => button("Add to dashboard").click());
   expect(document.body.textContent).toContain("Create with OpenWork");
   const saved = Array.from(document.querySelectorAll("button")).find(candidate => candidate.textContent === "Other saved apps");
   await act(async () => saved?.click());

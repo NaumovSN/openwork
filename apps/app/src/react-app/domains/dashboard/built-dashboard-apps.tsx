@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import fuzzysort from "fuzzysort";
-import { Blocks, Check, Minus, MoreHorizontal, Plus, RefreshCw } from "lucide-react";
+import { Blocks, Check, Minus, MoreHorizontal, Plus, RefreshCw, Share2 } from "lucide-react";
 import { DenApiError } from "@/app/lib/den";
 import type { BuiltMcpAppCatalogEntry } from "@/app/lib/built-mcp-app-catalog";
 import { Button } from "@/components/ui/button";
@@ -14,9 +14,9 @@ import {
 } from "@/components/ui/command";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "@/components/ui/sonner";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useAppsClient } from "../apps/use-apps";
-import { BuiltAppShareButton } from "../apps/built-app-share-button";
+import { BuiltAppShareDialog } from "../apps/built-app-share-button";
 import { McpAppTile, type DashboardLaunchEndpoint } from "./mcp-app-tile";
 import { DashboardMasonry } from "./dashboard-masonry";
 import { dashboardTileCacheScopeKey } from "./dashboard-tile-cache";
@@ -213,7 +213,6 @@ export function BuiltDashboardTiles({
         {personal.map((app) => (
           <McpAppTile
             key={app.connectionId}
-            actionsPlacement="header"
             cacheScopeKey={built.cacheScopeKey}
             fallbackEndpoints={fallbackEndpoints}
             entry={{
@@ -223,28 +222,60 @@ export function BuiltDashboardTiles({
               launchArguments: { input: {} },
               autoLaunch: true,
             }}
-            renderActions={({ onRefresh, refreshing }) => (
-              <div className="flex gap-1 rounded-md bg-background/90">
-                <BuiltAppShareButton
-                  pluginId={app.pluginId}
-                  title={app.title}
-                />
-                <DropdownMenu>
-                  <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label={`App options for ${app.title}`} />}><MoreHorizontal className="size-4" /></DropdownMenuTrigger>
-                  <DropdownMenuContent align="end"><DropdownMenuGroup>
-                    {onRefresh ? <DropdownMenuItem disabled={refreshing} aria-label={`Refresh ${app.title}`} onClick={onRefresh}><RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />Refresh</DropdownMenuItem> : null}
-                    <DropdownMenuItem aria-label={`Remove ${app.title} from dashboard`} onClick={() => {
-                    built.setAdded(app.connectionId, false);
-                    toast(`Removed ${app.title}`, { id: "personal-dashboard-placement", action: { label: "Undo", onClick: () => built.setAdded(app.connectionId, true) } });
-                    }}><Minus className="size-4" />Remove from dashboard</DropdownMenuItem>
-                  </DropdownMenuGroup></DropdownMenuContent>
-                </DropdownMenu>
-              </div>
+            renderActions={({ onRefresh, refreshing, badge }) => (
+              <BuiltDashboardTileMenu
+                app={app}
+                badge={badge}
+                onRefresh={onRefresh}
+                refreshing={refreshing}
+                onRemove={() => {
+                  built.setAdded(app.connectionId, false);
+                  toast(`Removed ${app.title}`, { id: "personal-dashboard-placement", action: { label: "Undo", onClick: () => built.setAdded(app.connectionId, true) } });
+                }}
+              />
             )}
           />
         ))}
         {onAdd ? <button type="button" onClick={onAdd} className="flex min-h-64 w-full flex-col items-center justify-center gap-3 rounded-xl border border-dashed text-sm text-muted-foreground hover:bg-muted/30 focus-visible:outline-2 focus-visible:outline-ring"><Plus className="size-5" />Add an app{built.apps.length > personal.length ? <span className="text-xs">{built.apps.length - personal.length} more available to you</span> : null}</button> : null}
       </DashboardMasonry>
     </section>
+  );
+}
+
+/** Same discreet hover menu as company dashboard tiles; sharing lives inside it. */
+function BuiltDashboardTileMenu({
+  app,
+  badge,
+  onRefresh,
+  refreshing,
+  onRemove,
+}: {
+  app: BuiltMcpAppCatalogEntry;
+  badge?: ReactNode;
+  onRefresh?: () => void;
+  refreshing: boolean;
+  onRemove: () => void;
+}) {
+  const [sharing, setSharing] = useState(false);
+  return (
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button variant="ghost" size="icon" className="size-7 bg-background/90" aria-label={`App options for ${app.title}`} title={`App options for ${app.title}`} />}>
+          <MoreHorizontal className="size-4" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>
+              <span className="block">{app.title}</span>
+              {badge}
+            </DropdownMenuLabel>
+            {onRefresh ? <DropdownMenuItem disabled={refreshing} aria-label={`Refresh ${app.title}`} onClick={onRefresh}><RefreshCw className={`size-4 ${refreshing ? "animate-spin" : ""}`} />Refresh</DropdownMenuItem> : null}
+            <DropdownMenuItem aria-label={`Share ${app.title}`} onClick={() => setSharing(true)}><Share2 className="size-4" />Share</DropdownMenuItem>
+            <DropdownMenuItem aria-label={`Remove ${app.title} from dashboard`} onClick={onRemove}><Minus className="size-4" />Remove from dashboard</DropdownMenuItem>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <BuiltAppShareDialog pluginId={app.pluginId} title={app.title} open={sharing} onOpenChange={setSharing} />
+    </>
   );
 }
