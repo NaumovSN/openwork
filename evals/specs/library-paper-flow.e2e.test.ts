@@ -89,6 +89,27 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     expect(wikiReady).toBe(true);
   });
 
+  await step("after: Needs sign-in shows only the connectors waiting on you, and clicking it again shows everything", async () => {
+    const pill = '[data-testid="library-needs-sign-in-filter"]';
+    const label = (await texts(pill))[0] ?? "";
+    await user.click({ testId: "library-needs-sign-in-filter" });
+    const rows = async (name: string) => (await probe.dom(`[data-library-row="${name}"]`)).elements.length;
+    await probe.eventually(() => rows("Team wiki"), { within: 15_000, label: "Team wiki is filtered out", until: (count) => count === 0 });
+    const google = await rows("Google Workspace");
+    const linear = await rows("Linear");
+    await shot();
+    evidence.recordAssertionEvidence(
+      "Needs sign-in keeps only rows that ask for the member's sign-in",
+      `pill "${label}"; Google Workspace ${google}, Linear ${linear}, Team wiki 0`,
+      label.startsWith("Needs sign-in") && google === 1 && linear === 1,
+    );
+    expect(label).toMatch(/^Needs sign-in\s*\d+$/);
+    expect(google).toBe(1);
+    expect(linear).toBe(1);
+    await user.click({ testId: "library-needs-sign-in-filter" });
+    await probe.eventually(() => rows("Team wiki"), { within: 15_000, label: "Team wiki is back", until: (count) => count === 1 });
+  });
+
   await step("opening Google Workspace says who can use it and whose account the AI uses", async () => {
     await user.click({ text: "Google Workspace" });
     await user.see({ text: "Who can use this" });
