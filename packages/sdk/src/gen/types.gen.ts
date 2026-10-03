@@ -13891,6 +13891,9 @@ export type PatchV1GatewayUsageLimitPoliciesByPolicyIdData = {
     revision: number;
   };
   path: {
+    /**
+     * Den TypeID with 'gulp_' prefix and a 26-character base32 suffix.
+     */
     policyId: string;
   };
   query?: never;
@@ -13977,6 +13980,9 @@ export type PostV1GatewayUsageLimitPoliciesByPolicyIdArchiveData = {
     revision: number;
   };
   path: {
+    /**
+     * Den TypeID with 'gulp_' prefix and a 26-character base32 suffix.
+     */
     policyId: string;
   };
   query?: never;
@@ -14063,6 +14069,9 @@ export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreData = {
     revision: number;
   };
   path: {
+    /**
+     * Den TypeID with 'gulp_' prefix and a 26-character base32 suffix.
+     */
     policyId: string;
   };
   query?: never;
@@ -14147,6 +14156,9 @@ export type PostV1GatewayUsageLimitPoliciesByPolicyIdRestoreResponse =
 export type GetV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsData = {
   body?: never;
   path: {
+    /**
+     * Den TypeID with 'gulp_' prefix and a 26-character base32 suffix.
+     */
     policyId: string;
   };
   query?: never;
@@ -14230,6 +14242,9 @@ export type PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsData = {
         teamId: string;
       };
   path: {
+    /**
+     * Den TypeID with 'gulp_' prefix and a 26-character base32 suffix.
+     */
     policyId: string;
   };
   query?: never;
@@ -14314,7 +14329,13 @@ export type PostV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsResponse =
 export type DeleteV1GatewayUsageLimitPoliciesByPolicyIdAssignmentsByAssignmentIdData = {
   body?: never;
   path: {
+    /**
+     * Den TypeID with 'gulp_' prefix and a 26-character base32 suffix.
+     */
     policyId: string;
+    /**
+     * Den TypeID with 'gula_' prefix and a 26-character base32 suffix.
+     */
     assignmentId: string;
   };
   query?: never;
@@ -14992,6 +15013,9 @@ export type PostV1GatewayUsageLimitResetRequestsByIdApproveData = {
     [key: string]: never;
   };
   path: {
+    /**
+     * Den TypeID with 'gurr_' prefix and a 26-character base32 suffix.
+     */
     id: string;
   };
   query?: never;
@@ -15078,6 +15102,9 @@ export type PostV1GatewayUsageLimitResetRequestsByIdDenyData = {
     note?: string;
   };
   path: {
+    /**
+     * Den TypeID with 'gurr_' prefix and a 26-character base32 suffix.
+     */
     id: string;
   };
   query?: never;
