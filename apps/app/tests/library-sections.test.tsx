@@ -188,7 +188,7 @@ describe("Library sections", () => {
     expect(host.querySelector("[data-library-status]")?.textContent).toBe("Sign in");
     expect(host.textContent).toContain("Connector");
     expect(host.textContent).toContain("menu");
-    const action = [...host.querySelectorAll("span")].find((span) => span.textContent === "Sign in" && !span.hasAttribute("data-library-status"));
+    const action = [...host.querySelectorAll("button")].find((button) => button.textContent === "Sign in");
     await act(async () => action?.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     expect(next).toHaveBeenCalledTimes(1);
   });
