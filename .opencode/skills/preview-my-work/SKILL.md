@@ -112,7 +112,10 @@ seeded org (not `fresh`) gets demo Slack, Notion, Linear, Google Calendar and
 Gmail connections: realistic Acme Robotics data where the person is Alex Chen,
 readable and writable in memory (`worlds/lib/demo-workspace.ts`), so a demo can
 post, create and read back. Restarting the world restores the seed; locally,
-`demoState` shows the live data. Real `Notion (live)` and `Linear (live)`
+`demoState` shows the live data. `acme-web` (local, Daytona and Freestyle)
+gets the same demo apps, so a Freestyle demo uses `acme-web`. Seeded desktops
+and web runtimes treat their world's Den as activated, so the demo apps appear
+as their own apps on every placement. Real `Notion (live)` and `Linear (live)`
 OAuth connectors sit next to them (unconnected), and more real connectors can
 be added from Den as usual. Fresh desktop is a
 true first launch: the harness adds no workspace and does not sign into Den.

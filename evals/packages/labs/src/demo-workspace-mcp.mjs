@@ -326,6 +326,20 @@ function seed() {
   return { slack: seedSlack(), notion: seedNotion(), linear: seedLinear(), calendar: seedCalendar(), gmail: seedGmail() };
 }
 let state = seed();
+/**
+ * Seed data is relative to today. A world can resume from a snapshot (Freestyle) or run past midnight, so untouched
+ * data is re-seeded for the new day; once a demo has written anything, its data is kept as is.
+ */
+const dayKey = () => Object.values(localToday()).join("-");
+let seededDay = dayKey();
+let touched = false;
+function refreshSeed() {
+  if (touched || dayKey() === seededDay) return;
+  state = seed();
+  seededDay = dayKey();
+  log("re-seeded for a new day");
+}
+function reset() { state = seed(); seededDay = dayKey(); touched = false; }
 
 // ── Tool helpers ────────────────────────────────────────────────────────────────────────────────────────
 
@@ -701,6 +715,7 @@ function handleRpc(service, message) {
       if (!tool) return rpcError(message.id, -32602, `Unknown tool: ${params.name}`);
       try {
         const value = tool.run(params.arguments && typeof params.arguments === "object" ? params.arguments : {});
+        if (!tool.annotations.readOnlyHint) touched = true;
         log(`${service.name} ${tool.name} ok`);
         return rpcResult(message.id, { content: [{ type: "text", text: JSON.stringify(value, null, 2) }], structuredContent: value, isError: false });
       } catch (error) {
@@ -731,8 +746,9 @@ const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname === "/health") return send(res, 200, { ok: true, services: Object.keys(SERVICES) });
+    refreshSeed();
     if (url.pathname === "/state" && req.method === "GET") return send(res, 200, state);
-    if (url.pathname === "/reset" && req.method === "POST") { state = seed(); log("state reset"); return send(res, 200, { ok: true }); }
+    if (url.pathname === "/reset" && req.method === "POST") { reset(); log("state reset"); return send(res, 200, { ok: true }); }
     const match = /^\/([a-z-]+)\/mcp\/?$/.exec(url.pathname);
     const service = match ? SERVICES[match[1]] : undefined;
     if (!service) return send(res, 404, { error: "not_found" });

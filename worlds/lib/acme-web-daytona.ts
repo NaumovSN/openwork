@@ -10,6 +10,7 @@ import { output, secret } from "../../packages/world/src/outputs.ts";
 import type { WorldOutput } from "../../packages/world/src/outputs.ts";
 import { receiptName, resolveStage } from "../../packages/world/src/stage.ts";
 import { ACME_REPLY, bootAcmeGatewayOnDaytona, probeAcmeGatewayDirect } from "./acme-gateway.ts";
+import { bootDemoWorkspace, connectDemoWorkspace, DEMO_WORKSPACE_SERVICES } from "./demo-workspace.ts";
 
 const ACME_WEB_NAME = "acme-web";
 const DAYTONA_WEB_PORT = 5178;
@@ -43,6 +44,9 @@ async function startDaytonaWebRuntime(stack: AsyncDisposableStack, place: Place,
       VITE_DEN_BASE_URL: den.ref.webUrl, VITE_DEN_API_BASE_URL: den.ref.apiUrl, VITE_DISABLE_OPENWORK_MODELS: "0",
     },
     browserHostSuffix: preview.browserHostSuffix,
+    // This world's Den is a public https origin here (loopback locally and on Freestyle); treating it as the activated
+    // organization Den makes its directly exposed connections (the demo apps) appear exactly as they do there.
+    syntheticPreactivatedDenOrigin: new URL(den.ref.apiUrl).origin,
   });
   stack.adopt(runtime, (owned) => owned.stop());
   await verifyPrivateWebPreview(preview);
@@ -88,6 +92,7 @@ PYEOF`;
 export async function bootAcmeWebOnDaytona(stack: AsyncDisposableStack, place: Place): Promise<Record<string, WorldOutput>> {
   const gateway = await bootAcmeGatewayOnDaytona(stack, place, { denEnv: { DEN_DASHBOARDS_ENABLED: "true" } });
   const probe = await probeAcmeGatewayDirect(gateway.den.admin, gateway);
+  await connectDemoWorkspace(gateway.den, await bootDemoWorkspace(stack, gateway.den));
   const web = await startDaytonaWebRuntime(stack, place, gateway.den, gateway.model.orgId);
   const { den, model, gatewayUrl } = gateway;
   return {
@@ -106,5 +111,7 @@ export async function bootAcmeWebOnDaytona(stack: AsyncDisposableStack, place: P
     previewExpires: output(web.expires, { group: "Runtime" }),
     ...(den.placement?.kind === "daytona" ? { denSandbox: output(den.placement.sandboxId, { group: "World" }) } : {}),
     webSandbox: output(web.sandboxId, { group: "World" }),
+    demoApps: output(DEMO_WORKSPACE_SERVICES.map((service) => service.name).join(", "), { group: "Demo apps",
+      note: "Acme Robotics demo data (you are Alex Chen); reads and writes stay in memory until the world stops" }),
   };
 }

@@ -338,7 +338,10 @@ export async function bootDenPreview(stack: AsyncDisposableStack, place: Place, 
   }
   // Fresh stays a true first launch: only what the app itself creates, no harness workspace.
   const desktop = surface === "full"
-    ? stack.use(await app({ den, place, env: PREVIEW_FULL_APP_ENV, ...(fresh ? { signIn: false, workspace: false } : { as: "admin" }) }))
+    // A seeded desktop treats its preview Den as the activated organization Den, so org connections exposed directly
+    // (the demo apps) appear as their own apps on every placement. Locally loopback is already trusted; on Daytona the
+    // Den is a public https origin, which only activation makes trusted.
+    ? stack.use(await app({ den, place, env: PREVIEW_FULL_APP_ENV, ...(fresh ? { signIn: false, workspace: false } : { as: "admin", enterpriseActivated: true }) }))
     : undefined;
   if (desktop) {
     await desktopOutputs(outputs, place, desktop.handle, true, "The OpenWork desktop window is open on this machine; Den web is linked in denWeb");

@@ -115,7 +115,7 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
       { intent: "Den signup plus a first-launch desktop", command: `${UP} preview-full --place daytona --stage <stage> --seed fresh ${DETACH}` },
       { intent: "A specific pushed commit", command: `${UP} preview-full --place daytona --stage <stage> --source den=sha:<full-pushed-sha> --seed workspace ${DETACH}` },
     ],
-    caveats: [NO_MODELS, "Does not run on Freestyle; use preview-desktop there for a signed-out desktop."],
+    caveats: [NO_MODELS, "Does not run on Freestyle; acme-web there has the same demo apps with a signed-in desktop, and preview-desktop a signed-out one."],
   },
   "preview-app-web": {
     family: "web",
@@ -145,6 +145,7 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
       { intent: "Seeded Acme demo stack on Freestyle", command: `${UP} acme-web --place freestyle --stage <stage> --source ref:dev ${DETACH}` },
       { intent: "Seeded Acme demo stack from this checkout", command: `${UP} acme-web --stage <stage>` },
     ],
+    caveats: ["Includes the in-memory demo Slack, Notion, Linear, Google Calendar and Gmail on every placement; Alex Chen is the signed-in owner."],
   },
 };
 
