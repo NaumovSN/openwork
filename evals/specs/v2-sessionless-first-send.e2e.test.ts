@@ -408,7 +408,7 @@ test(`${engine}: Run task on the sessionless New task route creates the session 
     expect(await readSessions()).toEqual(sessionsBefore);
     expect(await world.requests()).toHaveLength(0);
     await user.looks([
-      "The conversation shows the sent prompt beginning 'Summarize this workspace in one sentence.' as a user message, with 'Couldn’t send your message' and a 'Retry sending' action below it.",
+      "The conversation shows the sent prompt beginning 'Summarize this workspace in one sentence.' as a user message, with 'Couldn’t send your message' and a 'Retry' action below it.",
       "There is no Starting indicator and no assistant reply.",
     ]);
     evidence.recordAssertionEvidence("Rejected creation keeps the sent message recoverable without admitting a session or prompt",
