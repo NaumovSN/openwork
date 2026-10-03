@@ -148,6 +148,8 @@ pnpm worker:deploy --var HEADLESS_MODEL_PROTOCOL:openai --var HEADLESS_MODEL_BAS
 
 `pnpm smoke:remote` runs one real turn against any deployed runner: `HEADLESS_URL`, `HEADLESS_API_TOKEN` and `SMOKE_MODEL_API_KEY` (plus `SMOKE_MCP_TOKEN` for tools).
 
+`pnpm bench --levels 1,10,50,100,200` load-tests any deployed runner (`HEADLESS_URL`, `HEADLESS_API_TOKEN`). Point the runner at a mock model with a fixed delay so the numbers measure the runner, not the model. Each session creates, sends one tool-using turn, polls like Den, and deletes; the output has API latencies, end-to-end time and the runner's own turn time.
+
 `worker-configuration.d.ts` holds the Workers runtime types for the compatibility date in `wrangler.jsonc`. Regenerate it with `pnpm worker:types` after changing that file.
 
 ## Limits and next steps

@@ -1064,6 +1064,9 @@ importers:
       typescript:
         specifier: ^5.5.4
         version: 5.9.3
+      undici:
+        specifier: 7.29.0
+        version: 7.29.0
 
   ee/apps/landing:
     dependencies:
