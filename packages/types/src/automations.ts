@@ -314,6 +314,53 @@ export const automationRunnerWorkResponseSchema = z.object({
 })
 export type AutomationRunnerWorkResponse = z.infer<typeof automationRunnerWorkResponseSchema>
 
+/** Workspaces and models a desktop reports per workspace; anything beyond is dropped. */
+export const DESKTOP_INVENTORY_WORKSPACE_LIMIT = 50
+export const DESKTOP_INVENTORY_MODEL_LIMIT = 200
+const desktopInventoryIdSchema = z.string().trim().min(1).max(240)
+
+export const desktopInventoryModelSchema = z.object({
+  providerId: z.string().trim().min(1).max(160),
+  modelId: z.string().trim().min(1).max(160),
+  name: z.string().trim().min(1).max(200),
+})
+export type DesktopInventoryModel = z.infer<typeof desktopInventoryModelSchema>
+
+export const desktopInventoryWorkspaceSchema = z.object({
+  workspaceId: desktopInventoryIdSchema,
+  name: z.string().trim().min(1).max(120),
+  /** The workspace the desktop uses when a remote session names none. */
+  active: z.boolean(),
+  engine: z.enum(["v1", "v2"]),
+  defaultModel: z.object({
+    providerId: z.string().trim().min(1).max(160),
+    modelId: z.string().trim().min(1).max(160),
+    variant: z.string().trim().min(1).max(60).optional(),
+  }).nullable(),
+  /** Models the workspace can use right now; empty when the desktop could not list them. */
+  models: z.array(desktopInventoryModelSchema).max(DESKTOP_INVENTORY_MODEL_LIMIT),
+})
+export type DesktopInventoryWorkspace = z.infer<typeof desktopInventoryWorkspaceSchema>
+
+/**
+ * What a desktop runner has, reported to `PUT /v1/automation-runner/inventory`
+ * when it connects and when it changes. Den keeps only the latest report per
+ * runner. Objects are deliberately not strict so either side can add fields.
+ */
+export const desktopRunnerInventorySchema = z.object({
+  computer: z.object({
+    label: z.string().trim().min(1).max(120),
+    platform: z.enum(["darwin", "win32", "linux"]),
+    appVersion: z.string().trim().min(1).max(80),
+  }),
+  workspaces: z.array(desktopInventoryWorkspaceSchema).max(DESKTOP_INVENTORY_WORKSPACE_LIMIT),
+})
+export type DesktopRunnerInventory = z.infer<typeof desktopRunnerInventorySchema>
+export const desktopRunnerInventoryResponseSchema = z.object({
+  ok: z.literal(true),
+  updatedAt: timestampSchema,
+})
+
 export const remoteSessionCommandAssignmentSchema = z.object({
   commandId: idSchema,
   kind: z.literal("remote_session_create"),
@@ -325,6 +372,11 @@ export const remoteSessionCommandAssignmentSchema = z.object({
     variant: z.string().trim().min(1).max(60).nullable(),
   }).nullable(),
   expiresAt: timestampSchema,
+  /**
+   * The workspace the caller chose. The desktop creates the session there or
+   * fails with `workspace_unavailable`; absent means its active workspace.
+   */
+  workspaceId: desktopInventoryIdSchema.nullable().optional(),
 })
 export const remoteSessionCommandClaimResponseSchema = z.object({
   assignment: remoteSessionCommandAssignmentSchema,

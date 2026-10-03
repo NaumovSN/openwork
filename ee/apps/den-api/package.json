@@ -26,7 +26,7 @@
     "test:free-inference": "bun test --conditions development test/free-inference.test.ts && bun test --conditions development test/free-provider-management.test.ts",
     "test:slack:db": "bun test --conditions development test/slack-assistant-db.test.ts test/slack-desktop-handoff-db.test.ts",
     "test:headless-automations:db": "bun test --conditions development test/headless-automations-db.test.ts",
-    "test:automation-runners:db": "bun test --conditions development test/automation-runners-db.test.ts",
+    "test:automation-runners:db": "bun test --conditions development test/automation-runners-db.test.ts test/remote-session-targets-db.test.ts",
     "test:plugin-roles:db": "DATABASE_URL=${DEN_TEST_DATABASE_URL:?Set DEN_TEST_DATABASE_URL to an isolated prepared test database} bun test --conditions development test/plugin-system-plugin-role-batch.test.ts",
     "test:db": "bun test --conditions development test/device-authorization-db.test.ts test/workspace-preclaim-db.test.ts test/agent-errors-db.test.ts test/member-removal-rejoin.test.ts test/scim-provider-rotation.test.ts test/sso-provider-rotation.test.ts test/cloud-provider-member-credentials.test.ts",
     "test:scim-diagnostics": "tsx --conditions=development --test test/scim-diagnostics.test.ts",

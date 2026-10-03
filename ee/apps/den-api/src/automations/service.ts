@@ -15,6 +15,7 @@ import type {
   AutomationRun,
   AutomationAction,
   CreateAutomationDefinition,
+  DesktopRunnerInventory,
   UpdateAutomation,
 } from "@openwork/types/automations"
 import { env } from "../env.js"
@@ -553,6 +554,17 @@ export class AutomationService {
   /** Runner tokens are revoked in effect the moment the owner leaves the org. */
   isActiveRunnerOwner(scope: OwnerScope) {
     return isActiveAutomationOwner(scope)
+  }
+
+  /** False when the runner has no registration to attach the report to. */
+  saveDesktopRunnerInventory(scope: DesktopRunnerScope, inventory: DesktopRunnerInventory) {
+    return automationRepository.saveDesktopRunnerInventory({
+      organizationId: scope.organizationId,
+      ownerMemberId: scope.ownerMemberId,
+      runnerId: scope.runnerId,
+      inventory,
+      now: Date.now(),
+    })
   }
 
   touchDesktopRunner(scope: DesktopRunnerScope) {
