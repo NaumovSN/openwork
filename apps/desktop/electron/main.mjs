@@ -73,8 +73,8 @@ import {
 } from "./brand-icon-windows.mjs";
 import { resetMacDockIcon } from "./brand-icon-darwin.mjs";
 import { createDesktopVaultKeyProvider } from "./secure-vault-key.mjs";
-import { createDesktopFreeSigner, desktopFreeBootstrapEligible } from "./desktop-free-signer.mjs";
-import { applyDesktopFreeBuildSettings, loadDesktopFreeReleaseSecret } from "./desktop-free-release.mjs";
+import { desktopFreeBootstrapEligible } from "./desktop-free-eligibility.mjs";
+import { applyDesktopFreeBuildSettings } from "./desktop-free-release.mjs";
 import {
   clearOpenworkSentrySession,
   initOpenworkSentry,
@@ -1326,22 +1326,17 @@ function validateSkillName(raw) {
 
 // Apply the build opt-out before the runtime captures inherited environment values.
 await applyDesktopFreeBuildSettings({ appVersion: resolveAppVersion(app) });
-let desktopFreeReleaseSecret = null;
 const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
   anonymousInference: {
-    desktop: createDesktopFreeSigner({
-      filePath: path.join(app.getPath("userData"), "desktop-free-identity.bin"),
-      loadSafeStorage: () => require("electron").safeStorage,
+    // Signed-out Auto has no device identity: like OpenCode Zen, the gateway limits it by IP.
+    desktop: {
       // app.getVersion() is Electron's own version in development builds.
-      appVersion: resolveAppVersion(app),
-      platform: process.platform,
-      arch: process.arch,
-      isEligible: () => desktopFreeBootstrapEligible(DESKTOP_DISTRIBUTION, workspaceStore.readDesktopBootstrapConfigSync()),
-      releaseSecret: () => (desktopFreeReleaseSecret ??= loadDesktopFreeReleaseSecret({ appVersion: resolveAppVersion(app) })).then((value) => value.secret),
-    }),
+      currentVersion: resolveAppVersion(app),
+      eligible: () => desktopFreeBootstrapEligible(DESKTOP_DISTRIBUTION, workspaceStore.readDesktopBootstrapConfigSync()),
+    },
   },
   // When OPENWORK_ENCRYPTION_KEY is set, skip the safeStorage provider so it does not shadow the documented env override used by CI/headless/enterprise.
   localManagedMcpVaultKey: process.env.OPENWORK_ENCRYPTION_KEY?.trim()

@@ -667,7 +667,6 @@ async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: bool
   const app = options.disabledAutoDesktop
     ? await seed.desktop({ name: "model-picker-disabled-auto", den, as: "admin", env: {
       OPENWORK_ELECTRON_USE_MOCK_KEYCHAIN: "1", OPENWORK_DEV_MODE: "1",
-      OPENWORK_DEV_FREE_RELEASE_SECRET: "fixture-free-release-secret-000000000000000000",
       OPENWORK_FREE_INFERENCE_ORIGIN: new URL(witness.url).origin,
       OPENWORK_DEV_FREE_CONTROL_PLANE: den.ref.apiUrl,
       ...(options.disableAutoByEnvironment ? { OPENWORK_DISABLE_FREE_INFERENCE: "1" } : {}),

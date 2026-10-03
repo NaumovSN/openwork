@@ -1,5 +1,4 @@
 import type { WorkspaceWire } from "@openwork/types/workspace";
-import type { DesktopFreeProofClaims } from "@openwork/free-auto";
 
 export type WorkspaceType = "local" | "remote";
 
@@ -84,11 +83,11 @@ export interface ApprovalConfig {
 
 export type LocalManagedMcpVaultKeyProvider = () => Promise<Uint8Array>;
 
-export type DesktopFreeSigner = {
+/** What OpenWork Desktop tells the free Auto relay about this installation. */
+export type DesktopFreeHost = {
   currentVersion: string;
-  identity: () => Promise<Pick<DesktopFreeProofClaims, "publicKey" | "machineId" | "appVersion" | "platform" | "arch">>;
-  /** `nonce` lets the caller bind work (a session proof-of-work) to the proof before it is signed. */
-  sign: (request: { method: string; path: string; body: Uint8Array; authorization: string; nonce?: string }) => Promise<string>;
+  /** Whether this build and its bootstrap may offer signed-out Auto (the public app on hosted OpenWork Cloud). */
+  eligible: () => boolean;
 };
 
 export interface ServerConfig {
@@ -115,7 +114,7 @@ export interface ServerConfig {
   localManagedMcpVaultKey?: LocalManagedMcpVaultKeyProvider;
   /** Desktop-owned managed engines only; never enabled by remote clients. */
   resumeInterruptedTasks?: boolean;
-  anonymousInference?: { desktop: DesktopFreeSigner };
+  anonymousInference?: { desktop: DesktopFreeHost };
 }
 
 export interface Capabilities {

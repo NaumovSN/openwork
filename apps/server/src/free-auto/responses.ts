@@ -1,7 +1,6 @@
 import type { ManagedModelRecommendation } from "@openwork/types/den/inference";
 import {
-  DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_SESSION_POW_MAX_BITS, DESKTOP_FREE_SESSION_POW_MAX_ROUNDS, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH,
-  type DesktopFreeAccessStatus, type DesktopFreeSession, type SessionPowParams,
+  DESKTOP_FREE_MODEL_ID, MEMBER_FREE_MODELS_PATH, MEMBER_FREE_STATUS_PATH, type DesktopFreeAccessStatus,
 } from "@openwork/free-auto";
 import { isRecord } from "./http.js";
 
@@ -46,20 +45,6 @@ export function statusFromRejection(payload: Record<string, unknown>, base: Desk
     state: code === "desktop_update_required" ? "update_required" : EXHAUSTED_CODES.includes(code) ? "exhausted" : "unavailable",
     minimumVersion: typeof payload.minimumVersion === "string" ? payload.minimumVersion : null,
   };
-}
-export function parseGuestSession(payload: unknown, now = Date.now()): DesktopFreeSession {
-  if (!isRecord(payload) || typeof payload.token !== "string" || !payload.token.trim()
-    || typeof payload.expiresAt !== "number" || !Number.isFinite(payload.expiresAt) || payload.expiresAt <= now
-    || payload.model !== DESKTOP_FREE_MODEL_ID) throw new Error("Invalid desktop free session response.");
-  return { token: payload.token, expiresAt: payload.expiresAt, model: payload.model };
-}
-/** More proof of work the gateway asked for, if it is a valid request to do more than `current`. */
-export function requestedSessionPow(payload: Record<string, unknown>, current: SessionPowParams): SessionPowParams | null {
-  if (payload.code !== "session_pow_required" || typeof payload.bits !== "number") return null;
-  const bits = payload.bits, rounds = typeof payload.rounds === "number" ? payload.rounds : current.rounds;
-  if (!Number.isSafeInteger(bits) || !Number.isSafeInteger(rounds) || bits > DESKTOP_FREE_SESSION_POW_MAX_BITS
-    || rounds < 1 || rounds > DESKTOP_FREE_SESSION_POW_MAX_ROUNDS || (bits <= current.bits && rounds === current.rounds)) return null;
-  return { bits, rounds };
 }
 /** The member's Auto key from Den's credential response, checked against the Gateway it must point at. */
 export function parseMemberCredential(payload: unknown, origin: string): string {

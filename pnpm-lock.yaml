@@ -348,9 +348,6 @@ importers:
       '@openwork/enterprise-mcp-client':
         specifier: workspace:*
         version: link:../../packages/enterprise-mcp-client
-      '@openwork/free-auto':
-        specifier: workspace:*
-        version: link:../../packages/free-auto
       '@openwork/headless-threads':
         specifier: workspace:*
         version: link:../../packages/headless-threads
