@@ -1524,6 +1524,7 @@ export function SessionRoute() {
 
   const extensionsMainOpen = /^\/(?:workspace\/[^/]+\/)?extensions(?:\/|$)/.test(location.pathname);
   const [libraryHeaderActionsTarget, setLibraryHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
+  const [dashboardHeaderActionsTarget, setDashboardHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
 
   const surfaceProps = useMemo(() => {
     if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
@@ -3880,7 +3881,7 @@ export function SessionRoute() {
           workspaceId={dashboardEndpoint?.workspaceId ?? ""}
           selectedWorkspaceRoot={selectedWorkspaceRoot}
         >
-          <DashboardPage fallbackEndpoints={dashboardFallbackEndpoints} onCreateApp={startAppConversation} />
+          <DashboardPage fallbackEndpoints={dashboardFallbackEndpoints} onCreateApp={startAppConversation} headerActionsTarget={dashboardHeaderActionsTarget} />
         </WorkspaceProvider>
       ) : undefined}
       terminalOpen={terminalOpen}
@@ -4092,7 +4093,7 @@ export function SessionRoute() {
         ) : cloudWorkspaceMainContentTakeover
       }
       mainContentTitle={extensionsMainOpen ? t("settings.tab_extensions") : cloudWorkspaceMainContentTakeover ? "Cloud workspace" : undefined}
-      mainContentHeaderActionsRef={extensionsMainOpen ? setLibraryHeaderActionsTarget : undefined}
+      mainContentHeaderActionsRef={extensionsMainOpen ? setLibraryHeaderActionsTarget : dashboardRouteActive && !cloudWorkspaceMainContentTakeover ? setDashboardHeaderActionsTarget : undefined}
       extensionsActive={extensionsMainOpen}
       onAccessibleTargetsChange={setPaletteAccessibleTargets}
     />

@@ -14,10 +14,10 @@ test("Auto that is running but not offered to this organization says why, and ne
   const subtitles = Object.fromEntries(["free_not_enrolled", "free_not_offered", "managed_models_disabled_for_dpa", "not_eligible"]
     .map((code) => [code, autoPickerCopy("not_offered", true, null, code).subtitle]));
   expect(subtitles).toEqual({
-    free_not_enrolled: "Free · not on for your organization yet",
-    free_not_offered: "Free · turned off by your organization",
-    managed_models_disabled_for_dpa: "Free · not available for your organization",
-    not_eligible: "Free · not available for this account",
+    free_not_enrolled: "Not on for your organization yet",
+    free_not_offered: "Turned off by your organization",
+    managed_models_disabled_for_dpa: "Not available for your organization",
+    not_eligible: "Not available for this account",
   });
   for (const code of Object.keys(subtitles)) {
     expect(autoNotOffered({ code })).toBe(true);
@@ -27,7 +27,7 @@ test("Auto that is running but not offered to this organization says why, and ne
     expect(wall).toMatchObject({ state: "not_offered", code });
     expect(autoWallCopy(wall!, true).title).not.toContain("temporarily");
   }
-  expect(autoPickerCopy("unavailable", true).subtitle).toBe("Free · temporarily unavailable");
+  expect(autoPickerCopy("unavailable", true).subtitle).toBe("Temporarily unavailable");
   expect(freeAutoSwitchedOff({ code: "free_disabled" })).toBe(true);
 });
 
@@ -80,4 +80,14 @@ test("an older gateway's new-machine cap reads as the free limit, not as Auto be
   const wall = autoAccessWallFromError({ error: { code: "anonymous_new_identity_capped" } }, { providerID: "openwork-free", modelID: "openai/gpt-6-luna" });
   expect(wall).toMatchObject({ state: "limit", code: "anonymous_new_identity_capped" });
   expect(autoWallCopy(wall!, false).title).toBe("You’ve reached the free Auto limit");
+});
+
+test("the picker names when a used-up free limit resets and asks signed-out people to sign in", () => {
+  const monday = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
+  const signedOut = autoPickerCopy("exhausted", false, null, null, monday);
+  expect(signedOut.subtitle).toMatch(/^Limit used up · resets \S+/);
+  expect(signedOut.detail).toBe("This week’s free limit is used up. Sign in for a larger free limit.");
+  expect(signedOut.action).toBe("Sign in");
+  expect(autoPickerCopy("exhausted", true).subtitle).toBe("Limit used up");
+  expect(autoPickerCopy("exhausted", true).action).toBeNull();
 });

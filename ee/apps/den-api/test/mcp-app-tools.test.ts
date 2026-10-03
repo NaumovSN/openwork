@@ -19,8 +19,16 @@ const skillId = createDenTypeId("configObject")
 const workflow = `plugin:${pluginId}:${workflowId}`
 const projectsSchema = { type: "object", properties: { query: { type: "object", properties: { q: { type: "string" } } } } }
 const noteSchema = { type: "object", properties: { text: { type: "string" } }, required: ["text"] }
+// A provider schema well past the former 32 KB per-tool cap, like a database query tool's filter.
+const largeQuerySchema = {
+  type: "object",
+  properties: Object.fromEntries(Array.from({ length: 800 }, (_, index) => [
+    `filter_${index}`, { type: "string", description: `Filter on property ${index} using a long provider description.` },
+  ])),
+}
 const providerSchemas: Record<string, Record<string, unknown>> = {
   create_note: noteSchema, search_notes: { type: "object" }, delete_notes: { type: "object" }, tag_note: { type: "object" },
+  "query-data-sources": largeQuerySchema,
 }
 // Each provider tool's annotations as the author's live tool list shows them.
 const providerLabels: Record<string, { readOnlyHint?: boolean; destructiveHint?: boolean }> = {
@@ -45,6 +53,7 @@ let executions: unknown[] = []
 let liveRuns: unknown[] = []
 let nextResult: import("../src/mcp/capability-registry.js").ExecuteCapabilityToolResult | null = null
 let workflowInputSchema: unknown = { type: "object", properties: { week: { type: "string" } } }
+let workflowRequiredCapabilities: Array<{ capabilityName: string; scriptPath: string }> = []
 
 function leaf(toolName: string, readOnly: boolean, input: Record<string, unknown>) {
   return {
@@ -94,7 +103,7 @@ beforeAll(async () => {
     workflowLookups.push([...request.configObjectIds ?? []])
     return [{
       pluginId, configObjectId: workflowId, configObjectVersionId: createDenTypeId("configObjectVersion"),
-      title: "Weekly summary", description: null, inputSchema: workflowInputSchema, outputSchema: null, requiredCapabilities: [],
+      title: "Weekly summary", description: null, inputSchema: workflowInputSchema, outputSchema: null, requiredCapabilities: workflowRequiredCapabilities,
     }]
   })
   spyOn(registry, "executeCapability").mockImplementation(async (_ctx, request) => {
@@ -116,6 +125,22 @@ beforeEach(() => {
   liveRuns = []
   nextResult = null
   workflowInputSchema = { type: "object", properties: { week: { type: "string" } } }
+  workflowRequiredCapabilities = []
+})
+
+test("a live Workflow loads without asking only when every capability it calls is an OpenWork read", async () => {
+  const live = async () => (await appTools.resolveMcpAppTools(context(), [
+    { name: "weekly_summary", description: "This week's summary.", capability: workflow, mode: "live" },
+  ]))[0]?.readOnly
+  workflowRequiredCapabilities = [{ capabilityName: "getProjects", scriptPath: "tools.den.getProjects" }]
+  expect(await live()).toBe(true)
+  workflowRequiredCapabilities = [{ capabilityName: "postProjects", scriptPath: "tools.den.postProjects" }]
+  expect(await live()).toBe(false)
+  workflowRequiredCapabilities = [
+    { capabilityName: "getProjects", scriptPath: "tools.den.getProjects" },
+    { capabilityName: "mcp:emc_notion:notion-query-data-sources", scriptPath: "tools.notion[\"notion-query-data-sources\"]" },
+  ]
+  expect(await live()).toBe(false)
 })
 afterAll(() => mock.restore())
 
@@ -153,6 +178,16 @@ test("declared tools resolve one capability at a time, and a connection tool is 
   expect(bindings[0]?.schemaDigest).toBeUndefined()
   expect(bindings[3]?.inputSchema).toEqual(appTools.LIVE_WORKFLOW_TOOL_INPUT_SCHEMA)
   expect(bindings[4]?.inputSchema).toEqual({ type: "object", properties: { week: { type: "string" } } })
+})
+
+test("a connection tool with a large provider input schema binds without a per-tool size cap", async () => {
+  expect(new TextEncoder().encode(JSON.stringify(largeQuerySchema)).byteLength).toBeGreaterThan(32 * 1024)
+  const [binding] = await appTools.resolveMcpAppTools(context(), [
+    { name: "query_contacts", description: "Query contacts.", capability: "mcp:emc_notes:query-data-sources" },
+  ])
+  expect(binding?.kind).toBe("mcp")
+  expect(binding?.inputSchema).toEqual(largeQuerySchema)
+  expect(binding?.schemaDigest).toBe(schemaDigest(largeQuerySchema))
 })
 
 test("declarations that cannot become App tools are rejected before anything is published", async () => {

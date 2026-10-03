@@ -71,25 +71,47 @@ export function resolveGatewayCatalog(catalog: ModelsDevProvider, modelIds: stri
   return { catalog, config, models, ...(warnings.length ? { catalogWarning: warnings.join(" ") } : {}) }
 }
 
+const catalogUnavailableWarning = "Catalog refresh unavailable. Previously configured models are retained within the saved modelIds policy."
+const catalogSdkChangedWarning = "The catalog provider SDK changed or is unsupported. Create a separate provider to use the new SDK; the saved provider configuration is retained."
+
+function catalogCompatible(catalog: ModelsDevProvider, provider: GatewayProvider) {
+  return catalog.id === provider.provider_id && isSupportedGatewayNpm(catalog.npm) && catalog.npm === readProviderConfigNpm(provider.provider_config)
+}
+
+/**
+ * Sync the provider's stored models with the models.dev catalog. Runs only on
+ * provider/group writes and the explicit models endpoint, never on reads.
+ * Nearly every call is a no-op, so the diff is checked without locking first;
+ * the provider row lock is taken only when there is something to write.
+ */
 export async function refreshGatewayCatalog(provider: GatewayProvider, audit?: ProviderAuditCapture | null) {
-  const capture = audit === undefined
-    ? await loadProviderAudit(db, "auditCaptureEnabled" in env && env.auditCaptureEnabled === true, providerSystemAuditContext(provider.organization_id, provider.id), "catalog.refresh")
+  if (audit && (audit.context.scope !== provider.id || audit.context.organizationId !== provider.organization_id)) throw new Error("audit_provider_scope_mismatch")
+  // Audit policy is only read when the refresh writes or fails; no-op refreshes record nothing.
+  const resolveCapture = async (): Promise<ProviderAuditCapture | null> => audit === undefined
+    ? loadProviderAudit(db, "auditCaptureEnabled" in env && env.auditCaptureEnabled === true, providerSystemAuditContext(provider.organization_id, provider.id), "catalog.refresh")
     : audit ? { ...audit, step: "catalog.refresh" } : null
-  if (capture && (capture.context.scope !== provider.id || capture.context.organizationId !== provider.organization_id)) throw new Error("audit_provider_scope_mismatch")
   // Catalog I/O never holds a provider/OAuth lock. A failed load cannot prune rows.
   const catalog = await getModelsDevProvider(provider.provider_id).catch(() => null)
+  let capture: ProviderAuditCapture | null | undefined
   try {
+    const [snapshot] = await db.select().from(GatewayProviderTable)
+      .where(and(eq(GatewayProviderTable.id, provider.id), eq(GatewayProviderTable.organization_id, provider.organization_id)))
+    if (!snapshot) throw new GatewayWriteError(404, "inference_provider_not_found")
+    if (!catalog) return { provider: snapshot, catalogWarning: catalogUnavailableWarning }
+    if (!catalogCompatible(catalog, snapshot)) return { provider: snapshot, catalogWarning: catalogSdkChangedWarning }
+    const preview = resolveGatewayCatalog(catalog, snapshot.model_ids, snapshot.provider_config, false)
+    const stored = await db.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, snapshot.id))
+    if (!gatewayModelsChanged(stored, preview.models)) return { provider: snapshot, catalogWarning: preview.catalogWarning }
+    const writeCapture = capture = await resolveCapture()
     return await db.transaction(async (tx) => {
-      if (capture) await recheckAuditEntitlement(tx, provider.organization_id)
+      if (writeCapture) await recheckAuditEntitlement(tx, provider.organization_id)
       const [current] = await tx.select().from(GatewayProviderTable)
         .where(and(eq(GatewayProviderTable.id, provider.id), eq(GatewayProviderTable.organization_id, provider.organization_id))).for("update")
       if (!current) throw new GatewayWriteError(404, "inference_provider_not_found")
-      if (!catalog) return { provider: current, catalogWarning: "Catalog refresh unavailable. Previously configured models are retained within the saved modelIds policy." }
-      if (catalog.id !== current.provider_id || !isSupportedGatewayNpm(catalog.npm) || catalog.npm !== readProviderConfigNpm(current.provider_config)) {
-        return { provider: current, catalogWarning: "The catalog provider SDK changed or is unsupported. Create a separate provider to use the new SDK; the saved provider configuration is retained." }
-      }
+      // Recheck under the lock: the provider may have changed since the unlocked preview.
+      if (!catalogCompatible(catalog, current)) return { provider: current, catalogWarning: catalogSdkChangedWarning }
       const resolved = resolveGatewayCatalog(catalog, current.model_ids, current.provider_config, false)
-      return providerAuditMutation(tx, capture, async () => {
+      return providerAuditMutation(tx, writeCapture, async () => {
         if (await writeGatewayModels(tx, current, resolved.models)) {
           current.updated_at = new Date()
           await tx.update(GatewayProviderTable).set({ updated_at: current.updated_at }).where(eq(GatewayProviderTable.id, current.id))
@@ -98,13 +120,34 @@ export async function refreshGatewayCatalog(provider: GatewayProvider, audit?: P
       })
     })
   } catch (error) {
-    await recordProviderAttempt(db, capture, error instanceof GatewayWriteError ? error.status : 500)
+    await recordProviderAttempt(db, capture === undefined ? await resolveCapture() : capture, error instanceof GatewayWriteError ? error.status : 500)
     throw error
   }
 }
 
-/** Keep model row IDs stable so existing wire aliases and overlapping links survive catalog edits. */
-export async function writeGatewayModels(tx: GatewayTx, provider: GatewayProvider, models: Array<{ id: string; name: string; config: Record<string, unknown> }>) {
+type GatewayModelInput = { id: string; name: string; config: Record<string, unknown> }
+type GatewayModelRow = typeof GatewayProviderModelTable.$inferSelect
+
+// Compare as stored: model_config is a JSON column, so undefined keys never survive a write.
+const modelRowCurrent = (row: GatewayModelRow, model: GatewayModelInput) =>
+  row.name === model.name && isDeepStrictEqual(row.model_config, JSON.parse(JSON.stringify(model.config)))
+
+/** Whether writeGatewayModels would change anything for these stored rows. */
+export function gatewayModelsChanged(existing: GatewayModelRow[], models: GatewayModelInput[]) {
+  if (existing.some((row) => !models.some((model) => model.id === row.model_id))) return true
+  return models.some((model) => {
+    const row = existing.find((row) => row.model_id === model.id)
+    return !row || !modelRowCurrent(row, model)
+  })
+}
+
+/**
+ * Sync gateway_provider_models (the provider's stored copy of its catalog models)
+ * to `models`: delete removed models and their group links, update changed ones,
+ * insert new ones. Keeps model row IDs stable so existing wire aliases and
+ * overlapping links survive catalog edits. Caller holds the provider row lock.
+ */
+export async function writeGatewayModels(tx: GatewayTx, provider: GatewayProvider, models: GatewayModelInput[]) {
   const existing = await tx.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
   const removed = existing.filter((row) => !models.some((model) => model.id === row.model_id)).map((row) => row.id)
   let changed = removed.length > 0
@@ -115,7 +158,7 @@ export async function writeGatewayModels(tx: GatewayTx, provider: GatewayProvide
   }
   for (const model of models) {
     const row = existing.find((row) => row.model_id === model.id)
-    if (row && row.name === model.name && isDeepStrictEqual(row.model_config, model.config)) continue
+    if (row && modelRowCurrent(row, model)) continue
     changed = true
     if (row) await tx.update(GatewayProviderModelTable).set({ name: model.name, model_config: model.config }).where(eq(GatewayProviderModelTable.id, row.id))
     else await tx.insert(GatewayProviderModelTable).values({ id: createDenTypeId("inferenceProviderModel"), gateway_provider_id: provider.id, model_id: model.id, name: model.name, model_config: model.config })
@@ -345,13 +388,13 @@ export function publicGatewayPinnedModelIds(pinnedModelIds: readonly string[], u
   return [...new Set(pinnedModelIds.flatMap((id) => usableModels.filter((model) => model.upstreamModelId === id).map((model) => model.id)))]
 }
 
-export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: true, options?: { refreshCatalog?: boolean }): Promise<GatewayProviderDetails>
-export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean, options?: { refreshCatalog?: boolean }): Promise<GatewayProviderSummary>
-export async function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean, options: { refreshCatalog?: boolean } = {}): Promise<GatewayProviderDetails | GatewayProviderSummary> {
+export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: true): Promise<GatewayProviderDetails>
+export function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean): Promise<GatewayProviderSummary>
+export async function gatewaySummary(provider: GatewayProvider, memberId: GatewayMemberId, baseUrl: string, manage: boolean): Promise<GatewayProviderDetails | GatewayProviderSummary> {
   const [member] = await db.select({ userId: MemberTable.userId }).from(MemberTable).where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, provider.organization_id), isNull(MemberTable.removedAt)))
   if (!member?.userId) throw new GatewayWriteError(403, "forbidden")
-  const refreshed = options.refreshCatalog === false ? { provider, catalogWarning: undefined } : await refreshGatewayCatalog(provider)
-  provider = refreshed.provider
+  // Read-only: never refreshes the catalog or locks the provider. Catalog sync
+  // happens on provider/group writes and GET /v1/inference-providers/:id/models.
   const models = (await db.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id)))
     .filter((model) => (!provider.model_ids.length || provider.model_ids.includes(model.model_id))
       && !gatewayModelConfigurationError(provider.provider_config, [model.model_config]))
@@ -419,7 +462,7 @@ export async function gatewaySummary(provider: GatewayProvider, memberId: Gatewa
   usableModels.sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id))
   const pinnedModelIds = provider.pinned_model_ids ?? []
   const summary: GatewayProviderSummary = {
-    modelIds: provider.model_ids, ...(refreshed.catalogWarning ? { catalogWarning: refreshed.catalogWarning } : {}),
+    modelIds: provider.model_ids,
     pinnedModelIds: manage ? pinnedModelIds : publicGatewayPinnedModelIds(pinnedModelIds, usableModels),
     id: provider.id, providerId: provider.provider_id, name: provider.name, source: "openwork_gateway", credentialMode: sets.length > 0 && sets.every((set) => set.credential_mode === "member") ? "member" : "org", status: provider.status, updatedAt: provider.updated_at.toISOString(),
     providerConfig: buildGatewayProviderConfig(provider, env.gatewayPublicBaseUrl), models: usableModels, authorizationRequests,

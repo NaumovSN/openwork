@@ -6,7 +6,7 @@ import {
   FINISHED_TEXT_LIMIT,
   slackSafeText,
 } from "../src/slack-assistant/desktop-handoff-messages.js"
-import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, headlessRunTokenId } from "../src/mcp/headless-run-token.js"
+import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS, headlessRunTokenId } from "../src/mcp/headless-run-token.js"
 import type { RemoteSessionExecuteDeps, RemoteSessionToolResult } from "../src/mcp/remote-session-capabilities.js"
 import type { RemoteSessionCommand, RemoteSessionCommandStore } from "../src/remote-sessions/commands.js"
 
@@ -252,6 +252,6 @@ describe("linking a desktop command to its Slack run", () => {
         },
       },
     )
-    expect(minted).toEqual([{ userId: USER_ID, organizationId: ORGANIZATION_ID, messageId: "msg_abc" }])
+    expect(minted).toEqual([{ userId: USER_ID, organizationId: ORGANIZATION_ID, messageId: "msg_abc", ttlMs: DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS }])
   })
 })

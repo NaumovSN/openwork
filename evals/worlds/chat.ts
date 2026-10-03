@@ -812,6 +812,44 @@ export async function modelAccessPicker(seed: Seed) {
   return { app, den, workspace, session, policy, personal, organization: { providerID: organizationProviderId, modelID: "organization-model" } };
 }
 
+/**
+ * A saved model the provider no longer serves: the workspace provider lists only "Kept witness", while the
+ * person's saved default is the model it dropped. Opening the picker shows the Availability and recovery state.
+ */
+export async function modelPickerSavedUnavailable(seed: Seed) {
+  const providerId = "picker-witness";
+  const kept = { providerID: providerId, modelID: "kept-model" };
+  const retired = { providerID: providerId, modelID: "retired-model" };
+  const mock = seed.mock({});
+  const workspacePath = seed.tmpPath("model-picker-saved-unavailable");
+  const app = await seed.appWeb({ name: "model-picker-saved-unavailable", workspacePath, mocks: { agent: mock } });
+  const witness = app.mocks.agent;
+  if (!witness) throw new Error("Missing picker provider witness");
+  const workspace = await seed.workspace(app, workspacePath);
+  await configureProvider(seed, app, workspace.workspaceId, providerId, kept.modelID, { provider: {
+    [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Picker witness",
+      options: { baseURL: `${witness.url}/v1`, apiKey: "synthetic-picker-key" },
+      models: { [kept.modelID]: { name: "Kept witness" } },
+    },
+  } });
+  // The person chose a model earlier that this provider has since dropped.
+  const saved = await seed.evalIn(app, browserScript((workspaceId, ref) => {
+    const raw = localStorage.getItem("openwork.preferences");
+    let preferences: Record<string, unknown> = {};
+    try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
+    const [providerID, modelID] = ref.split("/");
+    localStorage.setItem("openwork.preferences", JSON.stringify({ ...preferences, defaultModel: { providerID, modelID }, modelVariant: null }));
+    localStorage.setItem("openwork.defaultModel", ref);
+    localStorage.setItem("openwork.modelChoice.explicit", "1");
+    localStorage.removeItem("openwork.sessionModels." + workspaceId);
+    return localStorage.getItem("openwork.defaultModel");
+  }, [workspace.workspaceId, `${retired.providerID}/${retired.modelID}`]));
+  if (saved !== `${retired.providerID}/${retired.modelID}`) throw new Error(`Saving the retired default failed: ${String(saved)}`);
+  await reload(app);
+  return { app, workspace, kept, retired };
+}
+
 /** Model picker contract through a real native engine and a synthetic provider. */
 export async function modelPickerEffortWeb(seed: Seed) {
   const engine = "v2";

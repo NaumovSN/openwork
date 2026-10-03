@@ -103,7 +103,7 @@ function registerRenderTool(input: {
     {
       title: `${input.preview ? "Preview" : "Open"} ${input.view.title}`,
       description: input.view.dataMode === "live"
-        ? "Fetch current data by running the saved Workflow as the authenticated viewer. Optional timeZone is an IANA zone (default UTC). The server supplies input.runtime: now, today (YYYY-MM-DD), timeZone, dayStart and exclusive dayEnd (ISO instants). No other inputs or receipt overrides are accepted. Only current Den-authorized read-only capabilities may run."
+        ? "Fetch current data by running the saved Workflow as the authenticated viewer. Optional timeZone is an IANA zone (default UTC). The server supplies input.runtime: now, today (YYYY-MM-DD), timeZone, dayStart and exclusive dayEnd (ISO instants). No other inputs or receipt overrides are accepted. The Workflow's capabilities run as the viewer."
         : input.preview
         ? "Preview the newest saved custom view revision without changing the active revision."
         : "Render the Workflow's latest successful Artifact data with this Artifact's active custom view revision.",

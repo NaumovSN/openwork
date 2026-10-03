@@ -3,10 +3,11 @@ import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import { Button } from "@/components/ui/button";
+import { PickerNotice } from "../models/picker-notice";
 import { useState } from "react";
 import { useSessionActivityStore } from "../session/status/session-activity-store";
 import { useCheckDesktopRestriction } from "./desktop-config-provider";
-import { autoAccessRefreshEvent, autoNotOffered, autoPickerCopy, autoQuietlyUnavailable, autoWallCopy, freeAutoSwitchedOff, openAlternativeModelPicker, type AutoPickerState, type AutoAccessWall, type DesktopFreeAccessStatus } from "@/app/lib/inference-access";
+import { autoAccessRefreshEvent, autoPickerCopy, autoQuietlyUnavailable, autoWallCopy, freeAutoSwitchedOff, openAlternativeModelPicker, type AutoPickerState, type AutoAccessWall, type DesktopFreeAccessStatus } from "@/app/lib/inference-access";
 import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider";
 import { useDenAuth, type DenAuthStore } from "./den-auth-provider";
 import { isDesktopRuntime } from "@/app/utils";
@@ -70,7 +71,7 @@ export function openAutoProviderSettings() {
   window.location.hash = `${workspace}/settings/ai`;
 }
 
-export function AutoPickerRecovery({ state, code, onRetry, onReload, hasAlternatives = true }: { state: AutoPickerState; code?: string | null; onRetry?: () => void | Promise<unknown>; onReload?: () => void | Promise<unknown>; hasAlternatives?: boolean }) {
+export function AutoPickerRecovery({ state, code, resetsAt, onRetry, onReload, hasAlternatives = true }: { state: AutoPickerState; code?: string | null; resetsAt?: string | null; onRetry?: () => void | Promise<unknown>; onReload?: () => void | Promise<unknown>; hasAlternatives?: boolean }) {
   const auth = useDenAuth();
   const workspace = useWorkspaceMaybe();
   const client = useQueryClient();
@@ -79,7 +80,7 @@ export function AutoPickerRecovery({ state, code, onRetry, onReload, hasAlternat
   const checkRestriction = useCheckDesktopRestriction();
   const activeWork = useSessionActivityStore((store) => Object.values(store.statusesByWorkspaceId[workspace?.workspaceId ?? ""] ?? {}).some((status) => ["thinking", "responding", "compacting", "waiting"].includes(status)));
   const observed = useObservedAutoAccessStatus();
-  const copy = autoPickerCopy(state, auth.isSignedIn, observed?.minimumVersion, code ?? observed?.code);
+  const copy = autoPickerCopy(state, auth.isSignedIn, observed?.minimumVersion, code ?? observed?.code, resetsAt ?? observed?.allowance?.resetsAt);
   const run = async (action: () => void | Promise<unknown>) => {
     if (busy) return;
     setBusy(true); setFailed(false);
@@ -92,13 +93,12 @@ export function AutoPickerRecovery({ state, code, onRetry, onReload, hasAlternat
   const reloadWorkspace = onReload ?? (workspace?.openworkServerClient && workspace.workspaceId ? () => workspace.openworkServerClient!.reloadEngine(workspace.workspaceId) : undefined);
   const reload = reloadWorkspace ? async () => { await reloadWorkspace(); await retry(); } : undefined;
   if (state === "ready" || freeAutoSwitchedOff(observed)) return null;
-  return <div role="status" data-testid="auto-picker-recovery" className="flex items-center gap-2 border-t border-border px-4 py-2 text-sm">
-    <span className="min-w-0 flex-1 text-muted-foreground">{failed ? "Couldn’t refresh Auto. Try again, or choose another model." : state === "unavailable" && !hasAlternatives ? "Auto is having trouble right now. Connect another provider to continue." : copy.detail}</span>
+  return <PickerNotice testId="auto-picker-recovery" action={<>
     {copy.action === "Sign in" ? <Button size="sm" onClick={() => openAutoSignIn()}>Sign in</Button> : null}
     {copy.action === "Update" ? <Button size="sm" onClick={openAutoUpdate}>Update</Button> : null}
     {copy.action === "Retry" ? <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(retry)}>Retry</Button> : null}
     {copy.action === "Reload" ? <Button size="sm" variant="outline" disabled={!reload || busy || activeWork || checkRestriction({ restriction: "allowControlSettings" })} title={activeWork ? "Wait for this workspace’s active tasks to finish" : undefined} onClick={() => { if (reload) void run(reload); }}>Reload</Button> : null}
-  </div>;
+  </>}>{failed ? "Couldn’t refresh Auto. Try again, or choose another model." : state === "unavailable" && !hasAlternatives ? "Auto is having trouble right now. Connect another provider to continue." : copy.detail}</PickerNotice>;
 }
 
 export function AutoAccessFooter(props: { available: boolean; syncing?: boolean }) {
@@ -145,12 +145,8 @@ export function AutoFirstUseStatus({ onConnect }: { onConnect?: () => void }) {
 function AutoAccessFooterContent({ available, syncing = false }: { available: boolean; syncing?: boolean }) {
   const { query, auth } = useAutoAccess(available);
   if ((!available && !syncing) || freeAutoSwitchedOff(query.data) || autoQuietlyUnavailable(query.data)) return null;
-  const status = syncing || query.isFetching ? "Syncing Auto…"
-    : autoNotOffered(query.data) ? autoPickerCopy("not_offered", auth.isSignedIn, null, query.data?.code).subtitle.replace(/^Free · /, "Auto: ")
-    : query.isError || query.data?.state === "unavailable" ? "Auto status unavailable"
-    : query.data?.state === "exhausted" ? "Free limit used up"
-    : query.data?.state === "update_required" ? "Update required for Auto"
-    : query.data?.state === "ready" ? (auth.status === "signed_out" ? "Auto is free on this device" : null) : null;
+  // Every other Auto state has its own notice above the picker footer (Paper "Availability and recovery").
+  const status = !syncing && query.data?.state === "ready" && auth.status === "signed_out" ? "Auto is free on this device" : null;
   if (!status) return null;
   return <div className="flex items-center justify-between gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground">
     <span role="status">{status}</span>

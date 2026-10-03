@@ -129,7 +129,7 @@ describe("headless remote calls", () => {
     ])
     const read = await headlessRemoteCall(actor, "read", { sessionId: "hs_1", messageId: "msg_1", limit: 100 }, deps)
     // Polled every second for the whole run: tool outputs stay on the runner.
-    expect(calls[0].path).toBe("/v1/sessions/hs_1?messageId=msg_1&limit=500&outputs=none")
+    expect(calls[0].path).toBe("/v1/sessions/hs_1?limit=500&messageId=msg_1&outputs=none")
     expect(read).toMatchObject({ status: "busy", finalAssistantText: "Checking Slack.", title: null })
     expect(z.object({ messages: z.array(z.object({ toolCalls: z.array(z.unknown()) })) }).parse(read).messages[1].toolCalls).toEqual([
       { id: "c1", name: "Using slack search public", status: "completed" },

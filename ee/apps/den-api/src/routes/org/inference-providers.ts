@@ -382,7 +382,7 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
           await tx.update(GatewayProviderTable).set({ pinned_model_ids: pinnedModelIds, updated_at }).where(eq(GatewayProviderTable.id, existing.id))
           return { ...existing, pinned_model_ids: pinnedModelIds, updated_at }
         })
-        return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true, { refreshCatalog: false }) })
+        return c.json({ inferenceProvider: await gatewaySummary(provider, actor.currentMember.id, publicBase(c.req.raw), true) })
       }
       const before = await getProvider(db, actor, c.req.valid("param").inferenceProviderId, true)
       const trusted = await getModelsDevProvider(before.provider_id)
