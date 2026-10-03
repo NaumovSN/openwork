@@ -420,3 +420,18 @@ test("a tested capability must still be available in the caller's current tool t
   await expect(workflows.saveWorkflow(input)).rejects.toThrow("workflow_capability_unavailable:tools.den.syntheticRead")
   expect(written).toEqual([])
 })
+
+test("a tested connection tool with a non-identifier name resolves to its bracketed script path", async () => {
+  const { input, row } = await fixture()
+  // Code Mode records calls with their path joined by ".", while the manifest uses bracket notation.
+  row.tool_calls = [{ name: "notion.notion-query-data-sources" }]
+  const required = {
+    scriptPath: "tools.notion[\"notion-query-data-sources\"]",
+    capabilityName: "mcp:emc_notion:notion-query-data-sources",
+  }
+  await workflows.saveWorkflow({
+    ...input,
+    buildTools: async () => ({ tools: {}, manifest: [{ ...required, readOnly: false, authority: "external" }] }),
+  })
+  expect(savedVersion().normalizedPayloadJson).toMatchObject({ requiredCapabilities: [required] })
+})
