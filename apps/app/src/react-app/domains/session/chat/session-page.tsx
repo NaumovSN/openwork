@@ -295,6 +295,8 @@ export type SessionPageProps = {
   settingsSlot?: React.ReactNode;
   /** Workspace-scoped first-class surface rendered in place of the conversation. */
   primarySlot?: React.ReactNode;
+  /** The primary slot is itself a conversation (a first send still being created), so it keeps chat chrome. */
+  primarySlotIsConversation?: boolean;
   /** Standalone pages use the main canvas instead of the inset conversation pane. */
   primarySurface?: "flat";
   primaryTitle?: string;
@@ -1022,7 +1024,7 @@ export function SessionPage(props: SessionPageProps) {
   const providerCount = props.hasUsableModel ? 1 : props.providerConnectedIds.length;
   const messageCountVisible = props.selectedSessionId ? 1 : 0;
   const hasMainContentTakeover = Boolean(props.mainContentTakeover);
-  const sidebarOnlyChrome = isMobile && !isElectronRuntime() && shellConfig.sidebar && !props.primarySlot && !hasMainContentTakeover && !props.mainContentHeaderActionsRef && !props.primaryTitle && !props.mainContentTitle;
+  const sidebarOnlyChrome = isMobile && !isElectronRuntime() && shellConfig.sidebar && (!props.primarySlot || props.primarySlotIsConversation) && !hasMainContentTakeover && !props.mainContentHeaderActionsRef && !props.primaryTitle && !props.mainContentTitle;
   const showWorkspaceSetupEmptyState = props.workspaces.length === 0 && !props.selectedSessionId;
   const showStartupSkeleton =
     !bootOverlayVisible &&
