@@ -1,9 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "rootDir": "../../../..",
-    "noEmit": true,
-    "allowImportingTsExtensions": true
-  },
-  "include": ["src/audit-log.ts", "src/schema/audit.ts", "src/schema/workers.ts", "test/audit*.ts"]
-}

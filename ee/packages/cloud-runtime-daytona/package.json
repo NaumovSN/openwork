@@ -15,8 +15,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
-    "test": "bun test src"
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
     "@daytonaio/sdk": "^0.201.0",

@@ -3,7 +3,6 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "test": "node --test test/*.test.ts",
     "dev": "next dev --hostname 127.0.0.1 --port ${REVIEW_PORT:-3011}",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1 --port ${REVIEW_PORT:-3011}",
