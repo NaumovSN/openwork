@@ -848,6 +848,13 @@
       "when": 1790980102568,
       "tag": "0121_slack_desktop_handoff",
       "breakpoints": true
+    },
+    {
+      "idx": 122,
+      "version": "5",
+      "when": 1791003459443,
+      "tag": "0122_remote_session_targets",
+      "breakpoints": true
     }
   ]
 }

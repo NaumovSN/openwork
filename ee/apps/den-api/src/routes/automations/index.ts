@@ -24,6 +24,8 @@ import {
   automationRunnerWorkResponseSchema,
   createAutomationSchema,
   createCloudAutomationSchema,
+  desktopRunnerInventoryResponseSchema,
+  desktopRunnerInventorySchema,
   remoteSessionCommandClaimResponseSchema,
   remoteSessionCommandCompleteRequestSchema,
   remoteSessionCommandCompleteResponseSchema,
@@ -47,6 +49,7 @@ import {
 import type { AuthContextVariables } from "../../session.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
 import { automationService, type AutomationService } from "../../automations/service.js"
+import { automationRunnerComputerIds } from "../../automations/repository.js"
 import { automationRunnerAudienceFromRequest, automationRunnerAuth } from "../../automations/runner-auth.js"
 import { env } from "../../env.js"
 import { OpenWorkWebAccessRequiredError } from "../../openwork-web-runtime-access.js"
@@ -370,6 +373,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       const commands = await commandStore.listPendingForRunner({
         organizationId: identity.organizationId,
         ownerMemberId: identity.ownerMemberId,
+        computerIds: automationRunnerComputerIds(identity),
         now: Date.now(),
         limit: 5,
       })
@@ -378,6 +382,27 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       }
     }
     return c.json(automationRunnerWorkResponseSchema.parse({ items }))
+    },
+  )
+
+  app.put(
+    "/v1/automation-runner/inventory",
+    runnerRoute({
+      summary: "Report this desktop's computer, workspaces and models",
+      description: "Replaces the runner's latest inventory. Remote-session callers read it through remote-session:targets "
+        + "to choose a computer, workspace and model. Desktops send it when they connect and when it changes.",
+      responses: {
+        200: jsonResponse("The inventory was stored.", desktopRunnerInventoryResponseSchema),
+        404: jsonResponse("The runner is not registered; register it again first.", runnerErrorSchema),
+      },
+    }),
+    jsonValidator(desktopRunnerInventorySchema),
+    async (c) => {
+      const identity = await authenticateRunner(c)
+      if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      const stored = await service.saveDesktopRunnerInventory(identity, c.req.valid("json"))
+      if (!stored) return c.json({ error: "runner_not_registered" }, 404)
+      return c.json(desktopRunnerInventoryResponseSchema.parse({ ok: true, updatedAt: Date.now() }))
     },
   )
 
@@ -403,6 +428,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       organizationId: identity.organizationId,
       ownerMemberId: identity.ownerMemberId,
       runnerId: identity.runnerId,
+      computerIds: automationRunnerComputerIds(identity),
       now: Date.now(),
     })
     if (!command) return c.json({ error: "command_claim_conflict" }, 409)
@@ -414,6 +440,9 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         prompt: command.prompt,
         model: command.model,
         expiresAt: command.expiresAt,
+        // Only pinned commands carry the field, so the assignment of an
+        // untargeted command keeps its long-standing shape.
+        ...(command.targetWorkspaceId ? { workspaceId: command.targetWorkspaceId } : {}),
       },
     }))
     },

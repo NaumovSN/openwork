@@ -1,6 +1,6 @@
 import { processBlankSlateProfile, resolveBlankSlateLaunch } from "./blank-slate-profile.mjs";
 import { DESKTOP_POLICY_ENFORCEMENT_ENABLED } from "@openwork/types/den/desktop-policies-runtime";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import net from "node:net";
 import { existsSync, readFileSync } from "node:fs";
@@ -63,7 +63,7 @@ import { createDesktopTransferRegistry, downloadBinaryToPath, uploadMultipartFro
 import {
   createLinuxDesktopIntegration,
 } from "./linux-desktop-integration.mjs";
-import { automationRunnerDisabledReason, createDesktopAutomationRunner, normalizeRunnerBaseUrl } from "./automation-runner.mjs";
+import { automationRunnerDisabledReason, createComputerDescriber, createDesktopAutomationRunner, normalizeRunnerBaseUrl } from "./automation-runner.mjs";
 import {
   desktopActivationRequired,
   enterprisePreactivationCommandAllowed,
@@ -1381,6 +1381,18 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
     const server = await runtimeManager.openworkServerInfo();
     return { baseUrl: server.baseUrl, token: server.clientToken ?? server.ownerToken };
   },
+  // Remote-session callers choose a computer by this label, then a workspace and model.
+  describeComputer: createComputerDescriber({
+    platform: process.platform,
+    appVersion: resolveAppVersion(app),
+    hostname: () => os.hostname(),
+    readComputerName: () => new Promise((resolve, reject) => {
+      execFile("/usr/sbin/scutil", ["--get", "ComputerName"], { timeout: 2_000 }, (error, stdout) => {
+        if (error) reject(error);
+        else resolve(String(stdout));
+      });
+    }),
+  }),
   log: (state) => console.info(`[automation-runner] ${state}`),
   onCredentialRejected: () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;

@@ -26,6 +26,7 @@ import type {
   AutomationRunEvent,
   AutomationRunEventType,
   AutomationUsage,
+  DesktopRunnerInventory,
 } from "@openwork/types/automations"
 import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
@@ -72,6 +73,15 @@ const idPrefix = (value: string) => value.slice(0, 8)
 export function automationRunnerRowId(input: { organizationId: string; ownerMemberId: string; runnerId: string }) {
   const scope = `${normalizeOrganizationId(input.organizationId)}\n${normalizeMemberId(input.ownerMemberId)}\n${input.runnerId}`
   return `rnr_${createHash("sha256").update(scope).digest("hex")}`
+}
+
+/**
+ * Every id a runner's computer can be targeted by: its scoped row id, which
+ * callers see as `computerId`, and the bare install id that named rows
+ * registered before rows were scoped.
+ */
+export function automationRunnerComputerIds(input: { organizationId: string; ownerMemberId: string; runnerId: string }) {
+  return [automationRunnerRowId(input), input.runnerId]
 }
 
 /**
@@ -1083,6 +1093,31 @@ export class DenAutomationRepository implements AutomationRepository {
   }
 
   /**
+   * Stores the runner's latest computer, workspace and model report. Returns
+   * false when the runner has no row, so it must register again first.
+   */
+  async saveDesktopRunnerInventory(input: {
+    organizationId: string
+    ownerMemberId: string
+    runnerId: string
+    inventory: DesktopRunnerInventory
+    now: number
+  }): Promise<boolean> {
+    const now = new Date(input.now)
+    const result = await db.update(AutomationRunnerTable).set({
+      inventory: input.inventory,
+      inventory_updated_at: now,
+      last_seen_at: now,
+      updated_at: now,
+    }).where(and(
+      inArray(AutomationRunnerTable.id, automationRunnerComputerIds(input)),
+      eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
+      eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
+    ))
+    return automationAffectedRows(result) > 0
+  }
+
+  /**
    * Queued desktop runs, oldest first. Every one of the owner's desktops sees
    * the same list; a run pinned to a workspace says so, and only a desktop
    * that has that workspace claims it.
@@ -1370,6 +1405,30 @@ export class DenAutomationRepository implements AutomationRepository {
         sql`json_contains(${AutomationRunnerTable.capabilities}, ${JSON.stringify(input.capability)})`,
       )).orderBy(desc(AutomationRunnerTable.last_seen_at)).limit(1)
     return rows[0]?.lastSeenAt.getTime() ?? null
+  }
+
+  /**
+   * The owner's desktops that can take remote sessions, most recently seen
+   * first, with their latest inventory report (null for desktops that never
+   * sent one).
+   */
+  async listRemoteSessionDesktops(input: {
+    organizationId: string
+    ownerMemberId: string
+    capability: AutomationDesktopRunnerCapability
+    limit: number
+  }) {
+    return db.select({
+      id: AutomationRunnerTable.id,
+      platform: AutomationRunnerTable.platform,
+      appVersion: AutomationRunnerTable.app_version,
+      lastSeenAt: AutomationRunnerTable.last_seen_at,
+      inventory: AutomationRunnerTable.inventory,
+    }).from(AutomationRunnerTable).where(and(
+      eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
+      eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
+      sql`json_contains(${AutomationRunnerTable.capabilities}, ${JSON.stringify(input.capability)})`,
+    )).orderBy(desc(AutomationRunnerTable.last_seen_at)).limit(input.limit)
   }
 
   /** The owner's registered desktops, most recently seen first. */
