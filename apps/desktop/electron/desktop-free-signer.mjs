@@ -56,32 +56,55 @@ export function createDesktopFreeSigner({ filePath, loadSafeStorage, appVersion,
     }
     return { platform, arch };
   };
-  async function loadIdentity() {
+  // Without an OS keyring (headless or minimal Linux), the key lives in an owner-only file instead.
+  const plainFilePath = filePath.replace(/\.bin$/, "") + ".json";
+  async function readIfPresent(target) {
+    try { return await readFile(target); }
+    catch (error) { if (error?.code !== "ENOENT") throw error; return null; }
+  }
+  async function writeOnce(target, contents) {
+    await mkdir(path.dirname(target), { recursive: true });
+    const temporary = `${target}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, contents, { mode: 0o600, flag: "wx" });
+      await chmod(temporary, 0o600);
+      // A concurrent writer may have won; the file that exists is the identity.
+      try { await link(temporary, target); }
+      catch (error) { if (error?.code !== "EEXIST") throw error; }
+    } finally { await rm(temporary, { force: true }); }
+    return readFile(target);
+  }
+  async function secureStorage() {
     const storage = loadSafeStorage();
-    if (!storage || !(await storage.isAsyncEncryptionAvailable()) || (platform === "linux" && storage.getSelectedStorageBackend() === "basic_text")) {
-      throw new Error("Desktop free inference requires operating-system secure storage.");
+    if (!storage || !(await storage.isAsyncEncryptionAvailable())) return null;
+    if (platform === "linux" && storage.getSelectedStorageBackend() === "basic_text") return null;
+    return storage;
+  }
+  async function readRecord() {
+    const newRecord = () => JSON.stringify({
+      version: 1, privateKey: generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "der" }).toString("base64"),
+    });
+    const storage = await secureStorage();
+    const encrypted = await readIfPresent(filePath);
+    // Keep whichever identity this device already has, so its allowance does not reset when a keyring appears or goes away.
+    if (encrypted) {
+      if (!storage) throw new Error("This device's free Auto identity is protected by a keyring that is not available now.");
+      await chmod(filePath, 0o600);
+      return (await storage.decryptStringAsync(encrypted)).result;
     }
-    let encrypted;
-    try { encrypted = await readFile(filePath); }
-    catch (error) { if (error?.code !== "ENOENT") throw error; }
-    if (!encrypted) {
-      const { privateKey } = generateKeyPairSync("ed25519");
-      encrypted = await storage.encryptStringAsync(JSON.stringify({
-        version: 1, privateKey: privateKey.export({ type: "pkcs8", format: "der" }).toString("base64"),
-      }));
-      await mkdir(path.dirname(filePath), { recursive: true });
-      const temporary = `${filePath}.${randomUUID()}.tmp`;
-      try {
-        await writeFile(temporary, encrypted, { mode: 0o600, flag: "wx" });
-        await chmod(temporary, 0o600);
-        try { await link(temporary, filePath); }
-        catch (error) { if (error?.code !== "EEXIST") throw error; }
-      } finally { await rm(temporary, { force: true }); }
-      encrypted = await readFile(filePath);
+    const plain = await readIfPresent(plainFilePath);
+    if (plain) {
+      await chmod(plainFilePath, 0o600);
+      return plain.toString("utf8");
     }
-    await chmod(filePath, 0o600);
-    const { result } = await storage.decryptStringAsync(encrypted);
-    const record = JSON.parse(result);
+    if (storage) {
+      const written = await writeOnce(filePath, await storage.encryptStringAsync(newRecord()));
+      return (await storage.decryptStringAsync(written)).result;
+    }
+    return (await writeOnce(plainFilePath, newRecord())).toString("utf8");
+  }
+  async function loadIdentity() {
+    const record = JSON.parse(await readRecord());
     // Records from earlier builds also carry an unused installationId.
     if (record.version !== 1 || typeof record.privateKey !== "string") {
       throw new Error("Invalid protected desktop free identity.");
