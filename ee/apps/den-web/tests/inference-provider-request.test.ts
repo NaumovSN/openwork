@@ -15,6 +15,7 @@ import {
   isGatewayOnlyNpm,
   isSupportedGatewayNpm,
   SUPPORTED_GATEWAY_NPM_PACKAGES,
+  readInferenceProviderDetails,
   readInferenceProvidersFromPayload,
   supportsMemberCredentialMode,
   validateInferenceProviderForm,
@@ -432,5 +433,14 @@ describe("response parsing", () => {
 
   test("drops rows with unknown modes or statuses", () => {
     expect(asInferenceProvider({ id: "x", providerId: "p", name: "n", credentialMode: "weird", status: "active" })).toBeNull();
+  });
+
+  test("details take the catalog warning from the models endpoint, since provider reads no longer refresh the catalog", () => {
+    const provider = { id: "infp_3", providerId: "anthropic", name: "Anthropic", credentialMode: "org", status: "active", modelGroups: [], credentialSets: [], accessGrants: [] };
+    const catalog = { catalogWarning: "Catalog refresh unavailable.", models: [{ id: "claude", name: "Claude", config: {} }] };
+    const details = readInferenceProviderDetails({ inferenceProvider: provider }, catalog);
+    expect(details?.catalogWarning).toBe("Catalog refresh unavailable.");
+    expect(details?.catalogModels).toEqual(catalog.models);
+    expect(readInferenceProviderDetails({ inferenceProvider: provider }, { models: [] })?.catalogWarning).toBeNull();
   });
 });

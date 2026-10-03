@@ -7,7 +7,6 @@ export const MCP_APP_MAX_HTML_BYTES = 768 * 1024
 /** Every App's own MCP server opens it with this one tool. */
 export const MCP_APP_LAUNCH_TOOL_NAME = "open_app"
 export const MCP_APP_MAX_TOOLS = 20
-export const MCP_APP_MAX_TOOL_SCHEMA_BYTES = 32 * 1024
 
 export const mcpAppIdSchema = z.string().length(30).regex(/^cob_[0-7][0-9a-hjkmnp-tv-z]{25}$/u)
 export const mcpAppRevisionIdSchema = z.string().length(30).regex(/^cov_[0-7][0-9a-hjkmnp-tv-z]{25}$/u)
@@ -42,9 +41,10 @@ export const mcpAppToolDeclarationSchema = z.object({
 const toolDeclarationsSchema = z.array(mcpAppToolDeclarationSchema).max(MCP_APP_MAX_TOOLS)
   .refine((tools) => new Set(tools.map((tool) => tool.name)).size === tools.length, "Tool names must be unique.")
 
+// No per-tool size cap: provider schemas (e.g. Notion's query tool) can be
+// large. The revision storage cap and transport limits bound the total.
 const jsonSchemaObject = z.record(z.string(), z.json())
   .refine((schema) => schema.type === "object", "Tool input schemas must describe an object.")
-  .refine((schema) => byteLength(JSON.stringify(schema)) <= MCP_APP_MAX_TOOL_SCHEMA_BYTES, "Tool input schema is too large.")
 
 /**
  * A declared tool resolved when the revision was published: how its arguments

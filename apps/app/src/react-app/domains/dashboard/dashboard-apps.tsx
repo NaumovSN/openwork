@@ -1,5 +1,6 @@
 import { BuiltAppPicker, BuiltDashboardTiles, useBuiltDashboardApps } from "./built-dashboard-apps";
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Blocks, Check, Loader2, Plus, Sparkles } from "lucide-react";
@@ -25,7 +26,12 @@ function snapshotGeometryScopeKey(scope: ReturnType<typeof useAppsClient>["scope
   return `${dashboardTileCacheScopeKey(scope[1] ?? null, scope[2] ?? null)}.snapshots.${encodeURIComponent(JSON.stringify(scope))}`;
 }
 
-export function DashboardApps({ onCreateApp, fallbackEndpoints }: { onCreateApp: CreateDashboardApp; fallbackEndpoints?: DashboardLaunchEndpoint[] }) {
+export function DashboardApps({ onCreateApp, fallbackEndpoints, headerActionsTarget }: {
+  onCreateApp: CreateDashboardApp;
+  fallbackEndpoints?: DashboardLaunchEndpoint[];
+  /** The window titlebar slot, like Library's. `undefined` renders the controls inline; `null` waits for the slot. */
+  headerActionsTarget?: HTMLElement | null;
+}) {
   const { available, client, orgId, query, scope, canManage } = useSavedApps();
   const cache = useQueryClient();
   const built = useBuiltDashboardApps();
@@ -54,23 +60,30 @@ export function DashboardApps({ onCreateApp, fallbackEndpoints }: { onCreateApp:
   const apps = query.data?.items ?? [];
   const personal = apps.filter((app) => app.onDashboard);
   const matching = apps.filter((app) => app.view.title.toLocaleLowerCase().includes(search.toLocaleLowerCase()));
+  const openAdd = () => { setChooser(built.ready ? "existing" : "add"); setError(null); placement.reset(); };
+  const headerControls = (available && canManage) || built.ready ? <div className="flex items-center gap-2">
+    {canManage && query.data?.sharingEnabled && personal.length > 0 ? <ShareDashboardButton key={JSON.stringify(scope)} apps={personal} /> : null}
+    <Button className="shrink-0 rounded-lg" onClick={openAdd}><Plus className="size-4" />Add to dashboard</Button>
+  </div> : null;
   return <>
-    <header className="mb-8 flex flex-wrap items-center justify-between gap-3 border-b pb-6">
-      <div><h1 className="text-2xl font-semibold">Your dashboard</h1>{!personal.length ? <p className="mt-2 text-sm text-muted-foreground">Artifacts you pick, with live data. Only you see this layout.</p> : null}</div>
-      {(available && canManage) || built.ready ? <div className="flex items-center gap-2">{canManage && query.data?.sharingEnabled && personal.length > 0 ? <ShareDashboardButton key={JSON.stringify(scope)} apps={personal} /> : null}<Button variant="outline" onClick={() => { setChooser(built.ready ? "existing" : "add"); setError(null); placement.reset(); }}><Plus className="size-4" />Add</Button></div> : null}
-    </header>
+    {headerControls ? headerActionsTarget ? createPortal(headerControls, headerActionsTarget)
+      : headerActionsTarget === undefined ? <div className="mb-6 flex justify-end">{headerControls}</div> : null : null}
     {query.isError ? <div className="mb-5 flex items-center gap-3"><p role="alert" className="text-sm">Your artifacts could not be loaded.</p><Button variant="outline" onClick={() => void query.refetch()}>Try again</Button></div> : null}
     {placement.error && !chooser ? <p role="alert" className="mb-4 text-sm text-destructive">{placement.error.message}</p> : null}
-    <BuiltDashboardTiles built={built} fallbackEndpoints={fallbackEndpoints} onAdd={() => setChooser("existing")} />
+    <BuiltDashboardTiles built={built} fallbackEndpoints={fallbackEndpoints} onAdd={openAdd} />
     {available && personal.length ? <section className="mb-8" aria-label="Your artifacts">
       <h2 className="mb-3 text-sm font-medium">Added by you</h2>
       <DashboardMasonry>{personal.map((app) => <SavedDashboardApp key={JSON.stringify([...scope, app.view.id])} app={app} fallbackEndpoints={fallbackEndpoints} onCreateApp={onCreateApp}
         removing={placement.isPending && placement.variables?.appId === app.view.id}
         onRemove={(geometry) => placement.mutate({ appId: app.view.id, added: false, geometry })} />)}</DashboardMasonry>
-    </section> : (available && canManage) || built.ready ? (built.apps.some((app) => built.ids.includes(app.connectionId)) ? null : <section className="mb-8 flex min-h-96 flex-col items-center justify-center text-center">
-      <div aria-hidden="true" className="mb-7 flex gap-3">{[0, 1, 2].map((index) => <div key={index} className="flex h-24 w-20 items-center justify-center rounded-lg border border-dashed text-muted-foreground/40"><Blocks className="size-5" /></div>)}</div>
-      <h2 className="text-lg font-semibold">Pin the artifacts you check every day</h2>
-      <Button className="mt-5" onClick={() => setChooser(built.ready ? "existing" : "add")}><Plus className="size-4" />Add an artifact</Button>
+    </section> : (available && canManage) || built.ready ? (built.apps.some((app) => built.ids.includes(app.connectionId)) ? null : <section className="mb-8 flex min-h-96 flex-col items-center justify-center text-center" data-dashboard-empty>
+      <div aria-hidden="true" className="mb-10 grid w-full max-w-xl grid-cols-[2fr_3fr_2fr] gap-4">{[0, 1, 2].map((index) => <div key={index} className="h-32 rounded-xl border border-dashed bg-muted/30 p-5">
+        <div className="h-2.5 w-3/5 rounded-full bg-muted" />
+        <div className="mt-3 h-6 w-10 rounded-md bg-muted" />
+      </div>)}</div>
+      <h2 className="text-xl font-semibold">Pin the artifacts you check every day</h2>
+      <p className="mt-2 max-w-md text-sm text-muted-foreground">Add artifacts your team shared with you, or ones you made. They stay live, so you never open a chat to see the numbers.</p>
+      <Button className="mt-6 rounded-lg" onClick={openAdd}><Plus className="size-4" />Add an artifact</Button>
     </section>) : available ? <p className="mb-8 text-xs text-muted-foreground">This dashboard has no artifacts yet.</p> : null}
     <Dialog open={(canManage || built.ready) && chooser !== null} onOpenChange={(open) => { if (!open && !creating && !placement.isPending) setChooser(null); }}>
       <DialogContent className={chooser === "existing" && built.ready ? "gap-0 overflow-hidden p-0 lg:top-[12vh] lg:max-w-xl lg:translate-y-0 lg:rounded-xl" : undefined}>

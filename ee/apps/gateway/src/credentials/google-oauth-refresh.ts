@@ -1,5 +1,5 @@
-import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
-import { GatewayProviderCredentialTable, GatewayProviderTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db"
+import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { GatewayProviderCredentialTable, GatewayProviderTable, MemberTable } from "@openwork-ee/den-db"
 import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
 import { parseGatewayProviderSecret, type GatewayOauthTokenSecret } from "@openwork/types/den/gateway"
 import { loadGatewayAccess, sameGatewaySelection, selectGatewayGrant } from "../provider-access.js"
@@ -52,8 +52,8 @@ export function needsGoogleOauthRefresh(credential: { expires_at: Date | null },
     && credential.expires_at.getTime() - now.getTime() <= REFRESH_WINDOW_MS
 }
 
-// Secret comparison happens on decrypted values under a short row lock: the
-// encrypted column uses randomized ciphertext and cannot be compared with eq().
+// Secret comparison happens on decrypted values: the encrypted column uses
+// randomized ciphertext and cannot be compared with eq(). Writes compare its hash.
 export function sameOauthVersion(a: OauthCredentialRow, b: OauthCredentialRow) {
   return a.id === b.id && a.gateway_provider_id === b.gateway_provider_id && a.credential_set_id === b.credential_set_id
     && a.organization_id === b.organization_id && a.subject === b.subject
@@ -199,9 +199,23 @@ export function createGoogleOauthRefresher(deps: {
   return (input) => refresh(input).catch((): GoogleOauthRefreshOutcome => ({ kind: "retry", reason: "refresh_unavailable" }))
 }
 
-type Db = Pick<typeof import("../db.js").db, "select" | "transaction">
-type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
+type Db = Pick<typeof import("../db.js").db, "select" | "update">
 
+function affectedRows(result: unknown): number {
+  if (Array.isArray(result)) return affectedRows(result[0])
+  if (typeof result !== "object" || result === null) return 0
+  if ("rowsAffected" in result && typeof result.rowsAffected === "number") return result.rowsAffected
+  if ("affectedRows" in result && typeof result.affectedRows === "number") return result.affectedRows
+  return 0
+}
+
+// No row locks anywhere in this store. Authorization is re-checked with plain reads
+// at each step, and every credential write is a compare-and-set against the exact
+// version that was read (updated_at, refreshing_until, active status and the stored
+// ciphertext hash). A concurrent refresh, Den revocation, re-authorization or token
+// replacement changes one of those, so the stale write matches no row. A Den access
+// change that lands between the check and the write is caught by the per-request
+// access check on the next call.
 export function createDbGoogleOauthRefreshStore(db: Db): GoogleOauthRefreshStore {
   const table = GatewayProviderCredentialTable
   const where = (scope: RefreshScope) => and(eq(table.id, scope.credentialId),
@@ -209,66 +223,64 @@ export function createDbGoogleOauthRefreshStore(db: Db): GoogleOauthRefreshStore
     eq(table.credential_set_id, scope.authorization.selection.row.credentialSet.id),
     eq(table.subject, scope.subject), eq(table.org_membership_id, scope.authorization.scope.orgMembershipId), eq(table.kind, "oauth_google"))
 
-  async function lockedRow(tx: Tx, scope: RefreshScope): Promise<OauthCredentialRow | null> {
-    // Match Den's lock order so member removal / client rotation serializes with
-    // each local mutation, but never with the external token request.
+  async function currentRow(scope: RefreshScope): Promise<OauthCredentialRow | null> {
     const authorization = scope.authorization
     if (scope.subject !== authorization.scope.orgMembershipId || scope.subject !== authorization.subject) return null
-    const [member] = await tx.select().from(MemberTable).where(eq(MemberTable.id, authorization.scope.orgMembershipId)).for("update")
+    const [member] = await db.select().from(MemberTable).where(eq(MemberTable.id, authorization.scope.orgMembershipId))
     if (!member || member.removedAt || !member.userId) return null
-    const [provider] = await tx.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, authorization.scope.gatewayProviderId)).for("update")
+    const [provider] = await db.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, authorization.scope.gatewayProviderId))
     if (!provider || provider.status !== "active"
       || provider.organization_id !== member.organizationId
       || !["google-vertex", "google-vertex-anthropic"].includes(provider.provider_id)) return null
-    await tx.select({ id: TeamMemberTable.id }).from(TeamMemberTable)
-      .innerJoin(TeamTable, eq(TeamTable.id, TeamMemberTable.teamId))
-      .where(and(eq(TeamMemberTable.orgMembershipId, member.id), eq(TeamTable.organizationId, member.organizationId))).for("update")
-    const access = selectGatewayGrant(await loadGatewayAccess(authorization.scope, tx, true), authorization.selection.requestedModel, authorization.selection.row.grant.id)
+    const access = selectGatewayGrant(await loadGatewayAccess(authorization.scope, db), authorization.selection.requestedModel, authorization.selection.row.grant.id)
     if (access.kind !== "selected" || !sameGatewaySelection(authorization.selection, access.selection)) return null
     const set = access.selection.row.credentialSet
     if (set.credential_mode !== "member" || set.id !== scope.provider.id
       || set.oauth_client_id !== scope.provider.oauth_client_id || set.oauth_client_secret !== scope.provider.oauth_client_secret) return null
     // Hash stored ciphertext, not a re-encrypted SQL parameter. Replacing even
     // identical plaintext in the same millisecond gets a different revision.
-    const [result] = await tx.select({ credential: table, secret_revision: sql<string>`sha2(${table.secret}, 256)` })
-      .from(table).where(where(scope)).for("update")
+    const [result] = await db.select({ credential: table, secret_revision: sql<string>`sha2(${table.secret}, 256)` })
+      .from(table).where(where(scope))
     const row = result?.credential
     if (!row || row.kind !== "oauth_google" || row.organization_id !== provider.organization_id) return null
     return { ...row, kind: row.kind, secret_revision: result.secret_revision }
   }
+
+  /** Write only if the row is still exactly `expected`; false when anything changed since it was read. */
+  async function writeIfUnchanged(scope: RefreshScope, expected: OauthCredentialRow, values: Partial<typeof table.$inferInsert>) {
+    const result = await db.update(table).set(values).where(and(where(scope),
+      eq(table.status, "active"),
+      eq(table.updated_at, expected.updated_at),
+      expected.refreshing_until ? eq(table.refreshing_until, expected.refreshing_until) : isNull(table.refreshing_until),
+      sql`sha2(${table.secret}, 256) = ${expected.secret_revision}`))
+    return affectedRows(result) === 1
+  }
+
   const nextVersion = (row: OauthCredentialRow, now: Date) => new Date(Math.max(now.getTime(), row.updated_at.getTime() + 1))
   return {
     async reloadCredential(scope) {
-      // Also fence read-only winners against current member/provider/client state.
-      return db.transaction((tx) => lockedRow(tx, scope))
+      return currentRow(scope)
     },
     async tryAcquireRefreshLock(input) {
-      return db.transaction(async (tx) => {
-        const row = await lockedRow(tx, input.scope)
-        if (!row || row.last_error === "invalid_client" || !sameOauthVersion(row, input.credential)
-          || (row.refreshing_until && row.refreshing_until.getTime() >= input.now.getTime())) return null
-        const updated_at = nextVersion(row, input.now)
-        await tx.update(table).set({ refreshing_until: input.until, updated_at }).where(where(input.scope))
-        return { scope: input.scope, credential: { ...row, refreshing_until: input.until, updated_at } }
-      })
+      const row = await currentRow(input.scope)
+      if (!row || row.last_error === "invalid_client" || !sameOauthVersion(row, input.credential)
+        || (row.refreshing_until && row.refreshing_until.getTime() >= input.now.getTime())) return null
+      const updated_at = nextVersion(row, input.now)
+      // Two callers can pass the check above; only one compare-and-set matches.
+      if (!await writeIfUnchanged(input.scope, row, { refreshing_until: input.until, updated_at })) return null
+      return { scope: input.scope, credential: { ...row, refreshing_until: input.until, updated_at } }
     },
     async saveRefreshedToken(input) {
-      return db.transaction(async (tx) => {
-        const row = await lockedRow(tx, input.lock.scope)
-        if (!row || !sameOauthVersion(row, input.lock.credential) || !row.refreshing_until || row.refreshing_until <= input.now) return false
-        await tx.update(table).set({ secret: input.secret, expires_at: input.expiresAt, last_refreshed_at: input.now,
-          updated_at: nextVersion(row, input.now), refreshing_until: null, last_error: null }).where(where(input.lock.scope))
-        return true
-      })
+      const row = await currentRow(input.lock.scope)
+      if (!row || !sameOauthVersion(row, input.lock.credential) || !row.refreshing_until || row.refreshing_until <= input.now) return false
+      return writeIfUnchanged(input.lock.scope, row, { secret: input.secret, expires_at: input.expiresAt, last_refreshed_at: input.now,
+        updated_at: nextVersion(row, input.now), refreshing_until: null, last_error: null })
     },
     async recordRefreshFailure(input) {
-      return db.transaction(async (tx) => {
-        const row = await lockedRow(tx, input.lock.scope)
-        if (!row || !sameOauthVersion(row, input.lock.credential) || !row.refreshing_until || row.refreshing_until <= input.now) return false
-        await tx.update(table).set({ refreshing_until: null, last_error: input.error, updated_at: nextVersion(row, input.now),
-          ...(input.permanent ? { status: "refresh_failed" } : {}) }).where(where(input.lock.scope))
-        return true
-      })
+      const row = await currentRow(input.lock.scope)
+      if (!row || !sameOauthVersion(row, input.lock.credential) || !row.refreshing_until || row.refreshing_until <= input.now) return false
+      return writeIfUnchanged(input.lock.scope, row, { refreshing_until: null, last_error: input.error, updated_at: nextVersion(row, input.now),
+        ...(input.permanent ? { status: "refresh_failed" } : {}) })
     },
   }
 }

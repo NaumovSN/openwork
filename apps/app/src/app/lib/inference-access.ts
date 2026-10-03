@@ -64,10 +64,10 @@ export function autoQuietlyUnavailable(status: { code?: string | null } | null |
 }
 function notOfferedCopy(code?: string | null) {
   switch (code) {
-    case "free_not_enrolled": return { subtitle: "Free · not on for your organization yet", detail: "Your organization hasn’t turned on Auto yet. An admin can turn it on. Other models still work." };
-    case "free_not_offered": case "admin_disabled": return { subtitle: "Free · turned off by your organization", detail: "Your organization has turned off Auto. Other models still work." };
-    case "managed_models_disabled_for_dpa": return { subtitle: "Free · not available for your organization", detail: "Auto isn’t available under your organization’s data agreement. Other models still work." };
-    default: return { subtitle: "Free · not available for this account", detail: "Auto isn’t available for this account. Other models still work." };
+    case "free_not_enrolled": return { subtitle: "Not on for your organization yet", detail: "Your organization hasn’t turned on Auto yet. An admin can turn it on. Other models still work." };
+    case "free_not_offered": case "admin_disabled": return { subtitle: "Turned off by your organization", detail: "Your organization has turned off Auto. Other models still work." };
+    case "managed_models_disabled_for_dpa": return { subtitle: "Not available for your organization", detail: "Auto isn’t available under your organization’s data agreement. Other models still work." };
+    default: return { subtitle: "Not available for this account", detail: "Auto isn’t available for this account. Other models still work." };
   }
 }
 
@@ -132,14 +132,19 @@ export function autoUpdateTarget(minimumVersion?: string | null) {
   const version = minimumVersion?.trim().replace(/^v/, "");
   return version ? `OpenWork v${version} or newer` : "OpenWork";
 }
-export function autoPickerCopy(state: AutoPickerState, signedIn: boolean, minimumVersion?: string | null, code?: string | null) {
+export function autoPickerCopy(state: AutoPickerState, signedIn: boolean, minimumVersion?: string | null, code?: string | null, resetsAt?: string | null) {
   switch (state) {
     case "not_offered": return { ...notOfferedCopy(code), action: null };
-    case "exhausted": return { subtitle: "Free limit used up", detail: signedIn ? "You’ve used your free Auto for now. Pick another model to keep going." : "You’ve used your free Auto for now. Sign in for more free use, or pick another model.", action: signedIn ? null : "Sign in" };
-    case "update_required": return { subtitle: "Free · needs an OpenWork update", detail: `Update to ${autoUpdateTarget(minimumVersion)} to keep using Auto. Your draft is kept.`, action: "Update" };
-    case "unavailable": return { subtitle: "Free · temporarily unavailable", detail: "Auto is having trouble right now. Other models still work.", action: "Retry" };
-    case "sync": return { subtitle: "Free · finishing setup", detail: "Auto is almost ready. Reload the workspace if it doesn’t appear.", action: "Reload" };
-    case "ready": return { subtitle: "Free · OpenWork picks the model", detail: "Free access ready", action: null };
+    case "exhausted": {
+      const back = autoResetPhrase(resetsAt ?? undefined)?.replace(/^on /, "");
+      return { subtitle: back ? `Limit used up · resets ${back}` : "Limit used up",
+        detail: signedIn ? "This week’s free limit is used up. Pick another model to keep going." : "This week’s free limit is used up. Sign in for a larger free limit.",
+        action: signedIn ? null : "Sign in" };
+    }
+    case "update_required": return { subtitle: "Needs an OpenWork update", detail: minimumVersion?.trim() ? `Update to ${autoUpdateTarget(minimumVersion)} to keep using Auto. Your draft is kept.` : "Update OpenWork to keep using Auto. Your draft is kept.", action: "Update" };
+    case "unavailable": return { subtitle: "Temporarily unavailable", detail: "Auto is having trouble right now. Other models still work.", action: "Retry" };
+    case "sync": return { subtitle: "Finishing setup", detail: "Auto is almost ready. Reload the workspace if it doesn’t appear.", action: "Reload" };
+    case "ready": return { subtitle: "OpenWork picks the model", detail: "Free access ready", action: null };
   }
 }
 
