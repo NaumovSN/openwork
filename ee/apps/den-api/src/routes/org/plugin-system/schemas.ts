@@ -161,7 +161,6 @@ export const configObjectParamsSchema = idParamSchema("configObjectId", "configO
 export const configObjectVersionParamsSchema = configObjectParamsSchema.extend(idParamSchema("versionId", "configObjectVersion").shape)
 export const configObjectAccessGrantParamsSchema = configObjectParamsSchema.extend(idParamSchema("grantId", "configObjectAccessGrant").shape)
 export const pluginParamsSchema = idParamSchema("pluginId", "plugin")
-export const pluginConfigObjectParamsSchema = pluginParamsSchema.extend(idParamSchema("configObjectId", "configObject").shape)
 export const pluginAccessGrantParamsSchema = pluginParamsSchema.extend(idParamSchema("grantId", "pluginAccessGrant").shape)
 export const marketplaceParamsSchema = idParamSchema("marketplaceId", "marketplace")
 export const marketplacePluginParamsSchema = marketplaceParamsSchema.extend(idParamSchema("pluginId", "plugin").shape)
@@ -892,12 +891,6 @@ export const connectorSourceTombstoneSchema = z.object({
   createdAt: z.string().datetime({ offset: true }),
 }).meta({ ref: "PluginArchConnectorSourceTombstone" })
 
-export const githubWebhookHeadersSchema = z.object({
-  xHubSignature256: z.string().trim().min(1),
-  xGithubEvent: githubWebhookEventSchema,
-  xGithubDelivery: z.string().trim().min(1),
-}).meta({ ref: "PluginArchGithubWebhookHeaders" })
-
 export const githubWebhookPayloadSchema = z.object({
   after: z.string().trim().min(1).optional(),
   installation: z.object({
@@ -933,8 +926,6 @@ export const githubConnectorSyncJobSchema = z.object({
   ref: z.string().trim().min(1),
   headSha: z.string().trim().min(1),
 }).meta({ ref: "PluginArchGithubConnectorSyncJob" })
-
-export const githubWebhookRawBodySchema = z.string().min(1).meta({ ref: "PluginArchGithubWebhookRawBody" })
 
 export const githubWebhookAcceptedResponseSchema = z.object({
   ok: z.literal(true),

@@ -150,7 +150,6 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "models-analytics.ts": uncovered("Model analytics reads; exports registered outside this module also uncovered."),
   "oauth-providers.ts": uncovered("OAuth provider configuration and authorization lifecycle."),
   "plugin-system/": uncovered("Plugin/marketplace configuration, permissions, versions and imports; nested modules included as uncovered, not covered by provider capture."),
-  "remote-mcp-apps.ts": uncovered("Remote MCP App tools/resources."),
   "resources.ts": uncovered("Organization resource reads."),
   "roles.ts": legacy(["organization.role.created", "organization.role.updated", "organization.role.deleted"], ["role"]),
   "scim.ts": legacy(["organization.scim.token_rotated", "organization.scim.connection_deleted", "organization.scim.reconciliation_run", "organization.scim.group_mapping_updated"], ["scim_connection"]),

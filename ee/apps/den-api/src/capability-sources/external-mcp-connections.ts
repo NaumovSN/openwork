@@ -990,55 +990,6 @@ export async function replaceExternalMcpConnectionAccessForPluginBinding(input: 
   }
 }
 
-export async function mergeExternalMcpConnectionAccess(input: {
-  organizationId: OrganizationId
-  connectionId: ExternalMcpConnectionId
-  access: ExternalMcpAccessInput
-  createdByOrgMembershipId: OrgMembershipId
-}): Promise<void> {
-  const existing = await listDirectExternalMcpConnectionAccess(input)
-  const rows: (typeof ExternalMcpConnectionAccessGrantTable.$inferInsert)[] = []
-
-  if (input.access.orgWide) {
-    if (!existing.some((grant) => grant.orgWide)) {
-      rows.push({
-        id: createDenTypeId("externalMcpConnectionAccessGrant"),
-        organizationId: input.organizationId,
-        externalMcpConnectionId: input.connectionId,
-        orgWide: true,
-        createdByOrgMembershipId: input.createdByOrgMembershipId,
-      })
-    }
-  } else {
-    const existingMemberIds = new Set(existing.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : []))
-    const existingTeamIds = new Set(existing.flatMap((grant) => grant.teamId ? [grant.teamId] : []))
-    for (const memberId of new Set(input.access.memberIds)) {
-      if (existingMemberIds.has(memberId)) continue
-      rows.push({
-        id: createDenTypeId("externalMcpConnectionAccessGrant"),
-        organizationId: input.organizationId,
-        externalMcpConnectionId: input.connectionId,
-        orgMembershipId: memberId,
-        createdByOrgMembershipId: input.createdByOrgMembershipId,
-      })
-    }
-    for (const teamId of new Set(input.access.teamIds)) {
-      if (existingTeamIds.has(teamId)) continue
-      rows.push({
-        id: createDenTypeId("externalMcpConnectionAccessGrant"),
-        organizationId: input.organizationId,
-        externalMcpConnectionId: input.connectionId,
-        teamId,
-        createdByOrgMembershipId: input.createdByOrgMembershipId,
-      })
-    }
-  }
-
-  if (rows.length > 0) {
-    await db.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
-  }
-}
-
 function directAccessKeys(rows: ExternalMcpConnectionAccessGrantRow[]): Set<string> {
   return new Set(rows.flatMap((row) => {
     if (row.orgWide) return ["org"]

@@ -547,10 +547,6 @@ export function getModelsAnalyticsRoute(orgSlug?: string | null): string {
   return `${getAnalyticsRoute(orgSlug)}/models`;
 }
 
-export function getManageMembersRoute(orgSlug?: string | null): string {
-  return `${getOrgDashboardRoute(orgSlug)}/manage-members`;
-}
-
 export function getMembersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/members`;
 }
