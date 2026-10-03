@@ -18,7 +18,7 @@ import { desktopFetch, desktopFetchViaMain, desktopFetchAgentContextDiagnostics,
 import { isOpenworkGatewayRuntime } from "./gateway-runtime";
 import { isDesktopRuntime } from "./runtime-env";
 import type { ExecResult, OpencodeConfigFile, WorkspaceInfo, WorkspaceList } from "./desktop";
-import type { DenOrgMarketplace, DenOrgPluginResolved, DenResourceSnapshot } from "./den-types";
+import type { DenResourceSnapshot } from "./den-types";
 import type { CloudImportedMarketplace, CloudImportedPlugin, CloudImportedProvider } from "../cloud/import-state";
 import { desktopFreeAccessStatusSchema } from "./inference-access";
 
@@ -533,7 +533,7 @@ export type OpenworkDesktopCloudSyncResult = {
   state: OpenworkDesktopCloudSyncState;
 };
 
-export type OpenworkCloudPluginInstallResult = {
+export type OpenworkCloudPluginRemoveResult = {
   item: CloudImportedPlugin;
   warnings: string[];
 };
@@ -541,22 +541,6 @@ export type OpenworkCloudPluginInstallResult = {
 export type OpenworkCloudPluginsResult = {
   marketplaces: Record<string, CloudImportedMarketplace>;
   plugins: Record<string, CloudImportedPlugin>;
-};
-
-export type OpenworkClaudePluginComponent = {
-  type: "mcp" | "skill" | "command" | "agent";
-  name: string;
-  description: string | null;
-};
-
-export type OpenworkClaudePluginPreview = {
-  pluginId: string;
-  name: string;
-  description: string | null;
-  version: string | null;
-  source: { owner: string; repo: string; ref: string; dir: string | null };
-  components: OpenworkClaudePluginComponent[];
-  warnings: string[];
 };
 
 function arrayBufferToBase64(data: ArrayBuffer): string {
@@ -2027,35 +2011,11 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         hostToken,
         timeoutMs: timeouts.config,
       }),
-    installCloudPlugin: (workspaceId: string, payload: { marketplaceId: string | null; marketplace?: DenOrgMarketplace | null; resolved: DenOrgPluginResolved }) =>
-      requestJson<OpenworkCloudPluginInstallResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: payload,
-        timeoutMs: timeouts.config,
-      }),
     removeCloudPlugin: (workspaceId: string, pluginId: string) =>
-      requestJson<OpenworkCloudPluginInstallResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins/${encodeURIComponent(pluginId)}`, {
+      requestJson<OpenworkCloudPluginRemoveResult>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/cloud-plugins/${encodeURIComponent(pluginId)}`, {
         token,
         hostToken,
         method: "DELETE",
-        timeoutMs: timeouts.config,
-      }),
-    previewClaudePlugin: (workspaceId: string, payload: { url: string; ref?: string }) =>
-      requestJson<{ preview: OpenworkClaudePluginPreview }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-plugins`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: { ...payload, dryRun: true },
-        timeoutMs: timeouts.config,
-      }),
-    installClaudePlugin: (workspaceId: string, payload: { url: string; ref?: string }) =>
-      requestJson<OpenworkCloudPluginInstallResult & { preview: OpenworkClaudePluginPreview }>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/claude-plugins`, {
-        token,
-        hostToken,
-        method: "POST",
-        body: payload,
         timeoutMs: timeouts.config,
       }),
     readOpencodeConfigFile: (workspaceId: string, scope: "project" | "global" = "project") => {

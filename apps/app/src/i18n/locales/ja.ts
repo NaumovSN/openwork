@@ -302,7 +302,6 @@ export default {
   "den.sync_provider_failed": "{name}の同期に失敗しました。",
   "den.synced_provider": "{name}を同期しました。",
   "den.syncing": "同期中…",
-  "den.uninstall": "アンインストール",
   "extensions.inventory_description": "エージェントが使用できるスキル、接続、ツール。",
   "extensions.apps_mcp_header": "アプリ（MCP）",
   "extensions.filter_all": "すべて",

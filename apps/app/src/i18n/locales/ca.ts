@@ -308,7 +308,6 @@ export default {
   "den.synced_provider": "{name} sincronitzat.",
   "den.syncing": "S'està sincronitzant...",
   "den.installed_name_badge": "Local: {name}",
-  "den.uninstall": "Desinstal·la",
   "extensions.inventory_description": "Skills, connexions i eines que el teu agent pot utilitzar.",
   "extensions.apps_mcp_header": "Aplicacions (MCP)",
   "extensions.filter_all": "Tots",

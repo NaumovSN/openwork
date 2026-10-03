@@ -70,7 +70,8 @@ test(title, async ({ evidence, world, user, probe, step }) => {
       within: 60_000, label: "Linear's row arrives from the organization", until: (chip) => chip === "Sign in",
     });
     const filters = await texts('[aria-label="Library filters"] button[aria-pressed]:not([aria-label])');
-    expect(filters).toEqual(["All", "Connectors", "Skills", "Plugins"]);
+    // "Needs sign-in" (#5568) carries its count, e.g. "Needs sign-in2".
+    expect(filters.map((label) => label.replace(/\d+$/, ""))).toEqual(["All", "Connectors", "Skills", "Plugins", "Needs sign-in"]);
     await user.notSee({ role: "tab", label: /Ready to use/ });
     const chip = async (name: string) => (await texts(`[data-library-row="${name}"] [data-library-status]`)).join("");
     const google = await chip("Google Workspace");
@@ -301,7 +302,17 @@ test(title, async ({ evidence, world, user, probe, step }) => {
       within: 60_000, label: "the plugin's own page", until: (headings) => headings.includes("Sales call prep"),
     });
     await user.notSee({ testId: "library-create-page" });
+    // The plugin lives in the organization; nothing is installed on this computer.
+    await user.see({ text: "Available from your organization" });
+    await user.notSee({ text: /^(Installed|Not installed)$/ });
+    await user.notSee({ role: "button", label: "Remove local copy" });
+    await shot();
     await backToLibrary("Sales call prep");
+    evidence.recordAssertionEvidence(
+      "The plugin page says where the plugin comes from, not that it is installed",
+      "Status reads \"Available from your organization\"; no \"Installed\" and no \"Remove local copy\" (no local copy exists)",
+      true,
+    );
     evidence.recordAssertionEvidence(
       "A plugin is made of the parts the member adds, on one page",
       `inside: ${parts.map((part) => part.split("\n")[0]).join(" / ")}; created "Sales call prep"`,

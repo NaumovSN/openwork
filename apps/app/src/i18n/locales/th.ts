@@ -303,7 +303,6 @@ export default {
   "den.sync_provider_failed": "ไม่สามารถซิงค์ {name} ได้",
   "den.synced_provider": "ซิงค์ {name} แล้ว",
   "den.syncing": "กำลังซิงค์…",
-  "den.uninstall": "ถอนการติดตั้ง",
   "extensions.inventory_description": "ทักษะ การเชื่อมต่อ และเครื่องมือที่เอเจนต์ของคุณใช้ได้",
   "extensions.apps_mcp_header": "แอป (MCP)",
   "extensions.filter_all": "ทั้งหมด",

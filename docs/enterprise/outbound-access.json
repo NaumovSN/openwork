@@ -19,15 +19,6 @@
       "override": "provider options.baseURL"
     },
     {
-      "host": "api.github.com",
-      "kind": "fetched",
-      "components": ["server"],
-      "purpose": "GitHub API calls for importing and previewing GitHub-hosted Claude Code/OpenWork plugins.",
-      "requirement": "opt-in",
-      "blockedEffect": "GitHub plugin import cannot inspect repositories, branches, or plugin manifests.",
-      "override": "OPENWORK_GITHUB_API_BASE"
-    },
-    {
       "host": "api.githubcopilot.com",
       "kind": "fetched",
       "components": ["renderer", "server"],
@@ -287,15 +278,6 @@
       "requirement": "optional",
       "blockedEffect": "Documentation or feedback links do not open; core app networking is unaffected.",
       "override": "VITE_OPENWORK_FEEDBACK_URL for the feedback link only"
-    },
-    {
-      "host": "raw.githubusercontent.com",
-      "kind": "fetched",
-      "components": ["server"],
-      "purpose": "Raw file downloads for GitHub-hosted plugin manifests, MCP configs, skills, commands, and agents.",
-      "requirement": "opt-in",
-      "blockedEffect": "GitHub plugin import can discover metadata but cannot download component contents.",
-      "override": "OPENWORK_GITHUB_RAW_BASE"
     },
     {
       "host": "registry.npmjs.org",

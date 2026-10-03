@@ -9,7 +9,6 @@ import {
   ChevronDown,
   ChevronLeft,
   Code2,
-  Download,
   ExternalLink,
   FileText,
   FolderOpen,
@@ -80,12 +79,10 @@ import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { isConnectDirectMcpServerName } from "../../connections/cloud-mcp-user-state";
 import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
 import type { McpConnectResult } from "../../connections/store";
-import { ClaudePluginImportModal } from "../../connections/modals/claude-plugin-import-modal";
 import {
   canDisconnectMemberConnection,
   canMemberAuthorizeConnection,
 } from "../../connections/native-provider-connections";
-import type { OpenworkClaudePluginPreview } from "../../../../app/lib/openwork-server";
 import {
   isOpenWorkExtensionEnabled,
   isOpenWorkExtensionHidden,
@@ -199,8 +196,10 @@ export type McpViewProps = {
   installedPlugins?: CloudImportedPlugin[];
   /** Uninstall a skill by name. */
   uninstallSkill?: (name: string) => void;
-  /** Remove an imported marketplace package by plugin id. */
+  /** Remove a legacy local copy of an organization plugin by plugin id. */
   removeCloudPlugin?: (pluginId: string) => void | Promise<unknown>;
+  /** Whether this workspace still holds a legacy local copy of the plugin. */
+  hasLocalPluginCopy?: (pluginId: string) => boolean;
   /** Read skill content by name. */
   readSkill?: (name: string) => Promise<{ content: string } | null>;
   readConfigFile?: (scope: "project" | "global") => Promise<OpencodeConfigFile | null>;
@@ -227,10 +226,6 @@ export type McpViewProps = {
   enablementContext?: import("../../../../app/enablement").EnablementContext;
   /** Organization policy restriction for OpenWork-provided built-in extensions. */
   builtInExtensionsDisabled?: boolean;
-  /** Preview a Claude Code plugin bundle from a GitHub URL ("Will install" disclosure). */
-  previewClaudePlugin?: (url: string) => Promise<OpenworkClaudePluginPreview>;
-  /** Install a Claude Code plugin bundle from a GitHub URL. */
-  installClaudePlugin?: (url: string) => Promise<{ ok: boolean; message: string }>;
   /** Connected org-level External MCP Connections rendered in My Extensions. */
   orgMcpItems?: ExtensionItem[];
   /**
@@ -431,7 +426,6 @@ export function McpView(props: McpViewProps) {
   const [filter, setFilter] = useState<ExtensionInventoryFilter>(primaryLibraryFilter(props.initialFilter));
   const [onlyNeedsSignIn, setOnlyNeedsSignIn] = useState(props.initialState === "needs_signin");
   const [layout, setLayout] = useState<ExtensionLayout>(readExtensionLayout);
-  const [claudeImportOpen, setClaudeImportOpen] = useState(false);
   const [screen, setScreen] = useState<LibraryScreen>({ kind: "list" });
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [changedPluginIds, setChangedPluginIds] = useState<Set<string>>(() => new Set());
@@ -1443,6 +1437,7 @@ export function McpView(props: McpViewProps) {
             description={detailPlugin.description ?? kindLabel(pluginTaxonomy)}
             taxonomy={pluginTaxonomy}
             connected={true}
+            connectedLabel={t("extensions.detail_available_from_org")}
             hidden={hidden}
             facts={[
               {
@@ -1468,10 +1463,11 @@ export function McpView(props: McpViewProps) {
               connectors: pluginConnectors,
             })}
             onShare={shareOwned(detailPlugin.pluginId)}
-            onUninstall={props.removeCloudPlugin ? () => {
+            onUninstall={props.removeCloudPlugin && props.hasLocalPluginCopy?.(detailPlugin.pluginId) ? () => {
               void props.removeCloudPlugin?.(detailPlugin.pluginId);
               closeDetail();
             } : undefined}
+            uninstallLabel={t("extensions.detail_remove_local_copy")}
             onHide={() => setOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, true)}
             onShow={() => setOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, false)}
           />
@@ -2109,7 +2105,6 @@ export function McpView(props: McpViewProps) {
         onScopeChange={setConfigScope}
         onReveal={revealConfig}
         onAddMcp={props.allowManageExtensions ? () => handleAddKind("workspace-mcp") : undefined}
-        onImportFromGithub={props.allowManageExtensions && props.previewClaudePlugin && props.installClaudePlugin ? () => setClaudeImportOpen(true) : undefined}
       />
 
       <ConfirmModal
@@ -2154,15 +2149,6 @@ export function McpView(props: McpViewProps) {
         busy={props.busy}
         isRemoteWorkspace={props.isRemoteWorkspace}
       />
-
-      {props.allowManageExtensions && props.previewClaudePlugin && props.installClaudePlugin ? (
-        <ClaudePluginImportModal
-          open={claudeImportOpen}
-          onClose={() => setClaudeImportOpen(false)}
-          onPreview={props.previewClaudePlugin}
-          onInstall={props.installClaudePlugin}
-        />
-      ) : null}
 
       <LibraryDeleteDialog
         open={deleteTarget !== null}
@@ -2626,7 +2612,6 @@ export function McpAdvancedConfigSection(props: {
   onScopeChange: (scope: ConfigScope) => void;
   onReveal: () => Promise<void>;
   onAddMcp?: () => void;
-  onImportFromGithub?: () => void;
 }) {
   return (
     <div className="mt-6 overflow-hidden rounded-xl border border-dls-border bg-dls-surface">
@@ -2651,12 +2636,6 @@ export function McpAdvancedConfigSection(props: {
                 <Button variant="outline" onClick={props.onAddMcp}>
                   <Plus size={14} />
                   {t("extensions.add_workspace_mcp")}
-                </Button>
-              ) : null}
-              {props.onImportFromGithub ? (
-                <Button variant="outline" onClick={props.onImportFromGithub}>
-                  <Download size={14} />
-                  From GitHub
                 </Button>
               ) : null}
             </div>

@@ -129,7 +129,7 @@ export function policyRequestActions(method: string, path: string): ManagedPolic
   const actions: ManagedPolicyAction[] = [];
   if (/^\/workspaces\/(local|remote)$/.test(path)) actions.push("workspace");
   if (/^\/runtime-config\/providers$/.test(path)) actions.push("provider");
-  if (/^\/workspace\/[^/]+\/(?:cloud-plugins|claude-plugins|plugins|skills|commands|mcp)(?:\/|$)/.test(path)
+  if (/^\/workspace\/[^/]+\/(?:cloud-plugins|plugins|skills|commands|mcp)(?:\/|$)/.test(path)
     && !/\/mcp\/[^/]+\/(?:auth|managed\/connect)$/.test(path)) actions.push("extensions");
   if (/^\/workspace\/[^/]+\/(?:config|opencode-config|runtime-config|permissions|authorized-folders)(?:\/|$)/.test(path)) actions.push("settings");
   if (path === "/experimental/engine-v2-preview") actions.push("settings");

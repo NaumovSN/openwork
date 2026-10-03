@@ -306,7 +306,6 @@ export default {
   "den.sync_provider_failed": "同步{name}失败。",
   "den.synced_provider": "已同步{name}。",
   "den.syncing": "同步中…",
-  "den.uninstall": "卸载",
   "extensions.inventory_description": "智能体可使用的技能、连接和工具。",
   "extensions.apps_mcp_header": "应用（MCP）",
   "extensions.filter_all": "全部",
