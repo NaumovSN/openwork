@@ -150,3 +150,32 @@ Workflows and artifacts can now use connected services, work handed to a desktop
 
 #### Lines of code changed since previous release
 296994 lines changed since `v0.18.54` (279347 insertions, 17647 deletions).
+
+## v0.18.56
+
+#### Commit
+`78f8b5cb`
+
+#### Released at
+`2026-10-03T05:30:05Z`
+
+#### Title
+Find shared connectors that still need your sign-in
+
+#### One-line summary
+The Library makes shared connectors that need your sign-in easier to find, while self-hosted first runs are faster and side chats no longer take up space in the sidebar.
+
+#### Pull requests
+| PR | Audience | Decision | Reason |
+|---|---|---|---|
+| #5594 | self-hosters | Included | First folder opens much faster on a fresh `openwork-server web` install |
+| #5593 | desktop users | Included | Side chats no longer take up space as chips beside session names |
+| #5587 | self-hosters | Included | Faster first folder load and fewer engine-install failures on Windows |
+| #5568 | everyone | Included | Find shared Library items that still need your sign-in; Den also shows an attention dot |
+
+#### Behavior changes and removals
+- Side chats no longer appear as chips in the sidebar; open a session to see its side chat.
+- On a fresh `openwork-server web` install, the first folder opens in about a second instead of taking 10+ seconds on Windows; engine installation no longer fails with “resource busy or locked.”
+
+#### Lines of code changed since previous release
+291014 lines changed since `v0.18.55` (1562 insertions, 289452 deletions).
