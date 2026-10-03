@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,9 +10,13 @@ import {
   isReleaseVersion,
   loadOrCreateWebTokens,
   opencodeReleaseAsset,
+  opencodeGlobalConfigDir,
+  opencodePluginDepsArchive,
   opencodeReleaseUrl,
+  renameWithRetry,
   resolvePackageRoot,
   resolveWebRoot,
+  seedOpencodePluginDeps,
 } from "./selfhost-web.js";
 import { parseCliArgs } from "./config.js";
 
@@ -80,5 +84,78 @@ describe("openwork-server web", () => {
     expect(second.token).toBe(first.token);
     expect(second.hostToken).toBe(first.hostToken);
     expect(JSON.parse(await readFile(join(dataDir, "web-tokens.json"), "utf8")).token).toBe(first.token);
+  });
+
+  test("resolves OpenCode's global config folder like OpenCode does", () => {
+    expect(opencodeGlobalConfigDir({ XDG_CONFIG_HOME: "/x/cfg" }, "/home/u")).toBe(join("/x/cfg", "opencode"));
+    expect(opencodeGlobalConfigDir({}, "/home/u")).toBe(join("/home/u", ".config", "opencode"));
+    expect(opencodePluginDepsArchive("/pkg", "v1.18.30")).toBe(join("/pkg", "dist", "opencode-plugin-deps-1.18.30.tgz"));
+  });
+
+  test("seeds OpenCode's plugin dependencies only on a fresh profile", async () => {
+    const root = await mkdtemp(join(tmpdir(), "openwork-plugin-deps-"));
+    const tree = join(root, "tree");
+    await mkdir(join(tree, "node_modules", "@opencode-ai", "plugin"), { recursive: true });
+    await writeFile(join(tree, "node_modules", "@opencode-ai", "plugin", "package.json"), '{"name":"@opencode-ai/plugin"}');
+    await writeFile(join(tree, "package.json"), '{"dependencies":{"@opencode-ai/plugin":"1.0.0"}}');
+    await writeFile(join(tree, "package-lock.json"), '{"packages":{"":{"dependencies":{"@opencode-ai/plugin":"1.0.0"}}}}');
+    const archive = join(root, "opencode-plugin-deps-1.0.0.tgz");
+    const packed = Bun.spawnSync(["tar", "-czf", archive, "-C", tree, "package.json", "package-lock.json", "node_modules"]);
+    expect(packed.exitCode).toBe(0);
+
+    const fresh = join(root, "fresh", "opencode");
+    const seeded = await seedOpencodePluginDeps({ archive, configDir: fresh });
+    expect(seeded.seeded).toBe(true);
+    expect(await readFile(join(fresh, "node_modules", "@opencode-ai", "plugin", "package.json"), "utf8")).toContain("@opencode-ai/plugin");
+    expect(await readFile(join(fresh, "package.json"), "utf8")).toContain("1.0.0");
+    expect((await readdir(fresh)).sort()).toEqual(["node_modules", "package-lock.json", "package.json"]);
+
+    // A profile OpenCode (or the user) already set up is left alone.
+    const existing = join(root, "existing", "opencode");
+    await mkdir(existing, { recursive: true });
+    await writeFile(join(existing, "package.json"), '{"dependencies":{"left-pad":"1.3.0"}}');
+    expect(await seedOpencodePluginDeps({ archive, configDir: existing })).toEqual({ seeded: false, reason: "already-set-up" });
+    expect((await readdir(existing)).sort()).toEqual(["package.json"]);
+
+    expect(await seedOpencodePluginDeps({ archive: join(root, "missing.tgz"), configDir: join(root, "a") }))
+      .toEqual({ seeded: false, reason: "no-archive" });
+
+    // A broken archive never throws and leaves nothing behind for OpenCode to trip on.
+    const broken = join(root, "broken.tgz");
+    await writeFile(broken, "not a tarball");
+    const failedDir = join(root, "broken-profile", "opencode");
+    const failed = await seedOpencodePluginDeps({ archive: broken, configDir: failedDir });
+    expect(failed.seeded).toBe(false);
+    expect(await readdir(failedDir)).toEqual([]);
+  });
+
+  test("retries the engine rename while Windows still holds the new binary", async () => {
+    const busy = Object.assign(new Error("EBUSY: resource busy or locked, rename"), { code: "EBUSY" });
+    let calls = 0;
+    const flaky = async () => {
+      calls += 1;
+      if (calls < 3) throw busy;
+    };
+    await renameWithRetry("a.partial", "a", { platform: "win32", renameImpl: flaky, delaysMs: [0, 0, 0] });
+    expect(calls).toBe(3);
+
+    calls = 0;
+    await expect(
+      renameWithRetry("a.partial", "a", { platform: "win32", renameImpl: async () => { calls += 1; throw busy; }, delaysMs: [0, 0] }),
+    ).rejects.toThrow("EBUSY");
+    expect(calls).toBe(3);
+
+    calls = 0;
+    await expect(
+      renameWithRetry("a.partial", "a", { platform: "darwin", renameImpl: async () => { calls += 1; throw busy; } }),
+    ).rejects.toThrow("EBUSY");
+    expect(calls).toBe(1);
+
+    calls = 0;
+    const missing = Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    await expect(
+      renameWithRetry("a.partial", "a", { platform: "win32", renameImpl: async () => { calls += 1; throw missing; }, delaysMs: [0] }),
+    ).rejects.toThrow("ENOENT");
+    expect(calls).toBe(1);
   });
 });

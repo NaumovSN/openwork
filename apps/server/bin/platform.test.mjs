@@ -59,6 +59,7 @@ async function fixture(context, bundleSource) {
   await writeFile(join(packageRoot, "dist/opencode-plugins/openwork-extensions-preview.js"), "plugin");
   await writeFile(join(packageRoot, "dist/opencode-plugins/openwork-extensions-preview.test.js"), "test");
   await writeFile(join(packageRoot, "dist/opencode-plugins/pdfium.wasm"), "wasm");
+  await writeFile(join(packageRoot, "dist/opencode-plugin-deps-1.0.0.tgz"), "deps");
   await writeFile(join(packageRoot, "dist/bin/openwork-server-bun-linux-x64"), "binary");
   await writeFile(join(packageRoot, "../app/dist/index.html"), "web");
   return { root, packageRoot };
@@ -76,7 +77,12 @@ test("stages one platform-independent package without compiled binaries", async 
   assert.equal(manifest.os, undefined);
   assert.equal(manifest.cpu, undefined);
 
-  assert.deepEqual((await readdir(join(output, "dist"))).sort(), ["opencode-plugins", "openwork-server.mjs", "pdfium.wasm"]);
+  assert.deepEqual((await readdir(join(output, "dist"))).sort(), [
+    "opencode-plugin-deps-1.0.0.tgz",
+    "opencode-plugins",
+    "openwork-server.mjs",
+    "pdfium.wasm",
+  ]);
   assert.deepEqual((await readdir(join(output, "dist/opencode-plugins"))).sort(), ["openwork-extensions-preview.js", "pdfium.wasm"]);
   assert.equal(await readFile(join(output, "web/index.html"), "utf8"), "web");
 });
@@ -85,6 +91,12 @@ test("refuses to stage without the Node bundle", async (context) => {
   const { packageRoot } = await fixture(context, "export {};");
   await rm(join(packageRoot, "dist/npm-bundle"), { recursive: true });
   await assert.rejects(stageNpmPackage(packageRoot), /build:npm-bundle/);
+});
+
+test("refuses to stage without the pre-resolved OpenCode plugin dependencies", async (context) => {
+  const { packageRoot } = await fixture(context, "export {};");
+  await rm(join(packageRoot, "dist/opencode-plugin-deps-1.0.0.tgz"));
+  await assert.rejects(stageNpmPackage(packageRoot), /build-opencode-plugin-deps/);
 });
 
 test("the installed launcher runs the Node bundle in-process with the package root set", async (context) => {
