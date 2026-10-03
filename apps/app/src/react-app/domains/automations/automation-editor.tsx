@@ -139,9 +139,9 @@ export function automationPlacementOf(choice: AutomationCanUse): AutomationExecu
 
 /** The words for each choice say what the Automation can reach, not where it runs. */
 export function automationCanUseLabel(choice: AutomationCanUse, onThisComputer?: boolean) {
-  if (choice === "computer") return onThisComputer ? "Connected accounts and files on this computer" : "Connected accounts and files on your computer"
-  if (choice === "cloud-computer") return "Connected accounts and files on your cloud computer"
-  return "Only connected accounts"
+  if (choice === "computer") return onThisComputer ? "Desktop: Connected accounts and files on this computer" : "Desktop: Connected accounts and files on your computer"
+  if (choice === "cloud-computer") return "Cloud: Connected accounts and files on your cloud computer"
+  return "Cloud: Only connected accounts"
 }
 
 export function automationCanUseNote(choice: AutomationCanUse) {
