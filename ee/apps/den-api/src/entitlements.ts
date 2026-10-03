@@ -102,6 +102,16 @@ export function getOrganizationEntitlements(
   }
 }
 
+/**
+ * Cloud Automations on the shared headless runner are part of Team: they run
+ * without an OpenWork Web computer, so they do not need the Web seat.
+ */
+export function planIncludesHeadlessAutomations(metadata: MetadataInput, options: EntitlementOptions = {}): boolean {
+  const gatingEnabled = options.gatingEnabled ?? env.planGatingEnabled
+  const tier = parseOrganizationPlan(metadata).tier
+  return !gatingEnabled || tier === "team" || tier === "enterprise"
+}
+
 export function checkEntitlement(
   metadata: MetadataInput,
   key: EntitlementKey,

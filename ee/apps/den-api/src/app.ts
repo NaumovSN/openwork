@@ -31,8 +31,9 @@ import { registerDeprecatedSkillHubRoutes } from "./routes/deprecated-skill-hubs
 import { registerDevRoutes } from "./routes/dev/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerAutomationRoutes } from "./routes/automations/index.js"
-import { configureCloudAgentExecutor, configureCloudWorkflowExecutor } from "./automations/service.js"
+import { configureCloudAgentExecutor, configureCloudWorkflowExecutor, configureHeadlessAgentExecutor } from "./automations/service.js"
 import { cloudAgentRuntimeAvailable, executeCloudAgent } from "./automations/cloud-agent-executor.js"
+import { executeHeadlessAgent } from "./automations/headless-agent-executor.js"
 import { getCatalog } from "./mcp/index.js"
 import { buildCapabilityToolTree, createCapabilityRegistryContext } from "./mcp/capability-registry.js"
 import { executeMarketplaceCapability } from "./mcp/marketplace-capabilities.js"
@@ -288,6 +289,7 @@ registerAdminMcpRoutes(app)
 registerTelemetryRoutes(app)
 
 configureCloudAgentExecutor({ execute: executeCloudAgent, runtimeAvailable: cloudAgentRuntimeAvailable })
+configureHeadlessAgentExecutor((input) => executeHeadlessAgent(input))
 
 configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automationRunId, action }) => {
   const normalizedOrganizationId = normalizeDenTypeId("organization", organizationId)

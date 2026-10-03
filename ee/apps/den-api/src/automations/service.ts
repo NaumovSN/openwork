@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto"
 import type { AutomationClaimResult, AutomationListItem } from "@openwork/automations"
 import { AUTOMATION_MANUAL_CLAIM_WINDOW_MS, desktopRunnerConnected } from "@openwork/automations"
+import { isAutomationCloudDefaultModel } from "@openwork/types/automations"
 import type {
   AutomationDesktopRunnerCapability,
   AutomationDesktopRunnerPresence,
@@ -18,6 +19,7 @@ import { shouldApplyAutomationModelAccessFailure } from "./model-attention-rollo
 import { automationRepository } from "./repository.js"
 import { validateWorkflowAutomationAction } from "../workflows.js"
 import type { CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
+import { cloudAutomationRuntime, HEADLESS_AGENT_ENGINE_KIND, type CloudAutomationRuntime } from "./headless-runtime.js"
 import { appLogger } from "../observability/logger.js"
 import {
   getOpenWorkWebRuntimeAccess,
@@ -70,6 +72,10 @@ export type CloudWorkflowExecutor = (input: {
 let cloudWorkflowExecutor: CloudWorkflowExecutor | null = null
 let cloudAgentExecutor: ((input: CloudAgentExecutorInput) => Promise<CloudAgentExecution>) | null = null
 let cloudAgentRuntimeAvailable: ((scope: OwnerScope) => Promise<boolean>) | null = null
+let headlessAgentExecutor: ((input: CloudAgentExecutorInput) => Promise<CloudAgentExecution>) | null = null
+
+const CLOUD_AGENT_ENGINE_KIND = "openwork-cloud-agent-v1"
+const CLOUD_CODEMODE_ENGINE_KIND = "openwork-cloud-codemode-v1"
 
 export function configureCloudWorkflowExecutor(executor: CloudWorkflowExecutor): void {
   cloudWorkflowExecutor = executor
@@ -83,16 +89,58 @@ export function configureCloudAgentExecutor(input: {
   cloudAgentRuntimeAvailable = input.runtimeAvailable
 }
 
+/** Cloud agent runs for organizations on the headless runtime execute here instead of an OpenWork Web computer. */
+export function configureHeadlessAgentExecutor(execute: (input: CloudAgentExecutorInput) => Promise<CloudAgentExecution>): void {
+  headlessAgentExecutor = execute
+}
+
 export type AutomationServiceOptions = {
   getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
+  cloudRuntime?: (organizationId: string) => Promise<CloudAutomationRuntime>
 }
 
 export class AutomationService {
   private readonly cloudExecutions = new Map<string, Promise<void>>()
   private readonly getOpenWorkWebAccess: OpenWorkWebRuntimeAccessResolver
+  private readonly cloudRuntime: (organizationId: string) => Promise<CloudAutomationRuntime>
 
   constructor(options: AutomationServiceOptions = {}) {
     this.getOpenWorkWebAccess = options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess
+    this.cloudRuntime = options.cloudRuntime ?? cloudAutomationRuntime
+  }
+
+  /**
+   * Cloud placement needs somewhere to run: the headless runner (included in
+   * Team, no Web seat) or, as before, the owner's OpenWork Web computer.
+   */
+  private async requireCloudRuntimeAccess(organizationId: string) {
+    if (await this.cloudRuntime(organizationId) === "headless") return
+    await requireOpenWorkWebRuntimeAccess(organizationId, this.getOpenWorkWebAccess)
+  }
+
+  /** Whether the owner has an OpenWork Web computer that can run agent Automations, with its files. */
+  private async cloudComputerAvailable(scope: OwnerScope) {
+    return (await this.getOpenWorkWebAccess(scope.organizationId)).hasAccess
+      && cloudAgentRuntimeAvailable !== null
+      && await cloudAgentRuntimeAvailable(scope)
+  }
+
+  /**
+   * Which engine runs a cloud agent Automation. Off the headless runtime it is
+   * always the owner's OpenWork Web computer. On it, the cloud default model
+   * ("only connected accounts") runs headless, and a chosen model runs on the
+   * owner's cloud computer when they have one, because it may need that
+   * computer's files; without one it runs headless too.
+   */
+  private async agentEngine(scope: OwnerScope, model: ModelSelection): Promise<typeof HEADLESS_AGENT_ENGINE_KIND | typeof CLOUD_AGENT_ENGINE_KIND> {
+    if (await this.cloudRuntime(scope.organizationId) !== "headless") return CLOUD_AGENT_ENGINE_KIND
+    if (isAutomationCloudDefaultModel(model)) return HEADLESS_AGENT_ENGINE_KIND
+    return await this.cloudComputerAvailable(scope) ? CLOUD_AGENT_ENGINE_KIND : HEADLESS_AGENT_ENGINE_KIND
+  }
+
+  private async cloudAgentAvailable(scope: OwnerScope, model: ModelSelection) {
+    if (await this.agentEngine(scope, model) === HEADLESS_AGENT_ENGINE_KIND) return headlessAgentExecutor !== null
+    return cloudAgentRuntimeAvailable !== null && await cloudAgentRuntimeAvailable(scope)
   }
 
   async list(scope: OwnerScope, input: { cursor?: string; limit?: number }) {
@@ -133,21 +181,21 @@ export class AutomationService {
       if (definition.executionTarget !== "cloud") {
         throw new Error("automation_action_target_mismatch")
       }
-      await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess)
+      await this.requireCloudRuntimeAccess(scope.organizationId)
       if (definition.action.kind === "agent") {
         // Action-based creation is Cloud placement. The legacy Zen exception
         // exists only for already-published Desktop clients.
-        await this.requireNewModel({ ...scope, modelAttentionCapable: true }, definition.action.model)
+        await this.requireNewModel({ ...scope, modelAttentionCapable: true }, definition.action.model, "cloud")
       }
       else {
         if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
         await validateWorkflowAutomationAction({ ...scope, action: definition.action })
       }
-      if (definition.action.kind === "agent" && (!cloudAgentRuntimeAvailable || !await cloudAgentRuntimeAvailable(scope))) {
+      if (definition.action.kind === "agent" && !await this.cloudAgentAvailable(scope, definition.action.model)) {
         throw new Error("automation_cloud_worker_required")
       }
     } else {
-      await this.requireNewModel(scope, definition.model)
+      await this.requireNewModel(scope, definition.model, "desktop")
     }
     const created = await automationRepository.create({ ...scope, definition, now: Date.now() })
     return this.reconcileModelAttention(created, scope)
@@ -157,7 +205,7 @@ export class AutomationService {
     const current = await this.get(scope, automationId)
     if (!current) return null
     if ((current.revision.executionTarget ?? "desktop") === "cloud") {
-      await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess)
+      await this.requireCloudRuntimeAccess(scope.organizationId)
     }
     if (changes.executionTarget !== undefined
       && changes.executionTarget !== (current.revision.executionTarget ?? "desktop")) {
@@ -170,19 +218,19 @@ export class AutomationService {
     if (nextAction?.kind === "saved_script") {
       await validateWorkflowAutomationAction({ ...scope, action: nextAction })
     } else if (nextAction?.kind === "agent") {
-      if ((current.revision.executionTarget ?? "desktop") === "cloud"
-        && (!cloudAgentRuntimeAvailable || !await cloudAgentRuntimeAvailable(scope))) {
-        throw new Error("automation_cloud_worker_required")
-      }
       const requestedModel = changes.action?.kind === "agent"
         ? changes.action.model
         : changes.model ?? nextAction.model
+      if ((current.revision.executionTarget ?? "desktop") === "cloud" && !await this.cloudAgentAvailable(scope, requestedModel)) {
+        throw new Error("automation_cloud_worker_required")
+      }
       if (!sameModel(requestedModel, current.revision.model)) {
         await this.requireNewModel(
           (current.revision.executionTarget ?? "desktop") === "cloud"
             ? { ...scope, modelAttentionCapable: true }
             : scope,
           requestedModel,
+          current.revision.executionTarget ?? "desktop",
         )
       }
     }
@@ -194,13 +242,12 @@ export class AutomationService {
     const current = await this.get(scope, automationId)
     if (!current) return null
     if ((current.revision.executionTarget ?? "desktop") === "cloud") {
-      await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess)
+      await this.requireCloudRuntimeAccess(scope.organizationId)
     }
     if (current.revision.action?.kind === "saved_script") {
       if (!await isActiveAutomationOwner(scope)) throw new Error("automation_owner_inactive")
     } else {
-      if ((current.revision.executionTarget ?? "desktop") === "cloud"
-        && (!cloudAgentRuntimeAvailable || !await cloudAgentRuntimeAvailable(scope))) {
+      if ((current.revision.executionTarget ?? "desktop") === "cloud" && !await this.cloudAgentAvailable(scope, current.revision.model)) {
         throw new Error("automation_cloud_worker_required")
       }
       await this.requireNewModel(
@@ -208,6 +255,7 @@ export class AutomationService {
           ? { ...scope, modelAttentionCapable: true }
           : scope,
         current.revision.model,
+        current.revision.executionTarget ?? "desktop",
       )
     }
     const activated = await automationRepository.setState({ ...scope, automationId, state: "active", now: Date.now() })
@@ -225,13 +273,13 @@ export class AutomationService {
   async runNow(scope: OwnerScope, automationId: string): Promise<AutomationRun | null> {
     const current = await this.get(scope, automationId)
     if (!current || current.automation.state === "archived") return null
-    // Cloud Automations execute on an OpenWork VM, so a manual run is gated
-    // like every other VM boundary. Desktop-target Automations are untouched.
-    // openwork_web_access_required is already part of the shared Automation
-    // contract (packages/types/src/automations.ts) and published desktops
-    // surface the returned message in the Automations page action toast.
+    // Cloud Automations execute on the headless runner or an OpenWork VM, so a
+    // manual run is gated like every other cloud boundary. Desktop-target
+    // Automations are untouched. openwork_web_access_required is already part
+    // of the shared Automation contract (packages/types/src/automations.ts) and
+    // published desktops surface the returned message in the action toast.
     if ((current.revision.executionTarget ?? "desktop") === "cloud") {
-      await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess)
+      await this.requireCloudRuntimeAccess(scope.organizationId)
     }
     let blocked = current.automation.needsAttentionReason
     if (current.revision.action?.kind === "saved_script") {
@@ -525,7 +573,14 @@ export class AutomationService {
    * continue submitting the exact legacy Zen selection until they advertise
    * support for the repairable attention state.
    */
-  private async requireNewModel(scope: OwnerScope, model: ModelSelection) {
+  private async requireNewModel(scope: OwnerScope, model: ModelSelection, target: "desktop" | "cloud") {
+    // The cloud default only means something where the runner picks the model.
+    if (isAutomationCloudDefaultModel(model)
+      && (target !== "cloud" || await this.cloudRuntime(scope.organizationId) !== "headless")) {
+      const error = new Error("The cloud default model runs only cloud Automations on the headless runtime.")
+      error.name = "model_access_lost"
+      throw error
+    }
     const result = await resolveAutomationModelAccess({ ...scope, ...model })
     if (!result.ok && shouldApplyAutomationModelAccessFailure({
       model,
@@ -571,15 +626,30 @@ export class AutomationService {
 
   private async executeCloudRun(runId: string): Promise<void> {
     const leaseOwner = `${schedulerOwner}:cloud:${runId}`
+    const target = await automationRepository.cloudRunTarget(runId)
+    if (!target) return
+    const runtime = await this.cloudRuntime(target.organizationId)
+    // A run keeps the engine it started on, so recovery never switches runtimes mid-run.
+    const engineKind = target.engineKind
+      ?? (target.actionKind === "saved_script"
+        ? CLOUD_CODEMODE_ENGINE_KIND
+        : await this.agentEngine({ organizationId: target.organizationId, ownerMemberId: target.ownerMemberId }, target.model))
+    const headlessEngine = engineKind === HEADLESS_AGENT_ENGINE_KIND
     const claimed = await automationRepository.claimCloud({
       runId,
       leaseOwner,
       leaseMs: env.automations.leaseMs,
-      maxConcurrency: env.automations.maxConcurrency,
+      maxConcurrency: headlessEngine ? env.automations.headlessMaxConcurrency : env.automations.maxConcurrency,
+      engineKind,
+      headlessEngineKind: HEADLESS_AGENT_ENGINE_KIND,
       now: Date.now(),
     })
     if (!claimed) return
-    const webAccess = await this.getOpenWorkWebAccess(claimed.automation.organizationId)
+    // Headless runs and in-Den Workflows need no OpenWork Web computer, so the
+    // Web seat gates only work that executes on one.
+    const webAccess = headlessEngine || (runtime === "headless" && claimed.revision.action?.kind === "saved_script")
+      ? { hasAccess: true }
+      : await this.getOpenWorkWebAccess(claimed.automation.organizationId)
     if (!webAccess.hasAccess) {
       const now = Date.now()
       await automationRepository.skipRun({
@@ -601,7 +671,7 @@ export class AutomationService {
       return
     }
     if (claimed.revision.action?.kind === "agent") {
-      await this.executeCloudAgentRun(claimed, leaseOwner)
+      await this.executeCloudAgentRun(claimed, leaseOwner, headlessEngine ? HEADLESS_AGENT_ENGINE_KIND : CLOUD_AGENT_ENGINE_KIND)
       return
     }
     if (claimed.revision.action?.kind !== "saved_script") return
@@ -643,7 +713,8 @@ export class AutomationService {
 
   private startCloudRun(runId: string): boolean {
     if (this.cloudExecutions.has(runId)) return true
-    if (this.cloudExecutions.size >= env.automations.maxConcurrency) return false
+    // Each pool's own limit is enforced durably at claim time; this only bounds one process.
+    if (this.cloudExecutions.size >= env.automations.maxConcurrency + env.automations.headlessMaxConcurrency) return false
     const task = this.executeCloudRun(runId)
       .catch((error) => {
         appLogger.error("Cloud Automation dispatch failed", {
@@ -660,10 +731,11 @@ export class AutomationService {
   private async executeCloudAgentRun(
     claimed: NonNullable<Awaited<ReturnType<typeof automationRepository.claimCloud>>>,
     leaseOwner: string,
+    engineKind: typeof HEADLESS_AGENT_ENGINE_KIND | typeof CLOUD_AGENT_ENGINE_KIND,
   ): Promise<void> {
     const action = claimed.revision.action
     if (action?.kind !== "agent") return
-    const executor = cloudAgentExecutor
+    const executor = engineKind === HEADLESS_AGENT_ENGINE_KIND ? headlessAgentExecutor : cloudAgentExecutor
     if (!executor) {
       await automationRepository.completeCloud({
         automationId: claimed.automation.id,
@@ -738,7 +810,7 @@ export class AutomationService {
         onAdmitted: async (receipt) => automationRepository.setCloudExecution({
           runId: claimed.run.id,
           leaseOwner,
-          engineKind: "openwork-cloud-agent-v1",
+          engineKind,
           receipt,
           now: Date.now(),
         }),

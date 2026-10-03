@@ -88,7 +88,7 @@ async function dialogLayerCanOpen() {
 }
 const dialogLayerInert = !(await dialogLayerCanOpen());
 
-type Row = { key: string; section: "mac" | "mine" | "openwork"; taxonomy: "skill" | "plugin" | "connection" | "mcp"; name: string };
+type Row = { key: string; section: "mac" | "mine" | "openwork"; taxonomy: "skill" | "plugin" | "connection" | "mcp"; name: string; needsSignIn?: boolean };
 
 function rowsFor(rows: Row[]) {
   return rows.map((row) => ({
@@ -96,6 +96,7 @@ function rowsFor(rows: Row[]) {
     section: row.section,
     taxonomy: row.taxonomy,
     searchText: row.name,
+    needsSignIn: row.needsSignIn,
     node: <ExtensionCard layout="list" name={row.name} description={`${row.name} description`} taxonomy={row.taxonomy} />,
   }));
 }
@@ -130,6 +131,12 @@ describe("Library sections", () => {
     expect(sections[2]?.textContent).toContain("1 shared with you");
     expect(host.textContent).not.toContain("Ready to use");
     expect(host.querySelector('[role="tab"]')).toBeNull();
+  });
+
+  test("Needs sign-in narrows the list to rows waiting on the member", async () => {
+    const rows = rowsFor([...libraryRows, { key: "f", section: "openwork", taxonomy: "connection", name: "PostHog", needsSignIn: true }]);
+    const host = await mount(<LibraryInventory rows={rows} loading={false} layout="list" filter="all" onlyNeedsSignIn />);
+    expect([...host.querySelectorAll("[data-library-row]")].map((row) => row.getAttribute("data-library-row"))).toEqual(["PostHog"]);
   });
 
   test("Skills and Plugins narrow the same list by kind; search narrows by name", async () => {

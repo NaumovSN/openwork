@@ -9,7 +9,7 @@ import {
   readOrganizationCapabilityOverrides,
 } from "../src/organization-capabilities.js"
 
-const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, slackAssistantHeadless: false }
+const defaultCapabilities = { installLinks: false, mcpConnections: false, modelsAnalytics: false, auditLogs: false, orgManagedDashboards: false, appMcpServers: false, slackAssistant: false, slackAssistantHeadless: false, headlessAutomations: false }
 
 test("auditLogs accepts only canonical literal booleans and defaults off even for Enterprise", () => {
   expect(organizationCapabilityKeySchema.parse("auditLogs")).toBe("auditLogs")
@@ -178,4 +178,14 @@ test("the Slack headless runtime is its own default-off platform capability", ()
   const enabled = { capabilities: { slackAssistant: true, slackAssistantHeadless: true } }
   expect(normalizeOrganizationCapabilities(enabled)).toEqual({ ...defaultCapabilities, slackAssistant: true, slackAssistantHeadless: true })
   expect(readOrganizationCapabilityOverrides(JSON.stringify(enabled))).toEqual({ slackAssistant: true, slackAssistantHeadless: true })
+})
+
+test("headless Automations are their own default-off platform capability", () => {
+  expect(organizationCapabilityKeySchema.parse("headlessAutomations")).toBe("headlessAutomations")
+  for (const value of [undefined, null, false, "true", 1, {}, []]) {
+    expect(organizationHasCapability({ capabilities: { headlessAutomations: value } }, "headlessAutomations")).toBe(false)
+  }
+  const enabled = { capabilities: { headlessAutomations: true } }
+  expect(normalizeOrganizationCapabilities(enabled)).toEqual({ ...defaultCapabilities, headlessAutomations: true })
+  expect(readOrganizationCapabilityOverrides(JSON.stringify(enabled))).toEqual({ headlessAutomations: true })
 })

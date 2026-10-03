@@ -1044,6 +1044,7 @@ export default {
   "extensions.builtins_disabled_notice": "Built-in OpenWork extensions are disabled by your organization.",
   "extensions.search_placeholder": "Filter by name",
   "extensions.filters_label": "Library filters",
+  "extensions.filter_needs_sign_in": "Needs sign-in",
   "extensions.state_label": "Library state",
   "extensions.state_disabled": "Disabled",
   "extensions.mcp_status": "MCP status",

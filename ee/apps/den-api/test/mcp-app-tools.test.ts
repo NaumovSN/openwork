@@ -53,6 +53,7 @@ let executions: unknown[] = []
 let liveRuns: unknown[] = []
 let nextResult: import("../src/mcp/capability-registry.js").ExecuteCapabilityToolResult | null = null
 let workflowInputSchema: unknown = { type: "object", properties: { week: { type: "string" } } }
+let workflowRequiredCapabilities: Array<{ capabilityName: string; scriptPath: string }> = []
 
 function leaf(toolName: string, readOnly: boolean, input: Record<string, unknown>) {
   return {
@@ -102,7 +103,7 @@ beforeAll(async () => {
     workflowLookups.push([...request.configObjectIds ?? []])
     return [{
       pluginId, configObjectId: workflowId, configObjectVersionId: createDenTypeId("configObjectVersion"),
-      title: "Weekly summary", description: null, inputSchema: workflowInputSchema, outputSchema: null, requiredCapabilities: [],
+      title: "Weekly summary", description: null, inputSchema: workflowInputSchema, outputSchema: null, requiredCapabilities: workflowRequiredCapabilities,
     }]
   })
   spyOn(registry, "executeCapability").mockImplementation(async (_ctx, request) => {
@@ -124,6 +125,22 @@ beforeEach(() => {
   liveRuns = []
   nextResult = null
   workflowInputSchema = { type: "object", properties: { week: { type: "string" } } }
+  workflowRequiredCapabilities = []
+})
+
+test("a live Workflow loads without asking only when every capability it calls is an OpenWork read", async () => {
+  const live = async () => (await appTools.resolveMcpAppTools(context(), [
+    { name: "weekly_summary", description: "This week's summary.", capability: workflow, mode: "live" },
+  ]))[0]?.readOnly
+  workflowRequiredCapabilities = [{ capabilityName: "getProjects", scriptPath: "tools.den.getProjects" }]
+  expect(await live()).toBe(true)
+  workflowRequiredCapabilities = [{ capabilityName: "postProjects", scriptPath: "tools.den.postProjects" }]
+  expect(await live()).toBe(false)
+  workflowRequiredCapabilities = [
+    { capabilityName: "getProjects", scriptPath: "tools.den.getProjects" },
+    { capabilityName: "mcp:emc_notion:notion-query-data-sources", scriptPath: "tools.notion[\"notion-query-data-sources\"]" },
+  ]
+  expect(await live()).toBe(false)
 })
 afterAll(() => mock.restore())
 
