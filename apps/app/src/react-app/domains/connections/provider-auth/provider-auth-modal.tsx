@@ -761,7 +761,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
                       ref={searchInputRef}
                       type="search"
                       aria-label="Search providers"
-                      placeholder="Search providers"
+                      placeholder="Filter providers by name or ID"
                       value={searchQuery}
                       onChange={(event) => {
                         setSearchQuery(event.currentTarget.value);

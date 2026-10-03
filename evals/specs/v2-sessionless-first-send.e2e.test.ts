@@ -81,15 +81,15 @@ mobileTest("MOBILE-CHAT-01 keyboard geometry and new turns keep a stable chat la
       // Settings › AI Providers (session-route.tsx), where Connect a provider uses the local engine.
       await user.click({ role: "button", label: "Connect a provider" });
     }
-    await user.see({ placeholder: "Search providers" });
+    await user.see({ placeholder: "Filter providers by name or ID" });
     const providerSearch = await probe.eventually(pickerFocus, {
       within: 10_000, label: "mobile provider dialog focuses its title, not search",
       until: (value) => value.activeText === "Connect a provider" && value.activeTag !== "INPUT",
     });
-    expect(providerSearch.inputs.some((input) => input.placeholder === "Search providers" && input.fontSize >= 16)).toBe(true);
+    expect(providerSearch.inputs.some((input) => input.placeholder === "Filter providers by name or ID" && input.fontSize >= 16)).toBe(true);
     expect(providerSearch.inputs.some((input) => input.focused)).toBe(false);
     await user.looks(["At phone width, Connect a provider shows a readable search field, provider rows and a close action without horizontal overflow."]);
-    await user.type({ placeholder: "Search providers" }, "Google");
+    await user.type({ placeholder: "Filter providers by name or ID" }, "Google");
     await user.click({ role: "button", label: /^Google/ });
     await user.see({ placeholder: "sk-..." });
     const providerSelected = await pickerFocus();
@@ -104,7 +104,7 @@ mobileTest("MOBILE-CHAT-01 keyboard geometry and new turns keep a stable chat la
     expect(providerBack.inputs.some((input) => input.focused)).toBe(false);
     await user.notSee({ placeholder: "sk-..." });
     await user.press("Escape");
-    await user.notSee({ placeholder: "Search providers" });
+    await user.notSee({ placeholder: "Filter providers by name or ID" });
     // CDP's mouse clicks can open the restored model trigger's focus tooltip.
     // Dismiss it before the separate simulated-keyboard/composer interaction.
     await user.press("Escape");

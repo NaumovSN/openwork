@@ -137,7 +137,7 @@ describe("connect providers gateway visibility", () => {
   test.each(["gateway-openai", "Managed OpenAI", "Managed credential"])("search cannot surface gateway providers by %s", async (query) => {
     const props = createProps();
     await act(async () => root.render(<ProviderAuthModal {...props} />));
-    const input = dialog().querySelector<HTMLInputElement>('input[placeholder="Search providers"]');
+    const input = dialog().querySelector<HTMLInputElement>('input[placeholder="Filter providers by name or ID"]');
     if (!input) throw new Error("Expected the provider search input");
     await act(async () => {
       input.focus();
@@ -159,7 +159,7 @@ describe("connect providers gateway visibility", () => {
     const props = createProps();
     await act(async () => root.render(<ProviderAuthModal {...props} preferredProviderId="gateway-openai" />));
 
-    expect(dialog().querySelector('input[placeholder="Search providers"]')).not.toBeNull();
+    expect(dialog().querySelector('input[placeholder="Filter providers by name or ID"]')).not.toBeNull();
     expect(dialog().textContent).not.toContain("Choose how you'd like to connect.");
     expect(dialog().textContent).not.toContain("Managed OpenAI");
     expect(providerButton("openai")).toBeDefined();
@@ -209,7 +209,7 @@ describe("connect providers gateway visibility", () => {
     // The row's keyboard action must still select that row after resetState.
     await act(async () => document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     expect(dialog().textContent).toContain("Google");
-    expect(dialog().querySelector('input[placeholder="Search providers"]')).toBeNull();
+    expect(dialog().querySelector('input[placeholder="Filter providers by name or ID"]')).toBeNull();
     expect(props.onSubmitApiKey).not.toHaveBeenCalled();
     expect(props.onSelect).not.toHaveBeenCalled();
   });
@@ -243,7 +243,7 @@ describe("connect providers gateway visibility", () => {
     await act(async () => providerButton("google")?.click());
     const api = [...dialog().querySelectorAll("button")].find((button) => button.textContent?.startsWith("API key"));
     await act(async () => api?.click());
-    for (const expected of ["Choose how you'd like to connect.", "Search providers"]) {
+    for (const expected of ["Choose how you'd like to connect.", "Filter providers by name or ID"]) {
       const back = [...dialog().querySelectorAll("button")].find((button) => button.textContent?.trim() === "Back");
       await act(async () => back?.click());
       expect(dialog().contains(document.activeElement)).toBe(true);

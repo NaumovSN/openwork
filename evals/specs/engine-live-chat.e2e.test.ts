@@ -208,7 +208,7 @@ async function ready({ world, user, probe, step, evidence }: Context) {
     if (!key) throw new Error("Live provider requested without a credential; no mock fallback is allowed");
     await world.openProviderSettings();
     const settings = await probe.eventually(() => probe.eval(browserScript(() => {
-      if (document.querySelector('input[placeholder="Search providers"]')) return "modal";
+      if (document.querySelector('input[placeholder="Filter providers by name or ID"]')) return "modal";
       if ([...document.querySelectorAll("button")].some(button => button.textContent?.trim() === "Connect provider")) return "settings";
       return "loading";
     }, [])), { within: 30_000, label: "provider connection entry", until: entry => entry !== "loading" });
@@ -237,7 +237,7 @@ async function ready({ world, user, probe, step, evidence }: Context) {
         throw error;
       });
     }
-    await user.type({ placeholder: "Search providers" }, provider);
+    await user.type({ placeholder: "Filter providers by name or ID" }, provider);
     await user.click({ role: "button", label: new RegExp(`^${provider}`) });
     if (provider === "OpenAI") await user.click({ role: "button", label: /^Manually enter API Key/ });
     await user.type({ placeholder: "sk-..." }, key, { sensitive: true });
