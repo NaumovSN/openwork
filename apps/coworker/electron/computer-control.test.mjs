@@ -728,6 +728,33 @@ test("native voice uses the pinned account, validates bounds, and really closes 
   assert.equal((await voice.status()).access, "unavailable");
 });
 
+test("with Always allow, a tool failure stays retryable in the same turn while a denial still turns the discussion off", async () => {
+  const saved = new Set(["scout"]);
+  let opens = 0;
+  const f = fixture({
+    standing: { allowed: async (slug) => saved.has(slug), set: async () => {} },
+    callTool: (name) => {
+      if (name === "computer_open_session") return ++opens === 1 ? result({ ok: false, code: "app_launch_failed", message: "The app did not open." }, true)
+        : opens === 2 ? result({ ok: true, session_id: "native-session", state: "active", expires_in_seconds: 900 })
+        : result({ ok: false, code: "access_denied", next: "human_takeover" }, true);
+      if (name === "computer_close_session") return result({ ok: true, state: "closed" });
+      return result({ ok: true, state: "active" });
+    },
+    connect: async () => { if (opens === 0 && f.counts().connects === 1) throw new Error("The Computer Use tool contract is incompatible."); },
+  });
+  // A helper that fails before any session exists dispatched nothing: the next call retries.
+  assert.equal(payload(await f.execute("discover")).code, "operation_interrupted");
+  assert.equal((await f.snapshot()).enabled, true);
+  assert.equal(payload(await f.execute("open", openArgs)).code, "app_launch_failed");
+  assert.equal((await f.snapshot()).enabled, true, "an app that would not open stays retryable");
+  assert.equal(payload(await f.execute("open", openArgs)).ok, true);
+  await f.execute("close");
+  assert.equal(payload(await f.execute("open", openArgs)).code, "access_denied");
+  assert.equal((await f.snapshot()).enabled, false, "the person's denial still turns it off");
+  await assert.rejects(f.execute("open", openArgs), /turns back on with the person's next message/);
+  await f.broker.reset(true);
+});
+
 test("zoom returns a sharper image of the current observation without consuming it or unlocking input", async () => {
   const f = fixture({ callTool: (name) => {
     if (name === "computer_open_session") return result({ ok: true, session_id: "native-session", state: "active", expires_in_seconds: 900 });

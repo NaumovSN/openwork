@@ -624,9 +624,8 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
       const readContext = (signal) => readOwner((signal) => resolveContext(slug, context, { name, args }, { signal }), signal);
       // Always allow covers discussions never opened since launch; Workers keep
       // their separate delegation approval and are never created here.
-      if (!cancel && !grants.has(keyFor(slug, context.sessionID)) && await standingAllowed(slug)) {
-        await grantFor(slug, context.sessionID).catch(() => {});
-      }
+      const standing = !cancel && await standingAllowed(slug);
+      if (standing && !grants.has(keyFor(slug, context.sessionID))) await grantFor(slug, context.sessionID).catch(() => {});
       const admissionEpoch = epoch;
       // A Worker's origin is not known until resolution. Pin only already-enabled
       // grants now, without letting unrelated permission changes cancel active work.
@@ -665,7 +664,9 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
       const assertAdmission = () => {
         if (closed || resetting || cancelled() || epoch !== admissionEpoch || revision === undefined || !admittedGrant.enabled
           || admittedGrant.revision !== revision || grants.get(keyFor(slug, originThreadId)) !== admittedGrant) {
-          throw new Error("Computer control was disabled, revoked, or restarted before this call could be admitted.");
+          throw new Error(standing
+            ? "Computer control stopped earlier in this turn, because the person stopped it or after a failure. It turns back on with the person's next message, so do not ask them to re-enable it; tell them what failed."
+            : "Computer control was disabled, revoked, or restarted before this call could be admitted.");
         }
       };
       assertAdmission();
@@ -858,7 +859,11 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
         try {
           const result = await limit.wait(() => work);
           if (name === "coworker_computer_close" || current.nativeStopped || current.handoffFailed || postReadFailed || (name === "coworker_computer_open" && result.isError)) {
-            if (name !== "coworker_computer_close" && lease === current && grant.revision === revision) disable(grant);
+            // With Always allow, an app that would not open stays retryable in this turn;
+            // the person's denial or native Stop still turns the discussion off.
+            const retryable = standing && name === "coworker_computer_open" && result.isError && !current.nativeStopped
+              && !["access_denied", "session_unavailable"].includes(stateOf(result)?.code);
+            if (name !== "coworker_computer_close" && lease === current && grant.revision === revision && !retryable) disable(grant);
             if (stateOf(result)?.ok === true && name === "coworker_computer_close") current.sessionId = null;
             await cleanup(current);
           }
@@ -868,7 +873,9 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
           if (current.closing && !call.post && name !== "coworker_computer_act" && name !== "coworker_computer_close") return failure("revoked", "Computer control stopped before this result could be delivered.");
           return result;
         } catch (error) {
-          if (lease === current && grant.revision === revision) disable(grant);
+          // A failure before any native session existed (such as an unavailable helper)
+          // dispatched nothing; with Always allow the next call may retry it.
+          if (lease === current && grant.revision === revision && !(standing && !current.sessionId)) disable(grant);
           const stopping = cleanup(current);
           if (!limit.signal.aborted) await stopping;
           if (call.post) return postWarning(call.post.receipt, "post_observation_failed", "human_takeover");

@@ -1,17 +1,19 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
+import { COMPUTER_TOOLS } from "./computer-control.mjs";
 import { createLocalComputerAdapter } from "./computer-local.mjs";
 import afterPack from "../scripts/electron-build.mjs";
 
 const permissions = { ok: true, supported: true, accessibility: true, screenRecording: true, protocolVersion: "openwork.computer-use/1" };
-const names = ["computer_discover", "computer_open_session", "computer_observe", "computer_act", "computer_session_status", "computer_close_session"];
+const names = Object.values(COMPUTER_TOOLS);
 const schemas = names.map((name) => ({ name, inputSchema: { type: "object", additionalProperties: false } }));
 
 function fixture(options = {}) {
@@ -715,4 +717,23 @@ test("shared afterSign retains Coworker's opt-in, credentials, notarization and 
   const unsignedHelper = loadHook("../../desktop/scripts/electron-after-sign.cjs", { adhoc: true });
   await assert.rejects(unsignedHelper.run(context), /ad-hoc signed/);
   assert.ok(unsignedHelper.commands.every(({ command }) => command === "codesign"));
+});
+
+test("the built native helper satisfies the adapter's exact tool contract", async (t) => {
+  // Alpha 82 shipped a helper tool the adapter did not expect, so every session failed at its first call.
+  const built = ["release", "debug"].map((mode) => fileURLToPath(new URL(`../../../packages/computer-use/native/.build/${mode}/ComputerUse`, import.meta.url))).find((file) => existsSync(file));
+  if (process.platform !== "darwin" || !built) return t.skip("Build the helper first: swift build --package-path packages/computer-use/native");
+  const resources = mkdtempSync(path.join(tmpdir(), "coworker-helper-"));
+  t.after(() => rmSync(resources, { recursive: true, force: true }));
+  const macos = path.join(resources, "helpers", "OpenWork Computer Use.app", "Contents", "MacOS");
+  mkdirSync(macos, { recursive: true });
+  symlinkSync(built, path.join(macos, "ComputerUse"));
+  // Only the permission probe is stubbed; the handshake and tool list come from the real helper.
+  const adapter = createLocalComputerAdapter({ resourcesPath: resources, spawnChild() {
+    const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), kill: () => true });
+    queueMicrotask(() => { child.stdout.end(JSON.stringify(permissions)); child.emit("close", 0); });
+    return child;
+  } });
+  const transport = await adapter.connect();
+  await transport.close();
 });

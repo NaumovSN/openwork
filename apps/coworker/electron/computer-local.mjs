@@ -4,18 +4,13 @@ import { existsSync } from "node:fs";
 import { release } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { COMPUTER_TOOLS } from "./computer-control.mjs";
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const helperName = "OpenWork Computer Use.app";
 const protocolVersion = "openwork.computer-use/1";
-const toolNames = new Set([
-  "computer_discover",
-  "computer_open_session",
-  "computer_observe",
-  "computer_act",
-  "computer_session_status",
-  "computer_close_session",
-]);
+// Exactly the native tools the broker maps; one table, so a new tool cannot drift out of the contract.
+const toolNames = new Set(Object.values(COMPUTER_TOOLS));
 
 async function loadMcp() {
   const [{ Client }, { StdioClientTransport }, { z }] = await Promise.all([
