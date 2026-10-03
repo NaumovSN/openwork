@@ -957,6 +957,12 @@ export type RemoteSessionExecuteInput = {
   headlessRunTokenId?: string | null
 }
 
+/** Added to a desktop create that a Slack run made: Den posts the outcome there, so the run should not wait. */
+const postedInThreadFields = {
+  resultPostedInThread: true,
+  note: "OpenWork will post the result in this Slack thread when the desktop finishes, fails, or needs approval. Tell the person that, then end your turn; for status questions later, use remote-session:read with this commandId.",
+}
+
 /** Never fails the create: the command is already queued, only the thread report is lost. */
 async function linkToOriginatingRun(
   deps: RemoteSessionExecuteDeps,
@@ -1121,6 +1127,9 @@ export async function executeRemoteSessionCapability(
         targetComputerId: resolved.computerId,
         ...(resolved.workspaceId === null ? {} : { targetWorkspaceId: resolved.workspaceId }),
       })
+      // A Slack run that picked a computer hands off the same way as one that didn't: the result is posted to
+      // its thread, so the run can end instead of waiting for the desktop.
+      const postsToThread = await linkToOriginatingRun(deps, input, command.id, body.prompt !== undefined)
       return jsonResult({
         target: "desktop",
         state: "queued",
@@ -1128,6 +1137,7 @@ export async function executeRemoteSessionCapability(
         computerId: resolved.computerId,
         workspaceId: resolved.workspaceId,
         expiresAt: command.expiresAt,
+        ...(postsToThread ? postedInThreadFields : {}),
       })
     }
     if (body.target === "desktop") {
@@ -1156,12 +1166,7 @@ export async function executeRemoteSessionCapability(
         state: "queued",
         commandId: command.id,
         expiresAt: command.expiresAt,
-        ...(postsToThread
-          ? {
-              resultPostedInThread: true,
-              note: "OpenWork will post the result in this Slack thread when the desktop finishes, fails, or needs approval. Tell the person that, then end your turn; for status questions later, use remote-session:read with this commandId.",
-            }
-          : {}),
+        ...(postsToThread ? postedInThreadFields : {}),
       })
     }
   }

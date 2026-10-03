@@ -14,8 +14,33 @@ export const DEFAULT_SYSTEM_PROMPT = `You are OpenWork, an assistant running in 
 - On a long task the person may only see your final message, so make it a complete answer on its own.
 - Reply concisely in Markdown.`
 
-/** A step that repeats the same calls and gets the same results this many times in a row ends the turn. */
-export const MAX_IDENTICAL_STEPS = 5
+/**
+ * A step that repeats the previous one (same calls, same inputs, same results) is usually waiting on something:
+ * a desktop picking up a task, CI still running. Each repeat first waits a little longer, as a person checking
+ * back would, so waiting is cheap and can last.
+ */
+export const REPEAT_WAITS_MS = [5_000, 10_000, 20_000, 30_000]
+/** How long the same successful answer may keep coming back before the model is asked to stop and say so. */
+export const MAX_WAITING_MS = 10 * 60_000
+/** How many times in a row the same call may fail the same way before the model is asked to stop and say so. */
+export const MAX_IDENTICAL_FAILURES = 3
+/** Added to the turn when either limit is reached; a model that still repeats the step after it is stopped. */
+export const STOP_REPEATING_NOTE =
+  "[OpenWork] You made the same call several times and got the same result each time, so do not call it again. Reply to the person now: say what you were waiting for or what kept failing, what you found so far, and what they can do next."
+
+const abortableSleep = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason)
+    const onAbort = () => {
+      clearTimeout(timer)
+      reject(signal.reason)
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort)
+      resolve()
+    }, ms)
+    signal.addEventListener("abort", onAbort, { once: true })
+  })
 
 export type RunnerOptions = {
   store: Store
@@ -35,6 +60,8 @@ export type RunnerOptions = {
   }
   systemPrompt?: string
   now?: () => number
+  /** Waits between repeated steps; tests pass a fake. Rejects with the signal's reason when the turn is stopped. */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>
 }
 
 export type SendInput = {
@@ -227,6 +254,11 @@ export class Runner {
     let toolCalls = 0
     let lastStep = ""
     let identicalSteps = 0
+    let repeatStartedAt = 0
+    let askedToStop = false
+    let waitBeforeNextStep = 0
+    const clock = this.options.now ?? Date.now
+    const sleep = this.options.sleep ?? abortableSleep
     console.log(`[headless-runner] turn started ${JSON.stringify({ sessionId, messageId })}`)
 
     const turnMessages = () =>
@@ -276,6 +308,7 @@ export class Runner {
 
       for (let step = 0; step < limits.maxSteps; step += 1) {
         signal.throwIfAborted()
+        if (waitBeforeNextStep) await sleep(waitBeforeNextStep, signal)
         // Between steps, never mid-call, so no tool is cut off. The caller resumes the turn right away with a
         // fresh MCP token; a caller that stopped supervising simply never resumes it.
         if (tools && step > 0 && Date.now() - startedAt >= limits.credentialRefreshMs) {
@@ -322,15 +355,28 @@ export class Runner {
           })
           outcomes.push(outcome)
         }
-        // Same calls, same inputs, same results, again and again: the model is stuck, not making progress.
+        // Same calls, same inputs, same results as the step before: waiting on something, or stuck.
         const signature = createHash("sha256")
           .update(JSON.stringify(result.toolCalls.map((call, index) => [call.name, call.input, outcomes[index]?.output, outcomes[index]?.isError])))
           .digest("hex")
         identicalSteps = signature === lastStep ? identicalSteps + 1 : 1
         lastStep = signature
-        if (identicalSteps >= MAX_IDENTICAL_STEPS) {
-          store.setTurnStatus(sessionId, messageId, "failed", "stuck_repeating")
-          return
+        waitBeforeNextStep = 0
+        if (identicalSteps === 1) {
+          repeatStartedAt = clock()
+          askedToStop = false
+        } else {
+          const failing = outcomes.every((outcome) => outcome.isError)
+          const exhausted = failing ? identicalSteps >= MAX_IDENTICAL_FAILURES : clock() - repeatStartedAt >= MAX_WAITING_MS
+          if (exhausted && askedToStop) {
+            store.setTurnStatus(sessionId, messageId, "failed", "stuck_repeating")
+            return
+          }
+          if (exhausted) {
+            // Let the model explain what it was waiting for, instead of ending on a generic failure.
+            askedToStop = true
+            store.appendMessage(sessionId, messageId, { role: "user", text: STOP_REPEATING_NOTE })
+          } else waitBeforeNextStep = REPEAT_WAITS_MS[Math.min(identicalSteps - 2, REPEAT_WAITS_MS.length - 1)]
         }
       }
       store.setTurnStatus(sessionId, messageId, "failed", "max_steps_exceeded")
