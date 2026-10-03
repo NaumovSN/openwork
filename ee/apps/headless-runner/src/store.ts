@@ -5,15 +5,19 @@ import { DatabaseSync } from "node:sqlite"
 import { z } from "zod"
 import type { Usage } from "./model.js"
 import { withoutAttachments } from "./tool-files.js"
-import { ACTIVE, messageSchema, turnStatusSchema, type Message, type TurnStatus } from "./types.js"
+import { ACTIVE, messageSchema, repeatLimitsSchema, turnStatusSchema, type Message, type RepeatLimits, type TurnStatus } from "./types.js"
 
 const sessionRow = z.object({
   id: z.string(),
   title: z.string(),
   instructions: z.string(),
+  /** JSON of the caller's per-session settings; null for sessions created before there were any. */
+  options: z.string().nullable().optional(),
   created_at: z.number(),
   updated_at: z.number(),
 })
+const sessionOptions = z.object({ repeats: repeatLimitsSchema.optional() })
+const tableColumns = z.array(z.object({ name: z.string() }).loose())
 const turnRow = z.object({
   session_id: z.string(),
   message_id: z.string(),
@@ -30,7 +34,15 @@ const messageRow = z.object({ seq: z.number(), message_id: z.string(), body: z.s
 const fileRow = z.object({ path: z.string(), size: z.number(), updated_at: z.number() })
 const countRow = z.object({ n: z.number() })
 
-export type Session = { id: string; title: string; instructions: string; createdAt: number; updatedAt: number }
+export type Session = {
+  id: string
+  title: string
+  instructions: string
+  /** The caller's limits for repeated steps; null uses the runner's defaults. */
+  repeats: RepeatLimits | null
+  createdAt: number
+  updatedAt: number
+}
 export type Turn = {
   sessionId: string
   messageId: string
@@ -110,6 +122,9 @@ export class Store {
         PRIMARY KEY (session_id, path)
       );
     `)
+    // Databases created before sessions had options gain the column; existing sessions keep the defaults.
+    const columns = tableColumns.parse(this.db.prepare("PRAGMA table_info(sessions)").all())
+    if (!columns.some((column) => column.name === "options")) this.db.exec("ALTER TABLE sessions ADD COLUMN options TEXT")
   }
 
   close() {
@@ -128,18 +143,19 @@ export class Store {
     }
   }
 
-  createSession(input: { title?: string; instructions?: string }): Session {
+  createSession(input: { title?: string; instructions?: string; repeats?: RepeatLimits }): Session {
     const at = this.now()
-    const session = {
+    const session: Session = {
       id: `hs_${randomUUID().replaceAll("-", "")}`,
       title: input.title ?? "Untitled",
       instructions: input.instructions ?? "",
+      repeats: input.repeats ?? null,
       createdAt: at,
       updatedAt: at,
     }
     this.db
-      .prepare("INSERT INTO sessions (id, title, instructions, created_at, updated_at) VALUES (?, ?, ?, ?, ?)")
-      .run(session.id, session.title, session.instructions, at, at)
+      .prepare("INSERT INTO sessions (id, title, instructions, options, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(session.id, session.title, session.instructions, input.repeats ? JSON.stringify({ repeats: input.repeats }) : null, at, at)
     return session
   }
 
@@ -147,10 +163,12 @@ export class Store {
     const row = this.db.prepare("SELECT * FROM sessions WHERE id = ?").get(id)
     if (!row) return null
     const value = sessionRow.parse(row)
+    const options = value.options ? sessionOptions.safeParse(JSON.parse(value.options)) : null
     return {
       id: value.id,
       title: value.title,
       instructions: value.instructions,
+      repeats: options?.success ? (options.data.repeats ?? null) : null,
       createdAt: value.created_at,
       updatedAt: value.updated_at,
     }

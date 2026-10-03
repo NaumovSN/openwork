@@ -4,10 +4,14 @@ import { z } from "zod"
 import { normalizePath } from "./files.js"
 import type { Runner } from "./runner.js"
 import type { Store } from "./store.js"
-import { ACTIVE, turnCredentialsSchema } from "./types.js"
+import { ACTIVE, repeatLimitsSchema, turnCredentialsSchema } from "./types.js"
 
 const createSessionBody = z
-  .object({ title: z.string().max(200).optional(), instructions: z.string().max(20_000).optional() })
+  .object({
+    title: z.string().max(200).optional(),
+    instructions: z.string().max(20_000).optional(),
+    repeats: repeatLimitsSchema.optional(),
+  })
   .strict()
 const messageIdSchema = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/)
 const sendBody = z

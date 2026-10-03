@@ -4,7 +4,7 @@ import type { McpConnector, ToolSession } from "./mcp.js"
 import { ModelError, type ModelClient } from "./model.js"
 import type { Store, StoredMessage, Turn } from "./store.js"
 import { withoutAttachments } from "./tool-files.js"
-import { RESUMABLE, type Message, type ToolResult, type TurnCredentials } from "./types.js"
+import { RESUMABLE, type Message, type RepeatLimits, type ToolResult, type TurnCredentials } from "./types.js"
 
 export const DEFAULT_SYSTEM_PROMPT = `You are OpenWork, an assistant running in the cloud on behalf of one person. There is no UI and nobody can approve actions while you work.
 
@@ -16,17 +16,18 @@ export const DEFAULT_SYSTEM_PROMPT = `You are OpenWork, an assistant running in 
 
 /**
  * A step that repeats the previous one (same calls, same inputs, same results) is usually waiting on something:
- * a desktop picking up a task, CI still running. Each repeat first waits a little longer, as a person checking
- * back would, so waiting is cheap and can last.
+ * a desktop picking up a task, CI still running. Each repeat first waits a little longer, as anyone checking back
+ * would, so waiting is cheap and can last.
  */
 export const REPEAT_WAITS_MS = [5_000, 10_000, 20_000, 30_000]
-/** How long the same successful answer may keep coming back before the model is asked to stop and say so. */
-export const MAX_WAITING_MS = 10 * 60_000
-/** How many times in a row the same call may fail the same way before the model is asked to stop and say so. */
-export const MAX_IDENTICAL_FAILURES = 3
-/** Added to the turn when either limit is reached; a model that still repeats the step after it is stopped. */
-export const STOP_REPEATING_NOTE =
-  "[OpenWork] You made the same call several times and got the same result each time, so do not call it again. Reply to the person now: say what you were waiting for or what kept failing, what you found so far, and what they can do next."
+/** Used for anything a session's caller did not set (see `repeatLimitsSchema`). */
+export const DEFAULT_REPEAT_LIMITS: Required<RepeatLimits> = { maxWaitingMs: 10 * 60_000, maxIdenticalFailures: 3 }
+/**
+ * Added to the system prompt for the rest of the turn when a limit is reached. It stays out of the transcript: the
+ * caller's own instructions say who reads the final message. A model that still repeats the step is stopped.
+ */
+export const STOP_REPEATING_INSTRUCTION =
+  "You have made the same tool call several times and got the same result each time. Do not make that call again. Finish now with your final message: say what you were waiting for or what kept failing, what you have so far, and what is still needed."
 
 const abortableSleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -296,7 +297,8 @@ export class Runner {
       }
       const session = store.getSession(sessionId)
       const turn = store.getTurn(sessionId, messageId)
-      const system = [
+      const repeatLimits = { ...DEFAULT_REPEAT_LIMITS, ...session?.repeats }
+      const baseSystem = [
         this.options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
         tools ? "" : "No OpenWork connection is available in this conversation, so connected apps cannot be reached.",
         session?.instructions ?? "",
@@ -316,7 +318,7 @@ export class Runner {
           return
         }
         const result = await this.options.model.complete({
-          system,
+          system: askedToStop ? `${baseSystem}\n\n${STOP_REPEATING_INSTRUCTION}` : baseSystem,
           messages: buildContext(store.messages(sessionId), messageId, limits.contextCharBudget),
           tools: toolSpecs,
           model: turn?.model ?? this.options.defaultModel,
@@ -367,16 +369,16 @@ export class Runner {
           askedToStop = false
         } else {
           const failing = outcomes.every((outcome) => outcome.isError)
-          const exhausted = failing ? identicalSteps >= MAX_IDENTICAL_FAILURES : clock() - repeatStartedAt >= MAX_WAITING_MS
+          const exhausted = failing
+            ? identicalSteps >= repeatLimits.maxIdenticalFailures
+            : clock() - repeatStartedAt >= repeatLimits.maxWaitingMs
           if (exhausted && askedToStop) {
             store.setTurnStatus(sessionId, messageId, "failed", "stuck_repeating")
             return
           }
-          if (exhausted) {
-            // Let the model explain what it was waiting for, instead of ending on a generic failure.
-            askedToStop = true
-            store.appendMessage(sessionId, messageId, { role: "user", text: STOP_REPEATING_NOTE })
-          } else waitBeforeNextStep = REPEAT_WAITS_MS[Math.min(identicalSteps - 2, REPEAT_WAITS_MS.length - 1)]
+          // Let the model report what it was waiting for, instead of ending on a generic failure.
+          if (exhausted) askedToStop = true
+          else waitBeforeNextStep = REPEAT_WAITS_MS[Math.min(identicalSteps - 2, REPEAT_WAITS_MS.length - 1)]
         }
       }
       store.setTurnStatus(sessionId, messageId, "failed", "max_steps_exceeded")

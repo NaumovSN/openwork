@@ -7,6 +7,7 @@ import {
   TERMINAL_TURN_STATUSES,
   type HeadlessRunnerActor,
   type HeadlessRunnerDeps,
+  type RunnerRepeatLimits,
 } from "../headless-runner/client.js"
 
 /**
@@ -81,6 +82,12 @@ export function slackHeadlessDeps(base: HeadlessDeps | null = defaultHeadlessRun
   }
 }
 
+/**
+ * Someone is waiting in the thread, and work handed to their desktop reports back there on its own, so a Slack run
+ * waits on an unchanged answer for at most 10 minutes and stops after the same failure three times.
+ */
+export const SLACK_REPEAT_LIMITS: RunnerRepeatLimits = { maxWaitingMs: 10 * 60_000, maxIdenticalFailures: 3 }
+
 /** Runner unavailable or overloaded: the Slack run loop retries these. */
 const retryable = (error: string) => ({ error, retryable: true, retryAfterMs: 5_000 })
 
@@ -117,7 +124,10 @@ export async function headlessRemoteCall(
   const messageId = typeof body.messageId === "string" ? body.messageId : ""
 
   if (action === "create") {
-    const created = await client.createSession({ title: typeof body.title === "string" ? body.title : undefined })
+    const created = await client.createSession({
+      title: typeof body.title === "string" ? body.title : undefined,
+      repeats: SLACK_REPEAT_LIMITS,
+    })
     if (!created.ok) return retryable(`headless_create_${created.status}`)
     return { sessionId: created.value.id, workspaceId: "headless" }
   }

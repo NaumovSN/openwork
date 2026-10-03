@@ -10,6 +10,7 @@ import {
   defaultHeadlessRunnerDeps,
   type HeadlessRunnerClient,
   type RunnerMessage,
+  type RunnerRepeatLimits,
   type RunnerTurn,
 } from "../headless-runner/client.js"
 import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
@@ -33,6 +34,14 @@ const MAX_CONSECUTIVE_READ_FAILURES = 30
 const RESULT_SUMMARY_LIMIT = 20_000
 /** The token outlives the run's own deadline a little, so the last steps never lose MCP mid-call. */
 const TOKEN_GRACE_MS = 5 * 60_000
+
+/**
+ * Nobody is waiting on an Automation, but its run has a deadline: waiting on an unchanged answer gets a third of
+ * it (5 of the default 15 minutes), so the agent still has time to report before the run is cut off.
+ */
+export function automationRepeatLimits(maximumRuntimeMs: number): RunnerRepeatLimits {
+  return { maxWaitingMs: Math.min(Math.max(Math.floor(maximumRuntimeMs / 3), 10_000), 24 * 3_600_000), maxIdenticalFailures: 3 }
+}
 
 export const HEADLESS_AUTOMATION_INSTRUCTIONS = [
   "This conversation is one run of a scheduled Automation. Nobody is watching while it runs.",
@@ -224,7 +233,11 @@ export async function executeHeadlessAgent(
     }
 
     if (!sessionId) {
-      const created = await client.createSession({ title: `Automation: ${input.automationName}`, instructions: HEADLESS_AUTOMATION_INSTRUCTIONS })
+      const created = await client.createSession({
+        title: `Automation: ${input.automationName}`,
+        instructions: HEADLESS_AUTOMATION_INSTRUCTIONS,
+        repeats: automationRepeatLimits(input.maximumRuntimeMs),
+      })
       // Nothing has run yet, so a runner outage here is safe to retry.
       if (!created.ok) return failure({ code: "execution_runtime_unavailable", message: "The headless runner is unavailable.", retryable: true })
       sessionId = created.value.id

@@ -38,6 +38,21 @@ export type ToolImage = { mediaType: string; data: string }
 export type ToolDocument = { mediaType: "application/pdf"; data: string; name: string }
 export type ToolResult = { output: string; isError: boolean; images?: ToolImage[]; documents?: ToolDocument[] }
 
+/**
+ * How long a session's turns may keep repeating a step (same calls, same results) before the model is asked to stop
+ * and report. Set by the caller per session (a person waiting in Slack and an unattended Automation want different
+ * limits); anything unset uses the runner's configured default.
+ */
+export const repeatLimitsSchema = z
+  .object({
+    /** The same successful answer may keep coming back this long: waiting on a desktop, CI, a job. */
+    maxWaitingMs: z.number().int().min(10_000).max(24 * 3_600_000).optional(),
+    /** The same call may fail the same way this many times in a row. */
+    maxIdenticalFailures: z.number().int().min(2).max(100).optional(),
+  })
+  .strict()
+export type RepeatLimits = z.infer<typeof repeatLimitsSchema>
+
 export const turnStatusSchema = z.enum(["queued", "running", "completed", "failed", "interrupted", "aborted"])
 export type TurnStatus = z.infer<typeof turnStatusSchema>
 
