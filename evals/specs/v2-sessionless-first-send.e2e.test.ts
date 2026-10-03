@@ -229,7 +229,8 @@ mobileTest("MOBILE-CHAT-01 keyboard geometry and new turns keep a stable chat la
     await user.looks(["At narrow phone width, the composer send button and model control remain inside the viewport without horizontal overflow."]);
     await setViewport(world.app, { width: 1440, height: 900, deviceScaleFactor: 1 });
     await simulateKeyboardViewport(world.app, 450, 90);
-    const desktop = await probe.eventually(read, { within: 10_000, label: "desktop ignores mobile keyboard shell geometry", until: (value) => Boolean(value.shell && value.shell.height > 800) });
+    const desktop = await probe.eventually(read, { within: 10_000, label: "desktop ignores mobile keyboard shell geometry and shows its header again",
+      until: (value) => Boolean(value.shell && value.shell.height > 800 && value.headerVisible && value.headerTitleVisible && value.headerWorkspaceVisible) });
     expect(desktop.editor?.height).toBeGreaterThanOrEqual(60);
     expect(desktop.headerTitleVisible).toBe(true);
     expect(desktop.headerWorkspaceVisible).toBe(true);
