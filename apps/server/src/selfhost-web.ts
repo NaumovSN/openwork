@@ -6,8 +6,8 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { openworkServerDataDir } from "@openwork/paths";
 
@@ -242,6 +242,60 @@ export async function ensureManagedEngine(input: {
     return { bin, installedVersion: downloadedVersion, source: "downloaded" };
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
+  }
+}
+
+/** OpenCode's global config folder: `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode` (all platforms). */
+export function opencodeGlobalConfigDir(env: NodeJS.ProcessEnv, home: string = homedir()): string {
+  const xdgConfig = env.XDG_CONFIG_HOME?.trim() || join(home, ".config");
+  return join(xdgConfig, "opencode");
+}
+
+export function opencodePluginDepsArchive(packageRoot: string, opencodeVersion: string): string {
+  return join(packageRoot, "dist", `opencode-plugin-deps-${opencodeVersion.replace(/^v/, "")}.tgz`);
+}
+
+const OPENCODE_INSTALL_STATE = ["node_modules", "package.json", "package-lock.json"] as const;
+
+export type PluginDepsSeedResult =
+  | { seeded: true; durationMs: number }
+  | { seeded: false; reason: "no-archive" | "already-set-up" | "failed"; error?: string };
+
+/**
+ * OpenCode blocks the first folder load on `npm install @opencode-ai/plugin`
+ * into its global config folder whenever plugins are configured, and OpenWork
+ * always configures plugins: 10-15 s on Windows. The npm package ships that
+ * exact install pre-resolved; on a fresh profile (no node_modules, manifest or
+ * lockfile yet) unpack it so OpenCode finds the dependency already installed.
+ * Any existing install state is left to OpenCode. Never throws: on failure
+ * OpenCode installs as before.
+ */
+export async function seedOpencodePluginDeps(input: {
+  archive: string;
+  configDir: string;
+  now?: () => number;
+}): Promise<PluginDepsSeedResult> {
+  const now = input.now ?? Date.now;
+  const startedAt = now();
+  if (!await isFile(input.archive)) return { seeded: false, reason: "no-archive" };
+  for (const name of OPENCODE_INSTALL_STATE) {
+    if (existsSync(join(input.configDir, name))) return { seeded: false, reason: "already-set-up" };
+  }
+  let staging: string | null = null;
+  try {
+    await mkdir(input.configDir, { recursive: true });
+    staging = await mkdtemp(join(input.configDir, ".openwork-plugin-deps-"));
+    extractArchive(input.archive, basename(input.archive), staging);
+    // node_modules first: if this stops part-way, OpenCode sees an
+    // incomplete lockfile and runs its own install, as it would have.
+    for (const name of OPENCODE_INSTALL_STATE) {
+      await renameWithRetry(join(staging, name), join(input.configDir, name));
+    }
+    return { seeded: true, durationMs: Math.max(0, now() - startedAt) };
+  } catch (error) {
+    return { seeded: false, reason: "failed", error: error instanceof Error ? error.message : String(error) };
+  } finally {
+    if (staging) await rm(staging, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
