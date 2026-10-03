@@ -148,8 +148,9 @@ jobs:
           fi
           # Exit 1 = a claim failed, 2 = still pending. Both are written into
           # the records, and Evidence preview reports them; only a crash fails here.
-          node evals/scripts/judge-journeys.mjs
-          status=$?
+          # Actions runs bash with -e, so capture the status instead of dying on it.
+          status=0
+          node evals/scripts/judge-journeys.mjs || status=$?
           if [ "$status" -gt 2 ]; then exit "$status"; fi
       - name: Replace the proof records with judged ones
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

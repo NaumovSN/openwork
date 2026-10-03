@@ -24,12 +24,6 @@ iteration, `pnpm warden:check --staged` reviews the index. Local security and
 confidentiality findings still return a failure at every severity. Missing
 credentials, partial analysis, and model errors are incomplete reviews.
 
-Run the reporter's contract tests without model credentials:
-
-```sh
-node --test .github/scripts/warden-report.test.mjs
-```
-
 ## Rollout
 
 The repository's Warden workflow is currently disabled in GitHub. The new

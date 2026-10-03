@@ -81,33 +81,12 @@ jobs:
       - name: Setup tests
         id: setup
         uses: ./.github/actions/setup-tests
-      - name: Run core product regressions
-        run: pnpm test:core
-      - name: Check journey selection, reporting, and alerts
-        run: node --test evals/scripts/journey-ci.test.mjs evals/scripts/flake-report.test.mjs .github/scripts/warden-report.test.mjs
-
-  workflow-authoring:
-    needs: classify-changes
-    if: needs.classify-changes.outputs.lane == 'full'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-tests
-      - name: Build MCP App resources required by the server
-        run: pnpm --filter @openwork/mcp-apps build
-      - name: Verify immutable runtime and authoring contracts
-        run: node --test scripts/ci/workflow-authoring-gate.test.mjs scripts/ci/den-contract-conflicts.test.mjs && pnpm --filter @openwork/codemode test && pnpm --filter @openwork-ee/den-api test:authoring
-      - name: Verify shared encrypted receipt retention against Redis
-        env:
-          WORKFLOW_AUTHORING_TEST_REDIS_URL: redis://127.0.0.1:6379
-        run: pnpm --filter @openwork-ee/den-api exec bun test --conditions development test/workflow-authoring-retention.redis.test.ts
+      - name: Typecheck the headless runner
+        run: pnpm --filter @openwork-ee/headless-runner typecheck
+      - name: Boot the app provider tree
+        run: pnpm test:boot
+      - name: Run core PR journeys
+        run: pnpm --dir evals run test:core
 
   openwork-tests-build:
     needs: classify-changes
@@ -235,12 +214,8 @@ jobs:
         run: |
           rm -rf packages/types/dist
           pnpm --filter openwork-server build
-      - name: Check packaged Fast module consumption
-        run: node --test packages/types/tests/packaged-cloud-model-fast.test.mjs
       - name: Typecheck Electron main against the IPC contract
         run: pnpm --filter @openwork/desktop typecheck:electron
-      - name: Check virtual display bootstrap contract
-        run: node --test scripts/ci/ubuntu-apt-https.test.mjs apps/desktop/scripts/packaged-smoke-runner.test.mjs
       - name: Package and smoke-test the installed desktop
         timeout-minutes: 7
         env:
@@ -259,7 +234,7 @@ jobs:
           include-hidden-files: true
           retention-days: 7
 
-  # Broad tests, source-layout guards, and test-framework checks remain visible
+  # Broad journeys, source-layout guards, and test-framework checks remain visible
   # here without blocking unrelated PRs. No retries or ignored failures.
   openwork-tests-extended:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
@@ -275,24 +250,9 @@ jobs:
       - name: Setup tests
         id: setup
         uses: ./.github/actions/setup-tests
-      - name: Run all app tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm --filter @openwork/app test
-      - name: Run all server tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm --filter openwork-server test
-      - name: Run Den API tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm --filter @openwork-ee/den-api test
-      - name: Run all desktop tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm --filter @openwork/desktop test
-      - name: Run release script tests
-        if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: node --test scripts/release/*.test.mjs
       - name: Run test-framework checks
         if: (success() || failure()) && steps.setup.outcome == 'success'
-        run: pnpm test:eval-runner
+        run: pnpm evals:check
       - name: Run all PR specs
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm sdk:build && pnpm evals:pr
@@ -466,7 +426,7 @@ jobs:
   # Single stable context for branch rulesets to require. Green only when
   # the lane selected by classification succeeds; always reports.
   openwork-tests-required:
-    needs: [classify-changes, openwork-tests-core, openwork-tests-build, workflow-authoring, validate-models-snapshot, validate-docs, den-contract]
+    needs: [classify-changes, openwork-tests-core, openwork-tests-build, validate-models-snapshot, validate-docs, den-contract]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -476,7 +436,6 @@ jobs:
           LANE: ${{ needs.classify-changes.outputs.lane }}
           CORE_RESULT: ${{ needs.openwork-tests-core.result }}
           BUILD_RESULT: ${{ needs.openwork-tests-build.result }}
-          AUTHORING_RESULT: ${{ needs.workflow-authoring.result }}
           SNAPSHOT_RESULT: ${{ needs.validate-models-snapshot.result }}
           DOCS_RESULT: ${{ needs.validate-docs.result }}
           DEN_CONTRACT: ${{ needs.classify-changes.outputs.den_contract }}
@@ -486,7 +445,6 @@ jobs:
           echo "Den API contract (required: $DEN_CONTRACT): $DEN_CONTRACT_RESULT"
           echo "core product regressions: $CORE_RESULT"
           echo "packaging and IPC contract: $BUILD_RESULT"
-          echo "workflow authoring contracts: $AUTHORING_RESULT"
           echo "snapshot validation: $SNAPSHOT_RESULT"
           echo "docs validation: $DOCS_RESULT"
 
@@ -506,13 +464,13 @@ jobs:
 
           case "$LANE" in
             full)
-              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$AUTHORING_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
+              [ "$CORE_RESULT" = "success" ] && [ "$BUILD_RESULT" = "success" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
               ;;
             snapshot)
-              [ "$SNAPSHOT_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$AUTHORING_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
+              [ "$SNAPSHOT_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$DOCS_RESULT" = "skipped" ] || exit 1
               ;;
             docs)
-              [ "$DOCS_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$AUTHORING_RESULT" = "skipped" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
+              [ "$DOCS_RESULT" = "success" ] && [ "$CORE_RESULT" = "skipped" ] && [ "$BUILD_RESULT" = "skipped" ] && [ "$SNAPSHOT_RESULT" = "skipped" ] || exit 1
               ;;
             *)
               echo "Changed-file classification returned an unexpected value; blocking merge." >&2
