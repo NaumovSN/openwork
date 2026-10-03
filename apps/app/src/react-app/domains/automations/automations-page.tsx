@@ -314,7 +314,7 @@ export function AutomationsPage(props: {
     // Automations live in OpenWork Cloud: signed out, nothing here calls Den,
     // and the page leads with the same sign-in banner as Library.
     return (
-      <div className="mx-auto max-w-5xl space-y-5 p-6" data-automations-signed-out>
+      <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8" data-automations-signed-out>
         <CloudSignInBanner
           testId="automations-sign-in-banner"
           media={<CloudSignInBannerIcon><Clock3 /></CloudSignInBannerIcon>}
@@ -801,7 +801,7 @@ export function AutomationsPage(props: {
   // as Library and Dashboard place their add controls.
   const newAutomation = <Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button>
   return (
-    <div className="mx-auto max-w-5xl space-y-5 p-6">
+    <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8">
       {props.headerActionsTarget
         ? createPortal(newAutomation, props.headerActionsTarget)
         : props.headerActionsTarget === undefined ? <div className="flex justify-end">{newAutomation}</div> : null}

@@ -3865,7 +3865,8 @@ export function SessionRoute() {
       }
       // Page titles match their sidebar labels.
       primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? "Dashboard" : automationsRouteActive ? "Automations" : dashboardRouteActive ? "Dashboard" : undefined}
-      primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive ? "flat" : undefined}
+      // Dashboard, Automations and Library share one flat page surface.
+      primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive || extensionsMainOpen ? "flat" : undefined}
       primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation)}
       primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
         <WorkspaceProvider
