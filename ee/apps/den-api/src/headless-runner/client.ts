@@ -139,11 +139,13 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
     async createSession(
       input: { title?: string; instructions?: string; repeats?: RunnerRepeatLimits } = {},
     ): Promise<RunnerResult<{ id: string }>> {
-      const { status, payload } = await request(deps, "POST", "/v1/sessions", {
+      const base = {
         ...(input.title ? { title: input.title.slice(0, 200) } : {}),
         ...(input.instructions ? { instructions: input.instructions.slice(0, 20_000) } : {}),
-        ...(input.repeats ? { repeats: input.repeats } : {}),
-      })
+      }
+      let { status, payload } = await request(deps, "POST", "/v1/sessions", input.repeats ? { ...base, repeats: input.repeats } : base)
+      // A runner older than per-session repeat limits rejects the field: create the session with its defaults.
+      if (status === 400 && input.repeats) ({ status, payload } = await request(deps, "POST", "/v1/sessions", base))
       const created = z.object({ id: z.string() }).safeParse(payload)
       if (status !== 201 || !created.success) return { ok: false, status, error: errorCode(payload, `headless_create_${status}`) }
       return { ok: true, value: { id: created.data.id } }
