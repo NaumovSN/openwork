@@ -226,7 +226,7 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
   {
     action: "read",
     summary:
-      "Read a remote session's recent transcript and status from your OpenWork Web instance, or the status of a desktop command. For a desktop command, poll with commandId until state is failed or expired, or session.status is idle (session.finalText holds the answer) or error (session.lastError). When session.status is waiting, tell the person the desktop needs them to answer a session.waitingFor (permission or question) prompt in OpenWork. With the sessionId of a desktop session, returns a transcript page (full message text, tool calls, status) read from the desktop; page with from and cursor/nextCursor. If the desktop has not answered within about 20 seconds the result is state \"pending\" with a requestId: call remote-session:read with that requestId later to collect it. A desktop command's status also says which computer (computerId) took it.",
+      "Read a remote session's recent transcript and status from your OpenWork Web instance, or the status of a desktop command, including which computer (computerId) took it. For a desktop command, poll with commandId until state is failed or expired, or session.status is idle (session.finalText holds the answer) or error (session.lastError). When session.status is waiting, tell the person the desktop needs them to answer a session.waitingFor (permission or question) prompt in OpenWork. With the sessionId of a desktop session, returns a transcript page (full message text, tool calls, status) read from the desktop; page with from and cursor/nextCursor. If the desktop has not answered within about 20 seconds the result is state \"pending\" with a requestId: call remote-session:read with that requestId later to collect it. A desktop command's status also says which computer (computerId) took it.",
     searchExtraTokens:
       "remote session sessions chat thread cloud web instance read transcript status reply answer poll result output check progress desktop command",
     argumentsSchema: {
@@ -248,7 +248,7 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
     action: "list",
     summary:
       "List the sessions you started on your desktop with remote-session:create target \"desktop\", newest first, with title, sessionId, workspaceId, status, and updatedAt. Use a sessionId with remote-session:read, send, or stop.",
-    searchExtraTokens: "remote session sessions list desktop recent my find which history",
+    searchExtraTokens: "remote session sessions list desktop conversations chats started recent history",
     argumentsSchema: {
       type: "object",
       properties: {
