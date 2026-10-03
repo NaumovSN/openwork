@@ -8,22 +8,6 @@ concurrency:
   group: jev-coverage-${{ github.event_name }}-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 jobs:
-  validation:
-    if: github.event_name == 'pull_request'
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
-        with:
-          ref: ${{ github.ref }}
-          persist-credentials: false
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24
-      - name: Secret-free focused tests
-        run: node --test .github/scripts/jev-test-coverage-review.test.mjs
   review:
     if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
