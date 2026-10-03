@@ -305,6 +305,7 @@ test("vision judging runs only trusted default-branch code against same-repo pro
   const [judging, upload] = judgingAndUpload.split("      - name: Replace the proof records with judged ones\n");
   assert.doesNotMatch(beforeJudging + upload, /secrets\.|OPENAI_API_KEY/);
   assert.match(judging, /OPENAI_API_KEY: \$\{\{ secrets.OPENAI_API_KEY \}\}/);
+  assert.match(judging, /OPENWORK_EVAL_VISION_MODEL: gpt-5\.6-luna/);
   assert.match(judging, /EXPECTED_SHA: \$\{\{ github.event.pull_request.head.sha \}\}/);
   assert.match(judging, /node evals\/scripts\/judge-journeys.mjs/);
   assert.match(upload, /name: pr-proof-\$\{\{ github.run_attempt \}\}-\$\{\{ matrix.key \}\}/);
