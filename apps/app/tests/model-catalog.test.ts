@@ -45,7 +45,7 @@ describe("model sources and pins", () => {
     expect(modelSource(local)).toBe("local");
     expect(modelSource(option("lpr_team", "same"))).toBe("organization");
     expect(modelTitle(auto)).toBe("Auto");
-    expect(modelSubtitle(auto)).toBe("Free · OpenWork picks the model");
+    expect(modelSubtitle(auto)).toBe("OpenWork picks the model");
   });
   test("preserves ordered authorized alias pins through import parsing and runtime option merging", () => {
     const imports = readWorkspaceCloudImports({ cloudImports: { providers: { team: {
@@ -89,13 +89,12 @@ describe("Auto submission walls", () => {
   });
   test("typed failures supply four states without money, paid offers, or automatic retries", () => {
     const wall = autoAccessWallFromError({ error: { code: "anonymous_limit_exceeded" } }, auto);
-    expect(wall).toEqual({ state: "limit" });
-    expect(autoAccessWallFromError({ code: "model_sync_pending" }, auto)).toEqual({ state: "sync" });
+    expect(wall).toEqual({ state: "limit", code: "anonymous_limit_exceeded" });
+    expect(autoAccessWallFromError({ code: "model_sync_pending" }, auto)).toEqual({ state: "sync", code: "model_sync_pending" });
     expect(autoAccessWallFromError({ code: "anonymous_limit_exceeded" }, local)).toBeNull();
     const copy = autoWallCopy({ state: "limit" }, false);
-    expect(copy.title).toBe("This week’s free limit is used up");
-    expect(copy.detail).toContain("resets Monday");
-    expect(copy.detail).toContain("larger free limit");
+    expect(copy.title).toBe("You’ve reached the free Auto limit");
+    expect(copy.detail).toBe("Sign in for more free use, or pick another model.");
     expect(autoWallCopy({ state: "limit" }, true).detail).not.toContain("Sign in");
     expect(JSON.stringify(copy)).not.toMatch(/\$|USD|upgrade|paid|automatically/i);
   });
@@ -107,9 +106,9 @@ describe("Auto submission walls", () => {
     expect(replyModelLabel({ id: "reply", role: "assistant", parts: [], metadata: { opencode: { replyModel: { providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID } } } })).toBeNull();
     expect(replyModelFromInfo({ role: "assistant" })).toBeUndefined();
     const resolved = replyModelFromInfo({ role: "assistant", providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID, resolvedModel: { id: AUTO_MODEL_ID } });
-    expect(replyModelLabel({ id: "resolved", role: "assistant", parts: [], metadata: { opencode: { replyModel: resolved } } })).toBe("GPT-5.6 Luna");
+    expect(replyModelLabel({ id: "resolved", role: "assistant", parts: [], metadata: { opencode: { replyModel: resolved } } })).toBe("GPT-6 Luna");
     const completed = mergeReplyMetadata({ opencode: { replyModel: resolved } }, { opencode: { replyModel: replyModelFromInfo({ role: "assistant", providerID: AUTO_PROVIDER_ID, modelID: AUTO_MODEL_ID }) } });
-    expect(replyModelLabel({ id: "resolved", role: "assistant", parts: [], metadata: completed })).toBe("GPT-5.6 Luna");
+    expect(replyModelLabel({ id: "resolved", role: "assistant", parts: [], metadata: completed })).toBe("GPT-6 Luna");
     expect(replyModelLabel({ id: "alias", role: "assistant", parts: [], metadata: { opencode: { replyModel: replyModelFromInfo({ role: "assistant", providerID: "ipr_fixture", modelID: "gwm_alias" }) } } })).toBeNull();
     const metadata = mergeReplyMetadata({ opencode: { replyModel: reply, created: 1 } }, { opencode: { completed: 2 } });
     expect(replyModelLabel({ id: "reply", role: "assistant", parts: [], metadata })).toBe("actual-witness");

@@ -1,7 +1,8 @@
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
-import { MEMBER_FREE_STATUS_PATH } from "@openwork/free-auto"
+import { MEMBER_FREE_STATUS_PATH, MEMBER_FREE_RESPONSES_PATH } from "@openwork/free-auto"
 import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
 import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
+import { GATEWAY_BEARER_KEY_PREFIX } from "@openwork-ee/utils/gateway-bearer-key"
 import { Hono } from "hono"
 import type { Context } from "hono"
 import { createMiddleware } from "hono/factory"
@@ -17,7 +18,7 @@ import {
   safeAccessUrl,
 } from "./inference-reporting.js"
 import type { InferenceReporter } from "./inference-reporting.js"
-import { inferenceAuth } from "./middleware/inference-auth.js"
+import { inferenceAuth, readOpenWorkKey } from "./middleware/inference-auth.js"
 import { gatewayAuth } from "./middleware/gateway-auth.js"
 import type { findActiveGatewayKey } from "./keys.js"
 import type { InferenceAuthEnv, InferenceAuthVariables } from "./middleware/inference-auth.js"
@@ -26,7 +27,7 @@ import type { LoadOrganization, OrganizationVariables } from "./middleware/org-c
 import { listModelCatalog, resolveModelAlias } from "./model-catalog.js"
 import type { AnalyticsObserver, beginModelAnalytics } from "./task-analytics.js"
 import { completeChatResponse, inferenceError, readResponseJson, relayChatStream, upstreamError } from "./chat-response.js"
-import { registerGatewayRoutes } from "./gateway.js"
+import { gatewayModelEndpoints, gatewayModelsPath, registerGatewayRoutes } from "./gateway.js"
 import type { GatewayDependencies } from "./gateway.js"
 import { isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./relay.js"
 import { createRequestLogRecorder, insertRequestLogIntoDb } from "./request-log.js"
@@ -57,13 +58,29 @@ const chatCompletionsPath = "/api/v1/chat/completions"
 const modelsPath = "/api/v1/models"
 
 /**
+ * Paths shared with OpenWork Models: GET /api/v1/models and the provider-less POST endpoints.
+ * An ow_gw_ key there is handled by Gateway; any other key stays on OpenWork Models.
+ */
+function isSharedGatewayRequest(request: Request, path: string) {
+  const shared = (request.method === "GET" && path === gatewayModelsPath)
+    || (request.method === "POST" && Object.hasOwn(gatewayModelEndpoints, path))
+  if (!shared) return false
+  try {
+    return readOpenWorkKey(request)?.startsWith(GATEWAY_BEARER_KEY_PREFIX) === true
+  } catch {
+    // Conflicting credentials are rejected by the Models authenticator.
+    return false
+  }
+}
+
+/**
  * Free Auto on a key whose organization pays for OpenWork Models: the Auto status check, or a chat request for the
  * Auto model. Those go to the free handler, which bills the member's free allowance, never the organization.
  */
 async function isFreeAutoRequest(request: Request): Promise<boolean> {
   const path = new URL(request.url).pathname
   if (request.method === "GET" && path === MEMBER_FREE_STATUS_PATH) return true
-  if (request.method !== "POST" || path !== chatCompletionsPath) return false
+  if (request.method !== "POST" || (path !== chatCompletionsPath && path !== MEMBER_FREE_RESPONSES_PATH)) return false
   try {
     const body: unknown = await request.clone().json()
     return isJsonObject(body) && body.model === INFERENCE_FREE_MODEL_ID
@@ -873,7 +890,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
 
   const authenticateModels = inferenceAuth({ findActiveInferenceKey: dependencies.findActiveInferenceKey })
   const authenticateGateway = gatewayAuth({ findActiveGatewayKey: dependencies.findActiveGatewayKey ?? (async (key) => (await import("./keys.js")).findActiveGatewayKey(key)) })
-  api.use("/api/v1/*", createMiddleware<InferenceAuthEnv>((c, next) => c.req.path.startsWith("/api/v1/providers/")
+  api.use("/api/v1/*", createMiddleware<InferenceAuthEnv>((c, next) => c.req.path.startsWith("/api/v1/providers/") || isSharedGatewayRequest(c.req.raw, c.req.path)
     ? authenticateGateway(c, next) : authenticateModels(c, next)))
   api.use("/api/v1/*", orgContext({ loadOrganization: dependencies.loadOrganization ?? loadOrganizationFromDb }))
   registerGatewayRoutes(api, { fetch: dependencies.fetch, insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter, ...dependencies.gateway })

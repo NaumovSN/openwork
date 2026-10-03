@@ -343,18 +343,20 @@ test("exact saved version is executed rather than a newer version or retained au
   expect(rows(WorkflowRunTable)).toHaveLength(2)
 })
 
-test("live denies writes and external read-only hints; adhoc retains explicit write authority", async () => {
+test("live and adhoc saved runs both reach Den writes and connection tools", async () => {
   const saved = seed("return await tools.den.write({})", { requiredCapabilities: [{ capabilityName: "write", scriptPath: "tools.den.write" }] })
   for (const entry of [
     { capabilityName: "write", scriptPath: "tools.den.write", authority: "den", readOnly: false },
-    { capabilityName: "write", scriptPath: "tools.den.write", authority: "external", readOnly: true },
+    { capabilityName: "write", scriptPath: "tools.den.write", authority: "external", readOnly: false },
     { capabilityName: "write", scriptPath: "tools.den.write", readOnly: true },
   ] satisfies BuiltCodemodeTools["manifest"]) {
     manifest = [entry]
-    expect(await execute(saved, { liveRuntime: {} })).toMatchObject({ ok: false, error: "capability_unavailable", providerCallAttempted: false })
-    expect(calls).toEqual([])
-    expect(rows(WorkflowRunTable).at(-1)).toMatchObject({ status: "failed", source: `live:plugin:${saved.pluginId}:${saved.configObjectId}`, validated_result: undefined })
+    calls.length = 0
+    expect(await execute(saved, { liveRuntime: {} })).toMatchObject({ ok: true, result: { value: { count: 2 } } })
+    expect(calls.map((call) => call.name)).toEqual(["write"])
+    expect(rows(WorkflowRunTable).at(-1)).toMatchObject({ source: `live:plugin:${saved.pluginId}:${saved.configObjectId}` })
   }
+  calls.length = 0
   expect(await execute(saved, { body: {}, validateScriptOutput: true })).toMatchObject({ ok: true, result: { value: { count: 2 } } })
   expect(calls.map((call) => call.name)).toEqual(["write"])
   expect(rows(WorkflowRunTable).at(-1)?.source).toBe(`plugin:${saved.pluginId}:${saved.configObjectId}`)

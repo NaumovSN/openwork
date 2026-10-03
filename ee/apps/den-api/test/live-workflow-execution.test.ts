@@ -73,14 +73,12 @@ test("live execution binds receipts and fetched results to each caller and fetch
   }
 })
 
-test("execution boundary denies writes, forged hints, missing pairs and missing connections before calls", async () => {
+test("execution boundary still denies missing pairs and missing connections before calls", async () => {
   const { input } = fixture()
   let calls = 0
   const make = () => { calls += 1; return Effect.succeed({ actor: "unexpected" }) }
   const tools = built(make)
   for (const candidate of [
-    built(make, false),
-    { ...tools, manifest: [{ capabilityName: "read", scriptPath: "tools.den.read", readOnly: true }] },
     { ...tools, manifest: [{ capabilityName: "different", scriptPath: "tools.den.read", readOnly: true, authority: "den" }] } satisfies BuiltCodemodeTools,
     { tools: {}, manifest: [] },
   ]) {
@@ -90,12 +88,18 @@ test("execution boundary denies writes, forged hints, missing pairs and missing 
   expect(calls).toBe(0)
 })
 
-test("normal explicit runs retain write authority while Automations and live runs deny writes", async () => {
+test("explicit, live and Automation runs all reach writes and connection tools", async () => {
   const { input } = fixture()
-  const buildTools = async () => built(() => Effect.succeed({ actor: "caller" }), false)
-  expect((await executeWorkflow({ ...input, readOnly: false, buildTools })).ok).toBe(true)
-  expect((await executeWorkflow({ ...input, buildTools })).ok).toBe(false)
-  expect((await executeWorkflow({ ...input, readOnly: false, automationRunId: createDenTypeId("automationRun"), buildTools })).ok).toBe(false)
+  const write = async () => built(() => Effect.succeed({ actor: "caller" }), false)
+  const external = async (): Promise<BuiltCodemodeTools> => ({
+    ...await write(),
+    manifest: [{ capabilityName: "read", scriptPath: "tools.den.read", readOnly: true, authority: "external" }],
+  })
+  for (const buildTools of [write, external]) {
+    expect((await executeWorkflow({ ...input, readOnly: false, buildTools })).ok).toBe(true)
+    expect((await executeWorkflow({ ...input, buildTools })).ok).toBe(true)
+    expect((await executeWorkflow({ ...input, readOnly: false, automationRunId: createDenTypeId("automationRun"), buildTools })).ok).toBe(true)
+  }
 })
 
 test("live provenance overrides a snapshot source on success and preflight failure", async () => {

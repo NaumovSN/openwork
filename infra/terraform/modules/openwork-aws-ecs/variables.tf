@@ -71,6 +71,17 @@ variable "den_web_image" {
   default     = ""
 }
 
+variable "ecs_cluster_arn" {
+  description = "ARN of an existing ECS cluster (same region) to run the services in. Empty creates <name>-den. The services use the FARGATE launch type, so the cluster needs no capacity providers of its own."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.ecs_cluster_arn == "" || can(regex("^arn:aws[a-z-]*:ecs:[a-z0-9-]+:[0-9]{12}:cluster/.+$", var.ecs_cluster_arn))
+    error_message = "ecs_cluster_arn must be a full ECS cluster ARN (arn:aws:ecs:<region>:<account>:cluster/<name>) or empty."
+  }
+}
+
 variable "cpu_architecture" {
   description = "X86_64 or ARM64 (Graviton). The published images support both."
   type        = string

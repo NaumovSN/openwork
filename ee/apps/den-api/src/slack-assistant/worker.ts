@@ -1,11 +1,18 @@
 import { organizeSlackSession, renameSlackSession, slackSessionNeedsAttention } from "./runtime.js"
-import { checkpointSchema, advanceSlackRun, stopSlackStream, RemoteSessionUnavailableError } from "./run.js"
+import {
+  checkpointSchema,
+  advanceSlackRun,
+  stopSlackStream,
+  RemoteSessionUnavailableError,
+  LONG_TASK_QUIET_AFTER_MS,
+  QUEUED_LINE,
+} from "./run.js"
 import { z } from "zod"
 import { appLogger } from "../observability/logger.js"
 import { openworkYourConnectionsUrl } from "../mcp/connection-navigation.js"
 import { executeRemoteSessionCapability, type RemoteSessionAction } from "../mcp/remote-session-capabilities.js"
 import { buildSlackPrompt, SlackApiError, slackClient, slackEventSchema } from "./protocol.js"
-import { HEADLESS_RUN_MAX_MS, headlessRemoteCall } from "./headless.js"
+import { headlessRemoteCall } from "./headless.js"
 import {
   slackAssistantEnabledForInstallation,
   admitSlackRun,
@@ -29,7 +36,7 @@ import {
 } from "./repository.js"
 import { pruneSlackEvents, renewSlackLease, SlackLeaseLostError } from "./repository.js"
 
-/** OpenWork Web runs stop after 15 minutes; headless runs get the runner's longer bound. */
+/** OpenWork Web runs stop after 15 minutes; headless runs have no time limit and end with Stop or their answer. */
 const WEB_RUN_MAX_MS = 15 * 60_000
 
 async function remoteCall(actor: SlackActor, action: RemoteSessionAction, body: Record<string, unknown>) {
@@ -201,11 +208,21 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     if (existing?.sessionId && payload.title) await deps.rename(actor, existing.sessionId, payload.title)
     return checkpointEvent(event, { status: "done" })
   }
-  const thread = await lockSlackThread(event, actor)
-  if (!thread) return checkpointEvent(event, {}, 2_000)
+  const { thread, busy } = await lockSlackThread(event, actor)
+  if (!thread) {
+    // An earlier task of this member holds the thread; this message runs right after it. Say so once.
+    if (busy && !cp.queuedNoticeShown) {
+      const notice = { channel: event.channelId, thread_ts: event.threadTs, text: QUEUED_LINE }
+      const privateReply = installation.shadowMode || /(^|\s)--private(?=\s|$)/.test(payload.text ?? "")
+      if (privateReply && payload.channel_type !== "im")
+        await slack("chat.postEphemeral", { ...notice, user: event.slackUserId })
+      else await slack("chat.postMessage", notice)
+      return checkpointEvent(event, { checkpoint: JSON.stringify({ ...cp, queuedNoticeShown: true }) }, 2_000)
+    }
+    return checkpointEvent(event, {}, 2_000)
+  }
   const headless = actor.runtime === "headless"
-  const maxRunMs = headless ? HEADLESS_RUN_MAX_MS : WEB_RUN_MAX_MS
-  if (event.cancelled || Date.now() - event.createdAt.getTime() > maxRunMs) {
+  if (event.cancelled || (!headless && Date.now() - event.createdAt.getTime() > WEB_RUN_MAX_MS)) {
     if (cp.sessionId && cp.phase !== "create")
       await deps.remote(actor, "stop", { sessionId: cp.sessionId, messageId: `msg_${event.id}` })
     if (cp.channel)
@@ -234,6 +251,8 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     if (identity.user_id !== event.slackUserId || identity.team_id !== event.teamId || identity.bot_id)
       throw new Error("slack_actor_mismatch")
     cp.startedAt ??= Date.now()
+    // Quiet by default: Slack's working status, then the answer. Admins can turn on live steps and notes.
+    cp.live = installation.progressUpdates
     cp.recipientUserId = event.slackUserId
     cp.recipientTeamId = event.teamId
     cp.privateReply =
@@ -304,6 +323,7 @@ export async function processSlackEvent(event: EventRow, suppliedDeps = defaultW
     title: `${event.channelId} · ${(payload.text ?? "Task").slice(0, 85)}`,
     webHandoff: !headless,
     model: headless ? (installation.model ?? undefined) : undefined,
+    quietAfterMs: headless ? LONG_TASK_QUIET_AFTER_MS : undefined,
   })
   if (result.done) await releaseSlackThread(event)
   await checkpointEvent(
@@ -333,6 +353,18 @@ export async function handleSlackEventFailure(event: EventRow, error: unknown, d
     )
     return
   }
+  if (!stopped)
+    appLogger.warn("slack_assistant_failed", {
+      event_id: event.id,
+      attempts: event.attempts,
+      code:
+        error instanceof SlackApiError
+          ? error.code
+          : error instanceof RemoteSessionUnavailableError
+            ? "remote_session_unavailable"
+            : "worker_error",
+      elapsed_ms: Date.now() - event.createdAt.getTime(),
+    })
   await renewSlackLease(event)
   const installation = await getInstallation(event.connectionId)
   const cp = checkpointSchema.parse(event.checkpoint ? JSON.parse(event.checkpoint) : {})

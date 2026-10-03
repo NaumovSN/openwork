@@ -59,6 +59,7 @@ describe("marketplace MCP readiness parsing", () => {
       title: "Linear",
     })).toEqual([{
       configObjectId: "cfg_linear",
+      connectionId: null,
       description: "Linear",
       id: "cfg_linear",
       name: "Linear",
@@ -67,6 +68,37 @@ describe("marketplace MCP readiness parsing", () => {
       transport: "http",
       url: "https://mcp.linear.app/mcp",
     }]);
+  });
+
+  test("names a synced single-server .mcp.json after its server, not the file", () => {
+    const [entry] = pluginMcpEntries({
+      currentRelativePath: "plugins/probe-plugin/.mcp.json",
+      description: "\"mcpServers\": {",
+      id: "cfg_probe",
+      normalizedPayload: {
+        mcpServers: {
+          "probe-server": { type: "http", url: "https://probe.example.com/mcp" },
+        },
+      },
+      title: ".mcp",
+    });
+    expect(entry?.name).toBe("probe-server");
+    expect(entry?.description).toBe("");
+  });
+
+  test("keeps per-server names for a synced multi-server .mcp.json", () => {
+    expect(pluginMcpEntries({
+      currentRelativePath: "plugins/probe-plugin/.mcp.json",
+      description: "2 MCP servers imported from plugins/probe-plugin/.mcp.json.",
+      id: "cfg_probe",
+      normalizedPayload: {
+        mcpServers: {
+          "probe-dev": { type: "http", url: "https://dev.probe.example.com/mcp" },
+          "probe-test": { type: "http", url: "https://test.probe.example.com/mcp" },
+        },
+      },
+      title: "probe-plugin",
+    }).map((entry) => entry.name)).toEqual(["probe-dev", "probe-test"]);
   });
 
   test("keeps command-based MCPs desktop only", () => {

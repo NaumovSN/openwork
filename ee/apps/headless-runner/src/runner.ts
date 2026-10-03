@@ -1,7 +1,9 @@
+import { createHash } from "node:crypto"
 import { FILE_TOOLS, FILE_TOOL_NAMES, runFileTool } from "./files.js"
 import type { McpConnector, ToolSession } from "./mcp.js"
 import { ModelError, type ModelClient } from "./model.js"
 import type { Store, StoredMessage, Turn } from "./store.js"
+import { withoutAttachments } from "./tool-files.js"
 import { RESUMABLE, type Message, type ToolResult, type TurnCredentials } from "./types.js"
 
 export const DEFAULT_SYSTEM_PROMPT = `You are OpenWork, an assistant running in the cloud on behalf of one person. There is no UI and nobody can approve actions while you work.
@@ -9,7 +11,11 @@ export const DEFAULT_SYSTEM_PROMPT = `You are OpenWork, an assistant running in 
 - Use the OpenWork tools (for example search_capabilities, then execute_capability) to reach the person's connected apps and skills.
 - Prefer reading and drafting. Only change data in the person's apps (send, post, create, update, delete) when their message explicitly asks for that exact action.
 - You have a small scratch workspace (list_files, read_file, write_file, edit_file, delete_file) that persists for this conversation. Use it for notes and drafts.
+- On a long task the person may only see your final message, so make it a complete answer on its own.
 - Reply concisely in Markdown.`
+
+/** A step that repeats the same calls and gets the same results this many times in a row ends the turn. */
+export const MAX_IDENTICAL_STEPS = 5
 
 export type RunnerOptions = {
   store: Store
@@ -17,7 +23,16 @@ export type RunnerOptions = {
   defaultModel: string
   defaultModelApiKey?: string
   mcp?: McpConnector
-  limits: { maxConcurrentTurns: number; maxSteps: number; turnTimeoutMs: number; contextCharBudget: number }
+  limits: {
+    maxConcurrentTurns: number
+    /** Infinity for no step limit. */
+    maxSteps: number
+    /** Infinity for no turn timeout. */
+    turnTimeoutMs: number
+    /** A turn using a caller's MCP token pauses between steps after this long, to be resumed with a fresh one. */
+    credentialRefreshMs: number
+    contextCharBudget: number
+  }
   systemPrompt?: string
   now?: () => number
 }
@@ -38,7 +53,41 @@ export const MAX_QUEUED_PER_SESSION = 20
 
 type Job = { sessionId: string; messageId: string }
 
-/** Keeps whole turns, newest first, within a character budget. The current turn is always kept. */
+/** Stands in for an older tool result in a long turn; the call, and whether it failed, stay in context. */
+export const TRIMMED_TOOL_OUTPUT =
+  "[Output removed to keep this long task within the model's context. Run the tool again if you still need it.]"
+/** Outputs shorter than this are kept: removing them saves little. */
+const TRIM_MIN_CHARS = 1_000
+/**
+ * Outputs are removed in blocks, so the context prefix changes only every few steps and the prompt cache keeps
+ * hitting in between.
+ */
+const TRIM_BLOCK = 8
+
+const messageSize = (message: Message) => (message.role === "tool" ? message.output.length + 200 : JSON.stringify(message).length)
+
+/** A turn bigger than the budget on its own keeps every call and its newest outputs; the oldest large outputs go first. */
+function fitTurn(turn: Message[], budget: number): Message[] {
+  let size = turn.reduce((sum, message) => sum + messageSize(message), 0)
+  if (size <= budget) return turn
+  const candidates = turn.flatMap((message, index) =>
+    message.role === "tool" && message.output.length > TRIM_MIN_CHARS ? [{ index, saved: message.output.length - TRIMMED_TOOL_OUTPUT.length }] : [],
+  )
+  let count = 0
+  while (count < candidates.length && size > budget) {
+    size -= candidates[count].saved
+    count += 1
+  }
+  const trimmed = new Set(candidates.slice(0, Math.min(candidates.length, Math.ceil(count / TRIM_BLOCK) * TRIM_BLOCK)).map((candidate) => candidate.index))
+  return turn.map((message, index) =>
+    trimmed.has(index) && message.role === "tool" ? { ...message, output: TRIMMED_TOOL_OUTPUT, images: undefined, documents: undefined } : message,
+  )
+}
+
+/**
+ * Keeps whole turns, newest first, within a character budget. The current turn is always kept; when it alone
+ * outgrows the budget (a long task), its oldest large tool outputs are replaced by a short note.
+ */
 export function buildContext(messages: StoredMessage[], currentMessageId: string, budget: number): Message[] {
   const turns: StoredMessage[][] = []
   for (const message of messages) {
@@ -46,25 +95,21 @@ export function buildContext(messages: StoredMessage[], currentMessageId: string
     if (last && last[0].messageId === message.messageId) last.push(message)
     else turns.push([message])
   }
-  const kept: StoredMessage[][] = []
+  const kept: Message[][] = []
   let used = 0
   for (let index = turns.length - 1; index >= 0; index -= 1) {
     const turn = turns[index]
-    const size = turn.reduce(
-      (sum, entry) => sum + (entry.message.role === "tool" ? entry.message.output.length + 200 : JSON.stringify(entry.message).length),
-      0,
-    )
     const isCurrent = turn[0].messageId === currentMessageId
+    const entries = isCurrent
+      ? fitTurn(turn.map((entry) => entry.message), budget)
+      : // Images and PDFs are large; the model sees them in the turn that fetched them, earlier turns keep the text.
+        turn.map(({ message }) => withoutAttachments(message))
+    const size = entries.reduce((sum, message) => sum + messageSize(message), 0)
     if (!isCurrent && used + size > budget) break
-    kept.unshift(turn)
+    kept.unshift(entries)
     used += size
   }
-  // Images are large; the model sees them in the turn that fetched them, earlier turns keep the text.
-  return kept.flat().map((entry) =>
-    entry.messageId !== currentMessageId && entry.message.role === "tool" && entry.message.images
-      ? { ...entry.message, images: undefined, output: `${entry.message.output}\n[images from an earlier turn not shown]` }
-      : entry.message,
-  )
+  return kept.flat()
 }
 
 /** Tool calls whose result was never recorded (process crashed or turn was aborted mid-call). */
@@ -172,9 +217,17 @@ export class Runner {
     const key = `${sessionId}:${messageId}`
     const credentials = this.credentials.get(key) ?? {}
     this.credentials.delete(key)
-    const timeout = setTimeout(() => controller.abort(new Error("turn_timeout")), limits.turnTimeoutMs)
+    const timeout = Number.isFinite(limits.turnTimeoutMs)
+      ? setTimeout(() => controller.abort(new Error("turn_timeout")), limits.turnTimeoutMs)
+      : undefined
     const signal = controller.signal
     let tools: ToolSession | null = null
+    const startedAt = Date.now()
+    let steps = 0
+    let toolCalls = 0
+    let lastStep = ""
+    let identicalSteps = 0
+    console.log(`[headless-runner] turn started ${JSON.stringify({ sessionId, messageId })}`)
 
     const turnMessages = () =>
       store.messages(sessionId).filter((entry) => entry.messageId === messageId).map((entry) => entry.message)
@@ -223,6 +276,12 @@ export class Runner {
 
       for (let step = 0; step < limits.maxSteps; step += 1) {
         signal.throwIfAborted()
+        // Between steps, never mid-call, so no tool is cut off. The caller resumes the turn right away with a
+        // fresh MCP token; a caller that stopped supervising simply never resumes it.
+        if (tools && step > 0 && Date.now() - startedAt >= limits.credentialRefreshMs) {
+          store.setTurnStatus(sessionId, messageId, "interrupted", "credentials_refresh")
+          return
+        }
         const result = await this.options.model.complete({
           system,
           messages: buildContext(store.messages(sessionId), messageId, limits.contextCharBudget),
@@ -231,12 +290,15 @@ export class Runner {
           apiKey,
           signal,
         })
+        steps += 1
+        toolCalls += result.toolCalls.length
         store.addUsage(sessionId, messageId, result.usage)
         store.appendMessage(sessionId, messageId, { role: "assistant", text: result.text, toolCalls: result.toolCalls })
         if (result.toolCalls.length === 0) {
           store.setTurnStatus(sessionId, messageId, "completed")
           return
         }
+        const outcomes: ToolResult[] = []
         for (const call of result.toolCalls) {
           signal.throwIfAborted()
           const outcome: ToolResult = call.inputError
@@ -256,7 +318,19 @@ export class Runner {
             output: outcome.output,
             isError: outcome.isError,
             ...(outcome.images?.length ? { images: outcome.images } : {}),
+            ...(outcome.documents?.length ? { documents: outcome.documents } : {}),
           })
+          outcomes.push(outcome)
+        }
+        // Same calls, same inputs, same results, again and again: the model is stuck, not making progress.
+        const signature = createHash("sha256")
+          .update(JSON.stringify(result.toolCalls.map((call, index) => [call.name, call.input, outcomes[index]?.output, outcomes[index]?.isError])))
+          .digest("hex")
+        identicalSteps = signature === lastStep ? identicalSteps + 1 : 1
+        lastStep = signature
+        if (identicalSteps >= MAX_IDENTICAL_STEPS) {
+          store.setTurnStatus(sessionId, messageId, "failed", "stuck_repeating")
+          return
         }
       }
       store.setTurnStatus(sessionId, messageId, "failed", "max_steps_exceeded")
@@ -274,6 +348,23 @@ export class Runner {
     } finally {
       clearTimeout(timeout)
       await tools?.close()
+      // One line per turn, never content or credentials: how it ended, how long it ran, and what it cost.
+      const turn = store.getTurn(sessionId, messageId)
+      // Later turns never see a finished turn's images and PDFs, so their bytes are not kept on the small disk.
+      // Interrupted turns keep them: the turn resumes and still needs them.
+      if (turn && ["completed", "failed", "aborted"].includes(turn.status)) store.stripAttachments(sessionId, messageId)
+      console.log(
+        `[headless-runner] turn ended ${JSON.stringify({
+          sessionId,
+          messageId,
+          status: turn?.status,
+          error: turn?.error,
+          steps,
+          toolCalls,
+          elapsedMs: Date.now() - startedAt,
+          ...turn?.usage,
+        })}`,
+      )
     }
   }
 }

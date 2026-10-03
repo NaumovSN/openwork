@@ -32,7 +32,8 @@ test("renders probe branding and accessible human labels in every state", () => 
     expect(html).toContain('data-connector-name="Notion"');
     expect(html).toContain("/ext-notion.svg");
     expect(html).toContain(label);
-    expect(html).toContain(`aria-label="${label}.`);
+    // Every state, failures included, names the row on its details icon.
+    expect(html).toContain(`technical details for ${label}"`);
     expect(html).not.toContain("Used *");
     expect(html).not.toContain("mcp:emc_probe:*");
     expect(html).not.toContain("Waiting for your action");
@@ -80,8 +81,9 @@ test("unfinished code mode calls do not resume animating after interruption", ()
   };
   for (const lifecycle of [null, "interrupted"] satisfies Array<null | "interrupted">) {
     const html = renderToStaticMarkup(<CodeModeTool part={part} calls={[call]} lifecycle={lifecycle} connectors={[]} />);
-    expect(html).toContain("Status unavailable");
-    expect(html).toContain("Checking connection");
+    expect(html).toContain("status unavailable");
+    // Groups stay collapsed unless the person opens them, so nothing animates.
+    expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain("animate-spin");
     expect(html).not.toContain("Task interrupted");
     expect(html).not.toContain("Completed");
@@ -109,9 +111,10 @@ test("code-mode failures remain neutral and do not hide the failed call", () => 
     { type: "dynamic-tool", toolName: "linear_list_teams", toolCallId: "second", state: "input-available", input: {} },
   ];
   const html = renderToStaticMarkup(<CodeModeTool part={part} calls={calls} lifecycle="running" connectors={[]} />);
-  expect(html).toContain("1 failed call");
-  expect(html).toContain("Couldn&#x27;t");
-  expect(html).toContain("ow-text-shimmer");
+  expect(html).toContain("1 failed");
+  // Running groups stay collapsed; the live step shows in the line itself.
+  expect(html).toContain('aria-expanded="false"');
+  expect(html).toContain("Listing teams");
   expect(html).not.toContain("text-destructive");
   expect(html).not.toContain("Completed with errors");
 });
@@ -133,5 +136,5 @@ test("renders a connector logo beside a human-readable completed tool call", () 
 
   expect(html).toContain('data-connector-name="Google Workspace"');
   expect(html).toContain("ext-google-workspace.svg");
-  expect(html).toContain("Fetched Google Workspace Calendar Events");
+  expect(html).toContain("Fetched calendar events · Google Workspace");
 });

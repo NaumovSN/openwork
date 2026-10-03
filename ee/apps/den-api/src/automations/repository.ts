@@ -1385,6 +1385,24 @@ export class DenAutomationRepository implements AutomationRepository {
     )).orderBy(desc(AutomationRunnerTable.last_seen_at)).limit(input.limit)
   }
 
+  /** One runner's capabilities and last contact, scoped to its owner. */
+  async desktopRunnerById(input: {
+    organizationId: string
+    ownerMemberId: string
+    runnerId: string
+  }): Promise<{ capabilities: AutomationDesktopRunnerCapability[]; lastSeenAt: number } | null> {
+    const rows = await db.select({
+      capabilities: AutomationRunnerTable.capabilities,
+      lastSeenAt: AutomationRunnerTable.last_seen_at,
+    }).from(AutomationRunnerTable).where(and(
+      eq(AutomationRunnerTable.id, input.runnerId),
+      eq(AutomationRunnerTable.organization_id, normalizeOrganizationId(input.organizationId)),
+      eq(AutomationRunnerTable.owner_member_id, normalizeMemberId(input.ownerMemberId)),
+    )).limit(1)
+    const row = rows[0]
+    return row ? { capabilities: row.capabilities ?? [], lastSeenAt: row.lastSeenAt.getTime() } : null
+  }
+
   private async missedDesktopReason(input: {
     organizationId: string
     ownerMemberId: string

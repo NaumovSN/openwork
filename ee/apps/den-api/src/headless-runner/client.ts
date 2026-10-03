@@ -34,7 +34,8 @@ export type HeadlessRunnerActor = { userId: string; organizationId: string }
 export type HeadlessRunnerDeps = {
   config: HeadlessRunnerConfig
   fetch: typeof fetch
-  mintToken: (input: HeadlessRunnerActor & { ttlMs?: number }) => Promise<{ token: string }>
+  /** `messageId` is the turn the token is minted for, so a caller can remember which run it belongs to. */
+  mintToken: (input: HeadlessRunnerActor & { ttlMs?: number; messageId?: string }) => Promise<{ token: string }>
 }
 
 export function defaultHeadlessRunnerDeps(env: Record<string, string | undefined> = process.env): HeadlessRunnerDeps | null {
@@ -147,7 +148,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       input: { sessionId: string; messageId: string; prompt: string; model?: string; ttlMs?: number },
     ): Promise<RunnerResult<{ state: string }>> {
       const ttlMs = Math.min(input.ttlMs ?? DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS, DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS)
-      const { token } = await deps.mintToken({ ...actor, ttlMs })
+      const { token } = await deps.mintToken({ ...actor, ttlMs, messageId: input.messageId })
       const { status, payload } = await request(deps, "POST", `${sessionPath(input.sessionId)}/turns`, {
         messageId: input.messageId,
         prompt: input.prompt,
@@ -159,9 +160,11 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return { ok: true, value: { state: accepted.success ? accepted.data.state : "accepted" } }
     },
 
-    async readSession(sessionId: string, input: { messageId?: string; limit?: number } = {}): Promise<RunnerResult<RunnerSnapshot>> {
+    /** `outputs: "none"` leaves tool outputs on the runner when a caller only needs each tool's outcome. */
+    async readSession(sessionId: string, input: { messageId?: string; limit?: number; outputs?: "none" } = {}): Promise<RunnerResult<RunnerSnapshot>> {
       const query = new URLSearchParams({ limit: String(input.limit ?? 500) })
       if (input.messageId) query.set("messageId", input.messageId)
+      if (input.outputs) query.set("outputs", input.outputs)
       const { status, payload } = await request(deps, "GET", `${sessionPath(sessionId)}?${query.toString()}`)
       if (status !== 200) return { ok: false, status, error: errorCode(payload, `headless_read_${status}`) }
       const snapshot = runnerSnapshotSchema.safeParse(payload)

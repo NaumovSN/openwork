@@ -7061,7 +7061,7 @@ export type MintAutomationRunnerTokenData = {
     runnerId: string;
     protocolVersion: 1;
     supportedExecutionTargets: ["desktop"];
-    capabilities?: Array<"model_attention_v1" | "remote_session_v1">;
+    capabilities?: Array<"model_attention_v1" | "remote_session_v1" | "remote_session_control_v1">;
     appVersion: string;
     platform: "darwin" | "win32" | "linux";
     concurrency: number;
@@ -10681,7 +10681,7 @@ export type GetV1McpAppsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can list Apps for dashboards.
+   * The caller must be an organization member.
    */
   403: ForbiddenError;
 };
@@ -26780,6 +26780,10 @@ export type GetV1McpConnectionsByConnectionIdSlackAssistantResponses = {
      */
     defaultModel: string | null;
     /**
+     * Whether Slack shows steps and notes while a task works, or only its working status.
+     */
+    progressUpdates: boolean;
+    /**
      * Models the headless runner can use; empty when the workspace doesn't use the headless runner.
      */
     models: Array<{
@@ -26820,6 +26824,10 @@ export type PutV1McpConnectionsByConnectionIdSlackAssistantData = {
      * Gateway model alias for headless runs; null restores the runner default. Omit to keep the current model.
      */
     model?: string | null;
+    /**
+     * Show steps and notes in Slack while a task works. Off (the default) shows only Slack's working status, then the answer. Omit to keep the current setting.
+     */
+    progressUpdates?: boolean;
   };
   path: {
     /**

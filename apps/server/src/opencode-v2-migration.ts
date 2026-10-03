@@ -6,9 +6,18 @@ import { createManagedOpencodeV2Server, type ManagedOpencodeV2Server } from "./m
 
 export interface EngineV2MigrationStatus {
   state: "idle" | "running" | "completed" | "error";
+  /**
+   * While running: `starting` until the history snapshot is counted,
+   * `converting` while the engine converts it (counts do not move), then
+   * `copying` as chats are imported. Lets clients show indeterminate progress
+   * instead of a stalled "0 of N".
+   */
+  phase?: "starting" | "converting" | "copying";
   imported: number;
   skipped: number;
   total: number;
+  /** ISO time the current migration started. */
+  startedAt?: string;
   error?: string;
 }
 
@@ -66,13 +75,14 @@ export async function migrateOpencodeV1History(options: {
   await mkdir(options.storageDir, { recursive: true, mode: 0o700 });
   const root = await mkdtemp(join(options.storageDir, "migration-"));
   let converter: ManagedOpencodeV2Server | undefined;
-  const status: EngineV2MigrationStatus = { state: "running", imported: 0, skipped: 0, total: 0 };
+  const status: EngineV2MigrationStatus = { state: "running", phase: "starting", imported: 0, skipped: 0, total: 0 };
   try {
     const database = join(root, "opencode.db");
     try { await access(options.source); } catch { throw new Error("No v1 chat history found for this profile. Create a v1 chat before migrating."); }
     await snapshotV1Database(options.source, database);
     const sessions = await readMigrationSessions(database);
     status.total = sessions.length;
+    status.phase = "converting";
     options.progress({ ...status });
     if (sessions.length) {
       // No user config, credentials, plugins, or previous preview database in the converter.
@@ -92,6 +102,8 @@ export async function migrateOpencodeV1History(options: {
         if (Date.now() > deadline) throw new Error("History conversion timed out. Retry migration.");
         await new Promise((resolve) => setTimeout(resolve, 250));
       }
+      status.phase = "copying";
+      options.progress({ ...status });
       const pending = new Map(sessions.map((session) => [session.id, session]));
       while (pending.size) {
         let advanced = false;
@@ -115,9 +127,9 @@ export async function migrateOpencodeV1History(options: {
         if (!advanced) throw new Error("History contains circular parent chats. Your v1 history is unchanged.");
       }
     }
-    options.progress({ ...status, state: "completed" });
+    options.progress({ ...status, state: "completed", phase: undefined });
   } catch (error) {
-    options.progress({ ...status, state: "error", error: error instanceof Error ? error.message : "Migration failed. Retry migration." });
+    options.progress({ ...status, state: "error", phase: undefined, error: error instanceof Error ? error.message : "Migration failed. Retry migration." });
   } finally {
     try { await converter?.close(); } finally { await rm(root, { recursive: true, force: true }); }
   }

@@ -2,9 +2,41 @@
 
 The command palette offers **Switch to OpenCode v1**, **Switch to OpenCode v2**,
 and **Migrate chats to OpenCode v2**. Advanced settings uses the same engine
-commands and migration consent dialog. Switching engines never migrates history.
-V1 remains the default. Desktop packages include both pinned native executables;
-v2's download fallback remains available for standalone servers.
+commands. Both hand off to one app-wide owner (`shell/engine-migration.tsx`)
+for the switch check, the migration consent, and migration progress, so a
+migration stays visible after the surface that started it closes. Switching
+engines never migrates history. V1 remains the default. Desktop packages include
+both pinned native executables; v2's download fallback remains available for
+standalone servers.
+
+## Running tasks, switching, and migration progress
+
+Before switching, the app reads `GET /experimental/engine-v2-preview/activity`
+(counts only) for the engine being left. Running v1 tasks keep running unseen
+after a switch to v2, and switching to v1 stops the v2 sidecar, so either case
+asks first ("Switch anyway" / "Stop tasks and switch").
+
+Migration consent names running v1 tasks the same way: a chat copied mid-turn
+lands in v2 half-finished while v1 keeps running it. The server enforces this:
+`POST …/migrate` answers 409 `engine_migration_active_sessions` while v1 reports
+busy work, unless the request sets `allowActiveSessions: true` ("Migrate
+anyway"). Engine switches during a migration answer 409
+`engine_migration_running`.
+
+While a migration runs, a modal shows progress. The person can choose
+**Continue using OpenWork**, which leaves a top banner ("OpenWork may be
+unstable until this finishes") with **Show progress**. Status reports a
+`phase` (`starting`, `converting`, `copying`) and `startedAt`; the counts only
+move while copying, so the bar is indeterminate before that instead of
+showing a stalled "0 of N". A finished migration offers **Switch to OpenCode
+v2**; one finished in the background reports with a toast instead. A failure
+brings the dialog back with **Try again**, which skips chats already copied.
+
+Session sync keys run state by workspace and session, not by engine, and
+migrated chats keep their ids. A status read is therefore only adopted by the
+engine it came from, a released sync for the other engine is disposed when
+chats move to a new engine, and failed status reads back off instead of
+polling an unreachable engine at 4 Hz.
 
 Connect health and repair follow the active local engine. On v2, diagnostics
 read native `/api/mcp` connection status and `/api/model` tool capabilities;
@@ -27,7 +59,8 @@ Temporary snapshots and the converter are cleaned up afterward.
 
 Migration keeps the selected engine. It can partially complete if a chat fails;
 retrying imports the remaining chats. Existing imported IDs are never overwritten,
-so later edits in v1 do not sync. Stop active tasks before taking the snapshot.
+so later edits in v1 do not sync. Active v1 tasks block the snapshot unless the
+person chooses to migrate anyway.
 The migration includes local history across workspaces in the active profile,
 not history on connected remote servers. Development profiles remain isolated.
 
@@ -61,6 +94,9 @@ the warning and cancellation from settings and palette, and real chat turns on
 both engines. UI consent/blocked/progress tests and desktop target mapping tests
 also run in the core checks.
 
-Design: P3 (details disclosure), P5 (existing ToggleGroup, Button and AlertDialog),
-P9 (migration data and risks), P10 (desktop screenshots), S2 (settings rows), S6
-(shared commands), C1 (verb-first actions), C6 (retryable errors).
+Design: P3 (details disclosure), P5 (existing ToggleGroup, Button, AlertDialog,
+Dialog, Progress and Alert), P9 (migration data and risks), P10 (desktop
+screenshots), P11 (no step labels; counts appear once they move), S2 (settings
+rows), S6 (one owner for palette and settings), C1 (verb-first actions), C2
+(Migrate → Migrated), C5 (running tasks are a warning, not an error), C6
+(retryable errors).

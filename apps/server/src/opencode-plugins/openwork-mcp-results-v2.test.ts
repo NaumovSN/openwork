@@ -28,6 +28,7 @@ test("connection reports from Code Mode calls are attached to the outer execute"
     { tool: "openwork-cloud_connection_action", input: { connectionId: "conn_notion" }, status: "completed", output: payload },
     { tool: "openwork-cloud_execute_capability", input: { name: "notion.search" }, status: "error",
       error: JSON.stringify({ error: "needs_connection", connectionStatus: payload }) },
+    { tool: "openwork-cloud_search_capabilities", input: {}, status: "completed", output: { matches: [payload] } },
   ] });
 });
 
@@ -56,4 +57,32 @@ test("the plugin registers both hooks and is always in the v2 config", async () 
   expect(disposed).toBe(2);
   const config = renderOpencodeV2Config({ providers: [], skills: [], mcpResultsPluginDirectory: "/runtime/mcp-results" });
   expect(config.plugins).toEqual([{ package: "file:///runtime/mcp-results" }]);
+});
+
+
+test("Code Mode preserves real App preparation, launch and failed builds", () => {
+  const collector = createMcpResultsCollector();
+  collector.before({ ...call, tool: "execute" });
+  const output = { app: { appId: "app" }, launch: { connectionId: "app", toolName: "open_app", resourceUri: "ui://app", arguments: { input: {} } } };
+  collector.after({ ...call, tool: "openwork-cloud_prepare_app", input: { title: "App" }, status: "completed", result: { output: { preparationId: "prepared" } } });
+  collector.after({ ...call, tool: "openwork-cloud_create_app", input: { preparationId: "prepared" }, status: "completed", result: { output } });
+  collector.after({ ...call, tool: "openwork-cloud_update_app", input: { appId: "app" }, status: "error", error: new Error("Compilation failed") });
+  const result: { metadata?: Record<string, unknown> } = {};
+  collector.after({ ...call, tool: "execute", input: {}, status: "completed", result });
+  expect(result.metadata?.openworkMcpResults).toEqual([
+    { tool: "openwork-cloud_prepare_app", input: { title: "App" }, status: "completed", output: { preparationId: "prepared" } },
+    { tool: "openwork-cloud_create_app", input: { preparationId: "prepared" }, status: "completed", output },
+    { tool: "openwork-cloud_update_app", input: { appId: "app" }, status: "error", error: "Compilation failed" },
+  ]);
+});
+
+test("Code Mode inner calls reported with a dot (openwork-cloud.create_app) are still preserved", () => {
+  const collector = createMcpResultsCollector();
+  collector.before({ ...call, tool: "execute" });
+  collector.after({ ...call, tool: "openwork-cloud.create_app", input: { preparationId: "prepared" }, status: "error", error: new Error("MCP App compilation failed. Generated MCP Apps cannot use timers.") });
+  const result: { metadata?: Record<string, unknown> } = {};
+  collector.after({ ...call, tool: "execute", input: {}, status: "completed", result });
+  expect(result.metadata?.openworkMcpResults).toEqual([
+    { tool: "openwork-cloud_create_app", input: { preparationId: "prepared" }, status: "error", error: "MCP App compilation failed. Generated MCP Apps cannot use timers." },
+  ]);
 });

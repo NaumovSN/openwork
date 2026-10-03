@@ -1,6 +1,7 @@
 import { DEN_HTTP_KEEP_ALIVE_TIMEOUT_MS, serveDenHttp } from "./http-server.js"
 import app from "./app.js"
 import { startSlackAssistantWorker } from "./slack-assistant/worker.js"
+import { startSlackDesktopHandoffWorker } from "./slack-assistant/desktop-handoff.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
 import { shutdownObservability } from "./observability/runtime.js"
@@ -13,6 +14,7 @@ import { startAutomationSchedulerLoop } from "./automations/scheduler-loop.js"
 import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
 
 const stopSlackAssistantWorker = startSlackAssistantWorker()
+const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopCloudIdleStopLoop = startCloudIdleStopLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
@@ -80,6 +82,7 @@ async function stopBackgroundLoops() {
   const results = await Promise.allSettled([
     stopScimMaintenanceLoop(),
     stopSlackAssistantWorker(),
+    stopSlackDesktopHandoffWorker(),
     stopCloudIdleStopLoop(),
     stopWorkerProvisioningReconcileLoop(),
     stopGithubSyncWorker(),

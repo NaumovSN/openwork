@@ -512,6 +512,11 @@ export function electronSurfaceEnv(
     ...selectedAppEnv(),
     ...(pnpmHome ? { PNPM_HOME: pnpmHome } : {}),
     APPDATA: paths.appDataDir,
+    // Den hands a member's Automation runs and remote-session commands to any
+    // of that member's runners, so an eval desktop signed in to a real account
+    // would take real work. Specs that exercise the runner opt in with
+    // `env: { OPENWORK_AUTOMATION_RUNNER: "on" }`.
+    OPENWORK_AUTOMATION_RUNNER: "off",
     HOME: paths.homeDir,
     LOCALAPPDATA: paths.localAppDataDir,
     OPENWORK_DATA_DIR: paths.dataDir,

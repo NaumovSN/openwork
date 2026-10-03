@@ -667,7 +667,6 @@ export function CommandPalette(props: CommandPaletteProps) {
 
   return (
     <>
-    {engine.dialog}
     <CommandDialog open={props.open} onOpenChange={handleOpenChange}>
       <CommandDialogPopup onKeyDownCapture={handleEscape}>
         <CommandDialogTitle>

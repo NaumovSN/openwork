@@ -1,12 +1,14 @@
 import { afterAll, afterEach, beforeEach, expect, mock, test, setSystemTime, spyOn } from "bun:test";
 import { GlobalRegistrator } from "@happy-dom/global-registrator";
 import { act, useLayoutEffect, useState } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import type { Root } from "react-dom/client";
 import { MemoryRouter, useLocation } from "react-router";
 import { notifyManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { GeneratedArtifactViewRevision, SavedAppDetail } from "@openwork/types/workflows";
 
+import type { BuiltMcpAppCatalogEntry } from "../src/app/lib/built-mcp-app-catalog";
 import type { DashboardTileActions } from "../src/react-app/domains/dashboard/dashboard-tile-shell";
+import type { DashboardMcpAppEntry } from "../src/react-app/domains/dashboard/granted-dashboard-store";
 import type { DenGrantedDashboard } from "../src/app/lib/den";
 import type { DenAuthStatus } from "../src/react-app/domains/cloud/den-auth-provider";
 import type { McpAppSandboxViewProps } from "../src/components/chat/mcp-app-frame";
@@ -14,6 +16,7 @@ import { denSettingsChangedEvent } from "../src/app/lib/den-session-events";
 import { resetDashboardTileCacheMemory } from "../src/app/lib/dashboard-cache-storage";
 
 GlobalRegistrator.register({ url: "http://localhost/" });
+const { createRoot } = await import("react-dom/client");
 const previousAct = Reflect.get(globalThis, "IS_REACT_ACT_ENVIRONMENT");
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true);
 notifyManager.setScheduler(queueMicrotask);
@@ -27,6 +30,7 @@ let memberId: string | null = "member";
 let organizationRole = "admin";
 const workspace = { workspaceId: "workspace", openworkServerClient: {} };
 const client = {
+  listBuiltMcpApps: mock(async (_orgId: string): Promise<BuiltMcpAppCatalogEntry[]> => { throw new den.DenApiError(404, "not_found", "Not available"); }),
   listOrgs: mock(async () => ({ orgs: [{ id: settings.activeOrgId, role: organizationRole }] })),
   listSavedApps: mock(async (_orgId: string) => ({ enabled: true, sharingEnabled: false, items: [detail] })),
   listGrantedDashboards: mock(async (_orgId: string): Promise<DenGrantedDashboard[]> => []),
@@ -62,11 +66,14 @@ mock.module("../src/components/chat/mcp-app-frame", () => ({
 }));
 
 const { DashboardTileShell } = await import("../src/react-app/domains/dashboard/dashboard-tile-shell");
+const { dashboardTileRunsAutomatically } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache");
 const refresh = mock(() => {});
 mock.module("../src/react-app/domains/dashboard/mcp-app-tile", () => ({
-  McpAppTile: ({ entry, cacheScopeKey, renderActions }: { entry: { title: string; toolName: string; launchArguments?: Record<string, unknown> }; cacheScopeKey: string; renderActions?: DashboardTileActions }) =>
-    <DashboardTileShell title={entry.title} compact renderActions={renderActions} onRefresh={refresh} badge={<span>Updated just now</span>}>
-      <div data-live-tool={entry.toolName} data-live-scope={cacheScopeKey} style={{ height: 720 }}>{JSON.stringify(entry.launchArguments)}</div>
+  McpAppTile: ({ entry, cacheScopeKey, renderActions, actionsPlacement }: { entry: DashboardMcpAppEntry; cacheScopeKey: string; renderActions?: DashboardTileActions; actionsPlacement?: "header" }) =>
+    <DashboardTileShell title={entry.title} compact actionsPlacement={actionsPlacement} renderActions={renderActions} onRefresh={refresh} badge={<span>Updated just now</span>}>
+      <div data-live-tool={entry.toolName} data-live-scope={cacheScopeKey}
+        data-auto-launch={dashboardTileRunsAutomatically(entry.requiresApproval === true, entry.autoLaunch === true, entry.launchApproved === true, entry.organizationAutoLaunch === true)}
+        style={{ height: 720 }}>{JSON.stringify(entry.launchArguments)}</div>
     </DashboardTileShell>,
 }));
 
@@ -120,6 +127,7 @@ beforeEach(() => {
   client.getSavedApp.mockClear();
   client.listSavedApps.mockClear().mockImplementation(async () => ({ enabled: true, sharingEnabled: false, items: [detail] }));
   client.listGrantedDashboards.mockClear().mockImplementation(async () => []);
+  client.listBuiltMcpApps.mockClear().mockImplementation(async () => { throw new den.DenApiError(404, "not_found", "Not available"); });
   client.setAppOnDashboard.mockClear().mockImplementation(async () => { await writes(); });
   launch = mock(async (_prompt: string) => {});
   cache = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity }, mutations: { retry: false } } });
@@ -213,13 +221,13 @@ function button(text: string) {
 }
 
 async function openMenu(title = detail.view.title) {
-  const trigger = container.querySelector<HTMLButtonElement>(`[aria-label="App options for ${title}"]`);
+  const trigger = container.querySelector<HTMLButtonElement>(`[aria-label="Artifact options for ${title}"]`);
   if (!trigger) throw new Error("Missing app menu");
   await act(async () => trigger.click());
 }
 
 function updateMenuItem() {
-  return Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) => item.textContent === "Update app");
+  return Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) => item.textContent === "Update artifact");
 }
 
 function expectRepairPrompt(prompt: string | undefined) {
@@ -239,7 +247,7 @@ test.each(["dashboard", "artifact"])("%s update button and menu draft the same i
   await render(surface);
   expect(container.textContent).toContain(detail.previewNotice);
   expect(launch).not.toHaveBeenCalled();
-  await act(async () => button("Update app").click());
+  await act(async () => button("Update artifact").click());
   expect(launch).toHaveBeenCalledTimes(1);
   expectRepairPrompt(launch.mock.calls[0]?.[0]);
   await openMenu();
@@ -254,15 +262,15 @@ test.each(["dashboard", "artifact"])("%s disables update while opening and suppo
   const opening = Promise.withResolvers<void>();
   launch.mockImplementationOnce(() => opening.promise);
   await render(surface);
-  await act(async () => button("Update app").click());
+  await act(async () => button("Update artifact").click());
   expect(button("Opening conversation…").disabled).toBe(true);
-  expect(container.querySelector<HTMLButtonElement>('[aria-label^="App options"]')?.disabled).toBe(true);
+  expect(container.querySelector<HTMLButtonElement>('[aria-label^="Artifact options"]')?.disabled).toBe(true);
   await act(async () => button("Opening conversation…").click());
   expect(launch).toHaveBeenCalledTimes(1);
   await act(async () => opening.reject(new Error("Workspace disconnected")));
   expect(container.querySelector('[role="alert"]')?.textContent).toBe("Workspace disconnected");
-  expect(button("Update app").disabled).toBe(false);
-  await act(async () => button("Update app").click());
+  expect(button("Update artifact").disabled).toBe(false);
+  await act(async () => button("Update artifact").click());
   expect(launch).toHaveBeenCalledTimes(2);
   expect(container.querySelector('[role="alert"]')).toBeNull();
 });
@@ -272,14 +280,14 @@ test.each(["dashboard", "artifact"])("%s members see no management controls or p
   detail.canManage = false;
   await render(surface);
   expect(container.textContent).toContain(detail.previewNotice);
-  expect(findButton("Update app")).toBeUndefined();
-  expect(findButton("Add")).toBeUndefined();
+  expect(findButton("Update artifact")).toBeUndefined();
+  expect(findButton("Add to dashboard")).toBeUndefined();
   expect(findButton("Share")).toBeUndefined();
   if (surface === "dashboard") {
     await openMenu();
-    expect(Array.from(document.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent)).toEqual(["Open app"]);
+    expect(Array.from(document.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent)).toEqual(["Open artifact"]);
   } else {
-    expect(container.querySelector('[aria-label^="App options"]')).toBeNull();
+    expect(container.querySelector('[aria-label^="Artifact options"]')).toBeNull();
   }
   expect(document.querySelector('[role="separator"]')).toBeNull();
   expect(document.body.textContent).not.toContain("Only organization owners and admins");
@@ -291,7 +299,7 @@ test.each(["dashboard", "artifact"])("%s members see no management controls or p
 test.each(["dashboard", "artifact"])("%s does not offer repair without a preview notice", async (surface) => {
   detail.previewNotice = null;
   await render(surface);
-  expect(findButton("Update app")).toBeUndefined();
+  expect(findButton("Update artifact")).toBeUndefined();
   await openMenu();
   expect(updateMenuItem()).toBeUndefined();
   expect(launch).not.toHaveBeenCalled();
@@ -301,7 +309,7 @@ test.each(["dashboard", "artifact"])("%s leaves a working preview unchanged even
   workingDetail();
   await render(surface);
   expect(container.querySelector("[data-preview]")?.textContent).toBe("Working preview");
-  expect(findButton("Update app")).toBeUndefined();
+  expect(findButton("Update artifact")).toBeUndefined();
   await openMenu();
   expect(updateMenuItem()).toBeUndefined();
   expect(launch).not.toHaveBeenCalled();
@@ -310,10 +318,10 @@ test.each(["dashboard", "artifact"])("%s leaves a working preview unchanged even
 test("artifact without a conversation launcher leaves the warning read-only", async () => {
   await render("artifact", false);
   expect(container.textContent).toContain(detail.previewNotice);
-  expect(findButton("Update app")).toBeUndefined();
+  expect(findButton("Update artifact")).toBeUndefined();
   await openMenu();
   expect(updateMenuItem()).toBeUndefined();
-  expect(Array.from(document.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent)).toEqual(["Delete app"]);
+  expect(Array.from(document.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent)).toEqual(["Delete artifact"]);
   expect(document.querySelector('[role="separator"]')).toBeNull();
   expect(launch).not.toHaveBeenCalled();
 });
@@ -429,7 +437,7 @@ test.each(["live", "snapshot"].flatMap((mode) => ["admin", "owner", "member", "u
   expect(tile).not.toBeNull();
   expect(tile?.closest("[data-dashboard-masonry]")).not.toBeNull();
   expect(tile?.querySelector("header")).toBeNull();
-  expect(tile?.textContent).not.toContain("Open app");
+  expect(tile?.textContent).not.toContain("Open artifact");
   expect(tile?.className).not.toMatch(/border|overflow-hidden/);
   const preview = tile?.querySelector<HTMLElement>(mode === "live" ? "[data-live-tool]" : "[data-preview]");
   expect(preview?.style.height).toBe("720px");
@@ -437,7 +445,7 @@ test.each(["live", "snapshot"].flatMap((mode) => ["admin", "owner", "member", "u
     expect(parent.className).not.toMatch(/max-h-|overflow-auto|overflow-y-auto/);
   }
   if (mode === "snapshot") expect(preview?.dataset.presentation).toBe("dashboard");
-  const triggers = tile?.querySelectorAll<HTMLButtonElement>('[aria-label^="App options"]');
+  const triggers = tile?.querySelectorAll<HTMLButtonElement>('[aria-label^="Artifact options"]');
   expect(triggers?.length).toBe(1);
   expect(triggers?.[0]?.disabled).toBe(false);
   expect(triggers?.[0]?.tabIndex).toBe(0);
@@ -451,7 +459,7 @@ test.each(["live", "snapshot"].flatMap((mode) => ["admin", "owner", "member", "u
   if (!isAdmin) {
     expect(document.querySelector('[role="separator"]')).toBeNull();
     expect(Array.from(document.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent))
-      .toEqual(mode === "live" ? ["Open app", "Refresh"] : ["Open app"]);
+      .toEqual(mode === "live" ? ["Open artifact", "Refresh"] : ["Open artifact"]);
   }
   expect(document.body.textContent).not.toContain("Only organization owners and admins");
   const menu = document.querySelector('[data-slot="dropdown-menu-content"]');
@@ -477,7 +485,7 @@ test.each(["admin", "owner", "member", "unknown"])("%s only sees dashboard add, 
   workingDetail();
   await render("dashboard");
   await act(async () => cache.setQueryData(["saved-apps", ...scope], { enabled: true, sharingEnabled: true, items: [detail] }));
-  expect(findButton("Add") !== undefined).toBe(isAdmin);
+  expect(findButton("Add to dashboard") !== undefined).toBe(isAdmin);
   expect(findButton("Share") !== undefined).toBe(isAdmin);
   detail.view.activeRevisionId = null;
   await render("artifact");
@@ -486,7 +494,7 @@ test.each(["admin", "owner", "member", "unknown"])("%s only sees dashboard add, 
     expect(button("Save").disabled).toBe(false);
     await act(async () => button("Save").click());
   } else {
-    expect(container.querySelector('[aria-label^="App options"]')).toBeNull();
+    expect(container.querySelector('[aria-label^="Artifact options"]')).toBeNull();
     expect(container.textContent).not.toContain("Ask for changes in the conversation");
   }
   expect(document.querySelector('[role="dialog"]') !== null).toBe(isAdmin);
@@ -498,7 +506,7 @@ test("unverified organization authority hides management without blocking previe
   client.listOrgs.mockImplementation(async () => { throw new Error("Role unavailable"); });
   workingDetail();
   await render("dashboard");
-  expect(findButton("Add")).toBeUndefined();
+  expect(findButton("Add to dashboard")).toBeUndefined();
   expect(container.querySelector("[data-preview]")).not.toBeNull();
   await openMenu();
   expect(document.querySelector(`[aria-label="Delete ${detail.view.title}"]`)).toBeNull();
@@ -524,9 +532,9 @@ test.each(["admin", "member", "unknown"])("%s empty dashboard only invites app c
   organizationRole = role;
   detail.onDashboard = false;
   await render("dashboard");
-  expect(findButton("Add your first app") !== undefined).toBe(role === "admin");
-  expect(container.textContent?.includes("Make this dashboard yours")).toBe(role === "admin");
-  expect(container.textContent?.includes("This dashboard has no apps yet.")).toBe(role !== "admin");
+  expect(findButton("Add an artifact") !== undefined).toBe(role === "admin");
+  expect(container.textContent?.includes("Pin the artifacts you check every day")).toBe(role === "admin");
+  expect(container.textContent?.includes("This dashboard has no artifacts yet.")).toBe(role !== "admin");
   expect(document.body.textContent).not.toContain("Only organization owners and admins");
 });
 
@@ -545,7 +553,7 @@ test.each(["admin", "member"])("external managed MCP tiles remain refresh-only f
 test("saved app options open by keyboard and deletion still requires confirmation", async () => {
   workingDetail();
   await render("dashboard");
-  const trigger = container.querySelector<HTMLButtonElement>('[aria-label^="App options"]');
+  const trigger = container.querySelector<HTMLButtonElement>('[aria-label^="Artifact options"]');
   if (!trigger) throw new Error("Missing app options");
   await act(async () => {
     trigger.focus();
@@ -580,9 +588,9 @@ test.each(["personal", "company"])("dashboard metadata starts in parallel and wa
   expect(client.getSavedApp).not.toHaveBeenCalled();
   await act(async () => { if (first === "personal") company.resolve(dashboards); else personal.resolve(apps); });
   expect(container.querySelector('[aria-label="Loading dashboard"]')).toBeNull();
-  const sections = Array.from(container.querySelectorAll('section[aria-label="Your apps"], section[data-granted-dashboard]'));
+  const sections = Array.from(container.querySelectorAll('section[aria-label="Your artifacts"], section[data-granted-dashboard]'));
   expect(sections).toHaveLength(2);
-  expect(sections[0]?.getAttribute("aria-label")).toBe("Your apps");
+  expect(sections[0]?.getAttribute("aria-label")).toBe("Your artifacts");
   expect(sections[1]?.getAttribute("data-granted-dashboard")).toBe("company-board");
   expect(client.listSavedApps).toHaveBeenCalledTimes(1);
   expect(client.listGrantedDashboards).toHaveBeenCalledTimes(1);
@@ -604,12 +612,12 @@ test("failed initial lists leave the loading gate and keep the existing personal
   client.listGrantedDashboards.mockImplementation(async () => { throw new Error("Company list unavailable"); });
   await renderPage();
   expect(container.querySelector('[aria-label="Loading dashboard"]')).toBeNull();
-  expect(container.textContent).toContain("Your apps could not be loaded.");
+  expect(container.textContent).toContain("Your artifacts could not be loaded.");
   expect(container.textContent).toContain("Your organization's dashboards could not be loaded right now.");
   client.listSavedApps.mockImplementation(async () => ({ enabled: true, sharingEnabled: false, items: [detail] }));
   await act(async () => button("Try again").click());
   expect(container.textContent).toContain(detail.view.title);
-  expect(container.textContent).not.toContain("Your apps could not be loaded.");
+  expect(container.textContent).not.toContain("Your artifacts could not be loaded.");
   expect(container.querySelector('[aria-label="Loading dashboard"]')).toBeNull();
 });
 
@@ -680,7 +688,7 @@ test("snapshot metadata loading reserves a short remembered height without tall 
   expect(container.querySelector<HTMLElement>("[data-personal-dashboard-app]")?.style.minHeight).toBe("124px");
   expect(container.querySelector("[data-personal-dashboard-app] header")).toBeNull();
   expect(container.querySelector("[data-personal-dashboard-app] section")?.className).not.toContain("min-h-64");
-  expect(container.textContent).toContain("Loading app…");
+  expect(container.textContent).toContain("Loading artifact…");
   expect(container.querySelector("[data-preview]")).toBeNull();
   await act(async () => pending.resolve(detail));
   expect(previewFrame().props.initialHeight).toBe(96);
@@ -775,3 +783,77 @@ function workingDetail() {
     },
   };
 }
+
+
+const builtFixture: BuiltMcpAppCatalogEntry = {
+  connectionId: `cob_0${"a".repeat(25)}`, pluginId: `plg_0${"b".repeat(25)}`,
+  serverName: "openwork-app-host-connect-fixture", toolName: "open_app", projectedToolName: "fixture_open_app",
+  resourceUri: `ui://openwork/apps/cob_0${"a".repeat(25)}/revisions/cov_0${"1".repeat(25)}/index.html`,
+  title: "Bug dashboard", description: "Open bugs grouped by team", pluginName: "Engineering", requiresApproval: false,
+};
+
+test("a member adds a shared built App with fuzzy search, refreshes it and removes only their placement", async () => {
+  organizationRole = "member";
+  detail.onDashboard = false;
+  client.listBuiltMcpApps.mockImplementation(async () => [builtFixture, { ...builtFixture, connectionId: `cob_0${"c".repeat(25)}`, title: "Sales report" }]);
+  await render("dashboard");
+  expect(container.textContent).toContain("Pin the artifacts you check every day");
+  await act(async () => button("Add to dashboard").click());
+  const input = document.querySelector<HTMLInputElement>('[aria-label="Search artifacts"]');
+  if (!input) throw new Error("App search missing");
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(input, "bgdsh");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  const choice = document.querySelector<HTMLElement>('[aria-label="Add Bug dashboard"]');
+  expect(choice).not.toBeNull();
+  expect(document.querySelector('[aria-label="Add Sales report"]')).toBeNull();
+  await act(async () => { input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+  expect(container.querySelector('[aria-label="Bug dashboard"]')).not.toBeNull();
+  expect(container.querySelector('[data-live-tool="open_app"]')?.getAttribute("data-auto-launch")).toBe("true");
+  // Personal tiles match company tiles: no header chrome, sharing sits in the hover menu.
+  expect(container.querySelector('[aria-label="Artifact options for Bug dashboard"]')?.closest("header")).toBeNull();
+  expect(findButton("Share")).toBeUndefined();
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Artifact options for Bug dashboard"]')?.click());
+  expect(document.querySelector('[role="menuitem"][aria-label="Share Bug dashboard"]')).not.toBeNull();
+  await act(async () => document.querySelector<HTMLElement>('[aria-label="Refresh Bug dashboard"]')?.click());
+  expect(refresh).toHaveBeenCalledTimes(1);
+  expect(client.setAppOnDashboard).not.toHaveBeenCalled();
+  const storage = Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index)).find(key => key?.startsWith("openwork:personal-mcp-apps"));
+  expect(storage).toBeDefined();
+  expect(JSON.parse(window.localStorage.getItem(storage ?? "") ?? "[]")).toEqual([builtFixture.connectionId]);
+  await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Artifact options for Bug dashboard"]')?.click());
+  await act(async () => document.querySelector<HTMLElement>('[aria-label="Remove Bug dashboard from dashboard"]')?.click());
+  expect(container.querySelector('[aria-label="Bug dashboard"]')).toBeNull();
+  expect(client.setAppOnDashboard).not.toHaveBeenCalled();
+});
+
+test("built App placements survive reopening but do not cross members or revocation", async () => {
+  organizationRole = "member";
+  detail.onDashboard = false;
+  client.listBuiltMcpApps.mockImplementation(async () => [builtFixture]);
+  const { builtDashboardScope } = await import("../src/react-app/domains/dashboard/built-dashboard-apps");
+  const key = builtDashboardScope(scope);
+  window.localStorage.setItem(key, JSON.stringify([builtFixture.connectionId]));
+  await render("dashboard");
+  expect(container.querySelector('[aria-label="Bug dashboard"]')).not.toBeNull();
+  memberId = "another-member";
+  await render("dashboard");
+  expect(container.querySelector('[aria-label="Bug dashboard"]')).toBeNull();
+  memberId = "member";
+  await render("dashboard");
+  expect(container.querySelector('[aria-label="Bug dashboard"]')).not.toBeNull();
+  await act(async () => cache.setQueryData(["built-dashboard-apps", ...scope], []));
+  expect(container.querySelector('[aria-label="Bug dashboard"]')).toBeNull();
+  expect(JSON.parse(window.localStorage.getItem(key) ?? "[]")).toEqual([builtFixture.connectionId]);
+});
+
+test("built Apps retain the existing saved app and creation paths for admins", async () => {
+  client.listBuiltMcpApps.mockImplementation(async () => [builtFixture]);
+  await render("dashboard");
+  await act(async () => button("Add to dashboard").click());
+  expect(document.body.textContent).toContain("Create with OpenWork");
+  const saved = Array.from(document.querySelectorAll("button")).find(candidate => candidate.textContent === "Other saved artifacts");
+  await act(async () => saved?.click());
+  expect(document.body.textContent).toContain(detail.view.title);
+});

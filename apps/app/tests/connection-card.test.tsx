@@ -421,3 +421,12 @@ describe("connection card states", () => {
     }
   })
 })
+
+test("a card signed in earlier stays connected after reopening the session, from the live connection list", () => {
+  const identity = { id: "connection:connection-1", name: "Research Vault", iconUrl: null, serviceUrl: null, toolNamespace: null, connectionId: "connection-1" }
+  const stale = renderToStaticMarkup(<ConnectionCard part={part} connectorIdentities={[{ ...identity, connectedForMe: false }]} />)
+  expect(stale).toContain("Connect Research Vault")
+  const live = renderToStaticMarkup(<ConnectionCard part={part} connectorIdentities={[{ ...identity, connectedForMe: true }]} />)
+  expect(live).toContain("Research Vault connected")
+  expect(live).not.toContain(">Connect</button>")
+})

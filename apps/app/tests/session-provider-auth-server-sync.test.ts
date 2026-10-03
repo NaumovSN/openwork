@@ -249,8 +249,8 @@ function installFetchMock(
       if (url.pathname === "/global/health") {
         return jsonResponse({ healthy: true, version: "1.17.11" });
       }
-      if (url.pathname === "/provider") {
-        return jsonResponse({ all: [], connected: [], default: {} });
+      if (url.pathname === "/config/providers") {
+        return jsonResponse({ providers: [], default: {} });
       }
       if (url.pathname === "/config") {
         return jsonResponse({ disabled_providers: [] });
@@ -385,8 +385,8 @@ describe("session-route cloud provider sync wiring", () => {
     const chosen = "gwm_00000000000000000000000001_00000000000000000000000004_00000000000000000000000003";
     provider.models = { [first]: { ...base, id: first, name: "First alias" }, [chosen]: { ...base, id: chosen, name: "Chosen alias" } };
     const requests: RecordedRequest[] = [];
-    installFetchMock(requests, { respond: (request) => new URL(request.url).pathname === "/provider"
-      ? jsonResponse({ all: [provider], connected: [provider.id], default: { [provider.id]: first } }) : undefined });
+    installFetchMock(requests, { respond: (request) => new URL(request.url).pathname === "/config/providers"
+      ? jsonResponse({ providers: [provider], default: { [provider.id]: first } }) : undefined });
     const store = createSessionRouteStore({ endpoint: makeEndpoint({ origin: "https://server.example", isRemote: false }), hostToken: "host-token" });
     const release = beginPendingGatewayModelSelection();
     try {
@@ -524,7 +524,11 @@ describe("session-route cloud provider sync wiring", () => {
             auth.delete(decodeURIComponent(path.slice("/auth/".length)));
             return jsonResponse(true);
           }
-          if (path === "/provider") return jsonResponse(providerList());
+          if (path === "/config/providers") {
+            const list = providerList();
+            const connected = new Set(list.connected);
+            return jsonResponse({ providers: list.all.filter((item) => connected.has(item.id)), default: list.default });
+          }
           if (path === "/workspace/ws_1/config" && request.method === "GET") {
             return jsonResponse({
               opencode: { provider: Object.fromEntries(runtimeProviders) },

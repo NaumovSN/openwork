@@ -3,7 +3,7 @@ locals {
   api_host      = var.api_domain_name != "" ? var.api_domain_name : "api.${var.domain_name}"
   web_url       = "https://${var.domain_name}"
   api_url       = "https://${local.api_host}"
-  region        = split(":", aws_ecs_cluster.this.arn)[3]
+  region        = split(":", aws_cloudwatch_log_group.api.arn)[3] # works on AWS provider v5 and v6
   den_api_image = var.den_api_image != "" ? var.den_api_image : "ghcr.io/different-ai/openwork-den-api:${var.openwork_version}"
   den_web_image = var.den_web_image != "" ? var.den_web_image : "ghcr.io/different-ai/openwork-den-web:${var.openwork_version}"
 

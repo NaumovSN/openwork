@@ -24,7 +24,7 @@ import { mcpProtectedResourceMetadataUrl, mcpRouteResource, resolveMcpResourceFr
 import { DEN_MCP_REQUESTED_SCOPE } from "./scopes.js"
 import { getMcpGrantLiveness } from "./grant-liveness.js"
 import { getMcpSessionLiveness } from "./session-liveness.js"
-import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, isHeadlessRunMcpToken } from "./headless-run-token.js"
+import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, DEN_MCP_HEADLESS_RUN_TOKEN_ID_CLAIM, isHeadlessRunMcpToken } from "./headless-run-token.js"
 export { hasActiveMcpSession } from "./session-liveness.js"
 
 export type McpPrincipal = {
@@ -322,6 +322,8 @@ async function verifyOpaqueMcpToken(token: string) {
     [DEN_MCP_RESOURCE_CLAIM]: resource,
     ...(accessToken.sessionId ? { sid: accessToken.sessionId } : {}),
     ...(accessToken.referenceId ? { [DEN_MCP_ORG_ID_CLAIM]: accessToken.referenceId } : {}),
+    // Lets work started by a headless run find the run it belongs to (for example its Slack thread).
+    ...(accessToken.clientId === DEN_MCP_HEADLESS_RUN_CLIENT_ID ? { [DEN_MCP_HEADLESS_RUN_TOKEN_ID_CLAIM]: accessToken.id } : {}),
   }
 }
 

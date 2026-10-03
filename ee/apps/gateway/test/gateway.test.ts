@@ -5,7 +5,7 @@ import { createMistral } from "@ai-sdk/mistral"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { GATEWAY_REQUEST_MODEL_HEADER } from "@openwork/types/den/gateway"
 import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
-import type { GatewayCredential, GatewayProvider } from "../src/gateway.js"
+import type { GatewayCredential, GatewayProvider, ResolveGatewayModelProvider } from "../src/gateway.js"
 import type { CheckGatewayUsage } from "../src/usage-limits.js"
 import { gatewayUsageLimitResponse, gatewayAccountingUnavailableResponse, type GatewayUsageStatus } from "@openwork/types/den/gateway-usage-limits"
 import type { InferenceReporter } from "../src/inference-reporting.js"
@@ -14,7 +14,7 @@ import type { RefreshGoogleOauthToken } from "../src/credentials/google-oauth-re
 import { createGoogleOauthRefresher } from "../src/credentials/google-oauth-refresh.js"
 import type { LoadProviderCredential } from "../src/provider-credentials.js"
 import { matrixRow, memoryStore, row as oauthRow } from "./google-oauth-refresh-fixture.js"
-import type { GatewayAccessRow } from "../src/provider-access.js"
+import type { GatewayAccessRow, GatewayMemberAccessRow } from "../src/provider-access.js"
 import { createProviderCatalog, getCatalogProvider } from "../src/provider-catalog.js"
 import type { GatewayRequestLogRow as InferenceRequestLogRow } from "../src/request-log.js"
 import { bedrockStreamFrames, eventStreamFrame } from "./helpers/event-stream.js"
@@ -72,6 +72,8 @@ type TestServerOptions = {
   provider?: Partial<GatewayProvider> | null
   credentialSet?: Partial<GatewayAccessRow["credentialSet"]>
   accessRows?: GatewayAccessRow[]
+  memberAccessRows?: GatewayMemberAccessRow[]
+  resolveGatewayModelProvider?: ResolveGatewayModelProvider
   credential?: Partial<GatewayCredential> | null
   access?: boolean
   fetch?: typeof fetch
@@ -161,6 +163,8 @@ function createTestServer(options: TestServerOptions = {}) {
   const upstreamRequests: UpstreamRequest[] = []
   const logRows: InferenceRequestLogRow[] = []
   const accessChecks: Array<{ inferenceProviderId: string; orgMembershipId: string }> = []
+  const memberAccessChecks: Array<{ organizationId: string; orgMembershipId: string; gatewayKeyId: string }> = []
+  const modelProviderLookups: Array<Parameters<ResolveGatewayModelProvider>[0]> = []
   const credentialLookups: Array<Parameters<LoadProviderCredential>[0]> = []
   const handledErrors: Array<Parameters<InferenceReporter["handledError"]>[0]> = []
   const tokenCalls = { mint: 0, refresh: 0 }
@@ -237,6 +241,17 @@ function createTestServer(options: TestServerOptions = {}) {
         accessChecks.push({ inferenceProviderId: input.gatewayProviderId, orgMembershipId: input.orgMembershipId })
         return options.access === false ? [] : accessRows
       },
+      async loadMemberGatewayAccess(input) {
+        memberAccessChecks.push({ organizationId: input.organizationId, orgMembershipId: input.orgMembershipId, gatewayKeyId: input.gatewayKeyId })
+        if (options.access === false) return []
+        return options.memberAccessRows ?? accessRows.map((row) => ({ ...row, provider: { id: providerId, provider_id: providerRow?.provider_id ?? "openai", name: "Test provider" } }))
+      },
+      async resolveGatewayModelProvider(input) {
+        modelProviderLookups.push(input)
+        if (options.resolveGatewayModelProvider) return options.resolveGatewayModelProvider(input)
+        if (!providerRow || input.organizationId !== providerRow.organization_id) return null
+        return accessRows.some((row) => row.model?.id === input.gatewayProviderModelId) ? providerRow.id : null
+      },
       async loadProviderCredential(input) {
         credentialLookups.push(input)
         return options.loadProviderCredential ? options.loadProviderCredential(input) : credentialRow
@@ -244,7 +259,7 @@ function createTestServer(options: TestServerOptions = {}) {
     },
   })
 
-  return { app, upstreamRequests, logRows, accessChecks, credentialLookups, accessRows, handledErrors, tokenCalls }
+  return { app, upstreamRequests, logRows, accessChecks, memberAccessChecks, modelProviderLookups, credentialLookups, accessRows, handledErrors, tokenCalls }
 }
 
 function gatewayRequest(input: { path: string; method?: string; body?: unknown; rawBody?: string; headers?: Record<string, string>; id?: string }) {
@@ -969,6 +984,188 @@ test("GET provider /models returns only local accessible aliases", async () => {
   assert.equal((await readError(response)).code, "provider_access_denied")
   assert.equal(denied.credentialLookups.length, 0)
   assert.equal(denied.upstreamRequests.length, 0)
+})
+
+function memberAccessRow(input: { provider: GatewayMemberAccessRow["provider"]; model: string | null; groupName?: string; setName?: string; createdAt?: Date }): GatewayMemberAccessRow {
+  const base = matrixRow()
+  const groupId = createDenTypeId("gatewayModelGroup")
+  const setId = createDenTypeId("gatewayCredentialSet")
+  return {
+    grant: { ...base.grant, id: createDenTypeId("inferenceProviderAccess"), gateway_provider_id: input.provider.id, model_group_id: groupId, credential_set_id: setId },
+    group: { ...base.group, id: groupId, gateway_provider_id: input.provider.id, name: input.groupName ?? "Default" },
+    credentialSet: { ...base.credentialSet, id: setId, gateway_provider_id: input.provider.id, name: input.setName ?? "Org key" },
+    model: input.model === null ? null : { id: createDenTypeId("inferenceProviderModel"), gateway_provider_id: input.provider.id, model_id: input.model,
+      name: input.model, model_config: {}, created_at: input.createdAt ?? new Date("2026-01-02T03:04:05Z") },
+    provider: input.provider,
+  }
+}
+
+function gatewayModelsRequest(headers: Record<string, string> = {}) {
+  return new Request("http://openwork.test/api/v1/models", { headers: { authorization: `Bearer ${gatewayKey}`, ...headers } })
+}
+
+test("GET /api/v1/models with a Gateway key lists every accessible model across providers in the OpenAI shape", async () => {
+  const openai = { id: createDenTypeId("inferenceProvider"), provider_id: "openai", name: "OpenAI" }
+  const anthropic = { id: createDenTypeId("inferenceProvider"), provider_id: "anthropic", name: "Anthropic" }
+  const gpt = memberAccessRow({ provider: openai, model: "gpt-4o" })
+  const claude = memberAccessRow({ provider: anthropic, model: "claude-sonnet-4-5", groupName: "Engineering", setName: "Team key" })
+  // A second grant for the same group/set/model is one model, not two.
+  const duplicateGrant = { ...gpt, grant: { ...gpt.grant, id: createDenTypeId("inferenceProviderAccess"), audience_key: "organization", org_membership_id: null } }
+  const emptyGroup = memberAccessRow({ provider: openai, model: null })
+  const fixture = createTestServer({ memberAccessRows: [claude, gpt, duplicateGrant, emptyGroup] })
+
+  const response = await fixture.app.fetch(gatewayModelsRequest())
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get("cache-control"), "no-store")
+  assert.ok(response.headers.get("x-openwork-request-id"))
+  const body = parseJsonObject(await response.text())
+  assert.equal(body.object, "list")
+  assert.ok(Array.isArray(body.data))
+  assert.equal(body.data.length, 2)
+  const [first, second] = body.data
+  assert.ok(isRecord(first) && isRecord(second))
+  assert.ok(claude.model && gpt.model)
+  // Sorted by provider name, then model name.
+  assert.deepEqual(first, {
+    id: createGatewayModelAlias({ modelGroupId: claude.group.id, credentialSetId: claude.credentialSet.id, gatewayProviderModelId: claude.model.id }),
+    object: "model",
+    created: Math.floor(Date.parse("2026-01-02T03:04:05Z") / 1000),
+    owned_by: "anthropic",
+    name: "claude-sonnet-4-5 (Engineering / Team key)",
+    openwork: { provider_id: anthropic.id, provider_name: "Anthropic", upstream_model_id: "claude-sonnet-4-5" },
+  })
+  assert.equal(second.owned_by, "openai")
+  assert.ok(isRecord(second.openwork) && second.openwork.provider_id === openai.id)
+
+  assert.deepEqual(fixture.memberAccessChecks, [{ organizationId, orgMembershipId: memberId, gatewayKeyId: "gky_test_key" }])
+  assert.equal(fixture.accessChecks.length, 0)
+  assert.equal(fixture.upstreamRequests.length, 0)
+  assert.equal(fixture.credentialLookups.length, 0)
+  assert.equal(fixture.logRows.length, 0)
+})
+
+test("GET /api/v1/models returns an empty list when a Gateway key has no grants", async () => {
+  const fixture = createTestServer({ access: false })
+  const response = await fixture.app.fetch(gatewayModelsRequest())
+  assert.equal(response.status, 200)
+  assert.deepEqual(parseJsonObject(await response.text()), { object: "list", data: [] })
+})
+
+test("GET /api/v1/models rejects invalid or conflicting Gateway credentials without loading access", async () => {
+  const fixture = createTestServer()
+  const unknown = await fixture.app.fetch(new Request("http://openwork.test/api/v1/models", { headers: { authorization: `Bearer ow_gw_${"B".repeat(43)}` } }))
+  assert.equal(unknown.status, 401)
+  const conflicting = await fixture.app.fetch(gatewayModelsRequest({ "x-api-key": "ow_inf_other" }))
+  assert.equal(conflicting.status, 401)
+  assert.equal(fixture.memberAccessChecks.length, 0)
+})
+
+function aliasFor(row: GatewayAccessRow | undefined) {
+  assert.ok(row?.model)
+  return createGatewayModelAlias({ modelGroupId: row.group.id, credentialSetId: row.credentialSet.id, gatewayProviderModelId: row.model.id })
+}
+
+function providerlessRequest(path: string, body: unknown, headers: Record<string, string> = {}) {
+  return new Request(`http://openwork.test${path}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${gatewayKey}`, "content-type": "application/json", ...headers },
+    body: typeof body === "string" ? body : JSON.stringify(body),
+  })
+}
+
+test("POST /api/v1/messages routes an Anthropic alias to its provider without a provider in the path", async () => {
+  const fixture = createTestServer({ provider: { provider_id: "anthropic", provider_config: { npm: "@ai-sdk/anthropic" } } })
+  const alias = aliasFor(fixture.accessRows.find((row) => row.model?.model_id === "claude-sonnet-4-5"))
+  // Anthropic SDKs send the key in x-api-key.
+  const response = await fixture.app.fetch(new Request("http://openwork.test/api/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": gatewayKey, "content-type": "application/json", "anthropic-version": "2023-06-01" },
+    body: JSON.stringify({ model: alias, max_tokens: 16, messages: [{ role: "user", content: "hi" }] }),
+  }))
+  assert.equal(response.status, 200)
+  assert.ok(response.headers.get("x-openwork-request-id"))
+  await response.text()
+
+  assert.equal(fixture.upstreamRequests.length, 1)
+  const upstream = fixture.upstreamRequests[0]
+  assert.equal(upstream?.url, "https://api.anthropic.com/v1/messages")
+  assert.equal(upstream?.headers.get("x-api-key"), "upstream-secret")
+  assert.equal(upstream?.headers.get("anthropic-version"), "2023-06-01")
+  assert.equal(parseJsonObject(upstream?.body ?? null).model, "claude-sonnet-4-5")
+  assert.equal(fixture.modelProviderLookups.length, 1)
+  assert.equal(fixture.modelProviderLookups[0]?.organizationId, organizationId)
+  assert.deepEqual(fixture.accessChecks[0], { inferenceProviderId: providerId, orgMembershipId: memberId })
+  const row = await waitForRows(fixture.logRows)
+  assert.equal(row.protocol, "anthropic_messages")
+  assert.equal(row.requested_model, alias)
+  assert.equal(row.upstream_model, "claude-sonnet-4-5")
+})
+
+test("POST /api/v1/chat/completions and /api/v1/responses route an OpenAI alias to its provider", async () => {
+  for (const [path, upstreamUrl] of [["/api/v1/chat/completions", "https://api.openai.com/v1/chat/completions"], ["/api/v1/responses", "https://api.openai.com/v1/responses"]]) {
+    const fixture = createTestServer()
+    const alias = aliasFor(fixture.accessRows.find((row) => row.model?.model_id === "gpt-4o"))
+    const body = path.endsWith("responses") ? { model: alias, input: "hi" } : { model: alias, messages: [{ role: "user", content: "hi" }] }
+    const response = await fixture.app.fetch(providerlessRequest(path, body))
+    assert.equal(response.status, 200, path)
+    await response.text()
+    assert.equal(fixture.upstreamRequests[0]?.url, upstreamUrl)
+    assert.equal(parseJsonObject(fixture.upstreamRequests[0]?.body ?? null).model, "gpt-4o")
+    const row = await waitForRows(fixture.logRows)
+    assert.equal(row.requested_model, alias)
+  }
+})
+
+test("provider-less endpoints reject a model whose provider speaks another protocol before credentials", async () => {
+  const fixture = createTestServer()
+  const alias = aliasFor(fixture.accessRows.find((row) => row.model?.model_id === "gpt-4o"))
+  const response = await fixture.app.fetch(providerlessRequest("/api/v1/messages", { model: alias, max_tokens: 16, messages: [] }))
+  assert.equal(response.status, 400)
+  const error = await readError(response)
+  assert.equal(error.code, "unsupported_model_endpoint")
+  assert.equal(error.provider_id, providerId)
+  assert.equal(fixture.upstreamRequests.length, 0)
+  assert.equal(fixture.credentialLookups.length, 0)
+  const row = await waitForRows(fixture.logRows)
+  assert.equal(row.outcome, "rejected")
+  assert.equal(row.error_code, "unsupported_model_endpoint")
+})
+
+test("provider-less endpoints require an OpenWork Gateway model id in a JSON body", async () => {
+  const fixture = createTestServer()
+  const cases: Array<[unknown, number, string]> = [
+    [{ model: "gpt-4o", messages: [] }, 400, "invalid_gateway_model"],
+    [{ messages: [] }, 400, "invalid_gateway_model"],
+    [{ model: `gwm_${"0".repeat(10)}`, messages: [] }, 400, "invalid_gateway_model"],
+    ["not json", 400, "invalid_json"],
+  ]
+  for (const [body, status, code] of cases) {
+    const response = await fixture.app.fetch(providerlessRequest("/api/v1/chat/completions", body))
+    assert.equal(response.status, status, JSON.stringify(body))
+    assert.ok(response.headers.get("x-openwork-request-id"))
+    assert.equal((await readError(response)).code, code)
+  }
+  assert.equal(fixture.modelProviderLookups.length, 0)
+  assert.equal(fixture.accessChecks.length, 0)
+  assert.equal(fixture.upstreamRequests.length, 0)
+})
+
+test("provider-less endpoints 404 an alias from no provider in the organization and 403 an ungranted one", async () => {
+  const unknownAlias = createGatewayModelAlias({ modelGroupId: createDenTypeId("gatewayModelGroup"), credentialSetId: createDenTypeId("gatewayCredentialSet"), gatewayProviderModelId: createDenTypeId("inferenceProviderModel") })
+  const unknown = createTestServer()
+  const missing = await unknown.app.fetch(providerlessRequest("/api/v1/chat/completions", { model: unknownAlias, messages: [] }))
+  assert.equal(missing.status, 404)
+  assert.equal((await readError(missing)).code, "model_not_found")
+  assert.equal(unknown.accessChecks.length, 0)
+  assert.equal(unknown.upstreamRequests.length, 0)
+
+  // Routing to a provider never authorizes: the provider's grants still have to cover the alias.
+  const ungranted = createTestServer({ resolveGatewayModelProvider: async () => providerId })
+  const denied = await ungranted.app.fetch(providerlessRequest("/api/v1/chat/completions", { model: unknownAlias, messages: [] }))
+  assert.equal(denied.status, 403)
+  assert.equal((await readError(denied)).code, "model_access_denied")
+  assert.equal(ungranted.credentialLookups.length, 0)
+  assert.equal(ungranted.upstreamRequests.length, 0)
 })
 
 test("rejects with 404 provider_not_found for another org's provider and unknown ids without logging", async () => {
@@ -1733,10 +1930,19 @@ test("permitted inline JSON retains exact request bytes and missing usage", asyn
 
 test("Models and Gateway keys cannot authenticate each other's routes", async () => {
   const fixture = createTestServer()
-  for (const path of ["/api/v1/models", "/api/v1/chat/completions"]) {
-    const response = await fixture.app.fetch(new Request(`http://openwork.test${path}`, { headers: { authorization: `Bearer ${gatewayKey}` } }))
+  // GET /api/v1/models is the one shared path; every other Models route rejects a Gateway key.
+  for (const [method, path] of [["POST", "/api/v1/models"], ["GET", "/api/v1/chat/completions"], ["GET", "/api/v1/responses"], ["PUT", "/api/v1/messages"]]) {
+    const response = await fixture.app.fetch(new Request(`http://openwork.test${path}`, { method, headers: { authorization: `Bearer ${gatewayKey}` } }))
     assert.equal(response.status, 401)
   }
+  const modelsKey = await fixture.app.fetch(new Request("http://openwork.test/api/v1/models", { headers: { authorization: "Bearer ow_inf_test" } }))
+  assert.notEqual(modelsKey.status, 200)
+  const modelsChat = await fixture.app.fetch(new Request("http://openwork.test/api/v1/chat/completions", {
+    method: "POST", headers: { authorization: "Bearer ow_inf_test", "content-type": "application/json" }, body: JSON.stringify({ model: "gpt-4o", messages: [] }),
+  }))
+  assert.notEqual(modelsChat.status, 200)
+  assert.equal(fixture.memberAccessChecks.length, 0)
+  assert.equal(fixture.modelProviderLookups.length, 0)
   for (const key of ["ow_inf_test", "ow_gw_malformed"]) {
     const response = await fixture.app.fetch(gatewayRequest({ path: "/models", headers: { authorization: `Bearer ${key}` } }))
     assert.equal(response.status, 401)

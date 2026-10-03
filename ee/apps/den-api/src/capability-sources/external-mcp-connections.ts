@@ -6,6 +6,8 @@ import {
   SlackAssistantThreadTable,
   SlackAssistantEventTable,
   SlackAssistantOAuthStateTable,
+  SlackAssistantRunTokenTable,
+  SlackAssistantDesktopHandoffTable,
   ConnectedAccountTable,
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -1630,6 +1632,8 @@ export async function deleteExternalMcpConnection(input: {
       SlackAssistantThreadTable,
       SlackAssistantEventTable,
       SlackAssistantOAuthStateTable,
+      SlackAssistantRunTokenTable,
+      SlackAssistantDesktopHandoffTable,
       SlackAssistantInstallationTable,
     ]) {
       await tx.delete(table).where(eq(table.connectionId, existing.id))
@@ -1689,6 +1693,8 @@ export async function deleteExternalMcpConnectionIfUnreferenced(input: {
       SlackAssistantThreadTable,
       SlackAssistantEventTable,
       SlackAssistantOAuthStateTable,
+      SlackAssistantRunTokenTable,
+      SlackAssistantDesktopHandoffTable,
       SlackAssistantInstallationTable,
     ]) {
       await tx.delete(table).where(eq(table.connectionId, existing.id))

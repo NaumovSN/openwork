@@ -136,6 +136,37 @@ test("tool images reach the model: Anthropic image blocks, OpenAI image parts", 
   })
 })
 
+test("tool PDFs reach the model: Anthropic document blocks in the tool result, OpenAI file parts", () => {
+  const withPdf: Message[] = [
+    { role: "user", text: "can you read this pdf?" },
+    { role: "assistant", text: "", toolCalls: [{ id: "t1", name: "execute_capability", input: {} }] },
+    {
+      role: "tool",
+      callId: "t1",
+      name: "execute_capability",
+      output: "[PDF brief.pdf (1.8 MB), attached]",
+      isError: false,
+      documents: [{ mediaType: "application/pdf", data: "JVBERi0=", name: "brief.pdf" }],
+    },
+  ]
+  assert.deepEqual(toAnthropicMessages(withPdf)[2].content[0], {
+    type: "tool_result",
+    tool_use_id: "t1",
+    content: [
+      { type: "text", text: "[PDF brief.pdf (1.8 MB), attached]" },
+      { type: "document", title: "brief.pdf", source: { type: "base64", media_type: "application/pdf", data: "JVBERi0=" } },
+    ],
+    is_error: false,
+  })
+  assert.deepEqual(toOpenAIMessages("sys", withPdf)[4], {
+    role: "user",
+    content: [
+      { type: "text", text: "Files returned by execute_capability:" },
+      { type: "file", file: { filename: "brief.pdf", file_data: "data:application/pdf;base64,JVBERi0=" } },
+    ],
+  })
+})
+
 test("the Gateway model list is read with the route's key and shown with readable names", async () => {
   const { fetchImpl, captured } = fakeFetch([
     json({

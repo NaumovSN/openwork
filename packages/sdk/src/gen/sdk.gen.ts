@@ -2345,7 +2345,7 @@ export class DenClient extends HeyApiClient {
       runnerId: string;
       protocolVersion: 1;
       supportedExecutionTargets: ["desktop"];
-      capabilities?: Array<"model_attention_v1" | "remote_session_v1">;
+      capabilities?: Array<"model_attention_v1" | "remote_session_v1" | "remote_session_control_v1">;
       appVersion: string;
       platform: "darwin" | "win32" | "linux";
       concurrency: number;
@@ -4195,7 +4195,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List Apps built in OpenWork for dashboards
    *
-   * Lists the Apps built in OpenWork that the calling admin can use, in the element shape organization Dashboards store. Each element opens the App through its own MCP server with open_app, and Dashboards keep it on the App's current revision. Members see a tile only when the App's Plugin is shared with them. Empty when Apps built in OpenWork are turned off. Admin-only.
+   * Lists the Apps built in OpenWork that the calling member can use, in the element shape organization Dashboards store. Each element opens the App through its own MCP server with open_app, and Dashboards keep it on the App's current revision. Members see a tile only when the App's Plugin is shared with them. Empty when Apps built in OpenWork are turned off. Only Apps the member can access are listed.
    */
   public getV1McpApps<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1McpAppsResponses, GetV1McpAppsErrors, ThrowOnError>({
@@ -14073,6 +14073,7 @@ export class DenClient extends HeyApiClient {
       shadowMode?: boolean;
       dailyLimit?: number;
       model?: string | null;
+      progressUpdates?: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -14088,6 +14089,7 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "shadowMode" },
             { in: "body", key: "dailyLimit" },
             { in: "body", key: "model" },
+            { in: "body", key: "progressUpdates" },
           ],
         },
       ],

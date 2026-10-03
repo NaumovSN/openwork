@@ -29,7 +29,10 @@ import {
   LIBRARY_FILTERS,
   type LibraryFilter,
   libraryItemDescription,
+  NEEDS_SIGN_IN_STATUS,
+  needsViewerSignIn,
   parseLibraryFilter,
+  parseNeedsSignIn,
   receivedStatus,
 } from "./library-view";
 import { type ExternalMcpConnection, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
@@ -174,6 +177,7 @@ function LibraryContent() {
   const [addOpen, setAddOpen] = useState(searchParams.get("add") === "1");
   const [query, setQuery] = useState("");
   const filter = parseLibraryFilter(searchParams.get("show"));
+  const onlyNeedsSignIn = parseNeedsSignIn(searchParams.get("status"));
 
   const ownedConnections = new Map((usable.data ?? []).filter((connection) => connection.access !== null).map((connection) => [connection.id, connection]));
   const viewerId = orgContext?.currentMember.id ?? null;
@@ -183,12 +187,21 @@ function LibraryContent() {
     filter,
     query,
     isMine: (item) => isOwnedByViewer(item, viewerId, new Set(ownedConnections.keys())),
+    needsSignIn: onlyNeedsSignIn,
   });
 
   function setFilter(next: LibraryFilter) {
     const params = new URLSearchParams(searchParams.toString());
     if (next === "all") params.delete("show");
     else params.set("show", next);
+    const suffix = params.toString();
+    router.replace(suffix ? `?${suffix}` : "?", { scroll: false });
+  }
+
+  function toggleNeedsSignIn() {
+    const params = new URLSearchParams(searchParams.toString());
+    if (onlyNeedsSignIn) params.delete("status");
+    else params.set("status", NEEDS_SIGN_IN_STATUS);
     const suffix = params.toString();
     router.replace(suffix ? `?${suffix}` : "?", { scroll: false });
   }
@@ -204,7 +217,11 @@ function LibraryContent() {
   }
 
   const showModels = filter === "all" || filter === "models";
-  const modelRows = showModels ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query)) : [];
+  const modelRows = showModels
+    ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query) && (!onlyNeedsSignIn || provider.state === "needs_signin"))
+    : [];
+  const needsSignInCount = items.filter(needsViewerSignIn).length
+    + (models.data ?? []).filter((provider) => provider.state === "needs_signin").length;
   const hasModels = (models.data ?? []).length > 0;
   const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels;
 
@@ -242,6 +259,22 @@ function LibraryContent() {
                   </button>
                 );
               })}
+              {needsSignInCount > 0 || onlyNeedsSignIn ? (
+                <>
+                  <span className="mx-1 h-4 w-px bg-gray-200" aria-hidden="true" />
+                  <button
+                    type="button"
+                    aria-pressed={onlyNeedsSignIn}
+                    onClick={toggleNeedsSignIn}
+                    data-testid="library-needs-sign-in-filter"
+                    className={`flex h-[30px] items-center gap-1.5 rounded-full px-3 text-[12px] font-medium transition-colors ${onlyNeedsSignIn ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+                    Needs sign-in
+                    <span className={onlyNeedsSignIn ? "text-white/70" : "text-gray-400"}>{needsSignInCount}</span>
+                  </button>
+                </>
+              ) : null}
             </div>
             <FilterInput value={query} onChange={setQuery} className="w-[240px]" />
           </div>

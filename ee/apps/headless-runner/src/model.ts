@@ -105,6 +105,7 @@ function parseArguments(raw: string): Pick<ToolCall, "input" | "inputError"> {
 
 type CacheControl = { cache_control?: { type: "ephemeral" } }
 type AnthropicImage = { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+type AnthropicDocument = { type: "document"; title: string; source: { type: "base64"; media_type: "application/pdf"; data: string } }
 type AnthropicBlock = CacheControl &
   (
     | { type: "text"; text: string }
@@ -112,7 +113,7 @@ type AnthropicBlock = CacheControl &
     | {
         type: "tool_result"
         tool_use_id: string
-        content: string | Array<{ type: "text"; text: string } | AnthropicImage>
+        content: string | Array<{ type: "text"; text: string } | AnthropicImage | AnthropicDocument>
         is_error: boolean
       }
   )
@@ -131,12 +132,18 @@ export function toAnthropicMessages(messages: Message[]): AnthropicMessage[] {
               {
                 type: "tool_result",
                 tool_use_id: message.callId,
-                content: message.images?.length
+                // Tool results may carry text, image, and document blocks: a PDF a tool returned is read as-is.
+                content: message.images?.length || message.documents?.length
                   ? [
                       { type: "text" as const, text: message.output },
-                      ...message.images.map((image) => ({
+                      ...(message.images ?? []).map((image) => ({
                         type: "image" as const,
                         source: { type: "base64" as const, media_type: image.mediaType, data: image.data },
+                      })),
+                      ...(message.documents ?? []).map((document) => ({
+                        type: "document" as const,
+                        title: document.name.slice(0, 500),
+                        source: { type: "base64" as const, media_type: document.mediaType, data: document.data },
                       })),
                     ]
                   : message.output,
@@ -249,7 +256,10 @@ export function anthropicModel(options: {
 
 // ------------------------------------------------- OpenAI chat completions
 
-type OpenAIContentPart = { type: "text"; text: string } | { type: "image_url"; image_url: { url: string } }
+type OpenAIContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "file"; file: { filename: string; file_data: string } }
 type OpenAIMessage =
   | { role: "system" | "user"; content: string | OpenAIContentPart[] }
   | {
@@ -265,15 +275,19 @@ export function toOpenAIMessages(system: string, messages: Message[]): OpenAIMes
     if (message.role === "user") out.push({ role: "user", content: message.text })
     else if (message.role === "tool") {
       out.push({ role: "tool", tool_call_id: message.callId, content: message.output })
-      // Chat Completions tool messages are text-only, so images follow as user content.
-      if (message.images?.length)
+      // Chat Completions tool messages are text-only, so images and PDFs follow as user content.
+      if (message.images?.length || message.documents?.length)
         out.push({
           role: "user",
           content: [
-            { type: "text", text: `Images returned by ${message.name}:` },
-            ...message.images.map((image) => ({
+            { type: "text", text: `${message.documents?.length ? "Files" : "Images"} returned by ${message.name}:` },
+            ...(message.images ?? []).map((image) => ({
               type: "image_url" as const,
               image_url: { url: `data:${image.mediaType};base64,${image.data}` },
+            })),
+            ...(message.documents ?? []).map((document) => ({
+              type: "file" as const,
+              file: { filename: document.name, file_data: `data:${document.mediaType};base64,${document.data}` },
             })),
           ],
         })

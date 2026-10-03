@@ -53,7 +53,7 @@ describe("command palette models", () => {
   });
 
   test("shared controls preview and apply the same available pin and source without changing another target", () => {
-    const auto = { ...option, providerID: "openwork-free", modelID: "openai/gpt-5.6-luna", title: "Luna" };
+    const auto = { ...option, providerID: "openwork-free", modelID: "openai/gpt-6-luna", title: "Luna" };
     const next = { ...option, providerID: "local", modelID: "next", title: "Next model" };
     const choices: unknown[] = [];
     const controls = createCommandPaletteModelControls({ options: [auto, next], current: auto, behavior: "high",
@@ -74,7 +74,7 @@ describe("command palette models", () => {
     const reasoning = { ...auto, behaviorOptions: [{ value: "high", label: "High" }] } as typeof auto;
     createCommandPaletteModelControls({ options: [next, reasoning], current: next, behavior: "high",
       favorites: [reasoning], onSelect: (model, behavior) => intoAuto.push({ model, behavior }) }).onNextPinnedModel();
-    expect(intoAuto).toEqual([{ model: { providerID: "openwork-free", modelID: "openai/gpt-5.6-luna" }, behavior: null }]);
+    expect(intoAuto).toEqual([{ model: { providerID: "openwork-free", modelID: "openai/gpt-6-luna" }, behavior: null }]);
   });
 
   test("navigates behavior to models to root", () => {

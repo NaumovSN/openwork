@@ -4,9 +4,9 @@ import { test } from "node:test"
 import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { INFERENCE_FREE_MODEL_ID, INFERENCE_USAGE_CONVERSION_FACTOR, freeInferenceWindow, managedModelCatalog, readFreeInferenceConfig } from "@openwork/types/den/inference"
-import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
-  MEMBER_FREE_STATUS_PATH, desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeSessionPowMessage, leadingZeroBits, type DesktopFreeProofClaims } from "@openwork/free-auto"
-import { readAutoConfig, FREE_OPENAI_CHAT_URL } from "../src/free/shared/config.js"
+import { DESKTOP_FREE_RESPONSES_PATH, MEMBER_FREE_RESPONSES_PATH, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_SESSION_PATH, DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_MODELS_PATH,
+  MEMBER_FREE_STATUS_PATH, DESKTOP_FREE_MODEL_ID, desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeSessionPowMessage, leadingZeroBits, type DesktopFreeProofClaims } from "@openwork/free-auto"
+import { readAutoConfig, untaggedAutoEnabled, FREE_OPENAI_CHAT_URL, FREE_OPENAI_RESPONSES_URL } from "../src/free/shared/config.js"
 import { freeUsageAmount, rampedDeviceAmount } from "@openwork/free-auto/accounting"
 import { verifyDesktopFreeProof } from "../src/free/guest/proof.js"
 import { deriveReleaseSecret, releaseTag, sha256Hex as desktopFreeHash } from "@openwork/free-auto/node"
@@ -14,6 +14,7 @@ import { createAnonymousIdentities, issueAnonymousToken, verifyAnonymousToken, c
 import { prepareFreeRequest, readFreeRequest } from "../src/free/shared/request.js"
 import { FreeResponseReceipt, meterFreeResponse } from "../src/free/shared/meter.js"
 import type { FreePrincipal, MemberPrincipal } from "../src/free/shared/principal.js"
+import { freeInferenceDigest as freeIdentityHash } from "@openwork-ee/utils/free-inference-digest"
 import type { FreeAllowanceStore, FreeUsageReceipt } from "../src/free/shared/allowance.js"
 
 process.env.OPENWORK_DEV_MODE = "1"
@@ -80,13 +81,19 @@ function openAiResponse(id = "chatcmpl-1") {
     usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, completion_tokens_details: { reasoning_tokens: 0 } } }
 }
 const expectedAmount = freeUsageAmount(config, 10, 2)
+function nativeResponse(status = "completed") {
+  return { id: "resp_fixture", object: "response", status, model: `${config.upstreamModel}-2026-09-22`, output: [
+    { id: "fc_fixture", type: "function_call", call_id: "call_fixture", name: "fixture_tool", arguments: "{}", status: "completed" },
+    { id: "rs_fixture", type: "reasoning", summary: [], encrypted_content: "fixture-encrypted-state" },
+  ], usage: { input_tokens: 10, output_tokens: 2, total_tokens: 12, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 1 } } }
+}
 type Upstream = { url: string; headers: Headers; body: Record<string, unknown> }
 function fakeStore(principals: FreePrincipal[], receipts: Array<FreeUsageReceipt | null>, calls: { session: number; charged: number }): FreeAllowanceStore {
   const nonces = new Set<string>()
   return {
     family: "anonymous",
     async consumeNonce(proof) { const key = `${proof.keyThumbprint}:${proof.nonce}`; if (nonces.has(key)) return "replay"; nonces.add(key); return "accepted" },
-    async consumeSession() { calls.session++; return "accepted" as const },
+    async consumeSession() { calls.session++ },
     async read(principal) { return { state: "ready", code: null, allowance: { limitUsd: principal.kind === "member" ? 5 : 1,
       usedUsd: 0, remainingUsd: principal.kind === "member" ? 5 : 1, resetsAt: freeInferenceWindow().end.toISOString() } } },
     async admit(principal) { principals.push(principal); return { ok: true, windows: [] } },
@@ -140,7 +147,7 @@ test("free Auto stays off without the dedicated OpenAI key or release key and ne
   assert.equal(readAutoConfig({ DESKTOP_FREE_MIN_VERSION: "v1.2.0" }).minimumVersion, "1.2.0")
   assert.throws(() => readAutoConfig({ DESKTOP_FREE_MIN_VERSION: "latest" }), /DESKTOP_FREE_MIN_VERSION/)
   assert.throws(() => readAutoConfig({ INFERENCE_FREE_ENABLED: "true", INFERENCE_FREE_WEEKLY_BUDGET_USD: "1" }))
-  assert.throws(() => readAutoConfig({ INFERENCE_FREE_OPENAI_MODEL: "openai/gpt-5.6-luna" }))
+  assert.throws(() => readAutoConfig({ INFERENCE_FREE_OPENAI_MODEL: "openai/gpt-6-luna" }))
   assert.throws(() => readFreeInferenceConfig({ INFERENCE_FREE_MODEL_ID: "paid-model" }))
   assert.deepEqual(managedModelCatalog().map((model) => model.modelID), [INFERENCE_FREE_MODEL_ID])
 })
@@ -224,17 +231,19 @@ test("minting a guest session costs a proof of work bound to the proof's own non
   assert.equal(f.calls.session, 1)
   const free = fixture({ config: { ...config, sessionPowBits: 0 } })
   assert.equal((await free.app.fetch(signed(DESKTOP_FREE_SESSION_PATH, "", "{}"))).status, 200)
-  const base = fixture()
-  const capped = fixture({ store: { ...base.store, consumeSession: async () => "new_identity_capped" as const } })
-  const response = await capped.app.fetch(session())
-  assert.equal(response.status, 429)
-  assert.equal((await response.json()).error.code, "anonymous_new_identity_capped")
+  // Machines are not counted per IP: many machines behind one office IP all start sessions.
+  const office = fixture()
+  for (let index = 0; index < 50; index++) {
+    const response = await office.app.fetch(session({ source: signer(`${index.toString(16).padStart(2, "0")}`.padEnd(64, "d")) }))
+    assert.equal(response.status, 200, `machine ${index} starts a session`)
+  }
+  assert.equal(office.calls.session, 50)
 })
 
 test("the guest allowance unlocks over the machine's first 30 active minutes and never exceeds the device budget", () => {
   const defaults = readAutoConfig({})
   assert.deepEqual(defaults.installRamp, [{ minutes: 0, amount: 10000000 }, { minutes: 10, amount: 20000000 }, { minutes: 20, amount: 50000000 }, { minutes: 30, amount: 100000000 }])
-  assert.equal(defaults.ipNewIdentitiesPerDay, 5)
+  assert.equal("ipNewIdentitiesPerDay" in defaults, false, "there is no new-machines-per-IP cap")
   assert.deepEqual([defaults.sessionPowBits, defaults.sessionPowRounds, defaults.activityMaxGapMs], [19, 8, 180000])
   const minute = 60000
   assert.equal(rampedDeviceAmount(defaults, 0) / INFERENCE_USAGE_CONVERSION_FACTOR, 0.1)
@@ -295,7 +304,7 @@ test("members use the regular OpenWork Models routes: Auto only, member allowanc
   assert.equal((await (await call(MEMBER_FREE_STATUS_PATH)).json()).allowance.limitUsd, 5)
   const paid = await call(MEMBER_FREE_CHAT_PATH, { method: "POST", body: prompt.replace(INFERENCE_FREE_MODEL_ID, "anthropic/claude-sonnet-4"), headers: { "content-type": "application/json" } })
   assert.equal(paid.status, 400)
-  assert.equal((await call("/api/v1/responses", { method: "POST", body: prompt, headers: { "content-type": "application/json" } })).status, 404)
+  assert.equal((await call("/api/v1/responses", { method: "POST", body: prompt, headers: { "content-type": "application/json" } })).status, 400)
   assert.equal(f.requests.length, 1)
 })
 
@@ -320,7 +329,8 @@ test("the proxy sends Auto to free Auto for every organization and keeps other m
   for (const metadata of [{}, { inference: { enabled: false } }, { inference: { enabled: true, tier: "tier1" } }]) {
     const route = routeFor(metadata)
     assert.equal((await route.call(MEMBER_FREE_CHAT_PATH, prompt)).status, 200, JSON.stringify(metadata))
-    assert.deepEqual(route.served, ["free"], JSON.stringify(metadata))
+    assert.equal((await route.call(MEMBER_FREE_RESPONSES_PATH, JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, input: "hello" }))).status, 200)
+    assert.deepEqual(route.served, ["free", "free"], JSON.stringify(metadata))
   }
   const paying = routeFor({ inference: { enabled: true, tier: "tier1" } })
   assert.equal((await paying.call(MEMBER_FREE_STATUS_PATH)).status, 200, "a paying organization's members can check their free Auto allowance")
@@ -371,7 +381,8 @@ test("the version the desktop reports passes unless the server blocks it or sets
   const alpha = guestFor("1.2.4-alpha.3244+4d3cfbd")
   assert.equal((await (await blocked.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${alpha.token}`, undefined, { version: "1.2.4-alpha.3244+4d3cfbd", source: alpha.source }))).json()).state, "update_required", "blocking ignores build metadata")
   const untagged = guestFor("1.2.4-alpha.1+abc")
-  assert.equal((await (await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${untagged.token}`, undefined, { version: "1.2.4-alpha.1+abc", source: untagged.source, proofVersion: 2 }))).json()).code, "desktop_build_unverified")
+  const untaggedOff = fixture({ config: { ...config, untaggedGlobalDailyAmount: 0 } })
+  assert.equal((await (await untaggedOff.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${untagged.token}`, undefined, { version: "1.2.4-alpha.1+abc", source: untagged.source, proofVersion: 2 }))).json()).code, "desktop_build_unverified")
 })
 
 test("the release tag must come from the secret of the claimed version, the previous master key overlaps, dev secrets only count in dev mode", async () => {
@@ -402,8 +413,58 @@ test("switched-off guest Auto says free_disabled, not unavailable, on every gues
   assert.equal(f.requests.length, 0)
 })
 
-test("an untagged (v2) proof from a current build says the build can't use Auto, not that it needs an update", async () => {
+test("an untagged (v2) proof, like a build from source, uses Auto on the per-IP untagged budget", async () => {
   const f = fixture()
+  const status = await (await f.app.fetch(signed(DESKTOP_FREE_STATUS_PATH, `Bearer ${guest()}`, undefined, { proofVersion: 2 }))).json()
+  assert.deepEqual([status.state, status.code], ["ready", null])
+  const minted = await f.app.fetch(session({ proofVersion: 2 }))
+  assert.equal(minted.status, 200, "an untagged build can start a guest session")
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))).status, 200)
+  const ipHash = createAnonymousIdentities(device.binding, "127.0.0.1", config).ipHash
+  assert.deepEqual(f.principals.at(-1), { kind: "installation", id: createAnonymousIdentities(device.binding, "127.0.0.1", config).installationHash, untaggedIpHash: ipHash })
+  assert.equal((await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt))).status, 200)
+  assert.equal(f.principals.at(-1)?.kind === "installation" && f.principals.at(-1)?.untaggedIpHash, undefined, "a tagged proof is not held to the IP budget")
+  const blocked = fixture({ config: { ...config, blockedReleases: ["1.2.3"] } })
+  assert.equal((await blocked.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))).status, 426, "blocked versions still apply")
+  const defaults = readAutoConfig({})
+  assert.deepEqual([defaults.untaggedIpDailyAmount, defaults.untaggedGlobalDailyAmount], [0.2 * INFERENCE_USAGE_CONVERSION_FACTOR, 10 * INFERENCE_USAGE_CONVERSION_FACTOR], "$0.20 per IP a day, $10 for all untagged builds a day")
+  assert.equal(untaggedAutoEnabled(defaults), true)
+  assert.equal(untaggedAutoEnabled(readAutoConfig({ ANONYMOUS_UNTAGGED_IP_DAILY_MICRO_USD: "0" })), false, "either budget at 0 turns untagged builds off")
+  assert.equal(untaggedAutoEnabled(readAutoConfig({ ANONYMOUS_UNTAGGED_GLOBAL_DAILY_MICRO_USD: "0" })), false)
+  assert.throws(() => readAutoConfig({ ANONYMOUS_UNTAGGED_IP_DAILY_MICRO_USD: "-1" }))
+})
+
+test("like OpenCode Zen, any client with no proof and no key (or the key \"public\") gets Auto, limited by its IP", async () => {
+  const f = fixture()
+  const open = (path: string, headers: Record<string, string> = {}, body?: string) => new Request(`https://free.test${path}`, {
+    method: body === undefined ? "GET" : "POST", body, headers: { ...headers, ...(body === undefined ? {} : { "content-type": "application/json" }) } })
+  const status = await (await f.app.fetch(open(DESKTOP_FREE_STATUS_PATH, { authorization: "Bearer public" }))).json()
+  assert.deepEqual([status.state, status.code, status.currentVersion, status.minimumVersion], ["ready", null, "", null])
+  const models = await (await f.app.fetch(open(DESKTOP_FREE_MODELS_PATH, { authorization: "Bearer public" }))).json()
+  assert.deepEqual(models.data.map((model: { id: string }) => model.id), [DESKTOP_FREE_MODEL_ID])
+  for (const headers of [{ authorization: "Bearer public" }, {}]) {
+    assert.equal((await f.app.fetch(open(DESKTOP_FREE_CHAT_PATH, headers, prompt))).status, 200)
+  }
+  const ipHash = createAnonymousIdentities(device.binding, "127.0.0.1", config).ipHash
+  assert.deepEqual(f.principals.at(-1), { kind: "installation", id: freeIdentityHash("open-ip", ipHash), untaggedIpHash: ipHash, deviceless: true },
+    "an open request is charged to its IP, not a machine")
+  assert.equal(f.requests.length, 2)
+  assert.equal(f.calls.session, 0, "no guest session is needed")
+  // Anything that is not the open key is still a desktop request and needs its proof.
+  assert.equal((await f.app.fetch(open(DESKTOP_FREE_CHAT_PATH, { authorization: "Bearer sk-someone-elses-key" }, prompt))).status, 401)
+  assert.equal((await f.app.fetch(open(DESKTOP_FREE_CHAT_PATH, { authorization: "Bearer public", "x-api-key": "public" }, prompt))).status, 401)
+  assert.equal((await f.app.fetch(open(DESKTOP_FREE_CHAT_PATH, { authorization: "Bearer public" }, prompt.replace(INFERENCE_FREE_MODEL_ID, "paid-model")))).status, 400, "only the free model")
+  const off = fixture({ config: { ...config, untaggedIpDailyAmount: 0 } })
+  const refused = await off.app.fetch(open(DESKTOP_FREE_CHAT_PATH, { authorization: "Bearer public" }, prompt))
+  assert.deepEqual([refused.status, (await refused.json()).error.code], [503, "desktop_build_unverified"], "with the untagged budgets off, open clients hear Auto is unavailable to them")
+  assert.equal((await (await off.app.fetch(open(DESKTOP_FREE_STATUS_PATH, {}))).json()).code, "desktop_build_unverified")
+  const disabled = fixture({ config: { ...config, anonymousEnabled: false } })
+  assert.equal((await (await disabled.app.fetch(open(DESKTOP_FREE_CHAT_PATH, {}, prompt))).json()).error.code, "free_disabled")
+  assert.equal(off.requests.length + disabled.requests.length, 0)
+})
+
+test("with the untagged budgets off, an untagged (v2) proof says the build can't use Auto, not that it needs an update", async () => {
+  const f = fixture({ config: { ...config, untaggedIpDailyAmount: 0 } })
   const response = await f.app.fetch(signed(DESKTOP_FREE_CHAT_PATH, `Bearer ${guest()}`, prompt, { proofVersion: 2 }))
   assert.equal(response.status, 503)
   assert.equal((await response.json()).error.code, "desktop_build_unverified")
@@ -457,7 +518,7 @@ test("like paid Models, the request is forwarded as sent, with only the model, u
   assert.deepEqual(forwarded.messages, engine.messages)
   assert.equal(JSON.parse(prepareFreeRequest(value, config).body).reasoning_effort, "none", "no effort requested: the cheapest")
   for (const refused of [{ ...value, model: "openai/gpt-6-sol" }, { ...value, messages: [] }, { ...value, messages: "hello" }, null]) {
-    assert.throws(() => prepareFreeRequest(refused, config), /Auto needs a chat completion request/)
+    assert.throws(() => prepareFreeRequest(refused, config), /Auto needs/)
   }
   const large = { ...value, messages: Array.from({ length: 300 }, () => ({ role: "user", content: "x".repeat(1024) })),
     tools: Array.from({ length: 70 }, (_, index) => ({ type: "function", function: { name: `tool_${index}`, description: "x".repeat(10000),
@@ -649,4 +710,104 @@ test("ordinary OpenAI sampling options and multiple choices preserve the provide
   const incomplete = new FreeResponseReceipt(config, 2)
   incomplete.accept(response)
   assert.throws(() => incomplete.complete(), /Incomplete/)
+})
+
+test("native Auto forwards over 128 function tools and stateless continuation items to GPT-6 Luna", async () => {
+  const tools = Array.from({ length: 142 }, (_, index) => ({ type: "function", name: `fixture_tool_${index}`, description: "A fixture tool",
+    parameters: { type: "object", properties: {}, additionalProperties: false }, strict: false }))
+  const input = [{ role: "user", content: "hello" }, { type: "function_call", call_id: "call_fixture", name: "fixture_tool_0", arguments: "{}" },
+    { type: "function_call_output", call_id: "call_fixture", output: "ok" }, { type: "reasoning", id: "rs_fixture", summary: [], encrypted_content: "fixture-encrypted-state" }]
+  const body = JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, input, tools, max_output_tokens: 128_000, reasoning: { effort: "none" },
+    include: ["reasoning.encrypted_content"], stream: false, store: true })
+  const f = fixture({}, () => Response.json(nativeResponse()))
+  for (const request of [signed(DESKTOP_FREE_RESPONSES_PATH, `Bearer ${guest()}`, body),
+    new Request(`https://free.test${MEMBER_FREE_RESPONSES_PATH}`, { method: "POST", body, headers: { "content-type": "application/json" } })]) {
+    const response = await (new URL(request.url).pathname === DESKTOP_FREE_RESPONSES_PATH ? f.app : f.memberApp).fetch(request)
+    assert.equal(response.status, 200)
+    const value = await response.json()
+    assert.equal(value.model, INFERENCE_FREE_MODEL_ID)
+    assert.deepEqual(value.output, nativeResponse().output, "native tool calls and encrypted continuation state reach the SDK unchanged")
+  }
+  assert.equal(config.upstreamModel, "gpt-6-luna")
+  assert.deepEqual([config.inputPrice, config.outputPrice], [0.1, 0.5])
+  for (const request of f.requests) {
+    assert.equal(request.url, FREE_OPENAI_RESPONSES_URL)
+    assert.equal(request.headers.get("authorization"), "Bearer sk-fixture-dedicated-free-key")
+    assert.deepEqual(request.body.tools, tools)
+    assert.deepEqual(request.body.input, input)
+    assert.deepEqual(request.body.reasoning, { effort: "none" })
+    assert.equal(request.body.store, false)
+    assert.equal(request.body.model, "gpt-6-luna")
+    assert.equal(request.body.max_output_tokens, 128_000)
+    assert.equal(request.body.stream_options, undefined)
+  }
+  assert.deepEqual(f.receipts.map((receipt) => receipt?.amount), [expectedAmount, expectedAmount])
+  assert.deepEqual(f.principals.map((principal) => principal.kind), ["installation", "member"])
+})
+
+test("native Auto accepts public clients but rejects unapproved models and unmetered Responses features before admission", async () => {
+  const body = { model: INFERENCE_FREE_MODEL_ID, input: "hello" }
+  const f = fixture({}, () => Response.json(nativeResponse()))
+  const call = (payload: unknown) => f.app.fetch(new Request(`https://free.test${DESKTOP_FREE_RESPONSES_PATH}`, {
+    method: "POST", body: JSON.stringify(payload), headers: { "content-type": "application/json", authorization: "Bearer public" },
+  }))
+  assert.equal((await call(body)).status, 200)
+  for (const blocked of [{ background: true }, { previous_response_id: "resp_previous" }, { conversation: "conv_previous" },
+    { tools: [{ type: "web_search" }] }, { input: [] }, { model: "paid-model" }]) assert.equal((await call({ ...body, ...blocked })).status, 400)
+  assert.equal(f.requests.length, 1)
+  assert.equal(f.principals.length, 1)
+  const mint = await (await f.app.fetch(session())).json()
+  assert.equal(mint.model, INFERENCE_FREE_MODEL_ID)
+  assert.throws(() => readFreeInferenceConfig({ INFERENCE_FREE_MODEL_ID: "unapproved-model" }), /Unapproved free model/)
+})
+
+test("native SSE forwards tool deltas and settles completed or incomplete usage without a DONE marker", async () => {
+  for (const status of ["completed", "incomplete"]) {
+    const events = [{ type: "response.created", response: { ...nativeResponse(), status: "in_progress", output: [], usage: null } },
+      { type: "response.function_call_arguments.delta", item_id: "fc_fixture", output_index: 0, delta: '{"text":"hé"}' },
+      { type: `response.${status}`, response: nativeResponse(status) }]
+    const bytes = new TextEncoder().encode(events.map((event) => `event: ${event.type}\r\ndata: ${JSON.stringify(event)}\r\n\r\n`).join(""))
+    let cancelled = false
+    const f = fixture({}, () => new Response(new ReadableStream({ start(controller) {
+      for (let i = 0; i < bytes.length; i += 7) controller.enqueue(bytes.slice(i, i + 7))
+    }, cancel() { cancelled = true } }), { headers: { "content-type": "text/event-stream" } }))
+    const response = await f.app.fetch(signed(DESKTOP_FREE_RESPONSES_PATH, `Bearer ${guest()}`,
+      JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, input: "hello", stream: true })))
+    const text = await response.text()
+    assert.ok(text.includes("response.function_call_arguments.delta"))
+    assert.ok(text.includes("hé"))
+    assert.ok(text.includes("fixture-encrypted-state"))
+    assert.ok(!text.includes("[DONE]"))
+    assert.ok(!text.includes(`${config.upstreamModel}-2026-09-22`))
+    assert.equal(cancelled, true)
+    assert.deepEqual(f.receipts, [{ amount: expectedAmount, eventId: "resp_fixture", model: INFERENCE_FREE_MODEL_ID, inputTokens: 10, outputTokens: 2 }])
+    assert.equal(f.calls.charged, 1)
+  }
+})
+
+test("native error, mismatched identity, missing usage, truncated stream and cancellation settle once conservatively", async () => {
+  const created = { type: "response.created", response: { ...nativeResponse(), status: "in_progress", usage: null } }
+  for (const events of [[created], [created, { type: "response.failed", response: { ...nativeResponse(), status: "failed" } }],
+    [created, { type: "response.completed", response: { ...nativeResponse(), id: "resp_other" } }]]) {
+    const receipts: Array<FreeUsageReceipt | null> = []
+    const stream = meterFreeResponse(new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")).body!, {
+      config, protocol: "responses", streaming: true, maxBytes: 100_000, signal: new AbortController().signal,
+      settle: async (receipt) => { receipts.push(receipt) },
+    })
+    await assert.rejects(new Response(stream).text())
+    assert.deepEqual(receipts, [null])
+  }
+  const receipts: Array<FreeUsageReceipt | null> = []
+  const missingUsage = meterFreeResponse(Response.json({ ...nativeResponse(), usage: null }).body!, {
+    config, protocol: "responses", streaming: false, maxBytes: 100_000, signal: new AbortController().signal, settle: async (receipt) => { receipts.push(receipt) },
+  })
+  assert.equal((await new Response(missingUsage).json()).status, "completed")
+  assert.deepEqual(receipts, [null])
+  const cancelled: Array<FreeUsageReceipt | null> = []
+  const source = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(created)}\n\n`)) } })
+  const reader = meterFreeResponse(source, { config, protocol: "responses", streaming: true, maxBytes: 100_000,
+    signal: new AbortController().signal, settle: async (receipt) => { cancelled.push(receipt) } }).getReader()
+  await reader.read()
+  await reader.cancel()
+  assert.deepEqual(cancelled, [null])
 })

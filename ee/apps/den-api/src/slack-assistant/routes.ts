@@ -72,6 +72,12 @@ const configSchema = z.object({
     .nullable()
     .optional()
     .describe("Gateway model alias for headless runs; null restores the runner default. Omit to keep the current model."),
+  progressUpdates: z
+    .boolean()
+    .optional()
+    .describe(
+      "Show steps and notes in Slack while a task works. Off (the default) shows only Slack's working status, then the answer. Omit to keep the current setting.",
+    ),
 })
 function publicBase(request: Request) {
   return env.apiPublicUrl ?? publicRequestUrl(request, { trustedOrigins: env.publicUrlTrustedOrigins }).origin
@@ -89,6 +95,7 @@ const setupResponseSchema = z.object({
   dailyLimit: z.number().int(),
   model: z.string().nullable().describe("Model chosen for headless runs, or null for the runner default."),
   defaultModel: z.string().nullable().describe("The headless runner's default model, when this workspace uses it."),
+  progressUpdates: z.boolean().describe("Whether Slack shows steps and notes while a task works, or only its working status."),
   models: z
     .array(z.object({ id: z.string(), name: z.string() }))
     .describe("Models the headless runner can use; empty when the workspace doesn't use the headless runner."),
@@ -170,6 +177,7 @@ export function registerSlackAssistantRoutes<T extends { Variables: OrgRouteVari
         dailyLimit: installation?.dailyLimit ?? 100,
         model: installation?.model ?? null,
         defaultModel: catalog?.defaultModel ?? null,
+        progressUpdates: installation?.progressUpdates ?? false,
         models: catalog?.models ?? [],
         metrics: await slackAssistantMetrics(connectionId),
         manifest: slackManifest(publicBase(c.req.raw), connectionId),

@@ -668,6 +668,9 @@ export function createDaytonaHost(options: DaytonaHostOptions): DaytonaHost {
       // Explicit `pnpm world up --env KEY` app settings; the launcher keys set
       // below always win over a selected value.
       appendExtraEnv(env, selectedAppEnv());
+      // Same default as local surfaces: no Automation runner unless the
+      // caller opts in with OPENWORK_AUTOMATION_RUNNER=on.
+      env.set("OPENWORK_AUTOMATION_RUNNER", "off");
       if (opts.profile !== "blank") {
         if (resolveEvalEngineValue(process.env.OPENWORK_EVAL_ENGINE) === "v2") env.set("OPENWORK_ENGINE_V2_PREVIEW", "1");
         appendExtraEnv(env, opts.env);

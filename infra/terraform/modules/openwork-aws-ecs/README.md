@@ -5,6 +5,7 @@ Runs a private, single-organization OpenWork control plane (Den) on AWS
 
 | Piece | AWS resource |
 | --- | --- |
+| ECS cluster | `<name>-den`, or your existing cluster (`ecs_cluster_arn`) |
 | Den API (`ghcr.io/different-ai/openwork-den-api`, port 8788) | Fargate service, registered in Cloud Map |
 | Den web (`ghcr.io/different-ai/openwork-den-web`, port 3005) | Fargate service |
 | Database migrations | Init container in each den-api task; den-api starts only if it succeeds |
@@ -60,7 +61,8 @@ module "openwork" {
   database_subnet_ids = ["subnet-private-a", "subnet-private-b"]
 
   # Optional
-  create_redis = false
+  ecs_cluster_arn = "arn:aws:ecs:us-east-1:123456789012:cluster/platform" # empty creates <name>-den
+  create_redis    = false
   email_from   = "OpenWork <no-reply@example.com>"
   smtp = {
     host     = "email-smtp.us-east-1.amazonaws.com"
@@ -85,6 +87,14 @@ After `terraform apply`:
 (no NAT gateway) and uses a certificate you provide.
 
 ## Notes
+
+- **Existing ECS cluster.** Set `ecs_cluster_arn` to deploy the two services
+  into a cluster you already run; the module then creates no cluster. The
+  services are named `den-api` and `den-web`, so they must not collide with
+  services already in that cluster. They use `launch_type = "FARGATE"`,
+  which overrides the cluster's default capacity provider strategy. The
+  module still creates its own Cloud Map namespace (`<name>.internal`), ALB,
+  security groups and IAM roles.
 
 - **Migrations** run in each den-api task before the app starts, like the Helm
   chart's pre-upgrade Job. They are idempotent but not locked, so keep

@@ -23,10 +23,10 @@ headless-runner (one Node process, SQLite file)
 | Goal | How |
 |---|---|
 | **Works with the AI Gateway** | It speaks Anthropic Messages (`{base}/messages`, `x-api-key`) or OpenAI Chat Completions (`{base}/chat/completions`, `Authorization: Bearer`). Point it at a Gateway provider route (`/api/v1/providers/<ipr>`, `ow_gw_` key) or OpenWork Models (`/api/v1`, `ow_inf_` key). Model ids are Gateway aliases (`gwm_…`), and the Gateway still enforces access, limits and usage. |
-| **Cheap** | One process serves many sessions, and an idle session is just rows. Anthropic prompt caching sits on the system prompt and the newest message, so each agent step reuses the previous prefix. In the smoke test, 123k of 167k input tokens were cache reads. Tool output, steps, file sizes and context are all capped. |
-| **Reliable** | Every step is written to SQLite (WAL) before the next one starts. Sends are idempotent on `messageId`. Follow-ups sent while a turn runs are queued per conversation and answered in order, each seeing the earlier answers; the caller never has to retry "busy". After a crash or restart, turns are marked `interrupted`; sending the same `messageId` again resumes them. A tool call whose result was never recorded is **not re-run**: it is recorded as an error so the model can check its effect instead of repeating a possible write. Model calls retry on 408/409/425/429/5xx with backoff. There is a turn timeout, a step cap, and a global concurrency limit. |
+| **Cheap** | One process serves many sessions, and an idle session is just rows. Anthropic prompt caching sits on the system prompt and the newest message, so each agent step reuses the previous prefix. In the smoke test, 123k of 167k input tokens were cache reads. Tool output, file sizes and context are capped. A long turn drops its oldest large tool outputs in blocks, so the cached prefix survives most steps. |
+| **Reliable** | Every step is written to SQLite (WAL) before the next one starts. Sends are idempotent on `messageId`. Follow-ups sent while a turn runs are queued per conversation and answered in order, each seeing the earlier answers; the caller never has to retry "busy". After a crash or restart, turns are marked `interrupted`; sending the same `messageId` again resumes them. A tool call whose result was never recorded is **not re-run**: it is recorded as an error so the model can check its effect instead of repeating a possible write. Model calls retry on 408/409/425/429/5xx with backoff. Turns have no time or step limit by default (both are optional settings); every model and tool call has its own timeout, and a turn that repeats the same calls with the same results five times in a row ends as `stuck_repeating`. A turn using a caller's MCP token pauses itself between steps every 50 minutes (`interrupted`, `credentials_refresh`) so the caller can resume it with a fresh token; no tool call is cut off. There is a global concurrency limit. Each turn logs one line when it starts and one when it ends (status, error code, steps, tool calls, elapsed time, tokens), never content or credentials. |
 | **Safe** | No shell, no host filesystem, no child processes. Network access goes only to the two operator-configured URLs (https, or http on loopback). Callers can't redirect it. Model keys and MCP tokens are supplied per turn, held in memory only, and never written to disk or logs (a test checks this). File paths are normalized so they can't escape the session. A service bearer token (≥32 chars) guards every `/v1` route. `HEADLESS_MCP_TOOL_ALLOWLIST` can narrow the MCP tools. The default system prompt asks the model to read and draft, and to change data only when explicitly asked. |
-| **Simple** | About 1,400 lines of source, four runtime deps (`hono`, `@hono/node-server`, `@modelcontextprotocol/client`, `zod`), and `node:sqlite`. No agent framework, no provider SDKs. |
+| **Simple** | About 1,900 lines of source, four runtime deps (`hono`, `@hono/node-server`, `@modelcontextprotocol/client`, `zod`), the workspace's `@openwork/workbook` for Office files, and `node:sqlite`. No agent framework, no provider SDKs. The build bundles the workspace package into `dist/server.js` with esbuild, so it runs on plain Node. |
 
 ## API
 
@@ -38,7 +38,7 @@ All `/v1` routes require `Authorization: Bearer $HEADLESS_API_TOKEN`.
 | `GET` | `/v1/models` | | `{ defaultModel, models: [{ id, name }] }`: the models the Gateway route serves with the runner's key (cached 5 min), for pickers. Pass one as a turn's `model` |
 | `POST` | `/v1/sessions` | `{ title?, instructions? }` | session (`hs_…`) |
 | `POST` | `/v1/sessions/:id/turns` | `{ messageId, prompt, model?, credentials: { modelApiKey?, mcpToken? } }` | `202 { state: accepted \| resumed \| already_present, turn }`. A message sent while another turn runs is accepted and answered next (`turn.status: queued`); only a runaway queue of 20+ returns `429 too_many_queued` |
-| `GET` | `/v1/sessions/:id` | `?messageId=&limit=` | `{ session, status: idle \| busy, turns, messages, finalAssistantText }` |
+| `GET` | `/v1/sessions/:id` | `?messageId=&limit=&outputs=` | `{ session, status: idle \| busy, turns, messages, finalAssistantText }`. `outputs=none` returns each tool result's `outputLength` instead of its output, for callers that poll a long turn |
 | `POST` | `/v1/sessions/:id/abort` | `{ messageId? }` | `{ accepted }`. With a `messageId`, stops only that turn (running or queued); without one, stops the running turn and every follow-up queued behind it |
 | `GET` | `/v1/sessions/:id/files` | | `{ files: [{ path, size, updatedAt }] }` |
 | `GET` | `/v1/sessions/:id/files/content` | `?path=` | file text |
@@ -50,10 +50,22 @@ Turn status is one of `queued`, `running`, `completed`, `failed`, `interrupted` 
 - `mcp_unavailable`
 - `model_http_<status>`
 - `turn_timeout`
-- `max_steps_exceeded`
+- `max_steps_exceeded` (only with `HEADLESS_MAX_STEPS` set)
+- `stuck_repeating`
 - `runner_restarted`
+- `credentials_refresh` (an `interrupted` turn waiting to be resumed with a fresh MCP token)
 
-Images that a tool returns (MCP `image` content, or `resource` blobs with an image type), for example a file read from Slack, are passed to the model as image input: PNG, JPEG, GIF or WebP, at most 4 per result and about 3.7 MB each. They go to Anthropic as image blocks in the tool result, and to OpenAI as image parts in a following user message. Only the turn that fetched an image sees it; later turns keep the text. The session API reports `imageCount` instead of the image data.
+Files that a tool returns (MCP `image` or `audio` content, or `resource` blobs), for example a file read from Slack, reach the model in the best form it can read:
+
+| File | The model gets |
+|---|---|
+| PNG, JPEG, GIF, WebP | The image: at most 4 per result, about 3.7 MB each |
+| PDF | The document itself (text and page images): at most 2 per result, 10 MB each |
+| Word, PowerPoint, Excel (`.docx`, `.pptx`, `.xlsx`) | Extracted text, from the same `@openwork/workbook` extractor the desktop app uses |
+| Text (`text/*`, JSON, YAML, CSV, code, SVG, …) | The decoded text |
+| Anything else (audio, video, archives, `.doc`/`.xls`, Keynote, HEIC, …) | A note with the name, type, size, and what to ask for instead |
+
+Images and PDFs go to Anthropic as image and document blocks in the tool result, and to OpenAI as image and file parts in a following user message. Only the turn that fetched them sees them: when a turn completes, fails, or is stopped, their bytes are dropped from the database and later turns see a note. An interrupted turn keeps them, since it resumes. The session API reports `imageCount` and `documentCount` instead of the data.
 
 The model sees these tools:
 
@@ -74,10 +86,11 @@ The model sees these tools:
 | `HEADLESS_DB_PATH` | `./data/headless.sqlite` | Put it on a persistent volume |
 | `HEADLESS_PORT` | `8795` | |
 | `HEADLESS_MAX_CONCURRENT_TURNS` | `32` | Process-wide. Turns mostly wait on the network, so this is bounded by memory and Gateway rate limits, not CPU |
-| `HEADLESS_MAX_STEPS` | `30` | Model calls per turn |
-| `HEADLESS_TURN_TIMEOUT_MS` | `3600000` | Matches the 60-minute bound Den puts on headless Slack runs and their MCP tokens |
+| `HEADLESS_MAX_STEPS` | `0` | Model calls per turn. `0` means no limit: a long task ends with its answer, Stop, or the stuck check |
+| `HEADLESS_TURN_TIMEOUT_MS` | `0` | `0` means no limit. Otherwise at least `10000`, applied to each stretch between credential refreshes |
+| `HEADLESS_CREDENTIAL_REFRESH_MS` | `3000000` | A turn with an MCP token pauses between steps after this long so the caller resumes it with a fresh one. Keep it under the token lifetime (60 minutes for Den) |
 | `HEADLESS_MAX_OUTPUT_TOKENS` | `8192` | Output cap per model call: Anthropic `max_tokens`, OpenAI `max_completion_tokens` |
-| `HEADLESS_CONTEXT_CHAR_BUDGET` | `400000` | Older whole turns are dropped past this |
+| `HEADLESS_CONTEXT_CHAR_BUDGET` | `400000` | Older whole turns are dropped past this. A turn that outgrows it alone replaces its oldest large tool outputs with a short note, in blocks of eight |
 | `HEADLESS_SYSTEM_PROMPT` | built-in | |
 
 ## Run
@@ -108,5 +121,5 @@ On den-api, set `DEN_HEADLESS_RUNNER_URL` to the private service address (for ex
 ## Limits and next steps
 
 - **Single instance.** State is one SQLite file. Scale by sharding sessions across instances, each with its own volume.
-- **Credentials come from the caller.** For Slack, Den mints a short-lived, run-scoped MCP token (client `openwork-headless-run`, at most 60 minutes) for the linked member on every admitted run.
+- **Credentials come from the caller.** For Slack, Den mints a short-lived, run-scoped MCP token (client `openwork-headless-run`, at most 60 minutes) for the linked member on every admitted run, and a fresh one each time it resumes a turn that paused for `credentials_refresh`. A run can last hours while no token outlives an hour, and a run nobody supervises loses its tools within the hour.
 - **Callers.** Slack replies and cloud agent Automations (`den-api/src/automations/headless-agent-executor.ts`) both use Den's one client, `den-api/src/headless-runner/client.ts`. Each Automation run is one turn in its own session; its session and message id are saved before the turn is sent, so a Den restart resumes the same turn.

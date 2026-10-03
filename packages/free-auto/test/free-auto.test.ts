@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { createHmac } from "node:crypto";
+import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference";
 import {
-  DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_SESSION_PATH, MEMBER_FREE_STATUS_PATH, clampSessionPowParams, compareDesktopVersions,
+  DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, MEMBER_FREE_RESPONSES_PATH, DESKTOP_FREE_SESSION_PATH, MEMBER_FREE_STATUS_PATH, clampSessionPowParams, compareDesktopVersions,
   desktopFreeProofMessage, desktopFreeReleaseTagMessage, desktopFreeVersionError, isDesktopFreeSignableRoute, leadingZeroBits,
 } from "../src/index.js";
 import { freeUsageAmount, parseInstallRamp, rampedDeviceAmount, DEFAULT_INSTALL_RAMP } from "../src/accounting.js";
@@ -11,6 +12,9 @@ const base = { publicKey: "k".repeat(59) + "=", machineId: "c".repeat(64), appVe
 const request = { method: "post", path: DESKTOP_FREE_CHAT_PATH, bodyHash: sha256Hex("{}"), authorizationHash: sha256Hex("") };
 
 describe("protocol", () => {
+  test("the desktop and gateway advertise the same Auto model", () => {
+    expect(DESKTOP_FREE_MODEL_ID).toBe(INFERENCE_FREE_MODEL_ID);
+  });
   test("a v3 signature covers the release tag; the tag message never includes it", () => {
     const tag = "a".repeat(64);
     expect(JSON.parse(desktopFreeProofMessage({ version: 3, ...base, releaseTag: tag, ...request })).at(-1)).toBe(tag);
@@ -19,6 +23,8 @@ describe("protocol", () => {
   });
   test("only the published routes are signable", () => {
     expect(isDesktopFreeSignableRoute("POST", DESKTOP_FREE_SESSION_PATH)).toBe(true);
+    expect(isDesktopFreeSignableRoute("POST", DESKTOP_FREE_RESPONSES_PATH)).toBe(true);
+    expect(isDesktopFreeSignableRoute("POST", MEMBER_FREE_RESPONSES_PATH)).toBe(true);
     expect(isDesktopFreeSignableRoute("GET", MEMBER_FREE_STATUS_PATH)).toBe(true);
     expect(isDesktopFreeSignableRoute("GET", DESKTOP_FREE_SESSION_PATH)).toBe(false);
     expect(isDesktopFreeSignableRoute("DELETE", DESKTOP_FREE_CHAT_PATH)).toBe(false);
@@ -88,7 +94,10 @@ describe("version policy", () => {
 describe("accounting", () => {
   test("cost from token counts and the activity ramp", () => {
     const prices = { inputPrice: 0.25, outputPrice: 1.2 };
-    expect(freeUsageAmount(prices, 1_000_000, 0)).toBe(25_000_000);
+    expect(freeUsageAmount(prices, 1_000_000, 0)).toBe(50_000_000);
+    const luna = { inputPrice: 0.1, outputPrice: 0.5 };
+    expect(freeUsageAmount(luna, 272_000, 2_000)).toBe(2_820_000);
+    expect(freeUsageAmount(luna, 272_001, 2_000)).toBe(5_590_020);
     const ramp = parseInstallRamp(DEFAULT_INSTALL_RAMP, 100_000_000);
     expect(ramp.map((step) => step.minutes)).toEqual([0, 10, 20, 30]);
     expect(rampedDeviceAmount({ installRamp: ramp, deviceWeeklyAmount: 100_000_000 }, 25 * 60000)).toBe(50_000_000);

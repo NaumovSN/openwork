@@ -1,11 +1,12 @@
 import { pathToFileURL } from "node:url";
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 
 import { createManagedOpencodeServer } from "./managed-opencode.js";
 import { createManagedOpencodeV2Server } from "./managed-opencode-v2.js";
+import { engineInstanceId } from "./engine-v2-preview.js";
 import { appendEngineOutputTail, createEngineStartupLineReader, ENGINE_OUTPUT_MAX_CHARS, ENGINE_STARTUP_LINE_MAX_CHARS } from "./engine-output.js";
 import { loopbackFetch } from "./server-fetch.js";
 
@@ -192,6 +193,44 @@ describe("managed OpenCode startup", () => {
       expect(JSON.stringify(config)).not.toContain('"hidden"');
       expect(JSON.stringify(config)).not.toContain('"disabled"');
     } finally { await managed.close(); }
+  });
+
+  test("two OpenWork apps sharing an engine state directory keep separate configs, and identical writes are skipped", async () => {
+    const root = await createRoot();
+    const bin = await writeExecutable(root, "instance-config.mjs", [
+      "const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => Response.json({ healthy: true, version: 'test', pid: process.pid }) });",
+      "console.log(`opencode server listening on http://127.0.0.1:${server.port}`);",
+      "console.log(`config dir ${process.env.OPENCODE_CONFIG_DIR}`);",
+      "process.on('SIGTERM', () => { server.stop(true); process.exit(0); });",
+    ]);
+    const first = await createManagedOpencodeV2Server({ bin, rootDir: root, instanceId: "app-a" });
+    const second = await createManagedOpencodeV2Server({ bin, rootDir: root, instanceId: "app-b" });
+    try {
+      await first.injectProvider({ id: "only-a", name: "A", apiKey: "a", models: [{ id: "m", name: "M" }] });
+      await second.injectProvider({ id: "only-b", name: "B", apiKey: "b", models: [{ id: "m", name: "M" }] });
+      const configA = join(root, "instances", "app-a", "config", "opencode.json");
+      const configB = join(root, "instances", "app-b", "config", "opencode.json");
+      expect(await readFile(configA, "utf8")).toContain("only-a");
+      expect(await readFile(configA, "utf8")).not.toContain("only-b");
+      expect(await readFile(configB, "utf8")).toContain("only-b");
+      expect(first.stdout).toContain(join(root, "instances", "app-a", "config"));
+      const before = (await stat(configA)).mtimeMs;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await first.injectProvider({ id: "only-a", name: "A", apiKey: "a", models: [{ id: "m", name: "M" }] });
+      expect((await stat(configA)).mtimeMs).toBe(before);
+    } finally {
+      await first.close();
+      await second.close();
+    }
+  });
+
+  test("the engine instance id follows the app's own server state path", () => {
+    expect(engineInstanceId({})).toBeUndefined();
+    const installed = engineInstanceId({ OPENWORK_SERVER_STATE_PATH: "/Users/a/Library/Application Support/com.example.app/state.json" });
+    const dev = engineInstanceId({ OPENWORK_SERVER_STATE_PATH: "/Users/a/Library/Application Support/com.example.app.dev/state.json" });
+    expect(installed).toMatch(/^[0-9a-f]{12}$/);
+    expect(installed).not.toBe(dev);
+    expect(engineInstanceId({ OPENWORK_SERVER_STATE_PATH: "/Users/a/Library/Application Support/com.example.app/state.json" })).toBe(installed);
   });
 
   test("spawns the engine with npm audit disabled so first-run installs never wait on the advisories endpoint", async () => {

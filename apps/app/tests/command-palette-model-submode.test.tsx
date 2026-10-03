@@ -15,7 +15,7 @@ const { useModelCollectionsStore } = await import("../src/react-app/domains/sess
 for (const surface of ["session", "settings"]) {
   test(`${surface} palette shows current and next models and selects within the shared submode`, async () => {
     const policySpy = spyOn(policy, "useCheckDesktopRestriction").mockReturnValue(() => false);
-    const auto: ModelOption = { providerID: "openwork-free", modelID: "openai/gpt-5.6-luna", title: "Luna", isFree: true };
+    const auto: ModelOption = { providerID: "openwork-free", modelID: "openai/gpt-6-luna", title: "Luna", isFree: true };
     const next: ModelOption = { providerID: "anthropic", modelID: "specific-model", title: "Friendly model", description: "Anthropic", isFree: false };
     const previous = useModelCollectionsStore.getState();
     useModelCollectionsStore.setState({ favorites: [next], recent: [] });
@@ -37,7 +37,7 @@ for (const surface of ["session", "settings"]) {
       expect(row("models.next-source")?.textContent).toContain("Local");
       await act(async () => row("models")?.click());
       expect(document.querySelector('input[placeholder="Search models…"]')).not.toBeNull();
-      expect(row("model:openwork-free:openai/gpt-5.6-luna")?.textContent).toContain("Current");
+      expect(row("model:openwork-free:openai/gpt-6-luna")?.textContent).toContain("Current");
       const modelRow = row("model:anthropic:specific-model");
       expect(modelRow?.textContent).toContain("Anthropic · specific-model");
       expect(modelRow?.firstElementChild?.getAttribute("data-slot")).toBe("model-provider-mark");

@@ -171,3 +171,44 @@ test("moved questions and approvals are recovered by home, with nested form even
     expect(await (await call("/api/form/request", "GET", { ...home, id: "other", path: destination })).json()).toMatchObject({ data: [] });
   } finally { native.stop(true); }
 });
+
+test("one moved conversation the engine cannot read does not hide the workspace's other pending requests", async () => {
+  const { proxyOpencodeV2Request } = await import("./server.js");
+  const { config, root } = await fixture();
+  const home = config.workspaces[0];
+  if (!home) throw new Error("Missing fixture workspace");
+  // A conversation moved into a folder that was later deleted: the engine
+  // still lists it, but answers 500 for its session-scoped pending reads.
+  const sessions = [
+    { id: "ses_moved", location: { directory: join(root, "worktree") } },
+    { id: "ses_gone", location: { directory: join(root, "deleted-temp-folder") } },
+  ];
+  const forms = [{ id: "frm_moved", sessionID: "ses_moved", metadata: { kind: "question" }, fields: [] }];
+  const approvals = [{ id: "per_moved", sessionID: "ses_moved" }];
+  const paths: string[] = [];
+  const native = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(request) {
+    const url = new URL(request.url);
+    paths.push(url.pathname);
+    if (url.pathname === "/api/session") return Response.json({ data: sessions, cursor: {} });
+    if (url.pathname === "/api/form/request" || url.pathname === "/api/permission/request") return Response.json({ data: [] });
+    const id = url.pathname.split("/")[3];
+    if (url.pathname.endsWith("/message")) {
+      return Response.json({ data: [{ type: "location-switched", previous: { location: { directory: home.path } } }] });
+    }
+    if (id === "ses_gone") return Response.json({ message: "NotFound: FileSystem.realPath" }, { status: 500 });
+    if (url.pathname.endsWith("/form")) return Response.json({ data: forms });
+    if (url.pathname.endsWith("/permission")) return Response.json({ data: approvals });
+    return Response.json({ data: sessions.find(session => session.id === id) });
+  } });
+  const call = (path: string) => {
+    const request = new Request(`http://openwork.test${path}`);
+    return proxyOpencodeV2Request({ config, workspace: home, request, url: new URL(request.url), proxyPath: `/opencode2${path}`,
+      actor: { type: "host", scope: "owner" }, connection: { url: `http://127.0.0.1:${native.port}`, username: "opencode", password: "test" },
+    });
+  };
+  try {
+    expect(await (await call("/api/form/request")).json()).toMatchObject({ data: forms });
+    expect(await (await call("/api/permission/request")).json()).toMatchObject({ data: approvals });
+    expect(paths).toContain("/api/session/ses_gone/form");
+  } finally { native.stop(true); }
+});

@@ -40,6 +40,7 @@ import {
 import { getReactQueryClient } from "../../../infra/query-client";
 import {
   clearProviderListQueries,
+  ensureProviderCatalogQuery,
   ensureProviderListQuery,
   getConnectedProviderItems,
 } from "../../../infra/provider-list-query";
@@ -412,13 +413,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const getProviderAuthWorkerType = (): "local" | "remote" =>
     options.selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
 
+  // Providers that are not connected yet, loaded only when the Connect modal
+  // opens. The everyday provider list holds connected providers only.
+  let providerCatalog: ProviderListItem[] = [];
+
   const getProviderAuthProviders = (): ProviderAuthProvider[] => {
     const merged = new Map<string, ProviderAuthProvider>();
     const restrictToCloud = options.checkDesktopAppRestriction({ restriction: "allowCustomProviders" });
 
-    for (const provider of options.providers()) {
+    for (const provider of [...options.providers(), ...providerCatalog]) {
       const id = provider.id?.trim();
-      if (!id) continue;
+      if (!id || merged.has(id)) continue;
       if (
         !isProviderAllowedByDesktopPolicy({
           providerId: id,
@@ -1564,12 +1569,33 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return merged;
   };
 
+  // Best effort: without the catalog the modal still offers connected
+  // providers, sign-in methods and cloud providers.
+  const loadProviderCatalog = async (client: Client) => {
+    try {
+      const catalog = filterProviderList(
+        await ensureProviderCatalogQuery(getReactQueryClient(), {
+          client,
+          baseUrl: options.providerBaseUrl(),
+          directory: options.selectedWorkspaceRoot(),
+        }),
+        options.disabledProviders(),
+      );
+      providerCatalog = catalog.all ?? [];
+    } catch {
+      providerCatalog = [];
+    }
+  };
+
   const loadProviderAuthMethods = async (workerType: "local" | "remote") => {
     const c = options.client();
     if (!c) {
       throw new Error(t("providers.not_connected"));
     }
-    const methods = unwrap(await c.provider.auth());
+    const [methods] = await Promise.all([
+      c.provider.auth().then(unwrap),
+      loadProviderCatalog(c),
+    ]);
     return buildProviderAuthMethods(
       methods as Record<string, ProviderAuthMethod[]>,
       getProviderAuthProviders(),

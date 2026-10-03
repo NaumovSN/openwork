@@ -80,9 +80,13 @@ export type OpenworkCloudProviderSyncStatus = {
 
 export interface EngineV2MigrationStatus {
   state: "idle" | "running" | "completed" | "error";
+  /** Only `copying` moves the counts; older servers omit it. */
+  phase?: "starting" | "converting" | "copying";
   imported: number;
   skipped: number;
   total: number;
+  /** ISO time the current migration started. */
+  startedAt?: string;
   error?: string;
 }
 
@@ -93,8 +97,43 @@ function parseEngineV2Migration(value: unknown): EngineV2MigrationStatus | undef
   if (!("imported" in value) || typeof value.imported !== "number"
     || !("skipped" in value) || typeof value.skipped !== "number"
     || !("total" in value) || typeof value.total !== "number") return undefined;
+  const phase = "phase" in value && (value.phase === "starting" || value.phase === "converting" || value.phase === "copying")
+    ? value.phase : undefined;
   return { state: value.state, imported: value.imported, skipped: value.skipped, total: value.total,
+    ...(phase ? { phase } : {}),
+    ...("startedAt" in value && typeof value.startedAt === "string" ? { startedAt: value.startedAt } : {}),
     error: "error" in value && typeof value.error === "string" ? value.error : undefined };
+}
+
+/** Work an engine switch or migration would interrupt, as counts only. */
+export interface EngineActivityCount {
+  verdict: "idle" | "busy" | "unknown";
+  busySessions: number;
+  waitingRequests: number;
+}
+
+export interface EngineActivity {
+  v1: EngineActivityCount;
+  /** Null while the v2 sidecar is not running. */
+  v2: EngineActivityCount | null;
+}
+
+function parseEngineActivityCount(value: unknown): EngineActivityCount | null {
+  if (!value || typeof value !== "object" || !("verdict" in value)) return null;
+  const verdict = value.verdict;
+  if (verdict !== "idle" && verdict !== "busy" && verdict !== "unknown") return null;
+  const count = (key: "busySessions" | "waitingRequests") => {
+    const raw: unknown = key in value ? Reflect.get(value, key) : 0;
+    return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? raw : 0;
+  };
+  return { verdict, busySessions: count("busySessions"), waitingRequests: count("waitingRequests") };
+}
+
+function parseEngineActivity(value: unknown): EngineActivity {
+  const v1 = value && typeof value === "object" && "v1" in value ? parseEngineActivityCount(value.v1) : null;
+  if (!v1) throw new Error("Invalid engine activity response.");
+  const v2 = value && typeof value === "object" && "v2" in value ? parseEngineActivityCount(value.v2) : null;
+  return { v1, v2 };
 }
 
 export interface EngineV2PreviewStatus {
@@ -110,6 +149,27 @@ export interface EngineV2PreviewStatus {
   catalogModelIds: string[];
   lastMirroredAt?: string;
   lastError?: string;
+}
+
+const workspaceDefaultModelRefSchema = z.object({
+  providerID: z.string(),
+  modelID: z.string(),
+  variant: z.string().optional(),
+});
+
+const workspaceDefaultModelStateSchema = z.object({
+  model: workspaceDefaultModelRefSchema.nullable(),
+  updatedAt: z.number().nullable(),
+});
+
+/** The model a new chat in a workspace uses, as remembered by its OpenWork server. */
+export type WorkspaceDefaultModelRef = z.infer<typeof workspaceDefaultModelRefSchema>;
+export type WorkspaceDefaultModelState = z.infer<typeof workspaceDefaultModelStateSchema>;
+
+function parseWorkspaceDefaultModelState(value: unknown): WorkspaceDefaultModelState {
+  const parsed = workspaceDefaultModelStateSchema.safeParse(value);
+  if (!parsed.success) throw new OpenworkServerError(502, "invalid_response", "Invalid workspace default model response");
+  return parsed.data;
 }
 
 function parseEngineV2PreviewStatus(value: unknown): EngineV2PreviewStatus {
@@ -1712,13 +1772,32 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         token,
         timeoutMs: timeouts.config,
       })),
+    getWorkspaceDefaultModel: async (workspaceId: string): Promise<WorkspaceDefaultModelState> =>
+      parseWorkspaceDefaultModelState(await requestJson<unknown>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/default-model`,
+        { token, hostToken, timeoutMs: timeouts.config },
+      )),
+    setWorkspaceDefaultModel: async (workspaceId: string, model: WorkspaceDefaultModelRef | null): Promise<WorkspaceDefaultModelState> =>
+      parseWorkspaceDefaultModelState(await requestJson<unknown>(
+        baseUrl,
+        `/workspace/${encodeURIComponent(workspaceId)}/default-model`,
+        { token, hostToken, method: "PUT", body: { model }, timeoutMs: timeouts.config },
+      )),
     switchOpencodeEngine: async (engine: "v1" | "v2"): Promise<EngineV2PreviewStatus> =>
       parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {
         token, method: "PUT", body: { enabled: engine === "v2", chatRouting: engine === "v2" }, timeoutMs: timeouts.config,
       })),
-    migrateOpencodeHistory: async (): Promise<EngineV2PreviewStatus> =>
+    getEngineActivity: async (): Promise<EngineActivity> =>
+      parseEngineActivity(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/activity", {
+        token,
+        timeoutMs: timeouts.config,
+      })),
+    /** Rejects with `engine_migration_active_sessions` (409) while v1 tasks run, unless allowed. */
+    migrateOpencodeHistory: async (options: { allowActiveSessions?: boolean } = {}): Promise<EngineV2PreviewStatus> =>
       parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview/migrate", {
-        token, hostToken, method: "POST", body: { confirm: true }, timeoutMs: timeouts.config,
+        token, hostToken, method: "POST", timeoutMs: timeouts.config,
+        body: { confirm: true, ...(options.allowActiveSessions ? { allowActiveSessions: true } : {}) },
       })),
     setEngineV2PreviewEnabled: async (enabled: boolean): Promise<EngineV2PreviewStatus> =>
       parseEngineV2PreviewStatus(await requestJson<unknown>(baseUrl, "/experimental/engine-v2-preview", {

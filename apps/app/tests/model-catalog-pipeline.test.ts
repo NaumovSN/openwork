@@ -17,7 +17,7 @@ function providerList(connected: string[], zenKey = false) {
       // Paid Zen models only appear once a Zen key is pasted.
       ...(zenKey ? { "claude-sonnet-4-6": model("claude-sonnet-4-6", "Claude Sonnet 4.6") } : {}),
     } },
-    { id: AUTO_PROVIDER_ID, name: "OpenWork Models (Free)", source: "config", env: [], models: { [AUTO_MODEL_ID]: model(AUTO_MODEL_ID, "GPT-5.6 Luna", cost(0, 0)) } },
+    { id: AUTO_PROVIDER_ID, name: "OpenWork Models (Free)", source: "config", env: [], models: { [AUTO_MODEL_ID]: model(AUTO_MODEL_ID, "GPT-6 Luna", cost(0, 0)) } },
     { id: "anthropic", name: "Anthropic", source: "api", env: [], models: { "claude-opus-4-6": model("claude-opus-4-6", "Claude Opus 4.6") } },
     { id: "lpr_team", name: "Team Claude", source: "config", env: [], models: { "claude-haiku": model("claude-haiku", "Claude Haiku") } },
   ];

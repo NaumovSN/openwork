@@ -17,6 +17,7 @@ const ENV_KEYS = [
   "OPENWORK_DATA_DIR",
   "OPENWORK_DESKTOP_BOOTSTRAP_PATH",
   "OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY",
+  "OPENWORK_AUTOMATION_RUNNER",
   "OPENWORK_DEV_MODE",
   "OPENWORK_ELECTRON_APP_IDENTIFIER",
   "OPENWORK_ELECTRON_APP_NAME",
@@ -117,6 +118,24 @@ test("electronSurfaceEnv maps the v2 eval lane before caller overrides", () => {
     if (previous === undefined) delete process.env.OPENWORK_EVAL_ENGINE;
     else process.env.OPENWORK_EVAL_ENGINE = previous;
   }
+});
+
+test("electronSurfaceEnv starts eval desktops with no Automation runner unless a caller opts in", () => {
+  const paths = electronProfilePaths(join(tmpdir(), "openwork-local-host-runner-env"));
+  const options = {
+    appName: "OpenWork Eval runner",
+    appIdentifier: "com.differentai.openwork.eval.runner",
+    port: 5126,
+    cdpPort: 9126,
+  };
+  assert.equal(electronSurfaceEnv(paths, options).OPENWORK_AUTOMATION_RUNNER, "off");
+  assert.equal(
+    electronSurfaceEnv(paths, options, { OPENWORK_AUTOMATION_RUNNER: "on" }).OPENWORK_AUTOMATION_RUNNER,
+    "on",
+  );
+  // A launching shell cannot switch it back on: the isolation value wins.
+  const launched = electronLaunchEnv({ OPENWORK_AUTOMATION_RUNNER: "on" }, electronSurfaceEnv(paths, options));
+  assert.equal(launched.OPENWORK_AUTOMATION_RUNNER, "off");
 });
 
 test("electronLaunchEnv keeps the launching shell's OPENCODE_* out of the app", () => {

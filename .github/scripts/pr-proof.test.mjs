@@ -228,7 +228,10 @@ test("controller preserves selection bounds and head freshness; rechecks live tr
 
 test("workflow keeps ordinary proof unprotected and gates all live PR code before checkout", async () => {
   const workflow = await readFile(new URL("../workflows/pr-proof.yml", import.meta.url), "utf8");
-  const [ordinary, afterOrdinary] = workflow.split("\n  live-proof:\n");
+  const [beforeLive, afterOrdinary] = workflow.split("\n  live-proof:\n");
+  // judge-vision holds a key but never runs PR code; its own test pins that.
+  const [beforeJudge, judgeAndAfter] = beforeLive.split("\n  judge-vision:\n");
+  const ordinary = beforeJudge + judgeAndAfter.slice(judgeAndAfter.indexOf("\n  # Packaged specs"));
   const live = afterOrdinary.split("\n  checkpoint-proof:\n")[0];
   const windows = afterOrdinary.split("\n  windows-proof:\n")[1];
   assert.ok(live && windows);
@@ -279,6 +282,34 @@ test("workflow keeps ordinary proof unprotected and gates all live PR code befor
   assert.doesNotMatch(execution, /--testNamePattern|--grep|--test-name|pnpm .*build|pnpm .*install/);
   assert.doesNotMatch(preparation + upload, /OPENWORK_EVAL_CONTAINER_ELECTRON/);
   assert.match(execution, /OPENWORK_EVAL_CONTAINER_ELECTRON=1/);
+});
+
+test("vision judging runs only trusted default-branch code against same-repo proof records", async () => {
+  const workflow = await readFile(new URL("../workflows/pr-proof.yml", import.meta.url), "utf8");
+  const judge = workflow.split("\n  judge-vision:\n")[1]?.split("\n  # Packaged specs")[0];
+  assert.ok(judge);
+  const gate = judge.split("    steps:\n")[0];
+  assert.match(gate, /needs: \[select, proof\]/);
+  assert.match(gate, /needs.proof.result == 'success'/);
+  assert.ok(gate.includes("github.event.pull_request.head.repo.full_name == github.repository"));
+  assert.ok(gate.includes("github.event.pull_request.head.repo.fork == false"));
+  for (const actor of ["github.event.pull_request.user.login", "github.actor", "github.triggering_actor"]) {
+    assert.ok(gate.includes(`${actor} != 'dependabot[bot]'`));
+  }
+  assert.match(judge, /matrix: \$\{\{ fromJSON\(needs.select.outputs.matrix\) \}\}/);
+  // The PR head is never checked out, and no PR-supplied action or script runs.
+  assert.match(judge, /ref: \$\{\{ github.event.repository.default_branch \}\}\n\s+persist-credentials: false/);
+  assert.doesNotMatch(judge, /ref: \$\{\{ github.event.pull_request|uses: \.\/|setup-tests/);
+  assert.match(judge, /install --frozen-lockfile --ignore-scripts/);
+  const [beforeJudging, judgingAndUpload] = judge.split("      - name: Judge deferred vision claims\n");
+  const [judging, upload] = judgingAndUpload.split("      - name: Replace the proof records with judged ones\n");
+  assert.doesNotMatch(beforeJudging + upload, /secrets\.|OPENAI_API_KEY/);
+  assert.match(judging, /OPENAI_API_KEY: \$\{\{ secrets.OPENAI_API_KEY \}\}/);
+  assert.match(judging, /OPENWORK_EVAL_VISION_MODEL: gpt-5\.6-luna/);
+  assert.match(judging, /EXPECTED_SHA: \$\{\{ github.event.pull_request.head.sha \}\}/);
+  assert.match(judging, /node evals\/scripts\/judge-journeys.mjs/);
+  assert.match(upload, /name: pr-proof-\$\{\{ github.run_attempt \}\}-\$\{\{ matrix.key \}\}/);
+  assert.match(upload, /overwrite: true/);
 });
 
 test("Windows proof only executes the exact reviewed spec after same-repo approval", async () => {

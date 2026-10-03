@@ -35,12 +35,12 @@ test("a saved issue is described as a creation or update from the submitted acti
 });
 
 test("a failed write does not claim success, and two writes use a generic outcome", () => {
-  expect(summary([call("linear_create_issue", "output-error")])).toBe("Tried to change Linear");
+  expect(summary([call("linear_create_issue", "output-error")])).toBe("Couldn't create issue · Linear");
   expect(summary([call("linear_create_issue", "output-available"), call("paper_update_page", "output-available")])).toBe("Changed Linear and Paper");
-  expect(summary([call("linear_create_issue", "output-available")], false, true)).toBe("Couldn't finish this step");
+  expect(summary([call("linear_create_issue", "output-available")], false, true)).toBe("Script failed");
 });
 
 test("an unknown script still has an honest label", () => {
-  expect(summary([], true)).toBe("Working on this step");
+  expect(summary([], true)).toBe("Running a script");
   expect(summary([call("unknown", "output-available")])).toBe("Looked up information");
 });

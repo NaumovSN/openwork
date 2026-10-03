@@ -42,3 +42,9 @@ variable "route53_zone_id" {
   type    = string
   default = ""
 }
+
+variable "ecs_cluster_arn" {
+  description = "Existing ECS cluster to deploy into. Empty creates one."
+  type        = string
+  default     = ""
+}

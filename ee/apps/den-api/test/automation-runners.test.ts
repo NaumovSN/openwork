@@ -115,7 +115,8 @@ describe("runner identity and routing", () => {
     })
     expect(parsed.items[0]).toEqual({ runId: "arun_1", executionTarget: "desktop" })
     expect(parsed.items[1]).toEqual({ runId: "arun_2", executionTarget: "desktop", workspaceId: "ws_laptop" })
-    const full = Array.from({ length: AUTOMATION_RUNNER_WORK_RUN_LIMIT + 5 }, (_, index) => ({ runId: `arun_${index}`, executionTarget: "desktop" }))
+    // Room for the run limit plus five remote-session commands and five remote-session requests.
+    const full = Array.from({ length: AUTOMATION_RUNNER_WORK_RUN_LIMIT + 10 }, (_, index) => ({ runId: `arun_${index}`, executionTarget: "desktop" }))
     expect(automationRunnerWorkResponseSchema.safeParse({ items: full }).success).toBe(true)
     expect(automationRunnerWorkResponseSchema.safeParse({ items: [...full, full[0]] }).success).toBe(false)
   })

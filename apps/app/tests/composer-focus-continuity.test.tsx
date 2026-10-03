@@ -333,7 +333,7 @@ test.each([
                 modelLabel="Test model"
                 onModelClick={() => {}}
                 modelPickerOpen={false}
-                selectedModel={autoRejection ? { providerID: "openwork-free", modelID: "openai/gpt-5.6-luna" } : { providerID: "test", modelID: "test-model" }}
+                selectedModel={autoRejection ? { providerID: "openwork-free", modelID: "openai/gpt-6-luna" } : { providerID: "test", modelID: "test-model" }}
                 onModelPickerOpenChange={() => {}}
                 onModelChange={() => {}}
                 onForkAtMessage={forkAtMessage}

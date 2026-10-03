@@ -414,7 +414,7 @@ test("a dashboard element that opens an App built in OpenWork follows the App to
   await db.update(ConfigObjectTable).set({ status: "active" }).where(eq(ConfigObjectTable.id, builtAppId))
 })
 
-test("admins list the Apps built in OpenWork they can use, in dashboard element shape", async () => {
+test("members list only the Apps they can access, in dashboard element shape", async () => {
   await db.insert(PluginTable).values({ id: appPluginId, organizationId, name: "Pricing tools", status: "active", createdByOrgMembershipId: adminMemberId })
   const listed = spyOn(mcpApps, "listAccessibleMcpApps").mockImplementation(async () => [{
     appId: builtAppId, pluginId: appPluginId, revisionId: secondRevisionId, title: "Order calculator", description: "Price an order.",
@@ -441,7 +441,12 @@ test("admins list the Apps built in OpenWork they can use, in dashboard element 
     // Only the Apps this admin can use, through their own Plugin access.
     expect(listed).toHaveBeenCalledWith({ organizationId, member: { orgMembershipId: adminMemberId, teamIds: [] }, enabled: true })
 
-    expect((await request("/v1/mcp-apps", { actor: "casey" })).status).toBe(403)
+    listed.mockClear()
+    const memberResponse = await request("/v1/mcp-apps", { actor: "casey" })
+    expect(memberResponse.status).toBe(200)
+    expect(listed).toHaveBeenCalledWith({ organizationId, member: { orgMembershipId: caseyMemberId, teamIds: memberTeams("casey").map((team) => team.id) }, enabled: true })
+    listed.mockImplementation(async () => [])
+    expect(await (await request("/v1/mcp-apps", { actor: "nova" })).json()).toEqual({ apps: [] })
 
     // Building your own Apps is off for this organization, or for the whole deployment.
     listed.mockClear()

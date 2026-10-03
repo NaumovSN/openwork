@@ -1045,6 +1045,9 @@ importers:
       '@modelcontextprotocol/client':
         specifier: ^2.0.0
         version: 2.0.0(patch_hash=702e2000a3f78e99cfa6971ac4c90466d482174e49340634c0f5b1f346285c12)
+      '@openwork/workbook':
+        specifier: workspace:*
+        version: link:../../../packages/workbook
       hono:
         specifier: 4.13.5
         version: 4.13.5
@@ -1055,6 +1058,9 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.13.3
+      esbuild:
+        specifier: 0.25.12
+        version: 0.25.12
       tsx:
         specifier: ^4.23.1
         version: 4.23.1

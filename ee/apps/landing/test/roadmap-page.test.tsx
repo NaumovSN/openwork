@@ -48,9 +48,11 @@ describe("Roadmap page", () => {
     expect(plain).toContain("https://api.openworklabs.com/mcp/agent");
     expect(plain).toContain("What’s working in Acme Studio");
     expect(plain).toContain("At-risk accounts digest");
+    expect(plain).toContain("Phone app");
+    expect(plain).toContain("Starts with your MCP Apps");
 
     const ready = ROADMAP_PRODUCTS.flatMap((product) => product.items.ready);
-    for (const unshipped of ["Session sharing", "Audit logs", "Live edit", "OpenWork in Slack", "Custom schedules"]) {
+    for (const unshipped of ["Session sharing", "Audit logs", "Live edit", "OpenWork in Slack", "Phone app, starting with MCP Apps", "Custom schedules"]) {
       expect(ready).not.toContain(unshipped);
     }
     expect(ROADMAP_PRODUCTS.find((product) => product.id === "new-apps")?.items.ready).toEqual([]);
