@@ -418,12 +418,17 @@ export function SessionRoute() {
     enabled: mcpAppsDashboardEnabled,
     loading: dashboardAvailabilityLoading,
   } = useDashboardDeploymentAvailability();
-  const dashboardRouteActive = mcpAppsDashboardEnabled && dashboardRouteRequested;
-  const dashboardWorkspaceRoute = dashboardRouteRequested
-    && (dashboardAvailabilityLoading || mcpAppsDashboardEnabled);
   const platform = usePlatform();
   const toggleSidebar = useUiStateStore((state) => state.toggleSidebar);
   const denAuth = useDenAuth();
+  // On desktop, Dashboard and Automations stay in the sidebar while signed
+  // out: each page explains that it needs OpenWork Cloud and calls nothing.
+  const denAuthChecking = denAuth.status === "checking";
+  const signedOutDesktopSurfaces = isDesktopRuntime() && !denAuthChecking && !denAuth.isSignedIn;
+  const dashboardSurfaceAvailable = mcpAppsDashboardEnabled || signedOutDesktopSurfaces;
+  const dashboardRouteActive = dashboardSurfaceAvailable && dashboardRouteRequested;
+  const dashboardWorkspaceRoute = dashboardRouteRequested
+    && (dashboardAvailabilityLoading || dashboardSurfaceAvailable);
   const { config: shellConfig } = useShellConfig();
   const activityRouteActive = shellConfig.notifications && activityRouteRequested;
   const local = useLocal();
@@ -431,7 +436,8 @@ export function SessionRoute() {
   // Desktop and Web share one Automations surface; the runtime only decides
   // the placement of what each creates. Den's deployment flag stays the gate.
   const automationsEnabled = automationDeploymentEnabled;
-  const automationsRouteActive = automationsEnabled && automationsRouteRequested;
+  const automationsSurfaceAvailable = automationsEnabled || signedOutDesktopSurfaces;
+  const automationsRouteActive = automationsSurfaceAvailable && automationsRouteRequested;
   const denSettings = readDenSettings();
   const sessionDraftScope = resolveSessionDraftScope({
     hasCloudCredential: Boolean(denSettings.authToken?.trim()),
@@ -439,24 +445,22 @@ export function SessionRoute() {
   });
   const pendingConversations = usePendingConversationStore((state) => state.conversations);
   const requestedPendingId = new URLSearchParams(location.search).get("pendingConversation");
-  const [automationsSupported, setAutomationsSupported] = useState(false);
   const [automationsNeedAttention, setAutomationsNeedAttention] = useState(false);
   useEffect(() => {
     if (activityRouteRequested && !shellConfig.notifications) navigate("/", { replace: true });
   }, [activityRouteRequested, navigate, shellConfig.notifications]);
   useEffect(() => {
-    if (!automationsRouteRequested || automationsEnabled) return;
+    if (!automationsRouteRequested || denAuthChecking || automationsSurfaceAvailable) return;
     navigate("/", { replace: true });
-  }, [automationsEnabled, automationsRouteRequested, navigate]);
+  }, [automationsRouteRequested, automationsSurfaceAvailable, denAuthChecking, navigate]);
   useEffect(() => {
-    if (!dashboardRouteRequested || dashboardAvailabilityLoading || mcpAppsDashboardEnabled) return;
+    if (!dashboardRouteRequested || dashboardAvailabilityLoading || denAuthChecking || dashboardSurfaceAvailable) return;
     navigate("/", { replace: true });
-  }, [dashboardAvailabilityLoading, dashboardRouteRequested, mcpAppsDashboardEnabled, navigate]);
+  }, [dashboardAvailabilityLoading, dashboardRouteRequested, dashboardSurfaceAvailable, denAuthChecking, navigate]);
   useEffect(() => {
     const authToken = denSettings.authToken?.trim();
     const organizationId = denSettings.activeOrgId?.trim();
     if (!automationsEnabled || !denAuth.isSignedIn || !authToken || !organizationId) {
-      setAutomationsSupported(false);
       setAutomationsNeedAttention(false);
       return;
     }
@@ -466,12 +470,10 @@ export function SessionRoute() {
       void client.listAutomations(organizationId, { limit: 100 })
         .then((result) => {
           if (cancelled) return;
-          setAutomationsSupported(true);
           setAutomationsNeedAttention(result.items.some((item) => item.automation.state === "needs_attention"));
         })
         .catch(() => {
           if (cancelled) return;
-          setAutomationsSupported(false);
           setAutomationsNeedAttention(false);
         });
     };
@@ -491,7 +493,6 @@ export function SessionRoute() {
     denSettings.authToken,
     denSettings.baseUrl,
   ]);
-  const automationsNavigationAvailable = automationsEnabled && automationsSupported;
   const reloadCoordinator = useReloadCoordinator();
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const restrictionNotice = useRestrictionNotice();
@@ -1526,6 +1527,7 @@ export function SessionRoute() {
   const extensionsMainOpen = /^\/(?:workspace\/[^/]+\/)?extensions(?:\/|$)/.test(location.pathname);
   const [libraryHeaderActionsTarget, setLibraryHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
   const [dashboardHeaderActionsTarget, setDashboardHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
+  const [automationsHeaderActionsTarget, setAutomationsHeaderActionsTarget] = useState<HTMLDivElement | null>(null);
 
   const surfaceProps = useMemo(() => {
     if (!client || !selectedWorkspaceId || !selectedSessionId || !opencodeBaseUrl || !token || !opencodeClient) {
@@ -3861,8 +3863,9 @@ export function SessionRoute() {
           }}
         />
       }
-      primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? "Dashboard" : automationsRouteActive ? "Automations" : dashboardRouteActive ? "Your dashboard" : undefined}
-      primarySurface={activityRouteActive || dashboardRouteActive ? "flat" : undefined}
+      // Page titles match their sidebar labels.
+      primaryTitle={activityRouteActive ? t("activity.title") : appsRouteActive ? "Dashboard" : automationsRouteActive ? "Automations" : dashboardRouteActive ? "Dashboard" : undefined}
+      primarySurface={activityRouteActive || dashboardRouteActive || automationsRouteActive ? "flat" : undefined}
       primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation)}
       primarySlot={activityRouteActive ? <ActivityPage onTrySkill={trySkillInNewSession} /> : pendingConversation ? <PendingConversationView conversation={pendingConversation} composer={newTaskComposerContext} /> : appsRouteActive ? (
         <WorkspaceProvider
@@ -3875,7 +3878,12 @@ export function SessionRoute() {
           <AppsPage onNewApp={startAppConversation} fallbackEndpoints={dashboardFallbackEndpoints} />
         </WorkspaceProvider>
       ) : automationsRouteActive ? (
-        <AutomationsPage providerCatalog={providerCatalog} workspaceId={selectedWorkspaceId} />
+        <AutomationsPage
+          providerCatalog={providerCatalog}
+          workspaceId={selectedWorkspaceId}
+          headerActionsTarget={automationsHeaderActionsTarget}
+          onSignIn={() => handleOpenSettings("/settings/cloud-account")}
+        />
       ) : dashboardRouteActive ? (
         <WorkspaceProvider
           client={opencodeClient}
@@ -3884,7 +3892,12 @@ export function SessionRoute() {
           workspaceId={dashboardEndpoint?.workspaceId ?? ""}
           selectedWorkspaceRoot={selectedWorkspaceRoot}
         >
-          <DashboardPage fallbackEndpoints={dashboardFallbackEndpoints} onCreateApp={startAppConversation} headerActionsTarget={dashboardHeaderActionsTarget} />
+          <DashboardPage
+            fallbackEndpoints={dashboardFallbackEndpoints}
+            onCreateApp={startAppConversation}
+            headerActionsTarget={dashboardHeaderActionsTarget}
+            onSignIn={() => handleOpenSettings("/settings/cloud-account")}
+          />
         </WorkspaceProvider>
       ) : undefined}
       terminalOpen={terminalOpen}
@@ -3907,13 +3920,13 @@ export function SessionRoute() {
         startupPhase: effectiveLoading ? "nativeInit" : "ready",
         automationsActive: automationsRouteActive,
         automationsNeedAttention,
-        onOpenAutomations: automationsNavigationAvailable
+        onOpenAutomations: automationsSurfaceAvailable
           ? () => {
               navigate(automationsRoute());
             }
           : undefined,
         dashboardActive: dashboardRouteActive || appsRouteActive,
-        onOpenDashboard: mcpAppsDashboardEnabled
+        onOpenDashboard: dashboardSurfaceAvailable
           ? () => {
               navigate(dashboardRoute());
             }
@@ -4096,7 +4109,11 @@ export function SessionRoute() {
         ) : cloudWorkspaceMainContentTakeover
       }
       mainContentTitle={extensionsMainOpen ? t("settings.tab_extensions") : cloudWorkspaceMainContentTakeover ? "Cloud workspace" : undefined}
-      mainContentHeaderActionsRef={extensionsMainOpen ? setLibraryHeaderActionsTarget : dashboardRouteActive && !cloudWorkspaceMainContentTakeover ? setDashboardHeaderActionsTarget : undefined}
+      mainContentHeaderActionsRef={extensionsMainOpen ? setLibraryHeaderActionsTarget
+        : cloudWorkspaceMainContentTakeover ? undefined
+        : dashboardRouteActive ? setDashboardHeaderActionsTarget
+        : automationsRouteActive ? setAutomationsHeaderActionsTarget
+        : undefined}
       extensionsActive={extensionsMainOpen}
       onAccessibleTargetsChange={setPaletteAccessibleTargets}
     />

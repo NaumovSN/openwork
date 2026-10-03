@@ -73,6 +73,7 @@ import type { McpServerEntry, McpStatusMap } from "../../../../app/types";
 import { isDesktopRuntime, isWindowsPlatform } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
+import { CloudSignInBanner } from "@/react-app/domains/cloud/cloud-sign-in-banner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
@@ -2378,24 +2379,19 @@ const lockedLibraryPreviews: Array<{ name: string; description: string; iconSrc:
  */
 function LibrarySignUpBanner(props: { onSignUp?: () => void }) {
   return (
-    <div data-testid="library-sign-up-banner" className="flex items-center gap-4 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
-      <div className="flex shrink-0 -space-x-1.5" aria-hidden>
-        {lockedLibraryPreviews.map((preview) => {
-          const src = resolveExtensionIconUrl({ iconSrc: preview.iconSrc });
-          return (
-            <span key={preview.name} className="flex size-7 items-center justify-center rounded-lg border border-dls-border bg-dls-surface">
-              {src ? <img src={src} alt="" width={16} height={16} loading="lazy" className="block" /> : null}
-            </span>
-          );
-        })}
-      </div>
-      <p className="min-w-0 flex-1 text-[13px] text-dls-text">{t("extensions.sign_up_banner")}</p>
-      {props.onSignUp ? (
-        <Button size="sm" className="shrink-0" onClick={props.onSignUp}>
-          {t("extensions.sign_up_action")}
-        </Button>
-      ) : null}
-    </div>
+    <CloudSignInBanner
+      testId="library-sign-up-banner"
+      message={t("extensions.sign_up_banner")}
+      onSignIn={props.onSignUp}
+      media={lockedLibraryPreviews.map((preview) => {
+        const src = resolveExtensionIconUrl({ iconSrc: preview.iconSrc });
+        return (
+          <span key={preview.name} className="flex size-7 items-center justify-center rounded-lg border border-dls-border bg-dls-surface">
+            {src ? <img src={src} alt="" width={16} height={16} loading="lazy" className="block" /> : null}
+          </span>
+        );
+      })}
+    />
   );
 }
 

@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { useMemo, useState } from "react"
+import { createPortal } from "react-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertCircle,
@@ -7,6 +8,7 @@ import {
   Archive,
   ArrowLeft,
   CalendarClock,
+  Clock3,
   Cloud,
   History,
   Monitor,
@@ -47,7 +49,9 @@ import {
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/sonner"
+import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
+import { t } from "../../../i18n"
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider"
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
 import { automationCreationPlacement } from "./automation-availability"
@@ -147,7 +151,14 @@ function LoadingState() {
   )
 }
 
-export function AutomationsPage(props: { providerCatalog?: AutomationProviderCatalog; workspaceId?: string | null } = {}) {
+export function AutomationsPage(props: {
+  providerCatalog?: AutomationProviderCatalog
+  workspaceId?: string | null
+  /** Titlebar slot for New Automation, matching Library and Dashboard. */
+  headerActionsTarget?: HTMLElement | null
+  /** Opens OpenWork Cloud sign-in, the same action Library offers when signed out. */
+  onSignIn?: () => void
+} = {}) {
   const denAuth = useDenAuth()
   const navigate = useNavigate()
   const openProviderSettings = () => navigate(props.workspaceId?.trim() ? workspaceSettingsRoute(props.workspaceId.trim(), "ai") : globalSettingsRoute("ai"))
@@ -300,15 +311,22 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
 
   if (denAuth.status === "checking") return <LoadingState />
   if (!denAuth.isSignedIn) {
+    // Automations live in OpenWork Cloud: signed out, nothing here calls Den,
+    // and the page leads with the same sign-in banner as Library.
     return (
-      <div className="mx-auto max-w-xl p-6 pt-16">
-        <Alert variant="warning">
-          <Cloud aria-hidden="true" />
-          <AlertTitle>Sign in to Den to use Automations</AlertTitle>
-          <AlertDescription>
-            Cloud tasks run even when your desktop is offline. Desktop tasks need OpenWork open and connected.
-          </AlertDescription>
-        </Alert>
+      <div className="mx-auto max-w-5xl space-y-5 p-6" data-automations-signed-out>
+        <CloudSignInBanner
+          testId="automations-sign-in-banner"
+          media={<CloudSignInBannerIcon><Clock3 /></CloudSignInBannerIcon>}
+          message={t("automations.sign_in_banner")}
+          onSignIn={props.onSignIn}
+        />
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><CalendarClock /></EmptyMedia>
+            <EmptyTitle>No Automations yet</EmptyTitle>
+          </EmptyHeader>
+        </Empty>
       </div>
     )
   }
@@ -779,19 +797,14 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
     )
   }
 
+  // The page title lives in the titlebar; New Automation sits beside it there,
+  // as Library and Dashboard place their add controls.
+  const newAutomation = <Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button>
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-semibold">Automations</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {placement === "cloud" && !placementChoices.includes("desktop")
-              ? "Schedule tasks on your cloud computer. They keep running when your desktop is offline."
-              : "Schedule tasks on your desktop or cloud computer. See where each task runs and how it went."}
-          </p>
-        </div>
-        <Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button>
-      </div>
+      {props.headerActionsTarget
+        ? createPortal(newAutomation, props.headerActionsTarget)
+        : props.headerActionsTarget === undefined ? <div className="flex justify-end">{newAutomation}</div> : null}
       <div className="relative max-w-md">
         <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
         <Input className="pl-9" value={query} placeholder="Search Automations" onChange={(event) => setQuery(event.currentTarget.value)} />
