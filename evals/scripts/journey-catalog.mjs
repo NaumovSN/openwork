@@ -9,7 +9,6 @@ import { readdir, readFile } from 'node:fs/promises';
 // reason; declaring it here would silently drop the runnable cases. The planner
 // reports a journey whose needs the lane cannot meet as "skipped: lane cannot
 // satisfy prerequisites" instead of scheduling a guaranteed skip.
-// journey-ci.test.mjs checks these against what each spec and world guards.
 const PACKAGED_BINARY = { env: ['OPENWORK_EVAL_ELECTRON_BINARY'] };
 const definitions = {
   'opencode-v2-context-activity.e2e.test.ts': {

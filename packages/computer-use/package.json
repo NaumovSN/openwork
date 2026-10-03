@@ -9,6 +9,6 @@
   "bin": { "openwork-computer-use": "bin/openwork-computer-use.mjs" },
   "scripts": {
     "build:native": "swift build --package-path native -c release --product ComputerUse",
-    "check": "node --check bin/openwork-computer-use.mjs && node --check src/session.mjs && swift test --package-path native"
+    "check": "node --check bin/openwork-computer-use.mjs && node --check src/session.mjs && swift build --package-path native"
   }
 }

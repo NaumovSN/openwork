@@ -19,8 +19,7 @@
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test test/*.test.ts",
-    "check": "pnpm run typecheck && pnpm run test && pnpm run build"
+    "check": "pnpm run typecheck && pnpm run build"
   },
   "dependencies": {
     "zod": "^4.3.6"

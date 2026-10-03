@@ -20,10 +20,10 @@ if (!launcher || !expectedVersion) {
 
 const READY_TIMEOUT_MS = 5 * 60_000;
 const REQUEST_TIMEOUT_MS = 20_000;
-// The first engine request for a folder on a fresh profile waits for OpenCode
-// to `npm install @opencode-ai/plugin` into its global config dir (it does that
-// whenever plugins are configured). Measured on GitHub runners: 4-6 s on macOS,
-// 34-50 s on windows-2022. Later requests take under a second.
+// The first engine request for a folder sets the folder up. The package ships
+// OpenCode's plugin dependency install pre-resolved, so this should take a
+// few seconds; the budget still covers OpenCode installing it itself
+// (34-50 s measured on windows-2022 runners) if unpacking ever fails.
 const FIRST_ENGINE_REQUEST_TIMEOUT_MS = 3 * 60_000;
 const log = (message) => console.log(`[npm-web-smoke] ${message}`);
 const fail = (message) => {
@@ -108,6 +108,9 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
   }
   if (!/Installed OpenCode \S+ to /.test(output)) fail("the OpenCode engine was not downloaded on first run");
+  if (!/Prepared OpenCode plugin dependencies in /.test(output)) {
+    fail("the bundled OpenCode plugin dependencies were not unpacked on first run");
+  }
 
   const health = await request(`${base}/health`);
   if (health.status !== 200 || JSON.parse(health.text).version !== expectedVersion) {

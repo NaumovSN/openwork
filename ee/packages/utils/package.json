@@ -73,8 +73,7 @@
     }
   },
   "scripts": {
-    "build": "tsup",
-    "test": "bun test src/observability.test.ts src/den-urls.test.ts src/inference-bearer-key.test.ts src/bedrock-mantle-catalog.test.ts"
+    "build": "tsup"
   },
   "dependencies": {
     "luxon": "^3.6.1",

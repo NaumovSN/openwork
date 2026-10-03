@@ -151,7 +151,7 @@ import {
   sidebarRowPaddingInlineStart,
 } from "./sidebar-lanes";
 import { WorkspaceAvatarPicker } from "./workspace-avatar-picker";
-import { isSameWorkbenchSession, useWorkbenchStore, workbenchSessionKey } from "../chat/workbench-store";
+import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
 import { SidebarDestination } from "./sidebar-destination";
 import { SessionTitle } from "./session-title";
 import { getSessionOrder } from "./session-order";
@@ -686,63 +686,6 @@ function RemoteConnectionIssueCard(props: {
         </div>
       </div>
     </SidebarMenuSubItem>
-  );
-}
-
-/** The split travels with its owning session, including when that row is pinned. */
-function SessionSideChatControl({ workspaceId, sessionId, title }: {
-  workspaceId: string;
-  sessionId: string;
-  title: string;
-}) {
-  const ctx = useSidebarContext();
-  const sideChat = useWorkbenchStore((state) => state.sideChats[workbenchSessionKey({ workspaceId, sessionId })]);
-  const primary = useWorkbenchStore((state) => state.primary);
-  const focusedPane = useWorkbenchStore((state) => state.focusedPane);
-  const [focusRequested, setFocusRequested] = React.useState(false);
-  const unreadIds = useUnreadSessionIds();
-  const selected = isSameWorkbenchSession(primary, { workspaceId, sessionId });
-  const status = sideChat ? ctx.sessionStatusById?.[sideChat.sessionId] : undefined;
-  const isUnread = Boolean(sideChat && unreadIds.has(sideChat.sessionId) && !selected);
-  const isActiveWork = isActiveWorkSessionStatus(status);
-
-  React.useEffect(() => {
-    if (!focusRequested || !selected || !sideChat) return;
-    useWorkbenchStore.getState().focusPane("secondary");
-    setFocusRequested(false);
-  }, [focusRequested, selected, sideChat]);
-
-  if (!sideChat) return null;
-
-  return (
-    <button
-      type="button"
-      data-session-side-chat={sideChat.sessionId}
-      aria-label={`${t("session_management.split_view")} · ${title}`}
-      aria-pressed={selected && focusedPane === "secondary"}
-      aria-description={isSessionActivityStatus(status) && status !== "idle" ? getSessionActivityStatusLabel(status) : undefined}
-      title={sideChat.title || t("session_management.split_view")}
-      className={cn(
-        "flex h-8 shrink-0 items-center gap-1 rounded-r-md border-l border-sidebar-border/60 px-2 text-[11px] text-sidebar-foreground/60 hover:bg-sidebar-accent disabled:opacity-50",
-        selected && focusedPane === "secondary" && "bg-sidebar-accent text-sidebar-accent-foreground",
-      )}
-      onClick={() => {
-        useSessionManagementStore.getState().clearUnread(sideChat.sessionId);
-        setFocusRequested(true);
-        if (!selected) ctx.onOpenSession(workspaceId, sessionId);
-      }}
-    >
-      {isActiveWork || isNeedsAttentionSessionStatus(status) || isUnread
-        ? <SessionStatusIndicator
-            status={status}
-            isActiveWork={isActiveWork}
-            isUnread={isUnread}
-            attentionLabel={ctx.sessionAttentionLabelById?.[sideChat.sessionId]}
-            attentionSource={ctx.sessionAttentionSourceById?.[sideChat.sessionId]}
-          />
-        : <Columns2 className="size-3" />}
-      <span>{sideChat.draftDestination && !sideChat.pendingConversationId ? "Draft" : t("session_management.split_view")}</span>
-    </button>
   );
 }
 
@@ -2211,7 +2154,6 @@ export function SessionMenuItem({
           {trailing}
         </div>
       </SessionContextMenu>
-      <SessionSideChatControl workspaceId={workspaceId} sessionId={session.id} title={displayTitle} />
     </SidebarMenuSubItem>
   );
 

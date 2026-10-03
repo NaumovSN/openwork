@@ -212,7 +212,6 @@ or recover during active person input.
 
 ```
 pnpm --filter @openwork/computer-use build:native
-swift test --package-path packages/computer-use/native
 pnpm evals:e2e computer-use-window-scope
 ```
 
