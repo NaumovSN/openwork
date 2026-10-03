@@ -2859,3 +2859,19 @@ test("real Code Mode App calls keep stable progress ids and preserve a server-is
   const withoutLaunch = codeModeConnectionParts({ ...base, state: { status: "completed", input: {}, output: "App unavailable", title: "execute", metadata: { openworkMcpResults: [{ tool, input: {}, status: "completed", output: { app: { appId } } }] }, time: { start: 1000, end: 2000 } } });
   expect(parseDynamicToolUIPart(withoutLaunch[0])?.callProviderMetadata?.openwork?.mcpResult).not.toHaveProperty("_meta");
 });
+
+test("a finished script with no recorded App results still ends its App steps, with Den's reason", () => {
+  const base = { id: "execute-retry", callID: "execute-retry", messageID: "message", sessionID: "session", type: "tool" as const, tool: "execute", metadata: { openworkV2CodeMode: true } };
+  const rejected = codeModeConnectionParts({ ...base, state: { status: "completed", input: {}, title: "execute",
+    output: '{"error":"mcp_app_compile_failed","message":"MCP App compilation failed. Generated MCP Apps cannot use dynamic code or timers. Use component props."}',
+    metadata: { error: true, toolCalls: [{ tool: "openwork-cloud.create_app", status: "error", input: { preparationId: "prep-1" } }] }, time: { start: 1000, end: 2000 } } });
+  expect(rejected).toHaveLength(1);
+  const part = parseDynamicToolUIPart(rejected[0]);
+  expect(part?.state).toBe("output-error");
+  expect(part?.state === "output-error" ? part.errorText : "").toContain("cannot use dynamic code or timers");
+  const prepared = codeModeConnectionParts({ ...base, id: "execute-prep", callID: "execute-prep", state: { status: "completed", input: {}, title: "execute",
+    output: '{\n  "preparationId": "prep-1",\n  "title": "Next Meeting",\n  "tools": []\n}',
+    metadata: { toolCalls: [{ tool: "openwork-cloud.prepare_app", status: "completed", input: { title: "Next Meeting" } }] }, time: { start: 1000, end: 2000 } } });
+  // A successful call's real result was not recorded: marked, never guessed from the script's return value.
+  expect(parseDynamicToolUIPart(prepared[0])?.callProviderMetadata?.openwork?.mcpResult).toMatchObject({ structuredContent: { unrecorded: true } });
+});

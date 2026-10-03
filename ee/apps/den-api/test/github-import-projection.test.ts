@@ -63,3 +63,38 @@ test("strips frontmatter before deriving a GitHub-imported command projection", 
   expect(projection.searchText).not.toContain("name: Run Probe")
   expect(projection.searchText).toContain("Body text.")
 })
+
+test("names a single-server GitHub-imported MCP after its server, not the .mcp.json file", () => {
+  const { projection } = store.deriveGithubImportedObjectProjection({
+    objectType: "mcp",
+    path: "plugins/probe-plugin/.mcp.json",
+    rawSourceText: JSON.stringify({ mcpServers: { "probe-server": { type: "http", url: "https://probe.example.com/mcp" } } }, null, 2),
+  })
+  expect(projection.title).toBe("probe-server")
+  expect(projection.description).toBe("MCP server imported from plugins/probe-plugin/.mcp.json.")
+})
+
+test("names a multi-server GitHub-imported MCP after its plugin folder", () => {
+  const { projection } = store.deriveGithubImportedObjectProjection({
+    objectType: "mcp",
+    path: "plugins/probe-plugin/.mcp.json",
+    rawSourceText: JSON.stringify({
+      mcpServers: {
+        "probe-dev": { type: "http", url: "https://dev.probe.example.com/mcp" },
+        "probe-test": { type: "http", url: "https://test.probe.example.com/mcp" },
+      },
+    }, null, 2),
+  })
+  expect(projection.title).toBe("probe-plugin")
+  expect(projection.description).toBe("2 MCP servers imported from plugins/probe-plugin/.mcp.json.")
+})
+
+test("does not use a JSON fragment as a GitHub-imported hook description", () => {
+  const { projection } = store.deriveGithubImportedObjectProjection({
+    objectType: "hook",
+    path: "probe-plugin/hooks/hooks.json",
+    rawSourceText: JSON.stringify({ hooks: { Stop: [] } }, null, 2),
+  })
+  expect(projection.title).toBe("hooks")
+  expect(projection.description).toBe("Imported from probe-plugin/hooks/hooks.json.")
+})

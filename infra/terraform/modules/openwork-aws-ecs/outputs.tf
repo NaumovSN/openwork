@@ -30,7 +30,12 @@ output "alb_zone_id" {
 }
 
 output "cluster_name" {
-  value = aws_ecs_cluster.this.name
+  description = "ECS cluster the services run in (created, or the one passed as ecs_cluster_arn)."
+  value       = local.cluster_name
+}
+
+output "cluster_arn" {
+  value = local.cluster_arn
 }
 
 output "service_names" {

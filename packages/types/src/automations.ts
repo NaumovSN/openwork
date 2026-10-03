@@ -206,18 +206,26 @@ export type AutomationExecutionTarget = z.infer<typeof automationExecutionTarget
 
 export const AUTOMATION_MODEL_ATTENTION_CAPABILITY = "model_attention_v1" as const
 export const REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY = "remote_session_v1"
+/**
+ * The runner can answer read, send, and stop requests for the remote sessions
+ * it delivered. Released runners registered only remote_session_v1 and would
+ * misread the request work item, so Den routes requests by this capability.
+ */
+export const REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY = "remote_session_control_v1"
 export const AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER = "x-openwork-automation-model-attention" as const
 export const automationDesktopRunnerCapabilitySchema = z.enum([
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
   REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
+  REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
 ])
+export const AUTOMATION_DESKTOP_RUNNER_CAPABILITY_LIMIT = 3
 export type AutomationDesktopRunnerCapability = z.infer<typeof automationDesktopRunnerCapabilitySchema>
 
 export const automationDesktopRunnerRegistrationSchema = z.object({
   runnerId: idSchema.min(8),
   protocolVersion: z.literal(1),
   supportedExecutionTargets: z.array(z.literal("desktop")).length(1),
-  capabilities: z.array(automationDesktopRunnerCapabilitySchema).max(2).default([]),
+  capabilities: z.array(automationDesktopRunnerCapabilitySchema).max(AUTOMATION_DESKTOP_RUNNER_CAPABILITY_LIMIT).default([]),
   appVersion: z.string().trim().min(1).max(80),
   platform: z.enum(["darwin", "win32", "linux"]),
   concurrency: z.number().int().min(1).max(4),
@@ -251,9 +259,11 @@ export const automationRunnerWorkItemSchema = z.union([
   // always carried.
   z.object({ runId: idSchema, executionTarget: z.literal("desktop") }),
   z.object({ kind: z.literal("remote_session_create"), commandId: idSchema }),
+  // Listed only for runners that registered remote_session_control_v1.
+  z.object({ kind: z.literal("remote_session_request"), requestId: idSchema }),
 ])
 export const automationRunnerWorkResponseSchema = z.object({
-  items: z.array(automationRunnerWorkItemSchema).max(9),
+  items: z.array(automationRunnerWorkItemSchema).max(14),
 })
 export type AutomationRunnerWorkResponse = z.infer<typeof automationRunnerWorkResponseSchema>
 
@@ -301,6 +311,152 @@ export const remoteSessionCommandCompleteResponseSchema = z.object({
     sessionId: z.string().max(240).nullable(),
     workspaceId: z.string().max(240).nullable(),
   }),
+})
+
+export const REMOTE_SESSION_FINAL_TEXT_MAX_LENGTH = 20_000
+export const remoteSessionStatusSchema = z.enum(["running", "waiting", "idle", "error"])
+export const remoteSessionWaitingForSchema = z.enum(["permission", "question"])
+export const remoteSessionEngineSchema = z.enum(["v1", "v2"])
+export const remoteSessionModelSchema = z.object({
+  providerId: idSchema,
+  modelId: idSchema,
+  variant: z.string().trim().min(1).max(60).nullable().optional(),
+})
+/**
+ * Progress the claiming desktop runner reports for a delivered remote-session
+ * command's local session, so Den callers can follow it to the final answer.
+ */
+export const remoteSessionCommandSessionReportSchema = z.object({
+  status: remoteSessionStatusSchema,
+  waitingFor: remoteSessionWaitingForSchema.nullable().optional(),
+  engine: remoteSessionEngineSchema.optional(),
+  model: remoteSessionModelSchema.nullable().optional(),
+  finalText: z.string().max(REMOTE_SESSION_FINAL_TEXT_MAX_LENGTH).optional(),
+  error: remoteSessionCommandErrorSchema.nullable().optional(),
+  messageCount: z.number().int().min(0).optional(),
+  observedAt: timestampSchema,
+})
+export type RemoteSessionCommandSessionReport = z.infer<typeof remoteSessionCommandSessionReportSchema>
+export const remoteSessionCommandSessionReportResponseSchema = z.object({ ok: z.literal(true) })
+
+/**
+ * Den -> desktop request/response channel for a delivered remote session:
+ * read its transcript, send a follow-up, or stop it. Only the runner that
+ * delivered the session receives the request.
+ */
+export const REMOTE_SESSION_REQUEST_RESULT_MAX_BYTES = 256 * 1024
+export const REMOTE_SESSION_TRANSCRIPT_TEXT_MAX_LENGTH = 20_000
+export const REMOTE_SESSION_TOOL_SUMMARY_MAX_LENGTH = 2_000
+export const REMOTE_SESSION_TRANSCRIPT_PAGE_MAX = 100
+export const remoteSessionRequestActionSchema = z.enum(["read", "send", "stop"])
+export type RemoteSessionRequestAction = z.infer<typeof remoteSessionRequestActionSchema>
+const remoteSessionMessageIdSchema = z.string().regex(/^msg_[a-zA-Z0-9]+$/).max(160)
+export const remoteSessionReadInputSchema = z.object({
+  from: z.enum(["start", "end"]),
+  cursor: z.string().trim().min(1).max(160).nullable(),
+  limit: z.number().int().min(1).max(REMOTE_SESSION_TRANSCRIPT_PAGE_MAX),
+})
+export const remoteSessionSendInputSchema = z.object({
+  prompt: z.string().min(1).max(100_000),
+  messageId: remoteSessionMessageIdSchema.nullable(),
+  model: remoteSessionModelSchema.nullable(),
+})
+export const remoteSessionStopInputSchema = z.object({
+  messageId: z.string().trim().min(1).max(160).nullable(),
+})
+export const remoteSessionRequestInputSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("read"), input: remoteSessionReadInputSchema }),
+  z.object({ action: z.literal("send"), input: remoteSessionSendInputSchema }),
+  z.object({ action: z.literal("stop"), input: remoteSessionStopInputSchema }),
+])
+export type RemoteSessionRequestInput = z.infer<typeof remoteSessionRequestInputSchema>
+const remoteSessionRequestAssignmentBase = {
+  requestId: idSchema,
+  kind: z.literal("remote_session_request"),
+  /** The remote-session command that delivered this session. */
+  commandId: idSchema,
+  sessionId: z.string().trim().min(1).max(240),
+  workspaceId: z.string().trim().min(1).max(240),
+  engine: remoteSessionEngineSchema.nullable(),
+  expiresAt: timestampSchema,
+}
+export const remoteSessionRequestAssignmentSchema = z.discriminatedUnion("action", [
+  z.object({ ...remoteSessionRequestAssignmentBase, action: z.literal("read"), input: remoteSessionReadInputSchema }),
+  z.object({ ...remoteSessionRequestAssignmentBase, action: z.literal("send"), input: remoteSessionSendInputSchema }),
+  z.object({ ...remoteSessionRequestAssignmentBase, action: z.literal("stop"), input: remoteSessionStopInputSchema }),
+])
+export type RemoteSessionRequestAssignment = z.infer<typeof remoteSessionRequestAssignmentSchema>
+export const remoteSessionRequestClaimResponseSchema = z.object({
+  assignment: remoteSessionRequestAssignmentSchema,
+})
+const boundedSummarySchema = z.string().max(REMOTE_SESSION_TOOL_SUMMARY_MAX_LENGTH).nullable()
+export const remoteSessionTranscriptToolCallSchema = z.object({
+  id: z.string().max(240),
+  name: z.string().max(240),
+  status: z.string().max(60).nullable(),
+  input: boundedSummarySchema,
+  output: boundedSummarySchema,
+  error: boundedSummarySchema,
+  truncated: z.boolean(),
+})
+export const remoteSessionTranscriptMessageSchema = z.object({
+  id: z.string().max(240),
+  role: z.enum(["user", "assistant"]),
+  createdAt: timestampSchema.nullable(),
+  text: z.string().max(REMOTE_SESSION_TRANSCRIPT_TEXT_MAX_LENGTH),
+  truncated: z.boolean(),
+  toolCalls: z.array(remoteSessionTranscriptToolCallSchema).max(200),
+  error: remoteSessionCommandErrorSchema.nullable(),
+})
+export type RemoteSessionTranscriptMessage = z.infer<typeof remoteSessionTranscriptMessageSchema>
+export const remoteSessionReadResultSchema = z.object({
+  title: z.string().max(240).nullable(),
+  status: remoteSessionStatusSchema,
+  waitingFor: remoteSessionWaitingForSchema.nullable(),
+  lastError: remoteSessionCommandErrorSchema.nullable(),
+  messageCount: z.number().int().min(0),
+  from: z.enum(["start", "end"]),
+  messages: z.array(remoteSessionTranscriptMessageSchema).max(REMOTE_SESSION_TRANSCRIPT_PAGE_MAX),
+  /** Pass back as cursor (with the same from) for the next page; null when there is none. */
+  nextCursor: z.string().max(160).nullable(),
+})
+export type RemoteSessionReadResult = z.infer<typeof remoteSessionReadResultSchema>
+export const remoteSessionSendResultSchema = z.object({
+  messageId: z.string().max(160).nullable(),
+  alreadyPresent: z.boolean(),
+})
+export const remoteSessionStopResultSchema = z.object({
+  stopped: z.boolean(),
+  reason: z.enum(["different_turn"]).nullable(),
+})
+export const remoteSessionRequestResultSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("read"), result: remoteSessionReadResultSchema }),
+  z.object({ action: z.literal("send"), result: remoteSessionSendResultSchema }),
+  z.object({ action: z.literal("stop"), result: remoteSessionStopResultSchema }),
+])
+export type RemoteSessionRequestResult = z.infer<typeof remoteSessionRequestResultSchema>
+export const remoteSessionRequestCompleteRequestSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("done"),
+    outcome: remoteSessionRequestResultSchema,
+    error: z.never().optional(),
+  }),
+  z.object({
+    status: z.literal("failed"),
+    outcome: z.never().optional(),
+    error: remoteSessionCommandErrorSchema,
+  }),
+]).refine(
+  (body) => body.status !== "done"
+    || new TextEncoder().encode(JSON.stringify(body.outcome)).byteLength <= REMOTE_SESSION_REQUEST_RESULT_MAX_BYTES,
+  { message: `The result must be at most ${REMOTE_SESSION_REQUEST_RESULT_MAX_BYTES} bytes`, path: ["outcome"] },
+)
+export type RemoteSessionRequestCompleteRequest = z.infer<typeof remoteSessionRequestCompleteRequestSchema>
+export const remoteSessionRequestCompleteResponseSchema = z.object({
+  request: z.object({ id: idSchema, status: z.enum(["done", "failed"]) }),
+})
+export const remoteSessionRequestPendingResponseSchema = z.object({
+  items: z.array(z.object({ kind: z.literal("remote_session_request"), requestId: idSchema })).max(5),
 })
 
 export const automationDesktopRunnerAssignmentSchema = z.object({

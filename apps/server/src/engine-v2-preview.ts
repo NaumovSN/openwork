@@ -4,6 +4,7 @@ import { migrateOpencodeV1History, opencodeV1DatabasePath, type EngineV2Migratio
 import { executionRules } from "./managed-policy-rules.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,6 +30,17 @@ import {
 import type { EnvService } from "./env-file.js";
 import { selectPrimaryCredentialEnvName } from "./managed-provider-auth.js";
 import type { ServerConfig } from "./types.js";
+
+/**
+ * A stable id for this OpenWork app's engine config. Each desktop app gives
+ * its server its own state path, so an installed build, a dev build and a
+ * test world sharing one engine state directory stop overwriting each other's
+ * engine config. A server without one keeps the shared layout.
+ */
+export function engineInstanceId(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const key = env.OPENWORK_SERVER_STATE_PATH?.trim() || env.OPENWORK_ELECTRON_APP_IDENTIFIER?.trim();
+  return key ? createHash("sha256").update(key).digest("hex").slice(0, 12) : undefined;
+}
 import { findManagedEngineWorkspace } from "./workspaces.js";
 import { localProviderDefinitions, readLocalProviderApiKeys } from "./opencode-v2-local-auth.js";
 
@@ -670,6 +682,7 @@ export function createEngineV2Preview(options: {
       contextTools: contextBridge,
       bin: resolved.bin,
       rootDir,
+      instanceId: engineInstanceId(),
       env: { OPENCODE_MODELS_URL: opencodeModelsUrl },
       permissions: async () => {
         const runtime = await readGlobalRuntimeOpencodeConfig(config);

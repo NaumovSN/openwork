@@ -5,6 +5,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { deriveReleaseSecret, emptyReleaseModule, obfuscateReleaseSecret, writeDesktopFreeReleaseModule } from "./prepare-desktop-free-release.mjs";
+import { applyDesktopFreeBuildSettings, loadDesktopFreeReleaseSecret } from "../electron/desktop-free-release.mjs";
 
 const masterKey = "test-only-release-master-key-2222222222222222222";
 
@@ -57,5 +58,32 @@ test("stable CI builds refuse to ship without a key; other builds get an untagge
     assert.ok(!masterKey.includes(tagged.fingerprint), "the fingerprint does not reveal the key");
     const module = await import(outPath);
     assert.deepEqual(Buffer.from(module.reveal()), deriveReleaseSecret(masterKey, "1.2.3"));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("an explicit Auto opt-out builds without a key and remains disabled after installation", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "openwork-free-release-disabled-"));
+  try {
+    for (const flag of ["OPENWORK_DISABLE_FREE_INFERENCE", "OPENWORK_DISABLE_HOSTED_MODELS", "VITE_DISABLE_OPENWORK_MODELS"]) {
+      for (const value of ["1", "true", " YES ", "On"]) {
+        const outPath = path.join(root, `${flag}-${value.trim()}.mjs`);
+        writeDesktopFreeReleaseModule({ masterKey, version: "1.2.3", outPath, ci: true, environment: {} });
+        const result = writeDesktopFreeReleaseModule({ masterKey: "", version: "1.2.3", outPath, ci: true, environment: { [flag]: value } });
+        assert.deepEqual(result, { tagged: false, disabled: true });
+        const module = await load(await readFile(outPath, "utf8"), root);
+        assert.equal(module.disabled, true);
+        assert.equal(module.reveal(), null, "a previous release tag must be removed");
+        const environment = {};
+        assert.equal(await applyDesktopFreeBuildSettings({ appVersion: "1.2.3", environment, importGenerated: async () => module }), true);
+        assert.equal(environment.OPENWORK_DISABLE_FREE_INFERENCE, "1");
+        assert.deepEqual(await loadDesktopFreeReleaseSecret({ appVersion: "1.2.3", environment, importGenerated: async () => module }), { secret: null, source: null });
+      }
+      for (const value of ["", "0", "false", "no", "off"]) {
+        assert.throws(() => writeDesktopFreeReleaseModule({ version: "1.2.3", outPath: path.join(root, "enabled.mjs"), ci: true, environment: { [flag]: value } }), /DESKTOP_FREE_RELEASE_KEY/);
+      }
+    }
+    const outPath = path.join(root, "key-present.mjs");
+    assert.deepEqual(writeDesktopFreeReleaseModule({ masterKey, version: "1.2.3", outPath, ci: true, environment: { OPENWORK_DISABLE_FREE_INFERENCE: "1" } }), { tagged: false, disabled: true });
+    assert.equal((await load(await readFile(outPath, "utf8"), root)).reveal(), null);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

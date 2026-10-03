@@ -596,11 +596,46 @@ test("provider destinations and source snapshots are immutable without stripping
     expect((await request(ownerCookie, `/v1/inference-providers/${id}`, { method: "PATCH", body: JSON.stringify({ name: "Rename with new catalog" }) })).status).toBe(200)
     expect(await loadConfig()).toEqual(before)
     source.npm = "@ai-sdk/openai"
-    const detail = readProvider(await (await request(ownerCookie, `/v1/inference-providers/${id}`)).json())
-    expect(detail.catalogWarning).toContain("SDK changed")
+    const catalogModels: unknown = await (await request(ownerCookie, `/v1/inference-providers/${id}/models`)).json()
+    expect(isRecord(catalogModels) ? catalogModels.catalogWarning : null).toContain("SDK changed")
     expect(await loadConfig()).toEqual(before)
   } finally {
     Object.assign(source, original)
+  }
+})
+
+test("provider reads never take the provider row lock", async () => {
+  const create = await request(ownerCookie, "/v1/inference-providers", { method: "POST", body: JSON.stringify({ name: "Lock-free reads", providerId: "anthropic", modelIds: ["claude-haiku-4"], credential: { kind: "api_key", secret: "fake-lock-free-key" }, allMembers: true }) })
+  expect(create.status).toBe(201)
+  const id = normalizeDenTypeId("inferenceProvider", readString(readProvider(await create.json()), "id"))
+  const base = `/v1/inference-providers/${id}`
+  // A catalog refresh with nothing to sync must not lock either.
+  expect((await request(ownerCookie, `${base}/models`)).status).toBe(200)
+
+  let lockHeld = () => {}
+  const held = new Promise<void>((resolve) => { lockHeld = resolve })
+  let releaseLock = () => {}
+  const release = new Promise<void>((resolve) => { releaseLock = resolve })
+  const holder = db.transaction(async (tx) => {
+    await tx.select().from(schema.GatewayProviderTable).where(drizzle.eq(schema.GatewayProviderTable.id, id)).for("update")
+    lockHeld()
+    await release
+  })
+  await held
+  try {
+    const reads = Promise.all([
+      request(ownerCookie, "/v1/inference-providers"),
+      request(memberCookie, "/v1/inference-providers?scope=usable"),
+      request(ownerCookie, base),
+      request(memberCookie, `${base}/connect`),
+      request(ownerCookie, `${base}/models`),
+    ])
+    const outcome = await Promise.race([reads, new Promise<"blocked">((resolve) => setTimeout(() => resolve("blocked"), 5000))])
+    if (outcome === "blocked") throw new Error("A provider read waited on the provider row lock")
+    expect(outcome.map((response) => response.status)).toEqual([200, 200, 200, 200, 200])
+  } finally {
+    releaseLock()
+    await holder
   }
 })
 
@@ -831,7 +866,9 @@ test("pending OAuth metadata filters cached out-of-universe and incompatible mod
     const connect = await request(memberCookie, `/v1/inference-providers/${id}/connect`)
     expect(connect.status).toBe(200)
     const summary = readProvider(await connect.json())
-    expect(summary).toMatchObject({ models: [], credentialStatus: "member_auth_required", catalogWarning: expect.stringContaining("unavailable") })
+    expect(summary).toMatchObject({ models: [], credentialStatus: "member_auth_required" })
+    // Connect is a read: it never refreshes the catalog, so a catalog outage cannot surface here.
+    expect(summary.catalogWarning).toBeUndefined()
     const pending = readRows(summary, "authorizationRequests")
     expect(pending).toHaveLength(1)
     expect(pending[0].credentialSetId).toBe(setId)

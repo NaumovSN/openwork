@@ -2,14 +2,51 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import {
+  automationRunnerDisabledReason,
   classifyAutomationExecutionError,
-  createDesktopAutomationRunner,
-  executeDesktopAutomation,
-  executeDesktopRemoteSession,
+  classifyRemoteSessionError,
+  createDesktopAutomationRunner as createRunner,
+  REMOTE_SESSION_FIRST_TURN_WINDOW_MS,
+  executeDesktopAutomation as executeAutomation,
+  executeDesktopRemoteSession as executeRemoteSession,
+  executeRemoteSessionRequest as executeRequest,
   normalizeRunnerBaseUrl,
+  REMOTE_SESSION_REQUEST_POLL,
+  REMOTE_SESSION_REQUEST_TIMEOUT_MS,
+  remoteSessionTranscriptPage,
+  remoteSessionTurnVisible,
+  REMOTE_SESSION_WATCH,
+  remoteSessionObservation,
+  remoteSessionThreadIdentity,
   resolveAssignmentWorkspace,
   runnerTokenAudience,
+  watchRemoteSession as watchSession,
 } from "./automation-runner.mjs"
+
+// The session client asks the local server which engine chats use and which
+// model is the workspace default. These fakes model a server that predates
+// both routes (404), which keeps sessions on v1 with no extra model.
+function isEngineLookup(url) {
+  const { pathname } = new URL(url)
+  return pathname === "/experimental/engine-v2-preview/status" || /^\/workspace\/[^/]+\/default-model$/.test(pathname)
+}
+
+function legacyLocalServer(options) {
+  if (!options?.fetchImpl) return options
+  const fetchImpl = options.fetchImpl
+  return {
+    ...options,
+    fetchImpl: (url, init) => isEngineLookup(url)
+      ? Promise.resolve(Response.json({ code: "not_found", message: "Not found" }, { status: 404 }))
+      : fetchImpl(url, init),
+  }
+}
+
+const createDesktopAutomationRunner = (options) => createRunner(legacyLocalServer(options))
+const executeDesktopAutomation = (assignment, options) => executeAutomation(assignment, legacyLocalServer(options))
+const executeDesktopRemoteSession = (assignment, options) => executeRemoteSession(assignment, legacyLocalServer(options))
+const watchRemoteSession = (options) => watchSession(legacyLocalServer(options))
+const executeRemoteSessionRequest = (assignment, options) => executeRequest(assignment, legacyLocalServer(options))
 
 function runnerTokenFor(audience, organizationId = "org-1") {
   const payload = Buffer.from(JSON.stringify({
@@ -17,6 +54,18 @@ function runnerTokenFor(audience, organizationId = "org-1") {
     o: organizationId,
     m: "member-1",
     r: "runner-1",
+    a: audience,
+  })).toString("base64url")
+  return `${payload}.test-signature`
+}
+
+function controlRunnerTokenFor(audience) {
+  const payload = Buffer.from(JSON.stringify({
+    v: 2,
+    o: "org-1",
+    m: "member-1",
+    r: "runner-1",
+    c: ["model_attention_v1", "remote_session_v1", "remote_session_control_v1"],
     a: audience,
   })).toString("base64url")
   return `${payload}.test-signature`
@@ -399,6 +448,47 @@ test("a runner credential bound elsewhere reports why this desktop stays disconn
   assert.deepEqual(logged, [
     "rejected runner credential for https://den.example.com/api/den"
       + ": token audience https://api.example.com",
+  ])
+})
+
+test("OPENWORK_AUTOMATION_RUNNER=off disables the runner; other values leave it on", () => {
+  for (const value of ["off", "OFF", " 0 ", "false", "disabled"]) {
+    assert.equal(
+      automationRunnerDisabledReason({ OPENWORK_AUTOMATION_RUNNER: value }),
+      `OPENWORK_AUTOMATION_RUNNER=${value.trim().toLowerCase()}`,
+    )
+  }
+  for (const env of [{}, { OPENWORK_AUTOMATION_RUNNER: "" }, { OPENWORK_AUTOMATION_RUNNER: "on" }, { OPENWORK_AUTOMATION_RUNNER: "1" }]) {
+    assert.equal(automationRunnerDisabledReason(env), null)
+  }
+})
+
+test("a disabled runner ignores renderer configuration and never contacts Den", async () => {
+  const logged = []
+  const attempted = []
+  const runner = createDesktopAutomationRunner({
+    disabledReason: "OPENWORK_AUTOMATION_RUNNER=off",
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" }),
+    fetchImpl: async (url) => {
+      attempted.push(String(url))
+      throw new Error("no network in test")
+    },
+    log: (state) => logged.push(state),
+  })
+  const configuration = {
+    baseUrl: "https://den.example.com",
+    token: runnerTokenFor("https://den.example.com"),
+    runnerId: "runner-1",
+  }
+  assert.deepEqual(runner.configure(configuration), { connected: false })
+  assert.deepEqual(runner.configure(configuration), { connected: false })
+  assert.deepEqual(runner.wake(), { polled: false })
+  await new Promise((resolve) => setTimeout(resolve, 25))
+  runner.stop()
+  assert.deepEqual(attempted, [])
+  assert.deepEqual(logged, [
+    "ignoring runner configuration: disabled by OPENWORK_AUTOMATION_RUNNER=off;"
+      + " this desktop will not claim Automation runs or remote-session commands",
   ])
 })
 
@@ -849,6 +939,8 @@ test("a remote-session work item creates a local session and completes with its 
           return Response.json({ id: "session-1" }, { status: 201 })
         }
         if (parsed.pathname === sessionPaths.prompt) return new Response(null, { status: 204 })
+        const snapshot = finishedSnapshot(parsed, sessionPaths)
+        if (snapshot) return snapshot
         throw new Error(`Unexpected local request ${parsed.pathname}`)
       }
       denRequests.push({ path: parsed.pathname, authorization, body })
@@ -885,7 +977,9 @@ test("a remote-session work item creates a local session and completes with its 
   )
   runner.stop()
 
-  assert.deepEqual(localRequests, [
+  const snapshotPaths = [sessionPaths.get, sessionPaths.messages, sessionPaths.todo, sessionPaths.status]
+  assert.ok(localRequests.some((request) => request.path === sessionPaths.messages), "first turn was not observed")
+  assert.deepEqual(localRequests.filter((request) => !snapshotPaths.includes(request.path)), [
     { path: "/workspaces", method: "GET", body: null, authorization: "Bearer local-client-token" },
     {
       path: "/workspace/workspace-1/opencode/session",
@@ -934,11 +1028,57 @@ test("remote-session creation omits nullable prompt and model fields", async () 
     signal: new AbortController().signal,
   })
 
-  assert.deepEqual(result, { sessionId: "session-not-started", workspaceId: "workspace/first", started: false })
+  assert.deepEqual(result, {
+    sessionId: "session-not-started",
+    workspaceId: "workspace/first",
+    started: false,
+    firstTurn: { outcome: "not_started" },
+    engine: "v1",
+  })
   assert.deepEqual(requests, [
     { path: "/workspaces", body: null },
     { path: "/workspace/workspace%2Ffirst/opencode/session", body: { title: "Desktop handoff" } },
   ])
+})
+
+test("a remote session starts on v2 when the local server routes chats there", async () => {
+  const requests = []
+  const result = await executeRemoteSession(remoteSessionAssignment(), {
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local-client-token" }),
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(url)
+      requests.push(`${options.method ?? "GET"} ${parsed.pathname}`)
+      if (parsed.pathname === "/workspaces") return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
+      if (parsed.pathname === "/experimental/engine-v2-preview/status") return Response.json({ enabled: true, chatRouting: true })
+      if (parsed.pathname === "/workspace/workspace-1/opencode2/api/session") return Response.json({ data: { id: "ses_v2", title: "Desktop handoff" } })
+      if (parsed.pathname === "/workspace/workspace-1/opencode2/api/session/ses_v2/model") return new Response(null, { status: 204 })
+      if (parsed.pathname === "/workspace/workspace-1/opencode2/api/session/ses_v2/prompt") return Response.json({ data: { id: "inp_1" } })
+      // The first-turn watch reads the session back through the v2 mount.
+      if (parsed.pathname === "/workspace/workspace-1/opencode2/api/session/ses_v2") return Response.json({ data: { id: "ses_v2", title: "Desktop handoff" } })
+      if (parsed.pathname === "/workspace/workspace-1/opencode2/api/session/ses_v2/message") {
+        return Response.json({
+          data: [
+            { id: "msg_reply", type: "assistant", time: { created: 2 }, content: [{ type: "text", text: "On it." }] },
+            { id: "msg_prompt", type: "user", time: { created: 1 }, text: "Summarize my week." },
+          ],
+          cursor: { next: null },
+        })
+      }
+      if (parsed.pathname === "/workspace/workspace-1/opencode2/api/session/active") return Response.json({ data: { ses_v2: { type: "running" } } })
+      throw new Error(`Unexpected request ${parsed.pathname}`)
+    },
+    signal: new AbortController().signal,
+  })
+
+  assert.deepEqual(result, { sessionId: "ses_v2", workspaceId: "workspace-1", started: true, firstTurn: { outcome: "replied" }, engine: "v2", model: { providerId: "provider", modelId: "model", variant: "high" } })
+  assert.deepEqual(requests.slice(0, 5), [
+    "GET /workspaces",
+    "GET /experimental/engine-v2-preview/status",
+    "POST /workspace/workspace-1/opencode2/api/session",
+    "POST /workspace/workspace-1/opencode2/api/session/ses_v2/model",
+    "POST /workspace/workspace-1/opencode2/api/session/ses_v2/prompt",
+  ])
+  assert.ok(requests.slice(5).every((request) => request.startsWith("GET /workspace/workspace-1/opencode2/api/")))
 })
 
 test("native OpenCode failures preserve upstream status, message, and workspace context", async () => {
@@ -1016,6 +1156,181 @@ test("a local remote-session failure completes as failed without leaking the res
   assert.equal(completions[0].sessionId, undefined)
   assert.equal(completions[0].workspaceId, undefined)
   assert.equal(JSON.stringify(completions[0]).includes(sensitiveToken), false)
+})
+
+function firstTurnFetch(sessionPaths, snapshotFor) {
+  let polls = 0
+  const fetchImpl = async (url, options = {}) => {
+    const parsed = new URL(url)
+    if (parsed.pathname === "/workspaces") {
+      return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
+    }
+    if (parsed.pathname === sessionPaths.create && options.method === "POST") {
+      return Response.json({ id: sessionPaths.get.split("/").at(-1) }, { status: 201 })
+    }
+    if (parsed.pathname === sessionPaths.prompt) return new Response(null, { status: 204 })
+    if (parsed.pathname === sessionPaths.messages) polls += 1
+    const snapshot = respondToSnapshotRequest(parsed, sessionPaths, snapshotFor(polls))
+    if (snapshot) return snapshot
+    throw new Error(`Unexpected request ${parsed.pathname}`)
+  }
+  return { fetchImpl, polls: () => polls }
+}
+
+function observeFirstTurn(sessionPaths, snapshotFor, overrides = {}) {
+  const { fetchImpl } = firstTurnFetch(sessionPaths, snapshotFor)
+  return executeDesktopRemoteSession(remoteSessionAssignment(), {
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local-client-token" }),
+    fetchImpl,
+    signal: new AbortController().signal,
+    firstTurnWindowMs: 1_000,
+    idleGraceMs: 50,
+    pollIntervalMs: 5,
+    ...overrides,
+  })
+}
+
+const providerAuthSnapshot = {
+  status: { type: "idle" },
+  messages: [{
+    info: {
+      id: "msg-auth",
+      role: "assistant",
+      error: { name: "ProviderAuthError", data: { message: "AI Gateway authentication failed: Invalid API key" } },
+    },
+    parts: [],
+  }],
+}
+
+test("the first-turn window defaults to about twenty seconds", () => {
+  assert.equal(REMOTE_SESSION_FIRST_TURN_WINDOW_MS, 20_000)
+})
+
+test("provider credential failures get their own remote-session code", () => {
+  assert.equal(classifyRemoteSessionError({ name: "ProviderAuthError", message: "nope" }).code, "provider_auth_failed")
+  assert.equal(classifyRemoteSessionError({ name: "APIError", message: "Invalid API key" }).code, "provider_auth_failed")
+  assert.equal(classifyRemoteSessionError({ name: "APIError", message: "Request returned 401 Unauthorized" }).code, "provider_auth_failed")
+  assert.equal(classifyRemoteSessionError({ message: "Model not found: provider/model" }).code, "model_access_lost")
+  assert.equal(classifyRemoteSessionError({ message: "Provider overloaded" }).code, "execution_failed")
+  // Desktop Automations keep their existing classification.
+  assert.equal(classifyAutomationExecutionError({ name: "ProviderAuthError", message: "Invalid API key" }).code, "execution_failed")
+})
+
+test("a remote session whose first assistant step succeeds is delivered", async () => {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const result = await observeFirstTurn(sessionPaths, (polls) => polls < 3
+    ? { status: { type: "busy" }, messages: [] }
+    : {
+      status: { type: "busy" },
+      messages: [{ info: { id: "msg-1", role: "assistant" }, parts: [{ id: "part-1", type: "reasoning", text: "Looking" }] }],
+    })
+  assert.deepEqual(result, { sessionId: "session-1", workspaceId: "workspace-1", started: true, firstTurn: { outcome: "replied" }, engine: "v1", model: { providerId: "provider", modelId: "model", variant: "high" } })
+})
+
+test("a remote session still busy when the window ends is delivered", async () => {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const startedAt = Date.now()
+  const result = await observeFirstTurn(sessionPaths, () => ({ status: { type: "busy" }, messages: [] }), {
+    firstTurnWindowMs: 100,
+  })
+  assert.deepEqual(result.firstTurn, { outcome: "busy" })
+  assert.ok(Date.now() - startedAt < 1_000, "the first-turn window was not bounded")
+})
+
+test("a remote session that goes idle without output fails as no_reply after the grace period", async () => {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const startedAt = Date.now()
+  const result = await observeFirstTurn(sessionPaths, () => ({ status: { type: "idle" }, messages: [] }), {
+    idleGraceMs: 60,
+  })
+  assert.ok(Date.now() - startedAt >= 60, "idle was trusted before the grace period")
+  assert.equal(result.firstTurn.outcome, "failed")
+  assert.equal(result.firstTurn.code, "no_reply")
+  assert.match(result.firstTurn.message, /session-1/)
+  assert.match(result.firstTurn.message, /workspace-1/)
+})
+
+test("a first-turn provider auth failure completes as failed with the local session named", async () => {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-auth")
+  const { fetchImpl: localFetch } = firstTurnFetch(sessionPaths, () => providerAuthSnapshot)
+  const completions = []
+  let offered = false
+  let resolveCompleted
+  const completed = new Promise((resolve) => { resolveCompleted = resolve })
+  const runner = createDesktopAutomationRunner({
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local-client-token" }),
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(url)
+      if (parsed.origin === "http://127.0.0.1:3000") return localFetch(url, options)
+      if (parsed.pathname === "/v1/automation-runner/work") {
+        if (offered) return Response.json({ items: [] })
+        offered = true
+        return Response.json({ items: [{ kind: "remote_session_create", commandId: "command-1" }] })
+      }
+      if (parsed.pathname.endsWith("/claim")) return Response.json({ assignment: remoteSessionAssignment() })
+      if (parsed.pathname.endsWith("/complete")) {
+        completions.push(JSON.parse(options.body))
+        resolveCompleted()
+        return Response.json({ command: { id: "command-1", status: "failed" } })
+      }
+      throw new Error(`Unexpected request ${parsed.pathname}`)
+    },
+    waitBeforeReconnect: () => new Promise(() => {}),
+    remoteSessionFirstTurnWindowMs: 1_000,
+    remoteSessionPollIntervalMs: 5,
+  })
+  runner.configure({
+    baseUrl: "https://den.example.com",
+    token: runnerTokenFor("https://den.example.com"),
+    runnerId: "runner-1",
+  })
+  await withTimeout(completed, "failed first-turn completion timed out")
+  runner.stop()
+
+  assert.equal(completions.length, 1)
+  const [completion] = completions
+  assert.equal(completion.status, "failed")
+  assert.equal(completion.error.code, "provider_auth_failed")
+  assert.match(completion.error.message, /session-auth/)
+  assert.match(completion.error.message, /workspace-1/)
+  assert.match(completion.error.message, /rejected its credentials/)
+  assert.match(completion.error.message, /Invalid API key/)
+  assert.ok(completion.error.message.length <= 2_000)
+  assert.equal("sessionId" in completion, false)
+  assert.equal("workspaceId" in completion, false)
+})
+
+test("a long provider error is truncated without losing the local session ids", async () => {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-long")
+  const result = await observeFirstTurn(sessionPaths, () => ({
+    status: { type: "idle" },
+    messages: [{
+      info: { id: "msg-long", role: "assistant", error: { name: "APIError", data: { message: "y".repeat(5_000) } } },
+      parts: [],
+    }],
+  }))
+  assert.equal(result.firstTurn.code, "execution_failed")
+  assert.equal(result.firstTurn.message.length, 2_000)
+  assert.match(result.firstTurn.message, /session-long/)
+})
+
+test("aborting during the first-turn window stops observing", async () => {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const controller = new AbortController()
+  const { fetchImpl, polls } = firstTurnFetch(sessionPaths, () => ({ status: { type: "busy" }, messages: [] }))
+  const pending = executeDesktopRemoteSession(remoteSessionAssignment(), {
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local-client-token" }),
+    fetchImpl,
+    signal: controller.signal,
+    firstTurnWindowMs: 60_000,
+    pollIntervalMs: 5,
+  })
+  await waitFor(() => polls() > 0, "first turn was not observed")
+  controller.abort(new Error("Automation runner configuration changed"))
+  await assert.rejects(
+    withTimeout(pending, "abort did not stop the first-turn window"),
+    (error) => error instanceof Error && !/abort did not stop/.test(error.message) && Reflect.get(error, "sessionId") === "session-1",
+  )
 })
 
 test("a work poll left hanging by a suspended machine times out and retries", async () => {
@@ -1894,4 +2209,693 @@ test("stopping the runner during terminal delivery aborts it without further req
   // retired generation never retries and never posts the completion.
   assert.equal(denPaths.filter((path) => path.endsWith("/events")).length, 4)
   assert.equal(denPaths.filter((path) => path.endsWith("/complete")).length, 0)
+})
+
+const FAST_WATCH = { fastPollMs: 2, slowPollMs: 2, keepaliveMs: 60_000, silentIdlePolls: 3 }
+
+function userMessage(id, text) {
+  return { info: { id, role: "user" }, parts: [{ id: `${id}-part`, type: "text", text }] }
+}
+
+function assistantMessage(id, text, extra = {}) {
+  return { info: { id, role: "assistant", ...extra }, parts: text ? [{ id: `${id}-part`, type: "text", text }] : [] }
+}
+
+/**
+ * Drives a delivered remote session through the real runner. `phase(polls)`
+ * returns the local snapshot (plus optional pending permissions) for each
+ * watcher poll after delivery; `denSession` answers the progress route.
+ */
+/**
+ * @param {{
+ *   phase: (polls: number) => Record<string, unknown>,
+ *   denSession: (count: number) => Response,
+ *   extraWork?: Array<Record<string, unknown>>,
+ *   onDen?: (parsed: URL, options: RequestInit) => Response | null,
+ * }} input
+ */
+function remoteSessionWatchRunner({ phase, denSession, extraWork = [], onDen = () => null }) {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const reports = []
+  const localPaths = []
+  let delivered = false
+  let watchPolls = 0
+  let offeredRemote = false
+  const queuedWork = [...extraWork]
+  const runner = createDesktopAutomationRunner({
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" }),
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(url)
+      if (parsed.origin === "http://127.0.0.1:3000") {
+        localPaths.push(parsed.pathname)
+        if (parsed.pathname === "/workspaces") {
+          return Response.json({ items: [{ id: "workspace-1" }], activeId: "workspace-1" })
+        }
+        if (parsed.pathname === sessionPaths.create && options.method === "POST") {
+          return Response.json({ id: "session-1" }, { status: 201 })
+        }
+        if (parsed.pathname === sessionPaths.prompt) return new Response(null, { status: 204 })
+        if (parsed.pathname === sessionPaths.abort) return Response.json(true)
+        if (!delivered) {
+          // First-turn window: the session has started replying.
+          const started = respondToSnapshotRequest(parsed, sessionPaths, {
+            status: { type: "busy" },
+            messages: [userMessage("msg-user", "Inspect the repo"), assistantMessage("msg-a1", "Looking")],
+          })
+          if (started) return started
+        }
+        if (parsed.pathname === sessionPaths.messages) watchPolls += 1
+        const current = phase(Math.max(1, watchPolls))
+        if (parsed.pathname === "/workspace/workspace-1/opencode/permission") return Response.json(current.permissions ?? [])
+        if (parsed.pathname === "/workspace/workspace-1/opencode/question") return Response.json(current.questions ?? [])
+        const snapshot = respondToSnapshotRequest(parsed, sessionPaths, current)
+        if (snapshot) return snapshot
+        throw new Error(`Unexpected local request ${parsed.pathname}`)
+      }
+      const custom = await onDen(parsed, options)
+      if (custom) return custom
+      if (parsed.pathname === "/v1/automation-runner/work") {
+        if (!offeredRemote) {
+          offeredRemote = true
+          return Response.json({ items: [{ kind: "remote_session_create", commandId: "command-1" }] })
+        }
+        const next = queuedWork.shift()
+        return Response.json({ items: next ? [next] : [] })
+      }
+      if (parsed.pathname === "/v1/remote-session-commands/command-1/claim") {
+        return Response.json({ assignment: remoteSessionAssignment() })
+      }
+      if (parsed.pathname === "/v1/remote-session-commands/command-1/complete") {
+        delivered = true
+        return Response.json({ command: { id: "command-1", status: "delivered" } })
+      }
+      if (parsed.pathname === "/v1/remote-session-commands/command-1/session") {
+        reports.push(JSON.parse(options.body))
+        return denSession(reports.length)
+      }
+      throw new Error(`Unexpected Den request ${parsed.pathname}`)
+    },
+    remoteSessionFirstTurnWindowMs: 1_000,
+    remoteSessionIdleGraceMs: 50,
+    remoteSessionPollIntervalMs: 1,
+    remoteSessionWatch: FAST_WATCH,
+    waitBeforeReconnect: () => new Promise(() => {}),
+  })
+  runner.configure({
+    baseUrl: "https://den.example.com",
+    token: runnerTokenFor("https://den.example.com"),
+    runnerId: "runner-1",
+  })
+  return { runner, reports, localPaths, watchPolls: () => watchPolls, sessionPaths }
+}
+
+test("the remote-session watch polls every 3 s for 5 minutes, then every 15 s, for up to 6 hours", () => {
+  assert.equal(REMOTE_SESSION_WATCH.fastPollMs, 3_000)
+  assert.equal(REMOTE_SESSION_WATCH.fastWindowMs, 300_000)
+  assert.equal(REMOTE_SESSION_WATCH.slowPollMs, 15_000)
+  assert.equal(REMOTE_SESSION_WATCH.keepaliveMs, 60_000)
+  assert.equal(REMOTE_SESSION_WATCH.maxMs, 6 * 60 * 60_000)
+})
+
+test("a delivered remote session reports running, waiting, then idle with its final answer", async () => {
+  const conversation = [userMessage("msg-user", "Inspect the repo"), assistantMessage("msg-a1", "Looking")]
+  const { runner, reports, localPaths } = remoteSessionWatchRunner({
+    phase: (polls) => {
+      if (polls <= 2) return { status: { type: "busy" }, messages: conversation }
+      if (polls <= 4) {
+        return {
+          status: { type: "busy" },
+          messages: conversation,
+          permissions: [{ id: "perm-1", sessionID: "session-1" }, { id: "perm-other", sessionID: "session-other" }],
+        }
+      }
+      if (polls <= 5) return { status: { type: "busy" }, messages: conversation }
+      return {
+        status: { type: "idle" },
+        messages: [...conversation, assistantMessage("msg-a2", "All done.\n\nThree files changed.")],
+      }
+    },
+    denSession: () => Response.json({ ok: true }),
+  })
+  await waitFor(() => reports.some((report) => report.status === "idle"), "the idle report never arrived")
+  const pollsAtIdle = localPaths.length
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const pollsAfter = localPaths.length
+  runner.stop()
+
+  assert.deepEqual(reports.map((report) => [report.status, report.waitingFor]), [
+    ["running", null],
+    ["waiting", "permission"],
+    ["running", null],
+    ["idle", null],
+  ])
+  const idle = reports.at(-1)
+  assert.equal(idle.finalText, "All done.\n\nThree files changed.")
+  assert.equal(idle.error, null)
+  assert.equal(idle.messageCount, 3)
+  assert.deepEqual(idle.model, { providerId: "provider", modelId: "model", variant: "high" })
+  assert.equal(typeof idle.observedAt, "number")
+  assert.ok(reports.every((report) => report.engine === "v1"), "every report names the engine the thread ran on")
+  assert.equal(pollsAfter, pollsAtIdle, "the watcher kept polling after the session settled")
+})
+
+test("a delivered remote session that fails reports a classified error and stops", async () => {
+  const reports = []
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const outcome = await watchRemoteSession({
+    sessionId: "session-1",
+    workspaceId: "workspace-1",
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" }),
+    fetchImpl: async (url) => {
+      const parsed = new URL(url)
+      const snapshot = respondToSnapshotRequest(parsed, sessionPaths, {
+        status: { type: "idle" },
+        messages: [
+          userMessage("msg-user", "Inspect the repo"),
+          assistantMessage("msg-a1", "", {
+            error: { name: "ProviderAuthError", data: { message: "Invalid API key" } },
+          }),
+        ],
+      })
+      if (snapshot) return snapshot
+      throw new Error(`Unexpected request ${parsed.pathname}`)
+    },
+    signal: new AbortController().signal,
+    timing: FAST_WATCH,
+    report: async (body) => { reports.push(body); return true },
+  })
+  assert.equal(outcome, "error")
+  assert.equal(reports.length, 1)
+  assert.equal(reports[0].status, "error")
+  assert.deepEqual(reports[0].error, {
+    code: "provider_auth_failed",
+    message: "The model provider rejected its credentials.",
+  })
+})
+
+test("a session that goes idle without replying is reported as no_reply after repeated reads", async () => {
+  const reports = []
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const outcome = await watchRemoteSession({
+    sessionId: "session-1",
+    workspaceId: "workspace-1",
+    getLocalRuntime: async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" }),
+    fetchImpl: async (url) => respondToSnapshotRequest(new URL(url), sessionPaths, {
+      status: { type: "idle" },
+      messages: [userMessage("msg-user", "Inspect the repo")],
+    }),
+    signal: new AbortController().signal,
+    timing: FAST_WATCH,
+    report: async (body) => { reports.push(body); return true },
+  })
+  assert.equal(outcome, "error")
+  assert.deepEqual(reports.map((report) => report.error?.code), ["no_reply"])
+})
+
+test("the watcher stops when Den does not know the progress route", async () => {
+  const { runner, reports, watchPolls } = remoteSessionWatchRunner({
+    phase: () => ({ status: { type: "busy" }, messages: [userMessage("msg-user", "Inspect the repo")] }),
+    denSession: () => Response.json({ error: "not_found" }, { status: 404 }),
+  })
+  await waitFor(() => reports.length === 1, "the first progress report never arrived")
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  const polls = watchPolls()
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  assert.equal(watchPolls(), polls, "the watcher kept polling after a 404")
+  assert.equal(reports.length, 1)
+  runner.stop()
+})
+
+test("a watched remote session does not block the next Automation claim", async () => {
+  let resolveRunCompleted
+  const runCompleted = new Promise((resolve) => { resolveRunCompleted = resolve })
+  const completions = []
+  const { runner, reports, watchPolls } = remoteSessionWatchRunner({
+    // The remote session keeps running for the whole test.
+    phase: () => ({ status: { type: "busy" }, messages: [userMessage("msg-user", "Inspect the repo")] }),
+    denSession: () => Response.json({ ok: true }),
+    extraWork: [{ runId: "run-1" }],
+    onDen: (parsed, options) => {
+      // The Automation shares the busy local fixture, so it times out quickly
+      // instead of finishing; what matters is that it was claimed and settled.
+      if (parsed.pathname === "/v1/automation-runs/run-1/claim") {
+        return Response.json({ assignment: { ...testAssignment(), timeoutMs: 50 } })
+      }
+      if (parsed.pathname.endsWith("/heartbeat")) return Response.json({ leaseValid: true, cancelRequested: false })
+      if (parsed.pathname.endsWith("/events")) return Response.json({ ok: true })
+      if (parsed.pathname === "/v1/automation-runs/run-1/complete") {
+        completions.push(JSON.parse(String(options.body)))
+        resolveRunCompleted()
+        return Response.json({ ok: true })
+      }
+      return null
+    },
+  })
+  try {
+    await withTimeout(runCompleted, "the Automation was not claimed while the remote session was watched")
+    const pollsAtCompletion = watchPolls()
+    await waitFor(() => watchPolls() > pollsAtCompletion, "the watcher stopped when the Automation ran")
+  } finally {
+    runner.stop()
+  }
+  assert.equal(completions[0]?.status, "failed")
+  assert.equal(reports[0]?.status, "running")
+})
+
+test("observations ignore replies to earlier turns and read thread identity defensively", () => {
+  assert.deepEqual(remoteSessionObservation({
+    status: { type: "idle" },
+    messages: [
+      { role: "user", parts: [] },
+      { role: "assistant", parts: [{ type: "text", text: "Old answer" }] },
+      { role: "user", parts: [] },
+    ],
+  }, null), { status: "silent", messageCount: 3 })
+  assert.deepEqual(remoteSessionThreadIdentity({
+    engine: "v2",
+    model: { providerId: "provider", modelId: "model", variant: "" },
+  }), { engine: "v2", model: { providerId: "provider", modelId: "model" } })
+  assert.deepEqual(remoteSessionThreadIdentity({ engine: "v3", model: { providerId: 1 } }), {})
+  assert.deepEqual(remoteSessionThreadIdentity(null), {})
+})
+
+// ---------------------------------------------------------------------------
+// Den requests for delivered remote sessions: read, send, stop.
+// ---------------------------------------------------------------------------
+
+function headlessMessage(id, role, text, extra = {}) {
+  return { id, role, createdAt: 1, parts: text === null ? [] : [{ id: `${id}-part`, type: "text", text }], ...extra }
+}
+
+function pageOf(messages, input, status = { type: "idle" }, waitingFor = null) {
+  return remoteSessionTranscriptPage({ title: "Desktop handoff", status, messages }, input, waitingFor)
+}
+
+test("remote-session requests are bounded to 15 s and polled every 2 s for 30 minutes of remote use", () => {
+  assert.equal(REMOTE_SESSION_REQUEST_TIMEOUT_MS, 15_000)
+  assert.equal(REMOTE_SESSION_REQUEST_POLL.pollMs, 2_000)
+  assert.equal(REMOTE_SESSION_REQUEST_POLL.activeWindowMs, 30 * 60_000)
+})
+
+test("transcript pages walk backward from the end and forward from the start by message id", () => {
+  const messages = [
+    headlessMessage("m1", "user", "one"),
+    headlessMessage("m2", "assistant", "two"),
+    { id: "m-sys", role: "system", parts: [] },
+    headlessMessage("m3", "user", "three"),
+    headlessMessage("m4", "assistant", "four"),
+    headlessMessage("m5", "user", "five"),
+  ]
+  const last = pageOf(messages, { from: "end", cursor: null, limit: 2 })
+  assert.deepEqual(last.messages.map((message) => message.id), ["m4", "m5"])
+  assert.equal(last.nextCursor, "m4")
+  assert.equal(last.messageCount, 5)
+  assert.equal(last.from, "end")
+  const earlier = pageOf(messages, { from: "end", cursor: "m4", limit: 2 })
+  assert.deepEqual(earlier.messages.map((message) => message.id), ["m2", "m3"])
+  const first = pageOf(messages, { from: "end", cursor: "m2", limit: 2 })
+  assert.deepEqual(first.messages.map((message) => message.id), ["m1"])
+  assert.equal(first.nextCursor, null)
+
+  const start = pageOf(messages, { from: "start", cursor: null, limit: 3 })
+  assert.deepEqual(start.messages.map((message) => message.id), ["m1", "m2", "m3"])
+  assert.equal(start.nextCursor, "m3")
+  const rest = pageOf(messages, { from: "start", cursor: "m3", limit: 3 })
+  assert.deepEqual(rest.messages.map((message) => message.id), ["m4", "m5"])
+  assert.equal(rest.nextCursor, null)
+
+  assert.throws(
+    () => pageOf(messages, { from: "start", cursor: "m-gone", limit: 3 }),
+    (error) => error instanceof Error && Reflect.get(error, "code") === "invalid_cursor",
+  )
+})
+
+test("transcript pages cap text and tool summaries and flag what was cut", () => {
+  const longInput = { command: "x".repeat(5_000) }
+  const page = pageOf([
+    headlessMessage("m1", "user", "y".repeat(25_000)),
+    headlessMessage("m2", "assistant", "Done", {
+      parts: [
+        { id: "t1", type: "tool", tool: "bash", toolStatus: "completed", toolInput: longInput, toolOutput: "ok" },
+        { id: "t2", type: "tool", tool: "read", toolStatus: "error", toolInput: { path: "a" }, toolError: "missing" },
+        { id: "p-text", type: "text", text: "Done" },
+      ],
+      error: null,
+    }),
+  ], { from: "start", cursor: null, limit: 10 })
+  const [user, assistant] = page.messages
+  assert.equal(user.text.length, 20_000)
+  assert.equal(user.truncated, true)
+  assert.equal(assistant.text, "Done")
+  assert.equal(assistant.truncated, false)
+  assert.equal(assistant.toolCalls[0].input.length, 2_000)
+  assert.deepEqual({ ...assistant.toolCalls[0], input: undefined }, {
+    id: "t1", name: "bash", status: "completed", input: undefined, output: "ok", error: null, truncated: true,
+  })
+  assert.deepEqual(assistant.toolCalls[1], {
+    id: "t2", name: "read", status: "error", input: "{\"path\":\"a\"}", output: null, error: "missing", truncated: false,
+  })
+})
+
+test("a transcript page stops early to stay within Den's 256 KB result limit", () => {
+  const messages = Array.from({ length: 30 }, (_, index) => headlessMessage(`m${index}`, "assistant", "z".repeat(20_000)))
+  const page = pageOf(messages, { from: "start", cursor: null, limit: 100 })
+  assert.ok(page.messages.length > 1 && page.messages.length < 30, `page held ${page.messages.length} messages`)
+  assert.ok(Buffer.byteLength(JSON.stringify(page)) < 256 * 1024)
+  assert.equal(page.nextCursor, page.messages.at(-1).id)
+
+  const toolHeavy = pageOf([headlessMessage("m1", "assistant", "w".repeat(20_000), {
+    parts: Array.from({ length: 250 }, (_, index) => ({
+      id: `t${index}`, type: "tool", tool: "bash", toolStatus: "completed", toolInput: "i".repeat(3_000), toolOutput: "o".repeat(3_000),
+    })),
+  })], { from: "start", cursor: null, limit: 1 })
+  const [message] = toolHeavy.messages
+  assert.equal(message.toolCalls.length, 200)
+  assert.equal(message.truncated, true)
+  assert.equal(message.toolCalls.at(-1).input, null, "summaries past the per-message budget are dropped")
+  assert.ok(Buffer.byteLength(JSON.stringify(toolHeavy)) < 256 * 1024)
+})
+
+test("transcript pages report waiting and the latest turn's error", () => {
+  const waiting = pageOf([headlessMessage("m1", "user", "go")], { from: "end", cursor: null, limit: 5 }, { type: "busy" }, "question")
+  assert.equal(waiting.status, "waiting")
+  assert.equal(waiting.waitingFor, "question")
+  const failed = pageOf([
+    headlessMessage("m1", "user", "go"),
+    headlessMessage("m2", "assistant", null, { error: { name: "ProviderAuthError", message: "Invalid API key" } }),
+  ], { from: "end", cursor: null, limit: 5 })
+  assert.equal(failed.status, "error")
+  assert.deepEqual(failed.lastError, { code: "provider_auth_failed", message: "The model provider rejected its credentials." })
+  assert.deepEqual(failed.messages[1].error, { code: "provider_auth_failed", message: "The model provider rejected its credentials." })
+})
+
+function requestAssignment(action, input, overrides = {}) {
+  return {
+    requestId: "request-1",
+    kind: "remote_session_request",
+    commandId: "command-1",
+    sessionId: "session-1",
+    workspaceId: "workspace-1",
+    engine: null,
+    expiresAt: Date.now() + 60_000,
+    action,
+    input,
+    ...overrides,
+  }
+}
+
+/** A local OpenWork server double for one session; records prompt and abort calls. */
+function localSessionDouble(initialMessages, initialStatus = { type: "idle" }) {
+  const sessionPaths = opencodeSessionPaths("workspace-1", "session-1")
+  const messages = [...initialMessages]
+  const session = { status: initialStatus }
+  const prompts = []
+  const aborts = []
+  const fetchImpl = async (url, options = {}) => {
+    const parsed = new URL(url)
+    if (parsed.pathname === sessionPaths.prompt) {
+      const body = JSON.parse(String(options.body))
+      prompts.push(body)
+      messages.push(userMessage(body.messageID ?? `msg_new${prompts.length}`, body.parts[0].text))
+      session.status = { type: "busy" }
+      return new Response(null, { status: 204 })
+    }
+    if (parsed.pathname === sessionPaths.abort) {
+      aborts.push(parsed.pathname)
+      return Response.json(true)
+    }
+    if (parsed.pathname === "/workspace/workspace-1/opencode/permission") return Response.json([])
+    if (parsed.pathname === "/workspace/workspace-1/opencode/question") return Response.json([])
+    const snapshot = respondToSnapshotRequest(parsed, sessionPaths, { status: session.status, messages, session: { id: "session-1", title: "Desktop handoff" } })
+    if (snapshot) return snapshot
+    return Response.json({ message: "Not found" }, { status: 404 })
+  }
+  return { fetchImpl, prompts, aborts, messages, session }
+}
+
+const LOCAL_RUNTIME = async () => ({ baseUrl: "http://127.0.0.1:3000", token: "local" })
+
+test("a read request returns a transcript page with tool calls from the local session", async () => {
+  const local = localSessionDouble([
+    userMessage("msg_u1", "Inspect the repo"),
+    {
+      info: { id: "msg_a1", role: "assistant" },
+      parts: [
+        { id: "prt_tool", type: "tool", tool: "bash", state: { status: "completed", input: { command: "ls" }, output: "src" } },
+        { id: "prt_text", type: "text", text: "One folder." },
+      ],
+    },
+  ])
+  const outcome = await executeRemoteSessionRequest(
+    requestAssignment("read", { from: "end", cursor: null, limit: 20 }),
+    { getLocalRuntime: LOCAL_RUNTIME, fetchImpl: local.fetchImpl, signal: new AbortController().signal },
+  )
+  assert.equal(outcome.action, "read")
+  assert.equal(outcome.result.title, "Desktop handoff")
+  assert.equal(outcome.result.status, "idle")
+  assert.deepEqual(outcome.result.messages.map((message) => [message.role, message.text]), [
+    ["user", "Inspect the repo"],
+    ["assistant", "One folder."],
+  ])
+  assert.deepEqual(outcome.result.messages[1].toolCalls, [{
+    id: "prt_tool", name: "bash", status: "completed", input: "{\"command\":\"ls\"}", output: "src", error: null, truncated: false,
+  }])
+})
+
+test("a send request is idempotent by message id", async () => {
+  const local = localSessionDouble([userMessage("msg_u1", "Inspect the repo"), assistantMessage("msg_a1", "Done")])
+  const options = { getLocalRuntime: LOCAL_RUNTIME, fetchImpl: local.fetchImpl, signal: new AbortController().signal }
+  const assignment = requestAssignment("send", {
+    prompt: "Now add tests",
+    messageId: "msg_follow",
+    model: { providerId: "provider", modelId: "model", variant: null },
+  })
+  const first = await executeRemoteSessionRequest(assignment, options)
+  assert.deepEqual(first.result, { messageId: "msg_follow", alreadyPresent: false })
+  assert.deepEqual(first.turn, { messageId: "msg_follow", previousUserMessageId: null })
+  const retried = await executeRemoteSessionRequest(assignment, options)
+  assert.deepEqual(retried.result, { messageId: "msg_follow", alreadyPresent: true })
+  assert.equal(local.prompts.length, 1)
+  assert.equal(local.prompts[0].messageID, "msg_follow")
+  assert.deepEqual(local.prompts[0].model, { providerID: "provider", modelID: "model" })
+
+  const anonymous = await executeRemoteSessionRequest(
+    requestAssignment("send", { prompt: "And docs", messageId: null, model: null }),
+    options,
+  )
+  assert.deepEqual(anonymous.turn, { messageId: null, previousUserMessageId: "msg_follow" })
+  assert.equal(local.prompts.length, 2)
+})
+
+test("a stop request aborts the session unless a newer turn replaced the guarded one", async () => {
+  const local = localSessionDouble([userMessage("msg_u1", "One"), userMessage("msg_u2", "Two")], { type: "busy" })
+  const options = { getLocalRuntime: LOCAL_RUNTIME, fetchImpl: local.fetchImpl, signal: new AbortController().signal }
+  const stale = await executeRemoteSessionRequest(requestAssignment("stop", { messageId: "msg_u1" }), options)
+  assert.deepEqual(stale.result, { stopped: false, reason: "different_turn" })
+  assert.equal(local.aborts.length, 0)
+  const guarded = await executeRemoteSessionRequest(requestAssignment("stop", { messageId: "msg_u2" }), options)
+  assert.deepEqual(guarded.result, { stopped: true, reason: null })
+  const unguarded = await executeRemoteSessionRequest(requestAssignment("stop", { messageId: null }), options)
+  assert.deepEqual(unguarded.result, { stopped: true, reason: null })
+  assert.equal(local.aborts.length, 2)
+})
+
+test("a follow-up's turn is visible only once its user message appears", () => {
+  const before = { messages: [{ id: "u1", role: "user" }, { id: "a1", role: "assistant" }] }
+  const after = { messages: [...before.messages, { id: "u2", role: "user" }] }
+  assert.equal(remoteSessionTurnVisible(before, { messageId: null, previousUserMessageId: "u1" }), false)
+  assert.equal(remoteSessionTurnVisible(after, { messageId: null, previousUserMessageId: "u1" }), true)
+  assert.equal(remoteSessionTurnVisible(before, { messageId: "u2", previousUserMessageId: null }), false)
+  assert.equal(remoteSessionTurnVisible(after, { messageId: "u2", previousUserMessageId: null }), true)
+})
+
+/**
+ * A control-capable runner whose Den offers `requests` (assignments by id)
+ * through the work poll and the pending route.
+ */
+function remoteSessionRequestRunner({ requests, local, token = controlRunnerTokenFor("https://den.example.com"), extra = {} }) {
+  const denPaths = []
+  const completions = []
+  const reports = []
+  const offered = new Map(requests.map((assignment) => [assignment.requestId, assignment]))
+  const runner = createDesktopAutomationRunner({
+    getLocalRuntime: LOCAL_RUNTIME,
+    fetchImpl: async (url, options = {}) => {
+      const parsed = new URL(url)
+      if (parsed.origin === "http://127.0.0.1:3000") return local.fetchImpl(url, options)
+      denPaths.push(parsed.pathname)
+      const pending = () => [...offered.keys()].map((requestId) => ({ kind: "remote_session_request", requestId }))
+      if (parsed.pathname === "/v1/automation-runner/work") return Response.json({ items: pending() })
+      if (parsed.pathname === "/v1/remote-session-requests/pending") return Response.json({ items: pending() })
+      const match = /^\/v1\/remote-session-requests\/([^/]+)\/(claim|complete)$/.exec(parsed.pathname)
+      if (match?.[2] === "claim") {
+        const assignment = offered.get(match[1])
+        offered.delete(match[1])
+        return assignment
+          ? Response.json({ assignment })
+          : Response.json({ error: "request_claim_conflict" }, { status: 409 })
+      }
+      if (match?.[2] === "complete") {
+        completions.push({ requestId: match[1], body: JSON.parse(String(options.body)) })
+        return Response.json({ request: { id: match[1], status: "done" } })
+      }
+      if (parsed.pathname === "/v1/remote-session-commands/command-1/session") {
+        reports.push({ at: completions.length, body: JSON.parse(String(options.body)) })
+        return Response.json({ ok: true })
+      }
+      throw new Error(`Unexpected Den request ${parsed.pathname}`)
+    },
+    waitBeforeReconnect: () => new Promise(() => {}),
+    remoteSessionWatch: FAST_WATCH,
+    ...extra,
+  })
+  runner.configure({ baseUrl: "https://den.example.com", token, runnerId: "runner-1" })
+  return { runner, denPaths, completions, reports }
+}
+
+test("the runner answers a read request from the work poll without taking its slot", async () => {
+  const local = localSessionDouble([userMessage("msg_u1", "Inspect the repo"), assistantMessage("msg_a1", "Done")])
+  const { runner, completions } = remoteSessionRequestRunner({
+    requests: [requestAssignment("read", { from: "end", cursor: null, limit: 5 })],
+    local,
+  })
+  try {
+    await waitFor(() => completions.length === 1, "the read request was never completed")
+  } finally {
+    runner.stop()
+  }
+  assert.equal(completions[0].requestId, "request-1")
+  assert.equal(completions[0].body.status, "done")
+  assert.equal(completions[0].body.outcome.action, "read")
+  assert.deepEqual(completions[0].body.outcome.result.messages.map((message) => message.id), ["msg_u1", "msg_a1"])
+})
+
+test("a sent follow-up restarts the command's progress watch after Den records the completion", async () => {
+  const local = localSessionDouble([userMessage("msg_u1", "Inspect the repo"), assistantMessage("msg_a1", "First answer")])
+  const { runner, completions, reports } = remoteSessionRequestRunner({
+    requests: [requestAssignment("send", { prompt: "Now add tests", messageId: "msg_follow", model: null })],
+    local,
+  })
+  try {
+    await waitFor(() => completions.length === 1, "the send request was never completed")
+    // The follow-up has no reply yet; the watcher must not report the first answer.
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    assert.ok(reports.every((report) => report.body.finalText !== "First answer"), "the previous turn's answer was reported")
+    assert.ok(reports.some((report) => report.body.status === "running"), "the follow-up was not reported running")
+    local.messages.push(assistantMessage("msg_a2", "Tests added."))
+    local.session.status = { type: "idle" }
+    await waitFor(() => reports.some((report) => report.body.status === "idle"), "the follow-up's answer was never reported")
+  } finally {
+    runner.stop()
+  }
+  assert.deepEqual(completions[0].body, { status: "done", outcome: { action: "send", result: { messageId: "msg_follow", alreadyPresent: false } } })
+  assert.equal(local.prompts.length, 1)
+  assert.ok(reports.every((report) => report.at >= 1), "the watcher reported before the completion")
+  assert.equal(reports.at(-1).body.finalText, "Tests added.")
+})
+
+test("an expired request is reported without touching the local session", async () => {
+  const local = localSessionDouble([userMessage("msg_u1", "Inspect the repo")])
+  const { runner, completions } = remoteSessionRequestRunner({
+    requests: [requestAssignment("send", { prompt: "Late", messageId: null, model: null }, { expiresAt: Date.now() - 1 })],
+    local,
+  })
+  try {
+    await waitFor(() => completions.length === 1, "the expired request was never completed")
+  } finally {
+    runner.stop()
+  }
+  assert.deepEqual(completions[0].body, {
+    status: "failed",
+    error: { code: "request_expired", message: "The request expired before the desktop ran it." },
+  })
+  assert.equal(local.prompts.length, 0)
+})
+
+test("a request that outlives its timeout fails as desktop_timeout and the runner moves on", async () => {
+  const hanging = { fetchImpl: (_url, options = {}) => new Promise((_resolve, reject) => {
+    options.signal?.addEventListener("abort", () => reject(options.signal.reason), { once: true })
+  }) }
+  const local = localSessionDouble([userMessage("msg_u1", "Inspect the repo")])
+  let calls = 0
+  const { runner, completions } = remoteSessionRequestRunner({
+    requests: [
+      requestAssignment("read", { from: "end", cursor: null, limit: 5 }),
+      requestAssignment("stop", { messageId: null }, { requestId: "request-2" }),
+    ],
+    local: { fetchImpl: (url, options) => (calls++ < 4 ? hanging.fetchImpl(url, options) : local.fetchImpl(url, options)) },
+    extra: { remoteSessionRequestTimeoutMs: 30 },
+  })
+  try {
+    await withTimeout(new Promise((resolve) => {
+      const check = () => (completions.length === 2 ? resolve() : setTimeout(check, 5))
+      check()
+    }), "both requests were not completed")
+  } finally {
+    runner.stop()
+  }
+  assert.deepEqual(completions[0].body, {
+    status: "failed",
+    error: { code: "desktop_timeout", message: "The desktop did not finish the request in time." },
+  })
+  assert.deepEqual(completions[1].body, { status: "done", outcome: { action: "stop", result: { stopped: true, reason: null } } })
+})
+
+test("a session missing locally fails as unknown_session", async () => {
+  const { runner, completions } = remoteSessionRequestRunner({
+    requests: [requestAssignment("read", { from: "end", cursor: null, limit: 5 }, { sessionId: "session-gone" })],
+    local: localSessionDouble([]),
+  })
+  try {
+    await waitFor(() => completions.length === 1, "the read request was never completed")
+  } finally {
+    runner.stop()
+  }
+  assert.equal(completions[0].body.status, "failed")
+  assert.equal(completions[0].body.error.code, "unknown_session")
+})
+
+test("a runner without the control capability never polls for session requests", async () => {
+  const local = localSessionDouble([])
+  const { runner, denPaths, completions } = remoteSessionRequestRunner({
+    requests: [requestAssignment("read", { from: "end", cursor: null, limit: 5 })],
+    local,
+    token: runnerTokenFor("https://den.example.com"),
+    extra: { remoteSessionRequestPoll: { pollMs: 1, activeWindowMs: 60_000 } },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  runner.stop()
+  assert.equal(denPaths.filter((path) => path === "/v1/remote-session-requests/pending").length, 0)
+  assert.equal(completions.length, 0)
+})
+
+test("pending requests are polled quickly only during active remote use", async () => {
+  const local = localSessionDouble([])
+  const idle = remoteSessionRequestRunner({
+    requests: [],
+    local,
+    extra: { remoteSessionRequestPoll: { pollMs: 1, activeWindowMs: 60_000 } },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 20))
+  idle.runner.stop()
+  // Only the initial work poll ran; nothing made the desktop active.
+  assert.equal(idle.denPaths.filter((path) => path === "/v1/remote-session-requests/pending").length, 0)
+
+  const active = remoteSessionRequestRunner({
+    requests: [requestAssignment("read", { from: "end", cursor: null, limit: 5 })],
+    local: localSessionDouble([userMessage("msg_u1", "Hi")]),
+    extra: { remoteSessionRequestPoll: { pollMs: 1, activeWindowMs: 60_000 } },
+  })
+  try {
+    await waitFor(() => active.completions.length === 1, "the first request was never completed")
+    // Having just answered a request, the desktop keeps polling for the next one.
+    const pendingPolls = active.denPaths.filter((path) => path === "/v1/remote-session-requests/pending").length
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.ok(
+      active.denPaths.filter((path) => path === "/v1/remote-session-requests/pending").length > pendingPolls,
+      "the active desktop stopped polling for requests",
+    )
+  } finally {
+    active.runner.stop()
+  }
 })

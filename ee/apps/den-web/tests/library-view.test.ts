@@ -20,7 +20,9 @@ import {
   isOwnedByViewer,
   libraryFilterOf,
   libraryItemDescription,
+  needsViewerSignIn,
   parseLibraryFilter,
+  parseNeedsSignIn,
   receivedStatus,
 } from "../app/(den)/dashboard/_components/library-view";
 
@@ -73,6 +75,19 @@ describe("My Library groups", () => {
     expect([...connectors.mine, ...connectors.received].map((item) => item.name)).toEqual(["Slack", "Notes"]);
     const named = groupLibrary({ items, filter: "all", query: "support", isMine });
     expect([...named.mine, ...named.received].map((item) => item.name)).toEqual(["Support replies"]);
+  });
+
+  test("Needs sign-in keeps only connectors waiting on the viewer, alongside the kind filter", () => {
+    const posthog: LibraryConnectionItem = { ...notes, id: "posthog", name: "PostHog", state: "needs_signin" };
+    const isMine = () => false;
+    expect(parseNeedsSignIn("needs-sign-in")).toBe(true);
+    expect(parseNeedsSignIn(null)).toBe(false);
+    expect(needsViewerSignIn(posthog)).toBe(true);
+    expect(needsViewerSignIn(slack)).toBe(false);
+    const waiting = groupLibrary({ items: [...items, posthog], filter: "all", query: "", isMine, needsSignIn: true });
+    expect(waiting.received.map((item) => item.name)).toEqual(["PostHog"]);
+    const skills = groupLibrary({ items: [...items, posthog], filter: "skills", query: "", isMine, needsSignIn: true });
+    expect(skills.received).toEqual([]);
   });
 
   test("a connector is yours when you added it, even before Den lists its access", () => {

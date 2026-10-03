@@ -9,8 +9,20 @@ import {
   stepLabel,
   type HeadlessDeps,
 } from "../src/slack-assistant/headless.js"
-import { advanceSlackRun, checkpointSchema, doneSummary, stopSlackStream, type RemoteCall } from "../src/slack-assistant/run.js"
-import { buildSlackPrompt } from "../src/slack-assistant/protocol.js"
+import {
+  advanceSlackRun,
+  checkpointSchema,
+  CHECK_IN_EVERY_MS,
+  doneSummary,
+  formatElapsed,
+  LONG_TASK_LINE,
+  LONG_TASK_QUIET_AFTER_MS,
+  stopSlackStream,
+  STREAM_CONTINUED_LINE,
+  STREAM_ROTATE_AFTER_MS,
+  type RemoteCall,
+} from "../src/slack-assistant/run.js"
+import { buildSlackPrompt, SlackApiError } from "../src/slack-assistant/protocol.js"
 
 const TOKEN = "t".repeat(40)
 const env = { DEN_HEADLESS_RUNNER_URL: "http://headless-runner:8795", DEN_HEADLESS_RUNNER_TOKEN: TOKEN }
@@ -101,7 +113,7 @@ describe("headless remote calls", () => {
   })
 
   test("read maps a running turn to busy with labelled steps", async () => {
-    const { deps } = runner([
+    const { deps, calls } = runner([
       snapshot({ status: "running" }, [
         { role: "user", text: "digest" },
         {
@@ -116,6 +128,8 @@ describe("headless remote calls", () => {
       ], "Checking Slack."),
     ])
     const read = await headlessRemoteCall(actor, "read", { sessionId: "hs_1", messageId: "msg_1", limit: 100 }, deps)
+    // Polled every second for the whole run: tool outputs stay on the runner.
+    expect(calls[0].path).toBe("/v1/sessions/hs_1?limit=500&messageId=msg_1&outputs=none")
     expect(read).toMatchObject({ status: "busy", finalAssistantText: "Checking Slack.", title: null })
     expect(z.object({ messages: z.array(z.object({ toolCalls: z.array(z.unknown()) })) }).parse(read).messages[1].toolCalls).toEqual([
       { id: "c1", name: "Using slack search public", status: "completed" },
@@ -138,6 +152,24 @@ describe("headless remote calls", () => {
     expect(await headlessRemoteCall(actor, "read", { sessionId: "hs_1", messageId: "msg_1" }, empty.deps)).toMatchObject({
       status: "idle",
       finalAssistantText: "Done.",
+    })
+  })
+
+  test("read returns the turn's last message on its own, for a long task's final answer", async () => {
+    const { deps } = runner([
+      snapshot(
+        { status: "completed" },
+        [
+          { role: "user", text: "fix the PR" },
+          { role: "assistant", text: "Looking at the checks.", toolCalls: [{ id: "c1", name: "execute_capability", input: {} }] },
+          { role: "tool", callId: "c1", name: "execute_capability", isError: false },
+          { role: "assistant", text: "Evidence preview fails on a missing env var.", toolCalls: [] },
+        ],
+        "Looking at the checks.\n\nEvidence preview fails on a missing env var.",
+      ),
+    ])
+    expect(await headlessRemoteCall(actor, "read", { sessionId: "hs_1", messageId: "msg_1" }, deps)).toMatchObject({
+      lastAssistantText: "Evidence preview fails on a missing env var.",
     })
   })
 
@@ -200,7 +232,7 @@ describe("Slack run loop on the headless runtime", () => {
     })
     await advanceSlackRun({ checkpoint, remote, slack, messageId: "msg_1", saveSession: async () => {}, title: "t", webHandoff: false, now: () => 200_000 })
     expect(JSON.stringify(calls)).not.toContain("OpenWork Web")
-    expect(calls.at(-1)).toEqual({ method: "chat.postMessage", body: { channel: "C1", thread_ts: "1.0", text: "<@U1> Done: Digest" } })
+    expect(calls.at(-1)).toEqual({ method: "chat.postMessage", body: { channel: "C1", thread_ts: "1.0", text: "<@U1> Done: Launch moved to Tuesday" } })
   })
 
   test("the reply stream opens with the first step, not a placeholder", async () => {
@@ -283,6 +315,275 @@ describe("Slack run loop on the headless runtime", () => {
   })
 })
 
+describe("long runs outlive Slack's five-minute stream", () => {
+  const base = { messageId: "msg_1", saveSession: async () => {}, title: "t", webHandoff: false }
+  const open = { phase: "read", channel: "C1", threadTs: "1.0", streamTs: "1.5", streamStartedAt: 0, sessionId: "hs_1" }
+  const answer = (text: string, toolCalls: Array<{ id: string; name: string; status: string }> = []): RemoteCall =>
+    async () => ({ status: "busy", messageCount: 2, finalAssistantText: text, messages: [{ role: "assistant", toolCalls }] })
+
+  /** Slack that refuses appends and stops on the streams listed in `closed`. */
+  function slackClosing(closed: string[]) {
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = []
+    const slack = async (method: string, body: Record<string, unknown>) => {
+      calls.push({ method, body })
+      if ((method === "chat.appendStream" || method === "chat.stopStream") && closed.includes(String(body.ts)))
+        throw new SlackApiError("message_not_in_streaming_state")
+      return { ok: true, ts: "2.0" }
+    }
+    return { calls, slack }
+  }
+
+  test("the reply stays in one message until four minutes, then continues in a new one", async () => {
+    const early = slackClosing([])
+    await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse(open), remote: answer("Checking."), slack: early.slack, now: () => STREAM_ROTATE_AFTER_MS - 1 })
+    expect(early.calls.map((call) => call.method)).toEqual(["chat.appendStream"])
+
+    const late = slackClosing([])
+    const result = await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse(open), remote: answer("Checking."), slack: late.slack, now: () => STREAM_ROTATE_AFTER_MS })
+    expect(late.calls).toEqual([
+      { method: "chat.stopStream", body: { channel: "C1", ts: "1.5", session_status: "processing" } },
+      {
+        method: "chat.startStream",
+        body: expect.objectContaining({
+          thread_ts: "1.0",
+          chunks: [{ type: "markdown_text", text: STREAM_CONTINUED_LINE }, { type: "markdown_text", text: "Checking." }],
+        }),
+      },
+    ])
+    expect(result.checkpoint).toMatchObject({ streamTs: "2.0", streamStartedAt: STREAM_ROTATE_AFTER_MS, sentText: "Checking." })
+  })
+
+  test("when Slack closes the stream early, text and steps continue in a new message instead of failing the run", async () => {
+    const { calls, slack } = slackClosing(["1.5"])
+    const remote = answer("Evidence preview failed on a missing env var.", [{ id: "c1", name: "Reading checks", status: "completed" }])
+    const result = await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse(open), remote, slack, now: () => 60_000 })
+    expect(calls.map((call) => `${call.method} ${String(call.body.ts ?? "")}`)).toEqual([
+      "chat.appendStream 1.5",
+      "chat.startStream ",
+      "chat.appendStream 2.0",
+    ])
+    expect(JSON.stringify(calls[1].body.chunks)).toContain("Evidence preview failed")
+    expect(result.checkpoint).toMatchObject({ streamTs: "2.0", sentText: "Evidence preview failed on a missing env var.", steps: { c1: "completed" } })
+  })
+
+  test("a step update alone also recovers a stream Slack closed", async () => {
+    const { calls, slack } = slackClosing(["1.5"])
+    const result = await advanceSlackRun({
+      ...base,
+      checkpoint: checkpointSchema.parse(open),
+      remote: answer("", [{ id: "c1", name: "Reading checks", status: "running" }]),
+      slack,
+      now: () => 60_000,
+    })
+    expect(calls.map((call) => call.method)).toEqual(["chat.appendStream", "chat.startStream"])
+    expect(JSON.stringify(calls[1].body.chunks)).toContain("Reading checks")
+    expect(result.checkpoint.streamTs).toBe("2.0")
+  })
+
+  test("closing text still reaches the thread when Slack already closed the stream", async () => {
+    const checkpoint = checkpointSchema.parse({ channel: "C1", threadTs: "1.0", streamTs: "1.5", finalStatus: "suspended" })
+    const closing = { chunks: [{ type: "markdown_text", text: "\n\nThis task stopped. Try again in a moment." }] }
+    const expired = slackClosing(["1.5"])
+    await stopSlackStream(expired.slack, checkpoint, closing)
+    expect(expired.calls.slice(1)).toEqual([
+      { method: "chat.postMessage", body: { channel: "C1", thread_ts: "1.0", text: "This task stopped. Try again in a moment." } },
+      { method: "agents.sessions.setStatus", body: { channel_id: "C1", thread_ts: "1.0", status: "suspended" } },
+    ])
+
+    // A member who pressed Stop already sees the stream end; no extra reply.
+    const calls: string[] = []
+    await stopSlackStream(
+      async (method) => {
+        calls.push(method)
+        if (method === "chat.stopStream") throw new SlackApiError("stopped_by_user")
+        return { ok: true }
+      },
+      checkpoint,
+      closing,
+    )
+    expect(calls).toEqual(["chat.stopStream", "agents.sessions.setStatus"])
+  })
+
+  for (const slackLifetimeMs of [5 * 60_000, 3 * 60_000])
+    test(`a 12-minute run delivers its answer when Slack closes streams after ${slackLifetimeMs / 60_000} minutes`, async () => {
+      let clock = 0
+      const opened = new Map<string, number>()
+      const methods: string[] = []
+      const slack = async (method: string, body: Record<string, unknown>) => {
+        methods.push(method)
+        if (method === "chat.startStream") {
+          const ts = `s${opened.size + 1}`
+          opened.set(ts, clock)
+          return { ok: true, ts }
+        }
+        if (method === "chat.appendStream" || method === "chat.stopStream") {
+          const started = opened.get(String(body.ts))
+          if (started === undefined || clock - started >= slackLifetimeMs) throw new SlackApiError("message_not_in_streaming_state")
+        }
+        return { ok: true }
+      }
+      let tick = 0
+      const remote: RemoteCall = async () => {
+        tick += 1
+        return {
+          status: tick >= 24 ? "idle" : "busy",
+          messageCount: tick,
+          finalAssistantText: Array.from({ length: tick }, (_, index) => `step ${index + 1}\n`).join(""),
+          messages: [{ role: "assistant", toolCalls: [{ id: `c${tick}`, name: "Reading checks", status: "completed" }] }],
+        }
+      }
+      let checkpoint = checkpointSchema.parse({ phase: "read", channel: "C1", threadTs: "1.0", sessionId: "hs_1", startedAt: 0, recipientUserId: "U1" })
+      let done = false
+      for (let poll = 0; poll < 40 && !done; poll += 1) {
+        const result = await advanceSlackRun({ ...base, checkpoint, remote, slack, now: () => clock })
+        checkpoint = result.checkpoint
+        done = result.done === true
+        clock += 30_000
+      }
+      expect(done).toBe(true)
+      expect(checkpoint.sentText).toContain("step 24")
+      expect(opened.size).toBeGreaterThanOrEqual(3)
+      expect(methods.at(-1)).toBe("chat.postMessage")
+    })
+})
+
+describe("long tasks go quiet and report back", () => {
+  const base = { messageId: "msg_1", saveSession: async () => {}, title: "t", webHandoff: false, quietAfterMs: LONG_TASK_QUIET_AFTER_MS }
+  const live = { phase: "read", channel: "C1", threadTs: "1.0", sessionId: "hs_1", recipientUserId: "U1", startedAt: 0 }
+  const quiet = { ...live, quiet: true, lastCheckInAt: LONG_TASK_QUIET_AFTER_MS }
+  function recorder() {
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = []
+    const slack = async (method: string, body: Record<string, unknown>) => {
+      calls.push({ method, body })
+      return { ok: true, ts: "9.0" }
+    }
+    return { calls, slack }
+  }
+  const busy = (text: string, toolCalls: Array<{ id: string; name: string; status: string }> = []): RemoteCall =>
+    async () => ({ status: "busy", messageCount: 3, finalAssistantText: text, messages: [{ role: "assistant", toolCalls }] })
+
+  test("after four minutes the live reply closes with one note; the session stays in progress so Stop still works", async () => {
+    const { calls, slack } = recorder()
+    const checkpoint = checkpointSchema.parse({ ...live, streamTs: "1.5", streamStartedAt: 5_000, sentText: "Looking at the PR.", steps: { c1: "running" } })
+    const remote = busy("Looking at the PR.", [{ id: "c1", name: "Reading checks", status: "running" }])
+    const early = await advanceSlackRun({ ...base, checkpoint, remote, slack, now: () => LONG_TASK_QUIET_AFTER_MS - 1 })
+    expect(early.checkpoint.quiet).toBe(false)
+    expect(calls).toHaveLength(0)
+
+    const result = await advanceSlackRun({ ...base, checkpoint, remote, slack, now: () => LONG_TASK_QUIET_AFTER_MS })
+    expect(calls).toEqual([
+      {
+        method: "chat.stopStream",
+        body: { channel: "C1", ts: "1.5", session_status: "processing", chunks: [{ type: "markdown_text", text: `\n\n${LONG_TASK_LINE}` }] },
+      },
+    ])
+    expect(result.checkpoint).toMatchObject({ quiet: true, streamTs: undefined, lastCheckInAt: LONG_TASK_QUIET_AFTER_MS })
+  })
+
+  test("a quiet task shows nothing new until its hourly check-in, and is read less often", async () => {
+    const { calls, slack } = recorder()
+    const remote = busy("Lots of progress notes.", [{ id: "c9", name: "Reading checks", status: "completed" }])
+    const between = await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse(quiet), remote, slack, now: () => 30 * 60_000 })
+    expect(calls).toHaveLength(0)
+    expect(between.delayMs).toBe(5_000)
+
+    const due = LONG_TASK_QUIET_AFTER_MS + CHECK_IN_EVERY_MS
+    const result = await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse(quiet), remote, slack, now: () => due })
+    expect(calls).toEqual([{ method: "chat.postMessage", body: { channel: "C1", thread_ts: "1.0", text: "Still working on it (1h 4m so far)." } }])
+    expect(result.checkpoint.lastCheckInAt).toBe(due)
+  })
+
+  test("a quiet task posts only its final answer, with feedback buttons, then mentions the person", async () => {
+    const { calls, slack } = recorder()
+    const remote: RemoteCall = async () => ({
+      status: "idle",
+      messageCount: 4,
+      finalAssistantText: "Looking at the checks.\n\nEvidence preview fails on a missing env var.",
+      lastAssistantText: "Evidence preview fails on a missing env var.",
+      messages: [],
+    })
+    const answered = await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse(quiet), remote, slack, now: () => 2 * 3_600_000 })
+    expect(answered.checkpoint.phase).toBe("finish")
+    const finish = await advanceSlackRun({ ...base, checkpoint: answered.checkpoint, remote, slack, now: () => 2 * 3_600_000 })
+    expect(finish.done).toBe(true)
+    expect(calls.map((call) => call.method)).toEqual(["chat.startStream", "chat.stopStream", "chat.postMessage"])
+    expect(calls[0].body.chunks).toEqual([{ type: "markdown_text", text: "Evidence preview fails on a missing env var." }])
+    expect(JSON.stringify(calls)).not.toContain("Looking at the checks")
+    expect(JSON.stringify(calls[1].body.blocks)).toContain("feedback_buttons")
+    expect(calls[2].body.text).toBe("<@U1> Done: Evidence preview fails on a missing env var.")
+  })
+
+  test("a task stuck repeating itself says so, and the mention asks for attention", async () => {
+    const { calls, slack } = recorder()
+    const remote: RemoteCall = async () => ({
+      status: "idle",
+      messageCount: 4,
+      finalAssistantText: "",
+      terminalError: { code: "stuck_repeating" },
+      messages: [],
+    })
+    const stopped = await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse(quiet), remote, slack, now: () => 3_600_000 })
+    await advanceSlackRun({ ...base, checkpoint: stopped.checkpoint, remote, slack, now: () => 3_600_000 })
+    expect(JSON.stringify(calls[0].body.chunks)).toContain("I got stuck repeating the same step, so I stopped.")
+    expect(calls.at(-1)?.body.text).toBe("<@U1> This task needs your attention. Details are above.")
+  })
+
+  test("a 3-hour task: a few live minutes, one note, two check-ins, then the answer — not a flood of messages", async () => {
+    let clock = 0
+    const opened = new Map<string, number>()
+    const methods: string[] = []
+    const posts: string[] = []
+    const slack = async (method: string, body: Record<string, unknown>) => {
+      methods.push(method)
+      if (method === "chat.postMessage") posts.push(String(body.text))
+      if (method === "chat.startStream") {
+        const ts = `s${opened.size + 1}`
+        opened.set(ts, clock)
+        return { ok: true, ts }
+      }
+      if ((method === "chat.appendStream" || method === "chat.stopStream") && clock - (opened.get(String(body.ts)) ?? -Infinity) >= 5 * 60_000)
+        throw new SlackApiError("message_not_in_streaming_state")
+      return { ok: true }
+    }
+    let tick = 0
+    const doneAt = 3 * 3_600_000
+    const remote: RemoteCall = async () => {
+      tick += 1
+      const done = clock >= doneAt
+      return {
+        status: done ? "idle" : "busy",
+        messageCount: tick,
+        finalAssistantText: `note ${tick}\n${done ? "The final answer." : ""}`,
+        lastAssistantText: done ? "The final answer." : `note ${tick}`,
+        messages: [{ role: "assistant", toolCalls: [{ id: `c${tick}`, name: "Reading checks", status: "completed" }] }],
+      }
+    }
+    let checkpoint = checkpointSchema.parse({ ...live, startedAt: 0 })
+    let done = false
+    for (let poll = 0; poll < 500 && !done; poll += 1) {
+      const result = await advanceSlackRun({ ...base, checkpoint, remote, slack, now: () => clock })
+      checkpoint = result.checkpoint
+      done = result.done === true
+      clock += 30_000
+    }
+    expect(done).toBe(true)
+    expect(opened.size).toBe(2)
+    expect(posts.filter((text) => text.startsWith("Still working on it ("))).toEqual([
+      "Still working on it (1h 4m so far).",
+      "Still working on it (2h 4m so far).",
+    ])
+    expect(posts.at(-1)).toBe("<@U1> Done: The final answer.")
+    expect(methods.filter((method) => method === "chat.appendStream").length).toBeLessThan(10)
+  })
+})
+
+test("elapsed time reads like a person would say it", () => {
+  expect(formatElapsed(45_000)).toBe("0m")
+  expect(formatElapsed(4 * 60_000)).toBe("4m")
+  expect(formatElapsed(64 * 60_000)).toBe("1h 4m")
+  expect(formatElapsed(8 * 3_600_000)).toBe("8h 0m")
+})
+
 test("labels and summaries are short and readable", () => {
   expect(stepLabel("search_capabilities")).toBe("Finding the right tool")
   expect(stepLabel("execute_capability", {})).toBe("Using your connections")
@@ -292,6 +593,15 @@ test("labels and summaries are short and readable", () => {
   expect(doneSummary("x".repeat(300)).length).toBe(140)
 })
 
+test("the done reply skips headings and labels and quotes the first sentence", () => {
+  expect(doneSummary("## Result\n\nAll three reports are ready. Details below.")).toBe("All three reports are ready.")
+  expect(doneSummary("Status check:\nEvery service is healthy. Nothing to do.")).toBe("Every service is healthy.")
+  expect(doneSummary("**Summary**\n\nThe draft was sent for review.")).toBe("The draft was sent for review.")
+  const long = `${"word ".repeat(60)}end. Second sentence.`
+  expect(doneSummary(`# Title\n${long}`)).toBe(`${long.slice(0, 139)}…`)
+  expect(doneSummary("# Title\n## Subtitle\n**Notes**\nNext steps:")).toBe("your answer is above.")
+})
+
 test("the runner-path prompt says Slack files and images can be opened", () => {
   const input = { event: { type: "app_mention", user: "U1", text: "<@B1> what is written here", files: [{ id: "F1", name: "image.png" }] }, teamId: "T1", botUserId: "B1", context: {}, privateReply: false }
   const headless = buildSlackPrompt({ ...input, webHandoff: false })
@@ -299,3 +609,69 @@ test("the runner-path prompt says Slack files and images can be opened", () => {
   expect(headless).toContain("F1")
   expect(buildSlackPrompt(input)).not.toContain("Open them before saying you can't read them")
 })
+
+describe("quiet by default: Slack's working status, then the answer", () => {
+  const base = { messageId: "msg_1", saveSession: async () => {}, title: "t", webHandoff: false, quietAfterMs: LONG_TASK_QUIET_AFTER_MS }
+  const quiet = { phase: "read", channel: "C1", threadTs: "1.0", sessionId: "hs_1", recipientUserId: "U1", startedAt: 0, live: false }
+  function recorder() {
+    const calls: Array<{ method: string; body: Record<string, unknown> }> = []
+    const slack = async (method: string, body: Record<string, unknown>) => {
+      calls.push({ method, body })
+      return { ok: true, ts: "9.0" }
+    }
+    return { calls, slack }
+  }
+  const working: RemoteCall = async () => ({
+    status: "busy",
+    messageCount: 3,
+    finalAssistantText: "No new files in the thread; let me retry the PDF itself.",
+    messages: [{ role: "assistant", toolCalls: [{ id: "c1", name: "Reading checks", status: "running" }] }],
+  })
+
+  test("while it works, nothing is posted: no notes, no steps, no 'still working', not even past four minutes", async () => {
+    const { calls, slack } = recorder()
+    let checkpoint = checkpointSchema.parse(quiet)
+    for (const at of [5_000, 25_000, LONG_TASK_QUIET_AFTER_MS + 1, 2 * 3_600_000]) {
+      const result = await advanceSlackRun({ ...base, checkpoint, remote: working, slack, now: () => at })
+      checkpoint = result.checkpoint
+      expect(result.delayMs).toBe(3_000)
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  test("the answer arrives as one reply without the notes before it, and no extra mention", async () => {
+    const { calls, slack } = recorder()
+    const remote: RemoteCall = async () => ({
+      status: "idle",
+      messageCount: 4,
+      finalAssistantText: "No new files in the thread; let me retry the PDF itself.\n\nThe PDF walks through personal Jira access in six steps.",
+      lastAssistantText: "The PDF walks through personal Jira access in six steps.",
+      messages: [],
+    })
+    const answered = await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse(quiet), remote, slack, now: () => 5 * 60_000 })
+    const finished = await advanceSlackRun({ ...base, checkpoint: answered.checkpoint, remote, slack, now: () => 5 * 60_000 })
+    expect(finished.done).toBe(true)
+    expect(calls.map((call) => call.method)).toEqual(["chat.startStream", "chat.stopStream"])
+    expect(calls[0].body.chunks).toEqual([{ type: "markdown_text", text: "The PDF walks through personal Jira access in six steps." }])
+    expect(JSON.stringify(calls)).not.toContain("let me retry")
+    expect(JSON.stringify(calls[1].body.blocks)).toContain("feedback_buttons")
+  })
+
+  test("a task that cannot finish says so in one reply", async () => {
+    const { calls, slack } = recorder()
+    const remote: RemoteCall = async () => ({ status: "idle", messageCount: 2, finalAssistantText: "", terminalError: { code: "model_http_500" }, messages: [] })
+    const stopped = await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse(quiet), remote, slack, now: () => 30_000 })
+    await advanceSlackRun({ ...base, checkpoint: stopped.checkpoint, remote, slack, now: () => 30_000 })
+    expect(calls.map((call) => call.method)).toEqual(["chat.startStream", "chat.stopStream"])
+    expect(calls[0].body.chunks).toEqual([{ type: "markdown_text", text: "This task couldn't finish. Try again, or ask in a different way." }])
+    expect(calls[1].body).toMatchObject({ session_status: "suspended" })
+  })
+
+  test("with progress turned on, the same task streams its notes and steps as before", async () => {
+    const { calls, slack } = recorder()
+    await advanceSlackRun({ ...base, checkpoint: checkpointSchema.parse({ ...quiet, live: true }), remote: working, slack, now: () => 5_000 })
+    expect(calls.map((call) => call.method)).toContain("chat.startStream")
+    expect(JSON.stringify(calls)).toContain("let me retry the PDF")
+  })
+})
+

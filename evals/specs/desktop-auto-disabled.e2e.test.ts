@@ -1,6 +1,6 @@
 import { spec } from "@openwork/testkit";
 import { expect } from "vitest";
-import { modelPickerDisabledAuto } from "../worlds/chat.ts";
+import { modelPickerDeploymentDisabledAuto, modelPickerDisabledAuto } from "../worlds/chat.ts";
 
 const test = spec.world(modelPickerDisabledAuto, {
   timeout: 420_000,
@@ -10,7 +10,43 @@ const test = spec.world(modelPickerDisabledAuto, {
   },
 });
 
-test("a member with a saved Auto default can choose a working model while free access is switched off", async ({ world, user, probe, step }) => {
+const deploymentTest = spec.world(modelPickerDeploymentDisabledAuto, {
+  timeout: 420_000,
+  resources: {
+    surfaces: ["desktop"], services: ["den", "mock"],
+    nativeReason: "The deployment opt-out is applied by the native relay and consumed by the desktop Settings and model picker.",
+  },
+});
+
+deploymentTest("a deployment-disabled Auto stays out of Settings and new tasks while other models remain available", async ({ world, user, probe, step, evidence }) => {
+  const option = (model: { providerID: string; modelID: string }) => ({ testId: `model-option-${model.providerID}-${model.modelID}` });
+  await step("before: a saved Auto preference does not interrupt a new task on a deployment with Auto disabled", async () => {
+    expect(await probe.desktopApi("/anonymous-inference/status")).toMatchObject({ status: 200, body: { state: "unavailable", code: "free_disabled" } });
+    expect(await probe.storage("openwork.defaultModel")).toBe(`${world.auto.providerID}/${world.auto.modelID}`);
+    await user.see({ role: "button", label: "Change model" }, { text: "Organization witness" });
+    await user.click({ role: "button", label: "Change model" });
+    await user.see(option(world.byok));
+    await user.see(option(world.organization));
+    await user.notSee(option(world.auto));
+    await user.click(option(world.byok));
+    evidence.recordAssertionEvidence("A saved Auto preference does not block a new task when the deployment disables Auto", "The local service reports Auto as free_disabled. With Auto saved as the default, the new task starts on the organization model, and the picker offers BYOK and organization models but not Auto.", true);
+    await user.screenshot();
+  });
+  await step("after: Settings hides the disabled Auto offer and keeps the person's other providers", async () => {
+    await user.click({ role: "button", label: "Account menu" });
+    await user.click({ role: "menuitem", label: "Settings" });
+    await user.click({ role: "button", label: /^AI Providers$/ });
+    await user.see({ role: "heading", label: /^AI Providers$/, nth: 0 });
+    await user.see({ text: /^BYOK provider$/ });
+    expect(await probe.desktopApi("/anonymous-inference/status")).toMatchObject({ status: 200, body: { code: "free_disabled" } });
+    await user.notSee({ testId: "settings-auto-provider" });
+    await user.notSee({ text: "Auto is unavailable on this device or blocked by your organization administrator." });
+    evidence.recordAssertionEvidence("Settings hides Auto when the deployment disables it", "AI Providers in Settings lists the BYOK provider and shows neither the Auto provider card nor an Auto-unavailable warning, while the local service still reports free_disabled.", true);
+    await user.screenshot();
+  });
+});
+
+test("a member with a saved Auto default can choose a working model while free access is switched off", async ({ world, user, probe, step, evidence }) => {
   const option = (model: { providerID: string; modelID: string }) => ({ testId: `model-option-${model.providerID}-${model.modelID}` });
   const draft = "Keep this draft while free access is switched off.";
   const quiet = async () => {
@@ -48,6 +84,7 @@ test("a member with a saved Auto default can choose a working model while free a
     await user.see("composer", { text: draft });
     await quiet();
     expect((await probe.api(world.den.admin, "/v1/inference/access")).body).toMatchObject({ access: { reason: "free_disabled" } });
+    evidence.recordAssertionEvidence("A member with a saved Auto default can pick another model without losing the draft", "Den reports free access as free_disabled. The new task starts on the organization model with no Auto recovery wall. Choosing BYOK switches the model, keeps the draft, and leaves free access off.", true);
     await user.screenshot();
   });
 });

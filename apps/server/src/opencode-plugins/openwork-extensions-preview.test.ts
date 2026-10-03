@@ -143,6 +143,8 @@ function startFakeOpenWorkServer(options: {
   hostCatalogResponse?: unknown;
   policyDenied?: boolean;
   messages?: Array<{ info: { id: string; role: string; error?: unknown }; parts: Array<{ type: string; text?: string }> }>;
+  /** Sessions the v2 engine holds for ws_1, keyed by id, with their visible text. */
+  v2Sessions?: Record<string, { title: string; text: string; created: number }>;
 } = {}) {
   const requests: Array<{ pathname: string; search: string; authorization: string | null; method: string; body?: unknown }> = [];
   const uiControlRequests: Array<{ authorization: string | null; body: unknown }> = [];
@@ -237,6 +239,26 @@ function startFakeOpenWorkServer(options: {
 
       if (url.pathname === "/workspaces") {
         return Response.json({ items: [workspaceOne, workspaceTwo], workspaces: [workspaceOne, workspaceTwo] });
+      }
+
+      // The v2 engine's native mount for ws_1, in its own response shapes.
+      if (url.pathname.startsWith("/workspace/ws_1/opencode2/api/")) {
+        if (!options.v2Sessions) return Response.json({ error: "engine_v2_preview_not_running" }, { status: 503 });
+        const v2Path = url.pathname.slice("/workspace/ws_1/opencode2/api".length);
+        const v2Session = (id: string, entry: { title: string; created: number }) =>
+          ({ id, title: entry.title, location: { directory: "/tmp/main" }, time: { created: entry.created, updated: entry.created } });
+        if (v2Path === "/session") return Response.json({ data: Object.entries(options.v2Sessions).map(([id, entry]) => v2Session(id, entry)), cursor: { next: null } });
+        if (v2Path === "/session/active") return Response.json({ data: {} });
+        if (v2Path === "/model") return Response.json({ data: [{ id: "gpt-6-astra", providerID: "openai", name: "GPT-6 Luna" }] });
+        if (v2Path === "/provider") return Response.json({ data: [{ id: "openai", name: "OpenAI" }] });
+        const match = /^\/session\/([^/]+)(\/message|\/permission|\/form)?$/.exec(v2Path);
+        const entry = match?.[1] ? options.v2Sessions[match[1]] : undefined;
+        if (!match?.[1] || !entry) return Response.json({ message: "Not found" }, { status: 404 });
+        if (!match[2]) return Response.json({ data: v2Session(match[1], entry) });
+        if (match[2] === "/message") {
+          return Response.json({ data: [{ id: `msg_${match[1]}`, type: "user", time: { created: entry.created + 1 }, text: entry.text }], cursor: { next: null } });
+        }
+        return Response.json({ data: [] });
       }
 
       const providerWorkspace = /^\/workspace\/(ws_[12])\/opencode\/provider$/.exec(url.pathname)?.[1];
@@ -792,7 +814,7 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       firstUser: z.object({ id: z.string(), role: z.string(), text: z.string() }).passthrough().nullable(),
       lastAssistant: z.object({ id: z.string(), role: z.string(), text: z.string() }).passthrough().nullable(),
     }).strict().extend({
-      workspaceId: z.string(), workspace: z.string(), title: z.string(), createdAt: z.number(), updatedAt: z.number(),
+      workspaceId: z.string(), engine: z.literal("v1"), workspace: z.string(), title: z.string(), createdAt: z.number(), updatedAt: z.number(),
       archived: z.boolean(), parentId: z.string().nullable(), status: z.string(),
       lastError: readResultSchema.shape.lastError,
       ...openworkSessionActivityInventorySchema.shape,
@@ -939,6 +961,48 @@ describe("OpenWorkExtensionsPreview session tools", () => {
       expect.objectContaining({ workspaceId: "ws_2", error: "Remote worker unavailable" }),
     ]);
     expect(fake.requests.some((request) => request.pathname === "/workspace/ws_2/opencode/session")).toBe(true);
+  });
+
+  test("session.read on v1 finds a session that exists only on v2 and reports its engine", async () => {
+    const fake = startFakeOpenWorkServer({ v2Sessions: { ses_v2only: { title: "Heron rollout", text: "Draft the heron rollout notes.", created: 500 } } });
+    const plugin = await OpenWorkExtensionsPreview();
+
+    const parsed = affordanceResultSchema("session.read", readResultSchema.extend({ engine: z.literal("v2") }))
+      .parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_v2only" } })));
+
+    expect(parsed.result).toMatchObject({ workspaceId: "ws_1", sessionId: "ses_v2only", title: "Heron rollout", engine: "v2", status: "idle" });
+    expect(parsed.result.messages).toEqual([expect.objectContaining({ role: "user", text: "Draft the heron rollout notes." })]);
+    // v1 was asked first; v2 was read only through the host's native mount, never written.
+    expect(fake.requests.some((request) => request.pathname === "/workspace/ws_1/opencode/session/ses_v2only")).toBe(true);
+    expect(fake.requests.filter((request) => request.pathname.includes("/opencode2/")).every((request) => request.method === "GET")).toBe(true);
+  });
+
+  test("session.read keeps v1 sessions on v1 and reports engine v1", async () => {
+    startFakeOpenWorkServer({ v2Sessions: { ses_alpha: { title: "Imported alpha", text: "imported copy", created: 100 } } });
+    const plugin = await OpenWorkExtensionsPreview();
+
+    const parsed = affordanceResultSchema("session.read", readResultSchema.extend({ engine: z.literal("v1") }))
+      .parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.read", args: { sessionId: "ses_alpha" } })));
+
+    expect(parsed.result).toMatchObject({ sessionId: "ses_alpha", title: "Alpha planning", engine: "v1" });
+  });
+
+  test("session.search on v1 includes v2-only sessions once, deduping imported ids", async () => {
+    startFakeOpenWorkServer({ v2Sessions: {
+      ses_v2only: { title: "Heron rollout", text: "Plan the raven launch on the new engine.", created: 500 },
+      // The v1 history import keeps ids: this is alpha's imported copy.
+      ses_alpha: { title: "Alpha planning", text: "Please remember the raven launch checklist.", created: 100 },
+    } });
+    const plugin = await OpenWorkExtensionsPreview();
+
+    const parsed = affordanceResultSchema("session.search", searchResultSchema)
+      .parse(JSON.parse(await plugin.tool.openwork_query.execute({ id: "session.search", args: { query: "raven launch", scanLimit: 10 } })));
+
+    const found = parsed.result.results.map((result) => [result.sessionId, result.engine]);
+    expect(found).toContainEqual(["ses_alpha", "v1"]);
+    expect(found).toContainEqual(["ses_v2only", "v2"]);
+    expect(found.filter(([id]) => id === "ses_alpha")).toHaveLength(1);
+    expect(parsed.result).toMatchObject({ workspaceErrors: [], totalCandidateSessions: 4 });
   });
 
   test("transform discovers on demand without loading Cloud catalogs", async () => {

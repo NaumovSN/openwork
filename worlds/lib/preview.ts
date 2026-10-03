@@ -37,6 +37,11 @@ const DEN_SCENARIOS: readonly PreviewScenario[] = ["fresh", "team", "restricted"
  * them off (evals/packages/hosts/src/local.ts); an explicit app env wins over that isolation default.
  */
 const PREVIEW_APP_ENV = { VITE_DISABLE_OPENWORK_MODELS: "0" };
+/**
+ * preview-full's desktop is wired to the disposable Den it just booted, so it can run that Den's Automations. The
+ * app-only preview keeps the eval default (runner off): a person may sign it in to a real account.
+ */
+const PREVIEW_FULL_APP_ENV = { ...PREVIEW_APP_ENV, OPENWORK_AUTOMATION_RUNNER: "on" };
 /** Scenarios each preview accepts; `blank` is a published desktop release. */
 export const PREVIEW_SCENARIOS: Record<PreviewSurface, readonly PreviewScenario[]> = {
   desktop: ["fresh", "blank"],
@@ -321,7 +326,7 @@ export async function bootDenPreview(stack: AsyncDisposableStack, place: Place, 
   }
   // Fresh stays a true first launch: only what the app itself creates, no harness workspace.
   const desktop = surface === "full"
-    ? stack.use(await app({ den, place, env: PREVIEW_APP_ENV, ...(fresh ? { signIn: false, workspace: false } : { as: "admin" }) }))
+    ? stack.use(await app({ den, place, env: PREVIEW_FULL_APP_ENV, ...(fresh ? { signIn: false, workspace: false } : { as: "admin" }) }))
     : undefined;
   if (desktop) {
     await desktopOutputs(outputs, place, desktop.handle, true, "The OpenWork desktop window is open on this machine; Den web is linked in denWeb");

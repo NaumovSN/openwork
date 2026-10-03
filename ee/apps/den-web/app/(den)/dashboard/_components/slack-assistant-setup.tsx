@@ -5,6 +5,7 @@ import { z } from "zod";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { DenButton } from "../../_components/ui/button";
+import { DenSwitch } from "../../_components/ui/switch";
 import type { ExternalMcpConnection } from "./mcp-connections-data";
 
 const setupSchema = z.object({
@@ -18,6 +19,7 @@ const setupSchema = z.object({
   dailyLimit: z.number(),
   model: z.string().nullable().default(null),
   defaultModel: z.string().nullable().default(null),
+  progressUpdates: z.boolean().default(false),
   models: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
   channelIds: z.array(z.string()),
   metrics: z.object({
@@ -63,7 +65,10 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
   }
   if (!isSlack) return null;
   const data = query.data;
-  async function save(enabled: boolean, shadowMode = data?.shadowMode ?? false, model?: string | null) {
+  async function save(
+    enabled: boolean,
+    changes: { shadowMode?: boolean; model?: string | null; progressUpdates?: boolean } = {},
+  ) {
     setBusy(true);
     setError(null);
     try {
@@ -73,11 +78,12 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
           headers,
           body: JSON.stringify({
             enabled,
-            shadowMode,
+            shadowMode: changes.shadowMode ?? data?.shadowMode ?? false,
             dailyLimit: limit ?? data?.dailyLimit ?? 100,
             channelIds: channels === null ? (data?.channelIds ?? []) : channels.split(/[\s,]+/).filter(Boolean),
             ...(secret ? { signingSecret: secret } : {}),
-            ...(model !== undefined ? { model } : {}),
+            ...(changes.model !== undefined ? { model: changes.model } : {}),
+            ...(changes.progressUpdates !== undefined ? { progressUpdates: changes.progressUpdates } : {}),
           }),
         });
         setSecret("");
@@ -182,10 +188,20 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
               type="checkbox"
               checked={data.shadowMode}
               disabled={busy || !data.hasSigningSecret}
-              onChange={(e) => void save(data.enabled, e.target.checked)}
+              onChange={(e) => void save(data.enabled, { shadowMode: e.target.checked })}
             />
             Send replies privately during rollout
           </label>
+          <div className="flex items-center justify-between gap-3 text-sm">
+            <span>Show progress while working</span>
+            <DenSwitch
+              checked={data.progressUpdates}
+              disabled={busy || !data.hasSigningSecret}
+              aria-label="Show progress while working"
+              testId="slack-assistant-progress"
+              onChange={(checked) => void save(data.enabled, { progressUpdates: checked })}
+            />
+          </div>
           <p className="text-xs text-gray-500">
             Access follows this connector’s workspace, team, and member grants. Turning the assistant off stops
             accepting new requests.
@@ -196,7 +212,7 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
               <select
                 value={data.model ?? ""}
                 disabled={busy || !data.hasSigningSecret}
-                onChange={(e) => void save(data.enabled, data.shadowMode, e.target.value || null)}
+                onChange={(e) => void save(data.enabled, { model: e.target.value || null })}
                 className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2"
               >
                 <option value="">

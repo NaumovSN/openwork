@@ -1,5 +1,4 @@
 import type { RemoteSessionAction } from "../mcp/remote-session-capabilities.js"
-import { DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "../mcp/headless-run-token.js"
 import { organizationHasCapability } from "../organization-capabilities.js"
 import {
   createHeadlessRunnerClient,
@@ -15,8 +14,11 @@ import {
  * headless runner (ee/apps/headless-runner) instead of each member's OpenWork
  * Web computer. This adapter speaks the same create/send/read/stop contract
  * the Slack run loop already uses, so run.ts stays runtime-agnostic.
+ *
+ * Runs have no time limit. Each MCP token still lives at most 60 minutes: the
+ * runner pauses a long turn between steps every 50 minutes, and the read below
+ * resumes it at once with a freshly minted token.
  */
-export const HEADLESS_RUN_MAX_MS = DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS
 
 export { headlessRunnerConfig }
 export type HeadlessDeps = HeadlessRunnerDeps
@@ -57,6 +59,28 @@ export function stepLabel(name: string, input: Record<string, unknown> = {}) {
   }
 }
 
+/**
+ * Slack runs remember which run each minted token belongs to, so work the run
+ * hands to the member's desktop reports back to its Slack thread.
+ */
+export function slackHeadlessDeps(base: HeadlessDeps | null = defaultHeadlessRunnerDeps()): HeadlessDeps | null {
+  if (!base) return null
+  return {
+    ...base,
+    // Loaded lazily: the minter pulls in the auth and database modules.
+    mintToken: async (input) => {
+      const minted = await (await import("../mcp/headless-run-token-mint.js")).mintHeadlessRunMcpToken(input)
+      try {
+        const { recordSlackRunToken } = await import("./desktop-handoff.js")
+        await recordSlackRunToken({ tokenId: minted.tokenId, expiresAt: minted.expiresAt, userId: input.userId, messageId: input.messageId })
+      } catch {
+        // The run still works; only a desktop handoff's thread report is lost.
+      }
+      return minted
+    },
+  }
+}
+
 /** Runner unavailable or overloaded: the Slack run loop retries these. */
 const retryable = (error: string) => ({ error, retryable: true, retryAfterMs: 5_000 })
 
@@ -85,7 +109,7 @@ export async function headlessRemoteCall(
   actor: HeadlessRunnerActor,
   action: RemoteSessionAction,
   body: Record<string, unknown>,
-  suppliedDeps: HeadlessDeps | null = defaultHeadlessRunnerDeps(),
+  suppliedDeps: HeadlessDeps | null = slackHeadlessDeps(),
 ): Promise<Record<string, unknown>> {
   if (!suppliedDeps) return { error: "headless_runner_not_configured", retryable: false }
   const client = createHeadlessRunnerClient(suppliedDeps)
@@ -114,14 +138,15 @@ export async function headlessRemoteCall(
     return stopped.reached ? { accepted: true } : { stopped: false }
   }
 
-  // read: map the runner transcript onto the snapshot shape run.ts consumes.
-  const read = await client.readSession(sessionId, { messageId, limit: 500 })
+  // read: map the runner transcript onto the snapshot shape run.ts consumes. This polls every second for the
+  // whole run, so tool outputs (up to 50k characters each) stay on the runner; only their outcome is needed.
+  const read = await client.readSession(sessionId, { messageId, limit: 500, outputs: "none" })
   if (!read.ok && read.status === 404) return { error: "unknown_session", retryable: false }
   if (!read.ok) return retryable(`headless_read_${read.status}`)
   const snapshot = read.value
   const turn = snapshot.turns.find((entry) => entry.messageId === messageId)
 
-  // A runner restart interrupts in-flight turns; re-sending the same messageId resumes them.
+  // A runner restart or a credential refresh interrupts a turn; re-sending the same messageId resumes it.
   if (turn?.status === "interrupted") {
     const resumed = await send(client, actor, sessionId, messageId, "resume")
     if ("error" in resumed) return resumed
@@ -135,11 +160,15 @@ export async function headlessRemoteCall(
   const failed = turn?.status === "failed"
   let finalAssistantText = snapshot.finalAssistantText
   if (terminal && !failed && !finalAssistantText) finalAssistantText = "Done."
+  // The turn's last message, without the progress notes before it: the answer a long, quiet run posts.
+  const lastAssistantText =
+    messages.flatMap((message) => (message.role === "assistant" && message.text.trim() ? [message.text] : [])).at(-1) ?? ""
   return {
     status: terminal ? "idle" : "busy",
     title: null,
     messageCount: messages.length,
     finalAssistantText,
+    lastAssistantText: lastAssistantText || finalAssistantText,
     ...(failed ? { terminalError: { code: turn.error ?? "headless_run_failed" } } : {}),
     messages: messages.map((message) => ({
       role: message.role,

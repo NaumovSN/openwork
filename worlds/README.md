@@ -109,6 +109,12 @@ The selected keys appear in the `appEnv` output. Freestyle refuses `--env` for
 desktops: its snapshot starts the app while the snapshot is built, so a
 launch-time setting could not reach it.
 
+Eval and world desktops start with `OPENWORK_AUTOMATION_RUNNER=off`, so they
+never claim Automation runs or remote-session commands, even when signed in to
+a real account (`live-desktop` always is). `--env` cannot turn it back on; a
+spec or world opts in in code with `env: { OPENWORK_AUTOMATION_RUNNER: "on" }`,
+as `preview-full` does for its own disposable Den.
+
 ## Writing a world
 
 In a script, declare a one-line summary and the supported targets as literals

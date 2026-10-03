@@ -820,6 +820,34 @@
       "when": 1790803693966,
       "tag": "0117_slack_assistant_model",
       "breakpoints": true
+    },
+    {
+      "idx": 118,
+      "version": "5",
+      "when": 1790968115525,
+      "tag": "0118_slack_assistant_progress_updates",
+      "breakpoints": true
+    },
+    {
+      "idx": 119,
+      "version": "5",
+      "when": 1790975539582,
+      "tag": "0119_remote_session_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 120,
+      "version": "5",
+      "when": 1790977843475,
+      "tag": "0120_remote_session_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 121,
+      "version": "5",
+      "when": 1790980102568,
+      "tag": "0121_slack_desktop_handoff",
+      "breakpoints": true
     }
   ]
 }

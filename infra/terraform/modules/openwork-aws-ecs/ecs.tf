@@ -1,4 +1,13 @@
+locals {
+  create_cluster = var.ecs_cluster_arn == ""
+  cluster_arn    = local.create_cluster ? aws_ecs_cluster.this[0].arn : var.ecs_cluster_arn
+  # arn:aws:ecs:<region>:<account>:cluster/<name>
+  cluster_name = local.create_cluster ? aws_ecs_cluster.this[0].name : element(split("/", var.ecs_cluster_arn), length(split("/", var.ecs_cluster_arn)) - 1)
+}
+
 resource "aws_ecs_cluster" "this" {
+  count = local.create_cluster ? 1 : 0
+
   name = "${var.name}-den"
   tags = var.tags
 
@@ -6,6 +15,12 @@ resource "aws_ecs_cluster" "this" {
     name  = "containerInsights"
     value = "enabled"
   }
+}
+
+# Earlier versions always created the cluster; keep it in state when upgrading.
+moved {
+  from = aws_ecs_cluster.this
+  to   = aws_ecs_cluster.this[0]
 }
 
 resource "aws_service_discovery_private_dns_namespace" "this" {
@@ -188,7 +203,7 @@ resource "aws_ecs_task_definition" "web" {
 
 resource "aws_ecs_service" "api" {
   name            = "den-api"
-  cluster         = aws_ecs_cluster.this.id
+  cluster         = local.cluster_arn
   task_definition = aws_ecs_task_definition.api.arn
   desired_count   = var.den_api.desired_count
   launch_type     = "FARGATE"
@@ -225,7 +240,7 @@ resource "aws_ecs_service" "api" {
 
 resource "aws_ecs_service" "web" {
   name            = "den-web"
-  cluster         = aws_ecs_cluster.this.id
+  cluster         = local.cluster_arn
   task_definition = aws_ecs_task_definition.web.arn
   desired_count   = var.den_web.desired_count
   launch_type     = "FARGATE"

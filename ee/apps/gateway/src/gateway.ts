@@ -3,7 +3,7 @@
 // configured upstream with the org/member credential, logging one row per
 // request. Never translates protocols and never returns raw credentials.
 import { and, eq } from "@openwork-ee/den-db/drizzle"
-import { GatewayProviderTable } from "@openwork-ee/den-db"
+import { GatewayProviderModelTable, GatewayProviderTable } from "@openwork-ee/den-db"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
 import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
 import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
@@ -32,8 +32,8 @@ import {
   vertexPublisherBase,
 } from "./protocols.js"
 import type { AuthHeader, ProtocolFamily } from "./protocols.js"
-import { accessibleGatewayModels, loadGatewayAccessFromDb, sameGatewaySelection, selectGatewayGrant } from "./provider-access.js"
-import type { GatewayGrantSelection, LoadGatewayAccess } from "./provider-access.js"
+import { accessibleGatewayModels, listGatewayModels, loadGatewayAccessFromDb, loadMemberGatewayAccessFromDb, sameGatewaySelection, selectGatewayGrant } from "./provider-access.js"
+import type { GatewayGrantSelection, LoadGatewayAccess, LoadMemberGatewayAccess } from "./provider-access.js"
 import { hasAlternateModelSelection } from "./model-selection.js"
 import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
@@ -77,6 +77,8 @@ export type GatewayDependencies = {
   reporter: InferenceReporter
   loadGatewayProvider: LoadGatewayProvider
   loadGatewayAccess: LoadGatewayAccess
+  loadMemberGatewayAccess: LoadMemberGatewayAccess
+  resolveGatewayModelProvider: ResolveGatewayModelProvider
   loadProviderCredential: LoadProviderCredential
   refreshGoogleOauthToken: RefreshGoogleOauthToken
   mintGcpAccessToken: MintGcpAccessToken
@@ -114,6 +116,8 @@ type UpstreamAuth =
   | { kind: "signer"; host: string; sign: (request: { method: string; url: URL; headers: Headers; body: string | Uint8Array<ArrayBuffer> | null }) => void }
 
 export const gatewayPathPrefix = "/api/v1/providers"
+/** Shared with OpenWork Models; a Gateway key here lists models across all of the member's providers. */
+export const gatewayModelsPath = "/api/v1/models"
 
 const droppedResponseHeaders = new Set(["content-length", "transfer-encoding", "connection"])
 const vertexAnthropicVersion = "vertex-2023-10-16"
@@ -600,6 +604,71 @@ function refreshGoogleOauthTokenWithDb(): RefreshGoogleOauthToken {
   }
 }
 
+/**
+ * Provider-less endpoints. Each maps to the path under the provider's base URL and the
+ * one protocol it accepts; a model whose provider speaks another protocol is rejected.
+ */
+export const gatewayModelEndpoints = {
+  "/api/v1/messages": { rest: "messages", protocol: "anthropic_messages" },
+  "/api/v1/chat/completions": { rest: "chat/completions", protocol: "openai_chat" },
+  "/api/v1/responses": { rest: "responses", protocol: "openai_responses" },
+} as const satisfies Record<string, { rest: string; protocol: GatewayRequestProtocol }>
+
+type ModelRouteTarget = {
+  inferenceProviderId: string
+  /** The caller's request rebuilt from the bytes read to find the model. */
+  request: Request
+  model: string
+  rest: string
+  protocol: GatewayRequestProtocol
+}
+
+/** Picks the provider that owns an alias's model. Routing only: it never authorizes the request. */
+export type ResolveGatewayModelProvider = (input: {
+  organizationId: string
+  gatewayProviderModelId: typeof GatewayProviderModelTable.$inferSelect.id
+}) => Promise<string | null>
+
+export const resolveGatewayModelProviderFromDb: ResolveGatewayModelProvider = async (input) => {
+  if (!isDenTypeId("organization", input.organizationId)) return null
+  const { db } = await import("./db.js")
+  const [row] = await db
+    .select({ id: GatewayProviderTable.id })
+    .from(GatewayProviderModelTable)
+    .innerJoin(GatewayProviderTable, eq(GatewayProviderTable.id, GatewayProviderModelTable.gateway_provider_id))
+    .where(and(
+      eq(GatewayProviderModelTable.id, input.gatewayProviderModelId),
+      eq(GatewayProviderTable.organization_id, input.organizationId),
+      eq(GatewayProviderTable.status, "active"),
+    ))
+    .limit(1)
+  return row?.id ?? null
+}
+
+async function routeByModel(raw: Request, organizationId: string, resolveProvider: ResolveGatewayModelProvider): Promise<Omit<ModelRouteTarget, "rest" | "protocol"> | { error: Response }> {
+  let bytes: Uint8Array<ArrayBuffer>
+  try { bytes = await readBoundedBody(raw) } catch (error) {
+    const limited = error instanceof RequestBodyLimitError
+    return { error: gatewayError(limited ? 413 : 400, limited ? "request_too_large" : "request_body_failed", "Could not read the request body within gateway limits.") }
+  }
+  let model: unknown = null
+  try {
+    const body: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
+    model = isJsonObject(body) ? body.model : null
+  } catch {
+    return { error: gatewayError(400, "invalid_json", "The request body must be JSON with a model field.") }
+  }
+  const alias = parseGatewayModelAlias(model)
+  if (typeof model !== "string" || !alias) {
+    return { error: gatewayError(400, "invalid_gateway_model", "model must be an OpenWork Gateway model id from GET /api/v1/models.") }
+  }
+  const inferenceProviderId = await resolveProvider({ organizationId, gatewayProviderModelId: alias.gatewayProviderModelId })
+  // Same answer for another organization's model and one that does not exist.
+  if (!inferenceProviderId) return { error: gatewayError(404, "model_not_found", `Unknown OpenWork Gateway model: ${model}.`) }
+  const request = new Request(raw.url, { method: raw.method, headers: raw.headers, body: bytes, signal: raw.signal })
+  return { inferenceProviderId, request, model }
+}
+
 function restOfPath(pathname: string, inferenceProviderId: string) {
   const prefix = `${gatewayPathPrefix}/${inferenceProviderId}`
   return pathname.startsWith(`${prefix}/`) ? pathname.slice(prefix.length + 1) : ""
@@ -614,6 +683,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     reporter: input.reporter,
     loadGatewayProvider: input.loadGatewayProvider ?? loadGatewayProviderFromDb,
     loadGatewayAccess: input.loadGatewayAccess ?? loadGatewayAccessFromDb,
+    loadMemberGatewayAccess: input.loadMemberGatewayAccess ?? loadMemberGatewayAccessFromDb,
+    resolveGatewayModelProvider: input.resolveGatewayModelProvider ?? resolveGatewayModelProviderFromDb,
     loadProviderCredential: input.loadProviderCredential ?? loadProviderCredentialFromDb,
     refreshGoogleOauthToken: input.refreshGoogleOauthToken ?? refreshGoogleOauthTokenWithDb(),
     mintGcpAccessToken: input.mintGcpAccessToken ?? createGcpServiceAccountTokenMinter(),
@@ -621,10 +692,12 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     now: input.now ?? (() => new Date()),
   }
 
-  async function handleGatewayRequest(c: Context<GatewayEnv>) {
+  // `target` is set by the provider-less routes, which pick the provider from the model alias.
+  // Everything after provider lookup, including every authorization check, is shared.
+  async function handleGatewayRequest(c: Context<GatewayEnv>, target?: ModelRouteTarget) {
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
-    const inferenceProviderId = c.req.param("inferenceProviderId")
+    const inferenceProviderId = target?.inferenceProviderId ?? c.req.param("inferenceProviderId")
     if (!inferenceProviderId) {
       return gatewayError(404, "provider_not_found", "Missing inference provider id.")
     }
@@ -632,7 +705,8 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const openworkRequestId = c.get("openworkRequestId")
     const startedAt = dependencies.now()
     const method = c.req.method
-    const incomingHeaders = sanitizeIncomingHeaders(c.req.raw.headers)
+    const request = target?.request ?? c.req.raw
+    const incomingHeaders = sanitizeIncomingHeaders(request.headers)
 
     const provider = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId })
     if (!provider) {
@@ -640,7 +714,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     }
 
     const catalog = dependencies.catalog.getCatalogProvider(provider.provider_id)
-    const rest = restOfPath(requestUrl.pathname, inferenceProviderId)
+    const rest = target?.rest ?? restOfPath(requestUrl.pathname, inferenceProviderId)
     const scope = { ...identity, gatewayProviderId: provider.id }
     const accessRows = await dependencies.loadGatewayAccess(scope)
     if (method === "GET" && /^(?:v1(?:beta|alpha)?\/)?models\/?$/.test(rest)) {
@@ -691,7 +765,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         accessGrantId: loggedSelection?.row.grant.id ?? null,
         requestBytes: state.requestBytes,
         gatewayUsage,
-        signal: c.req.raw.signal,
+        signal: request.signal,
         startedAt,
       })
     }
@@ -734,7 +808,17 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       )
     }
 
-    const prepared = await prepareRequest(c.req.raw, resolved, provider.provider_id, rest)
+    if (target && resolved.protocol !== target.protocol) {
+      // The member holds grants here, so naming the provider's protocol leaks nothing new.
+      startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: target.model, stream: false })
+      return reject(
+        gatewayError(400, "unsupported_model_endpoint", `This model's provider does not accept ${method} ${c.req.path}. Call it through ${gatewayPathPrefix}/${provider.id}/ with its native API.`, { provider_id: provider.id }),
+        "unsupported_model_endpoint",
+        "Model does not support the provider-less endpoint",
+      )
+    }
+
+    const prepared = await prepareRequest(request, resolved, provider.provider_id, rest)
     if ("error" in prepared) {
       startRecorder({ protocol: resolved.protocol, url: resolved.url, requestedModel: prepared.requestedModel, stream: prepared.stream })
       return reject(prepared.error, prepared.errorCode, "Unsupported or invalid gateway request")
@@ -849,7 +933,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       requestBytes: prepared.body === null ? null : Buffer.byteLength(prepared.body),
     })
 
-    const headers = buildUpstreamHeaders(c.req.raw, resolved.family, openworkRequestId)
+    const headers = buildUpstreamHeaders(request, resolved.family, openworkRequestId)
     if (auth.kind === "header") headers.set(auth.header.name, auth.header.value)
     else auth.sign({ method, url: prepared.url, headers, body: prepared.body })
 
@@ -868,7 +952,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return reject(gatewayError(503, "provider_credential_retry", "The selected credential changed before dispatch. Retry the same selection."), "credential_changed", "Gateway credential changed")
     }
 
-    const lifetime = upstreamLifetime(c.req.raw.signal, env.upstreamTimeoutMs)
+    const lifetime = upstreamLifetime(request.signal, env.upstreamTimeoutMs)
     let upstream: Response
     try {
       validateInferenceUrl(prepared.url)
@@ -949,6 +1033,26 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     return relayStreamResponse(upstream, resolved.protocol, responseHeaders, recorder, lifetime)
   }
 
-  api.all(`${gatewayPathPrefix}/:inferenceProviderId`, handleGatewayRequest)
-  api.all(`${gatewayPathPrefix}/:inferenceProviderId/*`, handleGatewayRequest)
+  // Models keys fall through to the OpenWork Models handler registered after this one.
+  api.get(gatewayModelsPath, async (c, next) => {
+    const identity = c.get("inference")
+    if (identity.kind !== "gateway") return next()
+    c.header("cache-control", "no-store")
+    return c.json(listGatewayModels(await dependencies.loadMemberGatewayAccess(identity)))
+  })
+  // Provider-less invocation: the body's gwm_ alias names the provider. Models keys fall through.
+  for (const [path, endpoint] of Object.entries(gatewayModelEndpoints)) {
+    api.post(path, async (c, next) => {
+      const identity = c.get("inference")
+      if (identity.kind !== "gateway") return next()
+      const routed = await routeByModel(c.req.raw, identity.organizationId, dependencies.resolveGatewayModelProvider)
+      if ("error" in routed) {
+        routed.error.headers.set("x-openwork-request-id", c.get("openworkRequestId"))
+        return routed.error
+      }
+      return handleGatewayRequest(c, { ...routed, rest: endpoint.rest, protocol: endpoint.protocol })
+    })
+  }
+  api.all(`${gatewayPathPrefix}/:inferenceProviderId`, (c) => handleGatewayRequest(c))
+  api.all(`${gatewayPathPrefix}/:inferenceProviderId/*`, (c) => handleGatewayRequest(c))
 }

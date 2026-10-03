@@ -636,7 +636,7 @@ export async function focusContinuity(seed: Seed) {
   return { app, workspace, session };
 }
 
-async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: boolean } = {}) {
+async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: boolean; disableAutoByEnvironment?: boolean } = {}) {
   const [webPort] = await allocateFreePorts(1);
   if (!webPort) throw new Error("No app-web port available for the picker fixture");
   const den = await seed.den({
@@ -670,6 +670,7 @@ async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: bool
       OPENWORK_DEV_FREE_RELEASE_SECRET: "fixture-free-release-secret-000000000000000000",
       OPENWORK_FREE_INFERENCE_ORIGIN: new URL(witness.url).origin,
       OPENWORK_DEV_FREE_CONTROL_PLANE: den.ref.apiUrl,
+      ...(options.disableAutoByEnvironment ? { OPENWORK_DISABLE_FREE_INFERENCE: "1" } : {}),
     } })
     : await seed.appWeb({ name: "model-picker", workspacePath, webPort, den: den.ref });
   await addInitScript(app.client, browserScript((providerId) => {
@@ -733,9 +734,8 @@ export function modelPicker(seed: Seed) {
   return seedModelPicker(seed);
 }
 
-/** A saved Auto default on the native renderer, with Den's free switch explicitly off. */
-export async function modelPickerDisabledAuto(seed: Seed) {
-  const world = await seedModelPicker(seed, { disabledAutoDesktop: true });
+async function seedDisabledAutoPicker(seed: Seed, disableAutoByEnvironment: boolean) {
+  const world = await seedModelPicker(seed, { disabledAutoDesktop: true, disableAutoByEnvironment });
   // No first-class seed primitive initializes model preferences on a sessionless route.
   await seed.evalIn(world.app, browserScript((auto, workspaceId) => {
     localStorage.setItem("openwork.defaultModel", `${auto.providerID}/${auto.modelID}`);
@@ -744,6 +744,16 @@ export async function modelPickerDisabledAuto(seed: Seed) {
     return true;
   }, [world.auto, world.workspace.workspaceId]));
   return world;
+}
+
+/** A saved Auto default on the native renderer, with Den's free switch explicitly off. */
+export function modelPickerDisabledAuto(seed: Seed) {
+  return seedDisabledAutoPicker(seed, false);
+}
+
+/** The same saved model choices with the desktop deployment's local opt-out. */
+export function modelPickerDeploymentDisabledAuto(seed: Seed) {
+  return seedDisabledAutoPicker(seed, true);
 }
 
 /**
@@ -800,6 +810,44 @@ export async function modelAccessPicker(seed: Seed) {
   await seed.evalIn(app, () => { location.reload(); return true; });
   const session = await seedSessionRetry(seed, app, { title: "Only models you provide" });
   return { app, den, workspace, session, policy, personal, organization: { providerID: organizationProviderId, modelID: "organization-model" } };
+}
+
+/**
+ * A saved model the provider no longer serves: the workspace provider lists only "Kept witness", while the
+ * person's saved default is the model it dropped. Opening the picker shows the Availability and recovery state.
+ */
+export async function modelPickerSavedUnavailable(seed: Seed) {
+  const providerId = "picker-witness";
+  const kept = { providerID: providerId, modelID: "kept-model" };
+  const retired = { providerID: providerId, modelID: "retired-model" };
+  const mock = seed.mock({});
+  const workspacePath = seed.tmpPath("model-picker-saved-unavailable");
+  const app = await seed.appWeb({ name: "model-picker-saved-unavailable", workspacePath, mocks: { agent: mock } });
+  const witness = app.mocks.agent;
+  if (!witness) throw new Error("Missing picker provider witness");
+  const workspace = await seed.workspace(app, workspacePath);
+  await configureProvider(seed, app, workspace.workspaceId, providerId, kept.modelID, { provider: {
+    [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Picker witness",
+      options: { baseURL: `${witness.url}/v1`, apiKey: "synthetic-picker-key" },
+      models: { [kept.modelID]: { name: "Kept witness" } },
+    },
+  } });
+  // The person chose a model earlier that this provider has since dropped.
+  const saved = await seed.evalIn(app, browserScript((workspaceId, ref) => {
+    const raw = localStorage.getItem("openwork.preferences");
+    let preferences: Record<string, unknown> = {};
+    try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
+    const [providerID, modelID] = ref.split("/");
+    localStorage.setItem("openwork.preferences", JSON.stringify({ ...preferences, defaultModel: { providerID, modelID }, modelVariant: null }));
+    localStorage.setItem("openwork.defaultModel", ref);
+    localStorage.setItem("openwork.modelChoice.explicit", "1");
+    localStorage.removeItem("openwork.sessionModels." + workspaceId);
+    return localStorage.getItem("openwork.defaultModel");
+  }, [workspace.workspaceId, `${retired.providerID}/${retired.modelID}`]));
+  if (saved !== `${retired.providerID}/${retired.modelID}`) throw new Error(`Saving the retired default failed: ${String(saved)}`);
+  await reload(app);
+  return { app, workspace, kept, retired };
 }
 
 /** Model picker contract through a real native engine and a synthetic provider. */

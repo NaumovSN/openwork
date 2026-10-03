@@ -24,8 +24,10 @@ import { DashboardMasonry } from "./dashboard-masonry";
  * Personal apps alongside the dashboards shared by the organization.
  * Company definitions stay in Den; personal placement belongs to each member.
  */
-export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
+export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTarget }: {
   onCreateApp: CreateDashboardApp;
+  /** Titlebar slot for the Add control, matching Library. */
+  headerActionsTarget?: HTMLElement | null;
   /** Other workspace MCP runtimes tiles may launch through when the primary one lacks their server. */
   fallbackEndpoints?: DashboardLaunchEndpoint[];
 }) {
@@ -75,7 +77,7 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
   if (denAuth.status === "checking" || (grantedReady && grantedQuery.isPending && !grantedQuery.isFetched)
     || (Boolean(personal.client && personal.orgId) && personal.query.isPending && !personal.query.isFetched)) {
     return (
-      <div className="mx-auto w-full max-w-5xl px-6 py-10 sm:px-8" data-dashboard-page>
+      <div className="mx-auto w-full max-w-5xl px-6 py-8 sm:px-8" data-dashboard-page>
         <div className="space-y-2 pt-3" role="status" aria-label="Loading dashboard">
           <Skeleton className="h-8 w-1/3" />
           <Skeleton className="h-40 w-full" />
@@ -92,12 +94,14 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
       grantedError={grantedReady && grantedQuery.error ? true : false}
       fallbackEndpoints={fallbackEndpoints}
       onCreateApp={onCreateApp}
+      headerActionsTarget={headerActionsTarget}
     />
   );
 }
 
-function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, grantedError, fallbackEndpoints, onCreateApp }: {
+function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, grantedError, fallbackEndpoints, onCreateApp, headerActionsTarget }: {
   onCreateApp: CreateDashboardApp;
+  headerActionsTarget?: HTMLElement | null;
   consentScopeKey: string;
   cacheScopeKey: string;
   /** Organization-managed dashboards granted to this member, rendered read-only. */
@@ -119,12 +123,12 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
 
   return (
     <div
-      className="mx-auto w-full max-w-5xl px-6 py-10 sm:px-8"
+      className="mx-auto w-full max-w-5xl px-6 py-8 sm:px-8"
       data-dashboard-page
       data-dashboard-cache-scope={cacheScopeKey}
       data-dashboard-consent-scope={consentScopeKey}
     >
-      <DashboardApps key={cacheScopeKey} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} />
+      <DashboardApps key={cacheScopeKey} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} headerActionsTarget={headerActionsTarget} />
       {grantedError ? (
         <p className="mb-4 text-xs text-muted-foreground" role="status">
           Your organization&apos;s dashboards could not be loaded right now.
@@ -137,7 +141,7 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
             <span className="text-xs text-muted-foreground">From your company</span>
           </header>
           {dashboard.elements.length === 0 ? (
-            <p className="text-xs text-muted-foreground">This dashboard has no apps yet.</p>
+            <p className="text-xs text-muted-foreground">This dashboard has no artifacts yet.</p>
           ) : (
             <DashboardMasonry>
               {dashboard.elements.map((element) => {

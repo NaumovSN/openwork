@@ -2343,7 +2343,7 @@ export class DenClient extends HeyApiClient {
       runnerId: string;
       protocolVersion: 1;
       supportedExecutionTargets: ["desktop"];
-      capabilities?: Array<"model_attention_v1" | "remote_session_v1">;
+      capabilities?: Array<"model_attention_v1" | "remote_session_v1" | "remote_session_control_v1">;
       appVersion: string;
       platform: "darwin" | "win32" | "linux";
       concurrency: number;
@@ -14042,6 +14042,7 @@ export class DenClient extends HeyApiClient {
       shadowMode?: boolean;
       dailyLimit?: number;
       model?: string | null;
+      progressUpdates?: boolean;
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -14057,6 +14058,7 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "shadowMode" },
             { in: "body", key: "dailyLimit" },
             { in: "body", key: "model" },
+            { in: "body", key: "progressUpdates" },
           ],
         },
       ],

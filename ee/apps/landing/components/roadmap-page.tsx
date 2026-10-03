@@ -8,6 +8,7 @@ import {
   RoadmapActivityPreview,
   RoadmapDashboardPreview,
   RoadmapInsightsPreview,
+  RoadmapPhonePreview,
   RoadmapSlackPreview,
   RoadmapStreamlinedChatPreview,
   RoadmapWorkflowPreview
@@ -131,11 +132,11 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
     id: "new-apps",
     label: "New apps",
     heading: ["For people who just", "want it to work."],
-    intro: "Two new ways to use OpenWork, set up by your team. Neither is available yet. This is what we’re designing.",
+    intro: "New ways to use OpenWork, set up by your team. None is available yet. This is what we’re designing.",
     items: {
       ready: [],
       building: [],
-      soon: ["A single, streamlined chat", "OpenWork in Slack"]
+      soon: ["A single, streamlined chat", "OpenWork in Slack", "Phone app, starting with MCP Apps"]
     }
   }
 ];
@@ -215,6 +216,7 @@ function Preview({ id }: { id: string }) {
   if (id === "dashboards") return <Frame><RoadmapDashboardPreview /></Frame>;
   if (id === "new-apps") {
     return (
+      <>
       <div className="mt-10 flex flex-col gap-6 md:mt-12 lg:flex-row">
         <ComingSoonTile
           title="A single, streamlined chat"
@@ -226,6 +228,19 @@ function Preview({ id }: { id: string }) {
           <RoadmapSlackPreview />
         </ComingSoonTile>
       </div>
+      <div className="mt-6 flex flex-col items-center gap-8 rounded-[24px] bg-[var(--lp-tonal)] p-5 md:flex-row md:gap-12 md:p-8">
+        <RoadmapPhonePreview />
+        <div className="flex max-w-[460px] flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-[17px] font-semibold tracking-[-0.01em] text-[var(--lp-ink)]">Phone app</h3>
+            <RoadmapStatusPill status="soon" />
+          </div>
+          <p className="text-[15px] leading-[23px] text-[var(--lp-body)]">
+            Starts with your MCP Apps: the quick views your team already built, like today’s meetings, open issues, and pipeline, in your pocket. Chat and approvals come next.
+          </p>
+        </div>
+      </div>
+      </>
     );
   }
   return null;

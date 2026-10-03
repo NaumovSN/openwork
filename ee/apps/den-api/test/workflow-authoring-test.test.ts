@@ -117,43 +117,27 @@ test("rejects invalid time zones, adhoc time zones and top-level forged runtime"
   }
 })
 
-test("live strips mutation, external hinted and undeclared paths even inside try/catch", async () => {
-  for (const path of ["tools.den.write", "tools.external.hinted", "tools.den.legacy", "tools.den.hidden", "tools.den['write']"]) {
-    const direct = fixture()
-    const denied = await execute({ mode: "live", code: `return await ${path}({})` }, direct.context)
-    expect(denied.isError).toBe(true)
-    expect(direct.calls).toEqual([])
-    expect(direct.retainSource).not.toHaveBeenCalled()
-    expect(direct.receipts[0]?.status).toBe("failed")
-    const caught = fixture()
-    const result = await execute({ mode: "live", code: `try { await ${path}({}) } catch (error) { return 2 } return 3` }, caught.context)
-    expect(result.isError).not.toBe(true)
-    expect(record(result.structuredContent).value).toBe(2)
-    expect(caught.calls).toEqual([])
-    expect(caught.receipts[0]?.toolCalls).toEqual([])
+test("live reaches the same Den writes and connection tools as adhoc", async () => {
+  for (const mode of ["live", "adhoc"]) {
+    for (const path of ["tools.den.read", "tools.den.write", "tools.external.hinted", "tools.den.legacy", "tools.den['write']"]) {
+      const f = fixture()
+      const result = await execute({ mode, code: `return await ${path}({})` }, f.context)
+      expect(result.isError).not.toBe(true)
+      expect(record(result.structuredContent).value).toEqual({ count: 2 })
+      expect(f.calls).toHaveLength(1)
+      expect(f.receipts[0]?.status).toBe("succeeded")
+    }
   }
 })
 
-test("live interpreter discovery sees only the restricted read-only catalog", async () => {
+test("live interpreter discovery sees the same catalog as adhoc", async () => {
   const f = fixture()
-  const result = await execute({ mode: "live", code: 'return await tools.$codemode.search({query:"read write hinted hidden"})' }, f.context)
+  const result = await execute({ mode: "live", code: 'return await tools.$codemode.search({query:"read write hinted"})' }, f.context)
   expect(result.isError).not.toBe(true)
   const value = JSON.stringify(record(result.structuredContent).value)
-  expect(value).not.toContain("den.write")
-  expect(value).not.toContain("external.hinted")
-  expect(value).not.toContain("den.hidden")
+  expect(value).toContain("den.write")
+  expect(value).toContain("external.hinted")
   expect(f.calls).toEqual([])
-})
-
-test("live executes read tools and adhoc preserves write access", async () => {
-  for (const mode of ["live", "adhoc"]) {
-    const f = fixture()
-    const name = mode === "live" ? "read" : "write"
-    const result = await execute({ mode, code: `return await tools.den.${name}({})` }, f.context)
-    expect(result.isError).not.toBe(true)
-    expect(record(result.structuredContent).value).toEqual({ count: 2 })
-    expect(f.calls).toEqual([name])
-  }
 })
 
 test("live supports the same confined date operations as saved runs", async () => {

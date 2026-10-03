@@ -20,33 +20,50 @@ export function BuiltAppShareButton({
   title: string;
 }) {
   const [open, setOpen] = useState(false);
-  const context = useAppsClient();
   return (
     <>
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
         Share
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
-          <DialogHeader className="sr-only">
-            <DialogTitle>Share {title}</DialogTitle>
-          </DialogHeader>
-          {context.client && context.orgId && context.identityVerified ? (
-            <AppSharing
-              key={JSON.stringify(context.scope)}
-              context={context}
-              pluginId={pluginId}
-              title={title}
-              onClose={() => setOpen(false)}
-            />
-          ) : (
-            <p role="status" className="text-sm">
-              Sign in to share this app.
-            </p>
-          )}
-        </DialogContent>
-      </Dialog>
+      <BuiltAppShareDialog pluginId={pluginId} title={title} open={open} onOpenChange={setOpen} />
     </>
+  );
+}
+
+/** The sharing dialog alone, for callers that open it from a menu item. */
+export function BuiltAppShareDialog({
+  pluginId,
+  title,
+  open,
+  onOpenChange,
+}: {
+  pluginId: string;
+  title: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const context = useAppsClient();
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader className="sr-only">
+          <DialogTitle>Share {title}</DialogTitle>
+        </DialogHeader>
+        {context.client && context.orgId && context.identityVerified ? (
+          <AppSharing
+            key={JSON.stringify(context.scope)}
+            context={context}
+            pluginId={pluginId}
+            title={title}
+            onClose={() => onOpenChange(false)}
+          />
+        ) : (
+          <p role="status" className="text-sm">
+            Sign in to share this artifact.
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -63,7 +80,7 @@ function AppSharing({
 }) {
   // The caller verifies these before mounting. Avoid retaining another member's grants.
   if (!context.client || !context.orgId)
-    throw new Error("Sign in to share this app.");
+    throw new Error("Sign in to share this artifact.");
   const library = useLibraryCloud({
     client: context.client,
     organizationId: context.orgId,
@@ -92,7 +109,7 @@ function AppSharing({
   if (!plugin || !library.ownedPluginIds.has(pluginId))
     return (
       <p role="status" className="text-sm">
-        Only this app's owner can share it. Ask them for access.
+        Only this artifact's owner can share it. Ask them for access.
       </p>
     );
   if (!library.grantsReadyFor(pluginId))

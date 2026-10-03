@@ -21,7 +21,7 @@ let buildNativeProviderManifest: typeof import("../src/mcp/codemode-tools.js")["
 let CAPABILITY_SOURCE_KINDS: typeof import("../src/mcp/capability-registry.js")["CAPABILITY_SOURCE_KINDS"]
 let CAPABILITY_SOURCES: typeof import("../src/mcp/capability-registry.js")["CAPABILITY_SOURCES"]
 let isCodemodeEligibleConnection: typeof import("../src/mcp/codemode-tools.js")["isCodemodeEligibleConnection"]
-let firstUnattendedUnsafeCapability: typeof import("../src/mcp/codemode-tools.js")["firstUnattendedUnsafeCapability"]
+let codemodeCallName: typeof import("../src/mcp/codemode-namespaces.js")["codemodeCallName"]
 let restrictCodemodeToolTree: typeof import("../src/mcp/codemode-tools.js")["restrictCodemodeToolTree"]
 let sanitizeNamespaceSegment: typeof import("../src/mcp/codemode-tools.js")["sanitizeNamespaceSegment"]
 let stripUndefinedEntries: typeof import("../src/mcp/codemode-tools.js")["stripUndefinedEntries"]
@@ -46,7 +46,7 @@ beforeAll(async () => {
   CAPABILITY_SOURCE_KINDS = capabilityRegistry.CAPABILITY_SOURCE_KINDS
   CAPABILITY_SOURCES = capabilityRegistry.CAPABILITY_SOURCES
   isCodemodeEligibleConnection = codemodeTools.isCodemodeEligibleConnection
-  firstUnattendedUnsafeCapability = codemodeTools.firstUnattendedUnsafeCapability
+  codemodeCallName = (await import("../src/mcp/codemode-namespaces.js")).codemodeCallName
   restrictCodemodeToolTree = codemodeTools.restrictCodemodeToolTree
   sanitizeNamespaceSegment = codemodeTools.sanitizeNamespaceSegment
   stripUndefinedEntries = codemodeTools.stripUndefinedEntries
@@ -121,16 +121,12 @@ test("excludes connections disabled or pending OAuth issuer review", () => {
   })).toBe(true)
 })
 
-test("allows only first-party read-only Den capabilities in unattended Cloud runs", () => {
-  const required = { scriptPath: "tools.den.reports_read", capabilityName: "reports_read" }
-  const built = {
-    tools: {},
-    manifest: [{ ...required, readOnly: true, authority: "den" as const }],
-  }
-  expect(firstUnattendedUnsafeCapability(built, [required])).toBeNull()
-  expect(firstUnattendedUnsafeCapability({ ...built, manifest: [{ ...required, readOnly: true, authority: "external" as const }] }, [required])).toEqual(required)
-  expect(firstUnattendedUnsafeCapability({ ...built, manifest: [{ ...required, readOnly: false, authority: "den" as const }] }, [required])).toEqual(required)
-  expect(firstUnattendedUnsafeCapability({ ...built, manifest: [] }, [required])).toEqual(required)
+test("a script path maps to the dotted name Code Mode records for its call", () => {
+  expect(codemodeCallName("tools.den.reports_read")).toBe("den.reports_read")
+  expect(codemodeCallName("tools.notion[\"notion-query-data-sources\"]")).toBe("notion.notion-query-data-sources")
+  expect(codemodeCallName("notion[\"notion-query-data-sources\"]")).toBe("notion.notion-query-data-sources")
+  expect(codemodeCallName("tools.ops[\"say \\\"hi\\\"\"]")).toBe("ops.say \"hi\"")
+  expect(codemodeCallName("notion.notion-query-data-sources")).toBe("notion.notion-query-data-sources")
 })
 
 test("excludes credential-bound native routes from the Den namespace and manifest", () => {
@@ -372,7 +368,6 @@ test("generic and Code Mode execution require write scope even for misleading re
       const leaf = built.manifest[0]
       if (!leaf) throw new Error("Missing external Code Mode leaf")
       expect(leaf).toMatchObject({ readOnly: true, authority: "external" })
-      expect(firstUnattendedUnsafeCapability(built, [leaf])).toEqual(leaf)
       for (const entry of cases) {
         // Keep the already-built tree: dispatch must not trust its read-only snapshot.
         liveTool = { ...liveTool, annotations: entry.annotations }

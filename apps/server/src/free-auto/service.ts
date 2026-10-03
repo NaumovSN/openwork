@@ -297,6 +297,8 @@ export class AnonymousInferenceService {
   }
 
   async status(force = false): Promise<DesktopFreeAccessStatus> {
+    // A deployment opt-out uses the same quiet UI state as a switched-off gateway.
+    if (this.settings.disabledByEnvironment) return this.unavailable("free_disabled");
     const signal = this.identityController.signal;
     try {
       await this.relayConfigUpdate;

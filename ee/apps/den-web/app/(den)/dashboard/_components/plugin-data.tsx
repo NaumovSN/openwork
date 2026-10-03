@@ -549,7 +549,20 @@ function pluginMcpTransport(config: Record<string, unknown>): PluginMcpTransport
   return asString(config.url) ? "http" : "stdio";
 }
 
+/**
+ * Marketplace syncs used to title an MCP config object after its file, so a
+ * `.mcp.json` showed up as ".mcp". Such a title says nothing about the server.
+ */
+function isFileDerivedMcpTitle(title: string, currentRelativePath: string | null | undefined) {
+  const normalized = title.trim().toLowerCase();
+  if (normalized === ".mcp" || normalized === "mcp") return true;
+  const fileName = currentRelativePath?.split("/").filter(Boolean).at(-1);
+  if (!fileName) return false;
+  return normalized === fileName.replace(/\.[^.]+$/, "").toLowerCase();
+}
+
 export function pluginMcpEntries(item: {
+  currentRelativePath?: string | null;
   description: string;
   id: string;
   normalizedPayload: Record<string, unknown> | null;
@@ -564,13 +577,16 @@ export function pluginMcpEntries(item: {
   const servers = entries.length > 0
     ? entries
     : [[item.title, payload] satisfies [string, Record<string, unknown>]];
+  const useTitle = servers.length === 1 && !isFileDerivedMcpTitle(item.title, item.currentRelativePath);
+  // Old syncs stored the second line of the JSON file (`"mcpServers": {`) as the description.
+  const description = /^"?(mcpServers|mcp)"?\s*:\s*\{?$/.test(item.description.trim()) ? "" : item.description;
 
   return servers.map(([serverName, config], index) => ({
     configObjectId: item.id,
     connectionId: asString(config.externalMcpConnectionId),
-    description: item.description,
+    description,
     id: servers.length === 1 ? item.id : `${item.id}:${index}`,
-    name: servers.length === 1 ? item.title : serverName,
+    name: useTitle ? item.title : serverName,
     serverName,
     toolCount: typeof config.toolCount === "number" ? config.toolCount : 0,
     transport: pluginMcpTransport(config),
@@ -725,7 +741,7 @@ function buildDenPlugin(pluginItem: Record<string, unknown>, contents: unknown):
     } satisfies PluginHook));
   const mcps = membershipItems
     .filter((item) => item.objectType === "mcp")
-    .flatMap(pluginMcpEntries);
+    .flatMap((item) => pluginMcpEntries(item));
 
   const marketplaces = Array.isArray(pluginItem.marketplaces)
     ? pluginItem.marketplaces.flatMap((entry) => {

@@ -42,14 +42,31 @@ platform capability are rechecked while processing each turn.
   ID lets the existing headless client deduplicate a retried send. Only assistant
   messages belonging to that turn are streamed.
 - Streams use Slack `chunks` mode throughout, including Markdown and task updates.
-  Delivered answer chunks are checkpointed. Large answers continue in another
-  stream in the same thread. Titles sync to Slack once; user title-change events
-  rename only the matching member's native session.
-- Slack Stop cancels the signed actor's run, including replies moved into a DM.
+  Delivered answer chunks are checkpointed. Slack closes a streamed message on
+  its own after about five minutes (`message_not_in_streaming_state`), so a reply
+  continues in a new stream in the same thread after four minutes or 30,000
+  characters, or right after Slack closed it early. The Slack session stays in
+  progress across streams, so Stop keeps working. Closing text that has no open
+  stream is posted as a plain reply. Titles sync to Slack once; user title-change
+  events rename only the matching member's native session.
+- Slack Stop cancels the signed actor's running task, including replies moved into a DM.
+  Messages the member sent while it ran are kept and start next. A message sent
+  while an earlier task runs in the thread gets one reply saying it will be done
+  right after, and waiting messages run in the order they were sent.
+- Replies are quiet by default: Slack's working status (with its Stop button)
+  shows while a task runs, then the answer arrives as one reply, without the
+  notes the agent wrote on the way. Admins can turn on "Show progress while
+  working" (`progressUpdates`), which applies to tasks started afterwards: steps
+  and notes stream live, and headless tasks then post one line after four minutes
+  saying they will report back, an hourly "Still working on it" line, and the
+  final answer alone as a new reply that mentions the member.
   Pending runtime permissions/questions suspend the stream and link to Web; no
   permission is approved through Slack. The member continues in Web.
-- Requests time out after fifteen minutes. Transient errors retry up to twenty
-  times; Slack Retry-After is respected. Five terminal failures within five
+- Requests time out after fifteen minutes; headless tasks have no time limit and
+  end with their answer, Stop, a failure, or the runner's stuck check. The runner
+  pauses a long turn every 50 minutes and the read resumes it with a fresh MCP token.
+  Transient errors retry up to twenty times; Slack Retry-After is respected. A
+  run that gives up logs `slack_assistant_failed` with the error code. Five terminal failures within five
   minutes pause new requests for that installation until the window expires.
 - Ingress is limited to 120 events per minute per installation and ten invocations
   per minute per Slack user. The configurable daily limit counts admitted runs
@@ -58,6 +75,20 @@ platform capability are rechecked while processing each turn.
   Pending connect requests expire after fifteen minutes, app context after thirty
   minutes, and unused install OAuth state after ten minutes. Native sessions keep
   their existing retention policy. Deleting a connector removes its Slack data.
+
+## Work handed to the desktop
+
+On the headless runner, Den records which Slack run each MCP token was minted
+for (`slack_assistant_run_token`). When that run calls `remote-session:create`
+with target `desktop`, the command is linked to the thread its reply went to
+(`slack_assistant_desktop_handoff`); nothing the model sends picks the thread.
+A sweep on worker nodes then posts, mentioning the member: the finished answer
+(first ~600 characters, with mentions and links escaped), a session failure, an
+unclaimed command expiring, or a delivery failure, each once; and "waiting for
+you to approve" once per waiting episode. Leases keep several Den instances from
+posting twice. Nothing is posted once the assistant is off, the member lost
+access, or Slack rejects the thread. A crash between posting and recording the
+post can repeat that one message. OpenWork Web runs have no such link yet.
 
 There is no atomic transaction spanning Slack and the database. A process crash
 after Slack accepts a chunk but before its checkpoint commits can duplicate that

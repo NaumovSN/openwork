@@ -91,9 +91,6 @@ test("mobile opening focuses the picker, not search, so the keyboard stays close
 
 test("Effort opens with Back focused and Back returns focus to Effort without changing the model", async () => {
   await open();
-  const advanced = document.querySelector<HTMLElement>('[data-testid="model-advanced-options"] summary');
-  if (!advanced) throw new Error("Missing Advanced options");
-  await click(advanced);
   await click(button("Effort"));
   expect(document.activeElement).toBe(button("Back to models"));
   await click(button("Back to models"));

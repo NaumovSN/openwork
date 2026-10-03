@@ -1057,7 +1057,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const autoClient = isDesktopRuntime() && openworkServerSnapshot.openworkServerClient && isLoopbackOpenworkServerUrl(openworkServerSnapshot.openworkServerClient.baseUrl) ? openworkServerSnapshot.openworkServerClient : null;
   const [autoPreferences, setAutoPreferences] = useState<DesktopFreePreferences | null>(null);
   // Until an operator switches free Auto on, Settings shows no OpenWork Models row for it.
-  const { query: autoAccessQuery } = useAutoAccess(Boolean(autoPreferences));
+  // Settings has no workspace context: read status from the same local client as preferences.
+  const { query: autoAccessQuery } = useAutoAccess(Boolean(autoPreferences), {
+    openworkServerClient: autoClient, workspaceId: selectedWorkspaceId ?? "",
+  });
   const autoSwitchedOff = (autoAccessQuery.isPending && autoAccessQuery.fetchStatus !== "idle") || freeAutoSwitchedOff(autoAccessQuery.data);
   const visibleAutoPreferences = autoSwitchedOff ? null : autoPreferences;
   const [autoBusy, setAutoBusy] = useState(false);

@@ -54,6 +54,8 @@ function reply(id: string, role: string, text?: string, parentID?: string): Mess
  */
 function createOpenworkDouble(input?: { beats?: Beat[]; messages?: MessageWire[]; abortResult?: boolean }) {
   const requests: RecordedRequest[] = [];
+  /** Engine and default-model lookups, kept apart so session traffic reads as before. */
+  const probes: RecordedRequest[] = [];
   const beats = input?.beats ?? [];
   const messages = input?.messages ?? [];
   let beatIndex = 0;
@@ -65,7 +67,8 @@ function createOpenworkDouble(input?: { beats?: Beat[]; messages?: MessageWire[]
     const parsed = new URL(url);
     const method = init?.method ?? "GET";
     const body: unknown = init?.body === undefined ? undefined : JSON.parse(init.body);
-    requests.push({
+    const probe = parsed.pathname === "/experimental/engine-v2-preview/status" || parsed.pathname.endsWith("/default-model");
+    (probe ? probes : requests).push({
       method,
       path: `${parsed.pathname}${parsed.search}`,
       body,
@@ -101,7 +104,7 @@ function createOpenworkDouble(input?: { beats?: Beat[]; messages?: MessageWire[]
     return Response.json({ code: "not_found", message: "Not found" }, { status: 404 });
   };
 
-  return { fetchImpl, requests, snapshotReads: () => beatIndex };
+  return { fetchImpl, requests, probes, snapshotReads: () => beatIndex };
 }
 
 /** A clock that only moves when the client sleeps, so waits are instant. */
@@ -153,6 +156,8 @@ describe("createThread", () => {
       directory: "/workspace",
       createdAt: 1,
       started: true,
+      engine: "v1",
+      model: { providerId: "anthropic", modelId: "claude-sonnet-5", variant: "thinking" },
     });
   });
 
@@ -315,12 +320,14 @@ describe("sendTurn", () => {
       const path = new URL(url).pathname;
       paths.push(path);
       if (path.endsWith("/message")) return Response.json([]);
+      if (path.endsWith("/default-model")) return new Response(null, { status: 404 });
       return new Response(null, { status: 204 });
     };
     const client = createHeadlessThreadClient({
       baseUrl: BASE_URL,
       workspaceId: "ws /?",
       token: "owt_test",
+      engine: "v1",
       fetch: fetchImpl,
     });
 
@@ -328,6 +335,7 @@ describe("sendTurn", () => {
 
     expect(paths).toEqual([
       "/workspace/ws%20%2F%3F/opencode/session/ses%20%2F%3F/message",
+      "/workspace/ws%20%2F%3F/default-model",
       "/workspace/ws%20%2F%3F/opencode/session/ses%20%2F%3F/prompt_async",
     ]);
   });
@@ -354,7 +362,7 @@ describe("getThreadSnapshot", () => {
       if (path.endsWith("/status")) return Response.json({ [SESSION_ID]: { type: "busy" } });
       return Response.json({ id: SESSION_ID, title: "Refund policy", directory: "/workspace", time: { created: 1 } });
     };
-    const client = createHeadlessThreadClient({ baseUrl: BASE_URL, workspaceId: "ws_1", token: "owt_test", fetch: fetchImpl });
+    const client = createHeadlessThreadClient({ baseUrl: BASE_URL, workspaceId: "ws_1", token: "owt_test", engine: "v1", fetch: fetchImpl });
 
     const pending = client.getThreadSnapshot(SESSION_ID);
     await allStarted;
@@ -377,6 +385,24 @@ describe("getThreadSnapshot", () => {
     const snapshot = await createClient(createOpenworkDouble()).getThreadSnapshot(SESSION_ID);
 
     expect(snapshot.status).toEqual({ type: "idle" });
+  });
+
+  test("carries tool input, output, and error text when the engine recorded them", async () => {
+    const messages: MessageWire[] = [{
+      info: { id: "msg_a", role: "assistant", time: { created: 1 } },
+      parts: [
+        { id: "prt_ok", type: "tool", tool: "bash", callID: "call_1", state: { status: "completed", input: { command: "ls" }, output: "a\nb" } },
+        { id: "prt_bad", type: "tool", tool: "read", state: { status: "error", input: { path: "x" }, error: "missing" } },
+        { id: "prt_odd", type: "tool", tool: "edit", state: { status: "running", output: 42 } },
+      ],
+    }];
+    const snapshot = await createClient(createOpenworkDouble({ messages })).getThreadSnapshot(SESSION_ID);
+
+    expect(snapshot.messages[0]?.parts).toEqual([
+      { id: "prt_ok", type: "tool", tool: "bash", callId: "call_1", toolStatus: "completed", toolInput: { command: "ls" }, toolOutput: "a\nb" },
+      { id: "prt_bad", type: "tool", tool: "read", toolStatus: "error", toolInput: { path: "x" }, toolError: "missing" },
+      { id: "prt_odd", type: "tool", tool: "edit", toolStatus: "running" },
+    ]);
   });
 });
 
@@ -551,6 +577,7 @@ describe("failures", () => {
       baseUrl: BASE_URL,
       workspaceId: "ws_1",
       token: "owt_test",
+      engine: "v1",
       fetch: fetchImpl,
     });
 
@@ -569,6 +596,7 @@ describe("failures", () => {
       baseUrl: BASE_URL,
       workspaceId: "ws_1",
       token: "owt_test",
+      engine: "v1",
       fetch: fetchImpl,
       requestTimeoutMs: 5,
     });
@@ -597,7 +625,8 @@ describe("failures", () => {
     });
     try {
       await createClient(createOpenworkDouble()).createThread({ title: "Default timeout" });
-      expect(requested).toEqual([15_000]);
+      // The engine lookup and the create are each bounded.
+      expect(requested).toEqual([15_000, 15_000]);
     } finally {
       Object.defineProperty(AbortSignal, "timeout", timeoutDescriptor);
     }

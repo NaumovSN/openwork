@@ -17,6 +17,7 @@ const EnvSchema = z
     GATEWAY_PROXY_BASE_URL: z.string().optional(),
     OPENROUTER_UPSTREAM_URL: z.string().optional(),
     GATEWAY_STREAM_IDLE_MS: z.number().int().min(1000).max(900000),
+    GATEWAY_SHUTDOWN_DRAIN_MS: z.number().int().min(0).max(600000),
     OPENAI_REALTIME_API_KEY: z.string().optional(),
     OPENAI_API_KEY: z.string().optional(),
     GATEWAY_ADMIN_TOKEN: z.string().optional(),
@@ -62,6 +63,9 @@ const input = {
   GATEWAY_ADMIN_TOKEN: process.env.GATEWAY_ADMIN_TOKEN ?? process.env.INFERENCE_ADMIN_TOKEN,
   GATEWAY_UPSTREAM_TIMEOUT_MS: gatewayInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS ?? process.env.INFERENCE_UPSTREAM_TIMEOUT_MS, "GATEWAY_UPSTREAM_TIMEOUT_MS", 30 * 60_000, 1000, 24 * 60 * 60_000),
   GATEWAY_STREAM_IDLE_MS: gatewayInteger(process.env.GATEWAY_STREAM_IDLE_MS ?? process.env.INFERENCE_STREAM_IDLE_MS, "GATEWAY_STREAM_IDLE_MS", 120000, 1000, 900000),
+  // Keep below the host's SIGKILL grace (Render: maxShutdownDelaySeconds, default 30s)
+  // minus ~5s for usage writes and telemetry flush.
+  GATEWAY_SHUTDOWN_DRAIN_MS: gatewayInteger(process.env.GATEWAY_SHUTDOWN_DRAIN_MS, "GATEWAY_SHUTDOWN_DRAIN_MS", 25000, 0, 600000),
   GATEWAY_CREDITS_PER_DOLLAR: process.env.GATEWAY_CREDITS_PER_DOLLAR ?? process.env.INFERENCE_CREDITS_PER_DOLLAR,
   DATABASE_URL:
     process.env.DATABASE_URL ??
@@ -138,6 +142,7 @@ export const env = {
   managedUpstreamTimeoutMs: process.env.GATEWAY_UPSTREAM_TIMEOUT_MS !== undefined || process.env.INFERENCE_UPSTREAM_TIMEOUT_MS !== undefined
     ? parsed.GATEWAY_UPSTREAM_TIMEOUT_MS : 120000,
   streamIdleMs: parsed.GATEWAY_STREAM_IDLE_MS,
+  shutdownDrainMs: parsed.GATEWAY_SHUTDOWN_DRAIN_MS,
   corsOrigins: splitCsv(parsed.CORS_ORIGINS).map((origin) => gatewayDeployment.enabled ? gatewayOrigin(origin, "CORS_ORIGINS", !isDevMode, true) : origin),
   databaseUrl: parsed.DATABASE_URL,
   dbMode: (parsed.DB_MODE ??

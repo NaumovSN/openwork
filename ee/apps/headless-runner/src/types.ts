@@ -21,9 +21,12 @@ export const messageSchema = z.discriminatedUnion("role", [
     isError: z.boolean(),
     /** Images a tool returned (for example a Slack file), passed to the model as image input. */
     images: z.array(z.object({ mediaType: z.string(), data: z.string() })).optional(),
+    /** PDFs a tool returned, passed to the model as document input (text and page images). */
+    documents: z.array(z.object({ mediaType: z.literal("application/pdf"), data: z.string(), name: z.string() })).optional(),
   }),
 ])
 export type Message = z.infer<typeof messageSchema>
+export type ToolMessage = Extract<Message, { role: "tool" }>
 
 export type ToolSpec = {
   name: string
@@ -32,7 +35,8 @@ export type ToolSpec = {
 }
 
 export type ToolImage = { mediaType: string; data: string }
-export type ToolResult = { output: string; isError: boolean; images?: ToolImage[] }
+export type ToolDocument = { mediaType: "application/pdf"; data: string; name: string }
+export type ToolResult = { output: string; isError: boolean; images?: ToolImage[]; documents?: ToolDocument[] }
 
 export const turnStatusSchema = z.enum(["queued", "running", "completed", "failed", "interrupted", "aborted"])
 export type TurnStatus = z.infer<typeof turnStatusSchema>

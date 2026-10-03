@@ -37,7 +37,7 @@ mock.module("@/components/chat/mcp-app-frame", () => ({
     return <div data-sandbox-view data-presentation={presentation} data-initial-height={startingHeight} data-update-mode={props.updateMode}>
       <button disabled={origin.readOnly} onClick={() => {
         void actionsRef.current?.callTool("read_detail").then(() => setMessage("Lease usable"), error => setMessage(error.message));
-      }}>App action</button>
+      }}>Artifact action</button>
       <span data-action-result>{message}</span>
       <span data-rendered-result>{JSON.stringify(props.result)}</span>
     </div>;
@@ -156,8 +156,8 @@ async function mountContinuityTile(fixture: ReturnType<typeof continuityFixture>
 }
 
 async function compactRefreshItem(container: HTMLElement) {
-  const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="App options for Fixture"]');
-  if (!trigger) throw new Error("Missing compact app menu trigger");
+  const trigger = container.querySelector<HTMLButtonElement>('button[aria-label="Artifact options for Fixture"]');
+  if (!trigger) throw new Error("Missing compact artifact menu trigger");
   expect(container.querySelector('button[aria-label="Refresh Fixture"]')).toBeNull();
   await act(async () => { trigger.focus(); trigger.click(); });
   expect(trigger.getAttribute("aria-expanded")).toBe("true");
@@ -378,8 +378,8 @@ test.each(["manual", "automatic", "background-refresh", "forbidden", "repeated",
     if (mode !== "automatic") {
       expect(calls).toEqual([]);
       expect(container.querySelector("header")?.textContent).toContain("Fixture");
-      expect(container.querySelector('[aria-label="App options for Fixture"]')).toBeNull();
-      if (mode === "manual") expect(container.textContent).toContain("This app modifies data when it runs, so it only runs when you ask.");
+      expect(container.querySelector('[aria-label="Artifact options for Fixture"]')).toBeNull();
+      if (mode === "manual") expect(container.textContent).toContain("This artifact modifies data when it runs, so it only runs when you ask.");
       await act(async () => button("Run Fixture").click());
     }
     expect(calls).toEqual([{ workspaceId: "fixture", request }]);
@@ -603,7 +603,7 @@ test.each(["sandbox", "refresh", "teardown"])("healthy tiles retain height and r
     expect(container.querySelector('[aria-label="Refresh Fixture"]')).toBeNull();
     expect(container.querySelector('[aria-label="Reload Fixture"]')).toBeNull();
     expect(container.querySelector("[data-dashboard-entry]")?.getAttribute("aria-label")).toBe("Fixture");
-    expect(container.querySelector('[aria-label="App options for Fixture"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Artifact options for Fixture"]')).not.toBeNull();
     expect(view().dataset.presentation).toBe("dashboard");
   };
   try {
@@ -645,7 +645,7 @@ test.each(["sandbox", "refresh", "teardown"])("healthy tiles retain height and r
     } else {
       expect(sandboxView?.onRequestTeardown).toBeFunction();
       await act(async () => sandboxView?.onRequestTeardown?.());
-      expect(container.textContent).toContain("This app closed its view. Use refresh to launch it again.");
+      expect(container.textContent).toContain("This artifact closed its view. Use refresh to launch it again.");
       expect(container.querySelector("[data-sandbox-view]")).toBeNull();
       expect(released).toEqual(["compact-1", "compact-2"]);
     }
@@ -654,7 +654,7 @@ test.each(["sandbox", "refresh", "teardown"])("healthy tiles retain height and r
     if (mode === "refresh") expect(container.querySelector("header")).toBeNull();
     else {
       expect(container.querySelector("header")?.textContent).toContain("Fixture");
-      expect(container.querySelector('[aria-label="App options for Fixture"]')).toBeNull();
+      expect(container.querySelector('[aria-label="Artifact options for Fixture"]')).toBeNull();
     }
     const recovery = mode === "refresh" ? await compactRefreshItem(container)
       : container.querySelector<HTMLButtonElement>('header button[aria-label="Refresh Fixture"]');
@@ -917,8 +917,8 @@ test("the freshness label ages on its own without another state change", async (
   const host = await mountContinuityTile(fixture);
   try {
     // Healthy tiles keep the badge inside the options menu, where a person reads it.
-    const trigger = host.container.querySelector<HTMLButtonElement>('button[aria-label="App options for Fixture"]');
-    if (!trigger) throw new Error("Missing compact app menu trigger");
+    const trigger = host.container.querySelector<HTMLButtonElement>('button[aria-label="Artifact options for Fixture"]');
+    if (!trigger) throw new Error("Missing compact artifact menu trigger");
     await act(async () => { trigger.focus(); trigger.click(); });
     const label = () => document.querySelector('[role="menu"] [data-dashboard-cache-state]')?.textContent ?? "";
     expect(label()).toContain("Updated just now");

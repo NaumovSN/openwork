@@ -534,6 +534,30 @@ test("latest-version preflight blocks only free selection and gateway rejection 
   });
 });
 
+test("deployment opt-outs report free_disabled without contacting Den or the gateway, and preserve other providers", async () => {
+  for (const flag of ["OPENWORK_DISABLE_FREE_INFERENCE", "OPENWORK_DISABLE_HOSTED_MODELS", "VITE_DISABLE_OPENWORK_MODELS"]) {
+    await fixture(async ({ service, config, requests, connectMember, activate }) => {
+      await writeGlobalRuntimeOpencodeConfig(config, (runtime) => ({ ...runtime,
+        provider: { personal: { npm: "@ai-sdk/openai-compatible", options: { apiKey: "fixture-personal-key" } } },
+        default_model: "personal/working-model", default_agent: "custom",
+      }));
+      const before = await readGlobalRuntimeOpencodeConfig(config);
+      expect(await service.initialize(9876)).toBe(false);
+      expect(await service.status()).toMatchObject({ state: "unavailable", code: "free_disabled" });
+      await connectMember();
+      expect(await service.preflight()).toMatchObject({ state: "unavailable", code: "free_disabled" });
+      expect(await service.preferences()).toMatchObject({ available: false, canEnable: false });
+      await expect(service.setEnabled(true)).rejects.toMatchObject({ status: 403, code: "auto_blocked" });
+      await expect(activate()).rejects.toMatchObject({ status: 503, code: "free_disabled" });
+      const byok = new Request("http://localhost/session/personal/prompt_async", { method: "POST",
+        body: JSON.stringify({ model: { providerID: "personal", modelID: "working-model" } }) });
+      await service.assertTaskAccess(byok, "/session/personal/prompt_async");
+      expect(await readGlobalRuntimeOpencodeConfig(config)).toEqual(before);
+      expect(requests).toHaveLength(0);
+    }, true, { [flag]: "1", OPENWORK_FREE_HEARTBEAT_MS: "10" });
+  }
+});
+
 test("local disable and policy denial prevent credential issuance, and user provider edits remain untouched", async () => {
   await fixture(async ({ service, config, environment, requests, localRequest, connectMember }) => {
     const disabled = new AnonymousInferenceService(config, { log: () => {} }, { ...environment, OPENWORK_DISABLE_FREE_INFERENCE: "1" });

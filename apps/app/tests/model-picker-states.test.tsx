@@ -137,7 +137,7 @@ test("policy blocks only reveal the selected saved row, name the organization ow
     await view.render(<ModelPickerModal open current={current} options={[current, hidden, allowed]} restrictToCloud target="session" query="" setQuery={() => {}}
       onSelect={(model) => selections.push(model)} onBehaviorChange={() => {}} onOpenSettings={() => {}} onClose={() => {}} />);
     expect(document.body.textContent).toContain("blocked by your organization");
-    expect(document.body.textContent).toContain("workspace owner or admin");
+    expect(document.body.textContent).toContain("Your organization decides which providers are allowed here.");
     expect(document.body.textContent).not.toContain("Unrelated blocked model");
     expect(document.querySelector('[data-model-key="openai:saved"]')).toBeNull();
     await act(async () => document.querySelector<HTMLElement>('[data-testid="retained-selected-model"]')?.click());

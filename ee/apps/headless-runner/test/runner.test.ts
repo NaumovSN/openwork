@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { test } from "node:test"
-import { buildContext } from "../src/runner.js"
-import { Store } from "../src/store.js"
+import { buildContext, TRIMMED_TOOL_OUTPUT } from "../src/runner.js"
+import { Store, type StoredMessage } from "../src/store.js"
 import { calls, fakeMcp, makeRunner, scriptedModel, tempDbPath, text, waitForAbort } from "./helpers.js"
 
 const creds = { modelApiKey: "ow_gw_model_secret_value", mcpToken: "ow_mcp_at_secret_value" }
@@ -190,7 +190,7 @@ test("turn timeout fails the turn instead of hanging", async () => {
   const { model } = scriptedModel([(request) => waitForAbort(request.signal)])
   const { store, runner } = makeRunner({
     model,
-    limits: { maxConcurrentTurns: 1, maxSteps: 4, turnTimeoutMs: 30, contextCharBudget: 10_000 },
+    limits: { maxConcurrentTurns: 1, maxSteps: 4, turnTimeoutMs: 30, credentialRefreshMs: 3_600_000, contextCharBudget: 10_000 },
   })
   const session = store.createSession({})
   runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "go", credentials: creds })
@@ -202,7 +202,7 @@ test("turn timeout fails the turn instead of hanging", async () => {
 })
 
 test("fails clearly without model credentials and caps runaway loops", async () => {
-  const { model } = scriptedModel(Array.from({ length: 10 }, (_, i) => calls({ id: `c${i}`, name: "list_files", input: {} })))
+  const { model } = scriptedModel(Array.from({ length: 10 }, (_, i) => calls({ id: `c${i}`, name: "list_files", input: { attempt: i } })))
   const { store, runner } = makeRunner({ model })
   const session = store.createSession({})
   runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "go", credentials: {} })
@@ -212,6 +212,78 @@ test("fails clearly without model credentials and caps runaway loops", async () 
   runner.send({ sessionId: session.id, messageId: "msg_2", prompt: "loop", credentials: creds })
   await runner.idle()
   assert.equal(store.getTurn(session.id, "msg_2")?.error, "max_steps_exceeded")
+})
+
+const unbounded = {
+  maxConcurrentTurns: 4,
+  maxSteps: Number.POSITIVE_INFINITY,
+  turnTimeoutMs: Number.POSITIVE_INFINITY,
+  credentialRefreshMs: 0,
+  contextCharBudget: 100_000,
+}
+
+test("a long turn pauses between steps for a fresh MCP token and resumes without repeating a tool call", async () => {
+  const mcp = fakeMcp({ lookup: (input) => `result ${String(input.n)}` })
+  const { model } = scriptedModel([
+    calls({ id: "c1", name: "lookup", input: { n: 1 } }),
+    calls({ id: "c2", name: "lookup", input: { n: 2 } }),
+    text("All done."),
+  ])
+  const { store, runner } = makeRunner({ model, mcp: mcp.connector, limits: unbounded })
+  const session = store.createSession({})
+  const turn = () => store.getTurn(session.id, "msg_1")
+
+  runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "go", credentials: { modelApiKey: "k", mcpToken: "token-1" } })
+  await runner.idle()
+  assert.deepEqual([turn()?.status, turn()?.error], ["interrupted", "credentials_refresh"], "paused after a finished step, not mid-call")
+
+  for (const token of ["token-2", "token-3"]) {
+    const resumed = runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "resume", credentials: { modelApiKey: "k", mcpToken: token } })
+    assert.equal(resumed.ok && resumed.state, "resumed")
+    await runner.idle()
+  }
+  assert.equal(turn()?.status, "completed")
+  assert.deepEqual(
+    mcp.seen.map((call) => [call.token, call.input.n]),
+    [["token-1", 1], ["token-2", 2]],
+    "each stretch uses its own token and no call runs twice",
+  )
+  assert.equal(store.messages(session.id).filter((entry) => entry.message.role === "user").length, 1)
+})
+
+test("a turn without an MCP token has nothing to refresh and never pauses", async () => {
+  const { model } = scriptedModel([calls({ id: "c1", name: "write_file", input: { path: "a.md", content: "a" } }), text("done")])
+  const { store, runner } = makeRunner({ model, limits: unbounded })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "go", credentials: { modelApiKey: "k" } })
+  await runner.idle()
+  assert.equal(store.getTurn(session.id, "msg_1")?.status, "completed")
+})
+
+test("a model repeating the same call and getting the same result is stopped; changing results keep it going", async () => {
+  const sameCall = (i: number) => calls({ id: `c${i}`, name: "check_ci", input: { pr: 7 } })
+  const limits = { ...unbounded, credentialRefreshMs: 3_600_000 }
+
+  const stuck = fakeMcp({ check_ci: () => "still pending" })
+  const looping = makeRunner({ model: scriptedModel(Array.from({ length: 9 }, (_, i) => sameCall(i))).model, mcp: stuck.connector, limits })
+  const first = looping.store.createSession({})
+  looping.runner.send({ sessionId: first.id, messageId: "msg_1", prompt: "wait for CI", credentials: { modelApiKey: "k", mcpToken: "t" } })
+  await looping.runner.idle()
+  const turn = looping.store.getTurn(first.id, "msg_1")
+  assert.deepEqual([turn?.status, turn?.error], ["failed", "stuck_repeating"])
+  assert.equal(stuck.seen.length, 5)
+
+  let polls = 0
+  const moving = fakeMcp({ check_ci: () => `pending, ${++polls} of 6 jobs done` })
+  const progressing = makeRunner({
+    model: scriptedModel([...Array.from({ length: 6 }, (_, i) => sameCall(i)), text("CI passed.")]).model,
+    mcp: moving.connector,
+    limits,
+  })
+  const second = progressing.store.createSession({})
+  progressing.runner.send({ sessionId: second.id, messageId: "msg_1", prompt: "wait for CI", credentials: { modelApiKey: "k", mcpToken: "t" } })
+  await progressing.runner.idle()
+  assert.equal(progressing.store.getTurn(second.id, "msg_1")?.status, "completed")
 })
 
 test("concurrency limit queues turns across sessions", async () => {
@@ -227,7 +299,7 @@ test("concurrency limit queues turns across sessions", async () => {
   const { model } = scriptedModel(Array.from({ length: 6 }, () => step))
   const { store, runner } = makeRunner({
     model,
-    limits: { maxConcurrentTurns: 2, maxSteps: 4, turnTimeoutMs: 60_000, contextCharBudget: 10_000 },
+    limits: { maxConcurrentTurns: 2, maxSteps: 4, turnTimeoutMs: 60_000, credentialRefreshMs: 3_600_000, contextCharBudget: 10_000 },
   })
   for (let i = 0; i < 6; i += 1) {
     const session = store.createSession({})
@@ -241,7 +313,7 @@ test("many members at once: each turn uses only its own credentials, transcript 
   const members = Array.from({ length: 40 }, (_, i) => `member${i}`)
   const seen: Array<{ token: string; input: Record<string, unknown> }> = []
   const { store, runner } = makeRunner({
-    limits: { maxConcurrentTurns: 16, maxSteps: 4, turnTimeoutMs: 60_000, contextCharBudget: 100_000 },
+    limits: { maxConcurrentTurns: 16, maxSteps: 4, turnTimeoutMs: 60_000, credentialRefreshMs: 3_600_000, contextCharBudget: 100_000 },
     // Every turn: one MCP call, one file write, then an answer — with random latency so turns interleave.
     model: {
       async complete(request) {
@@ -314,6 +386,60 @@ test("an image from a tool is shown to the model in its turn, then dropped from 
   assert.equal(toolLater?.role === "tool" && toolLater.images, undefined)
 })
 
+test("a PDF from a tool reaches the model in its turn, and its bytes are not kept once the turn ends", async () => {
+  const pdf = Buffer.from("%PDF-1.7 brief").toString("base64")
+  const { model, requests } = scriptedModel([calls({ id: "c1", name: "read_file_from_slack", input: { file_id: "F1" } }), text("It describes the flow."), text("Sure.")])
+  const { store, runner } = makeRunner({
+    model,
+    mcp: async () => ({
+      tools: [{ name: "read_file_from_slack", description: "read", inputSchema: { type: "object" } }],
+      async call() {
+        return { output: "[PDF brief.pdf (14 bytes), attached]", isError: false, documents: [{ mediaType: "application/pdf", data: pdf, name: "brief.pdf" }] }
+      },
+      async close() {},
+    }),
+  })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "can you read this pdf?", credentials: creds })
+  await runner.idle()
+  const toolInTurn = requests[1].messages.find((message) => message.role === "tool")
+  assert.deepEqual(toolInTurn?.role === "tool" && toolInTurn.documents, [{ mediaType: "application/pdf", data: pdf, name: "brief.pdf" }])
+
+  const stored = store.messages(session.id).find((entry) => entry.message.role === "tool")?.message
+  assert.equal(stored?.role === "tool" && stored.documents, undefined)
+  assert.equal(stored?.role === "tool" && stored.output, "[PDF brief.pdf (14 bytes), attached]\n[files from an earlier turn not shown]")
+  store.db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
+  const rows = store.db.prepare("SELECT body FROM messages WHERE session_id = ?").all(session.id)
+  assert.ok(!JSON.stringify(rows).includes(pdf), "the PDF bytes are gone from the database")
+
+  runner.send({ sessionId: session.id, messageId: "msg_2", prompt: "thanks", credentials: creds })
+  await runner.idle()
+  const toolLater = requests[2].messages.find((message) => message.role === "tool")
+  assert.equal(toolLater?.role === "tool" && toolLater.output, "[PDF brief.pdf (14 bytes), attached]\n[files from an earlier turn not shown]")
+})
+
+test("a turn paused for fresh credentials keeps its files, since it resumes and still needs them", async () => {
+  const pdf = Buffer.from("%PDF-1.7 brief").toString("base64")
+  const { model } = scriptedModel([calls({ id: "c1", name: "read_file_from_slack", input: {} }), text("done")])
+  const { store, runner } = makeRunner({
+    model,
+    limits: { maxConcurrentTurns: 4, maxSteps: Number.POSITIVE_INFINITY, turnTimeoutMs: Number.POSITIVE_INFINITY, credentialRefreshMs: 0, contextCharBudget: 100_000 },
+    mcp: async () => ({
+      tools: [{ name: "read_file_from_slack", description: "read", inputSchema: { type: "object" } }],
+      async call() {
+        return { output: "[PDF brief.pdf, attached]", isError: false, documents: [{ mediaType: "application/pdf", data: pdf, name: "brief.pdf" }] }
+      },
+      async close() {},
+    }),
+  })
+  const session = store.createSession({})
+  runner.send({ sessionId: session.id, messageId: "msg_1", prompt: "read it", credentials: creds })
+  await runner.idle()
+  assert.equal(store.getTurn(session.id, "msg_1")?.status, "interrupted")
+  const stored = store.messages(session.id).find((entry) => entry.message.role === "tool")?.message
+  assert.equal(stored?.role === "tool" && stored.documents?.length, 1)
+})
+
 test("context keeps whole recent turns within budget", () => {
   const entry = (seq: number, messageId: string, body: string) => ({
     seq,
@@ -323,4 +449,31 @@ test("context keeps whole recent turns within budget", () => {
   const messages = [entry(1, "a", "x".repeat(500)), entry(2, "b", "y".repeat(500)), entry(3, "c", "z")]
   const context = buildContext(messages, "c", 700)
   assert.deepEqual(context.map((message) => message.role === "user" && message.text[0]), ["y", "z"])
+})
+
+test("a long turn keeps every call but drops its oldest large outputs, in blocks, to fit the budget", () => {
+  let seq = 0
+  const messages: StoredMessage[] = [{ seq: ++seq, messageId: "m", message: { role: "user", text: "fix the PR" } }]
+  for (let i = 0; i < 20; i += 1) {
+    messages.push({ seq: ++seq, messageId: "m", message: { role: "assistant", text: "", toolCalls: [{ id: `c${i}`, name: "fetch", input: {} }] } })
+    messages.push({ seq: ++seq, messageId: "m", message: { role: "tool", callId: `c${i}`, name: "fetch", output: `${i}:`.padEnd(5_000, "x"), isError: false } })
+  }
+  messages.push({ seq: ++seq, messageId: "m", message: { role: "tool", callId: "short", name: "fetch", output: "ok", isError: false } })
+  const outputs = (budget: number) =>
+    buildContext(messages, "m", budget).flatMap((message) => (message.role === "tool" ? [message.output] : []))
+
+  assert.ok(outputs(1_000_000).every((output) => output !== TRIMMED_TOOL_OUTPUT), "a turn within budget is untouched")
+
+  // About 106,000 characters against a 60,000 budget: 10 outputs must go, which rounds up to two blocks of 8.
+  const fitted = outputs(60_000)
+  assert.equal(fitted.length, 21, "every tool call keeps a result, so the transcript stays valid")
+  assert.equal(fitted.filter((output) => output === TRIMMED_TOOL_OUTPUT).length, 16)
+  assert.ok(fitted.slice(0, 16).every((output) => output === TRIMMED_TOOL_OUTPUT), "the oldest go first")
+  assert.ok(fitted[16].startsWith("16:"), "the newest outputs stay")
+  assert.equal(fitted.at(-1), "ok", "short outputs are never replaced")
+
+  // One more step: the same 16 are trimmed, so the cached prefix is unchanged.
+  messages.push({ seq: ++seq, messageId: "m", message: { role: "assistant", text: "", toolCalls: [{ id: "c20", name: "fetch", input: {} }] } })
+  messages.push({ seq: ++seq, messageId: "m", message: { role: "tool", callId: "c20", name: "fetch", output: "20:".padEnd(5_000, "x"), isError: false } })
+  assert.deepEqual(outputs(60_000).slice(0, 21), fitted)
 })

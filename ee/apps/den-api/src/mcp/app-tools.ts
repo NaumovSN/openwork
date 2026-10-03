@@ -70,9 +70,10 @@ function unavailable(tool: McpAppToolDeclaration, reason: string): McpAppError {
  * Resolves declared App tools as their author, looking up only the
  * capabilities they name. Each binding records how its arguments reach the
  * capability, the schema the App's server advertises, and whether it is
- * read-only: OpenWork reads and live Workflows are, and so is a connection tool
- * its provider marks read-only, which every call checks again. Other connection
- * tools and ordinary Workflow runs are not, so a host asks before each call.
+ * read-only: OpenWork reads and live Workflows that only call OpenWork reads
+ * are, and so is a connection tool its provider marks read-only, which every
+ * call checks again. Other connection tools and Workflows are not, so a host
+ * asks before each call.
  */
 export async function resolveMcpAppTools(ctx: CapabilityRegistryContext, declarations: McpAppToolDeclaration[]): Promise<McpAppToolBinding[]> {
   const parsedDeclarations = declarations.map((tool) => ({ tool, parsed: parseCapability(tool.capability) }))
@@ -111,8 +112,12 @@ export async function resolveMcpAppTools(ctx: CapabilityRegistryContext, declara
         kind: "workflow",
         mode,
         inputSchema,
-        // Den runs live Workflows read-only; ordinary runs may call write tools.
-        readOnly: mode === "live",
+        // Workflows may call any capability, so a live one loads without asking
+        // only when every capability it calls is an OpenWork read.
+        readOnly: mode === "live" && workflow.requiredCapabilities.every((required) => {
+          const capability = parseCapability(required.capabilityName)
+          return (capability?.kind === "catalog" || capability?.kind === "native") && isDenRead(ctx, capability)
+        }),
       }
     } else if (parsed.kind === "catalog" || parsed.kind === "native") {
       const leaf = (await apiLeaves(parsed.kind)).find((candidate) => candidate.capabilityName === tool.capability)
@@ -155,7 +160,7 @@ export async function resolveMcpAppTools(ctx: CapabilityRegistryContext, declara
       throw unavailable(tool, "Apps can bind saved Workflows, connection tools, and OpenWork actions that read, not skills, remote sessions, or admin tools.")
     }
     const checked = mcpAppToolBindingSchema.safeParse(binding)
-    if (!checked.success) throw unavailable(tool, "its input schema is too large or is not an object schema.")
+    if (!checked.success) throw unavailable(tool, "its input schema is not an object schema.")
     return checked.data
   }
 

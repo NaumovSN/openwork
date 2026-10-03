@@ -27,9 +27,21 @@ const configSchema = z.object({
   HEADLESS_MCP_URL: safeUrl.optional(),
   HEADLESS_MCP_TOOL_ALLOWLIST: csv,
   HEADLESS_MAX_CONCURRENT_TURNS: z.coerce.number().int().min(1).max(1_000).default(32),
-  HEADLESS_MAX_STEPS: z.coerce.number().int().min(1).max(200).default(30),
+  /** Model calls per turn; 0 means no limit, so a long task is bounded by the turn timeout and Stop instead. */
+  HEADLESS_MAX_STEPS: z.coerce.number().int().min(0).default(0),
   HEADLESS_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(128_000).default(8192),
-  HEADLESS_TURN_TIMEOUT_MS: z.coerce.number().int().min(10_000).default(60 * 60_000),
+  /** 0 means no limit: every model and tool call has its own timeout, so a turn cannot hang. */
+  HEADLESS_TURN_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .default(0)
+    .refine((value) => value === 0 || value >= 10_000, "must be 0 (no limit) or at least 10000"),
+  /**
+   * A running turn pauses itself between steps this often so the caller can resume it with fresh credentials.
+   * Den's run-scoped MCP tokens live at most 60 minutes.
+   */
+  HEADLESS_CREDENTIAL_REFRESH_MS: z.coerce.number().int().min(60_000).default(50 * 60_000),
   HEADLESS_CONTEXT_CHAR_BUDGET: z.coerce.number().int().min(10_000).default(400_000),
   HEADLESS_SYSTEM_PROMPT: z.string().optional(),
 })
@@ -50,6 +62,7 @@ export type Config = {
     maxConcurrentTurns: number
     maxSteps: number
     turnTimeoutMs: number
+    credentialRefreshMs: number
     contextCharBudget: number
   }
   systemPrompt?: string
@@ -78,8 +91,9 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
       : undefined,
     limits: {
       maxConcurrentTurns: value.HEADLESS_MAX_CONCURRENT_TURNS,
-      maxSteps: value.HEADLESS_MAX_STEPS,
-      turnTimeoutMs: value.HEADLESS_TURN_TIMEOUT_MS,
+      maxSteps: value.HEADLESS_MAX_STEPS === 0 ? Number.POSITIVE_INFINITY : value.HEADLESS_MAX_STEPS,
+      turnTimeoutMs: value.HEADLESS_TURN_TIMEOUT_MS === 0 ? Number.POSITIVE_INFINITY : value.HEADLESS_TURN_TIMEOUT_MS,
+      credentialRefreshMs: value.HEADLESS_CREDENTIAL_REFRESH_MS,
       contextCharBudget: value.HEADLESS_CONTEXT_CHAR_BUDGET,
     },
     systemPrompt: value.HEADLESS_SYSTEM_PROMPT,

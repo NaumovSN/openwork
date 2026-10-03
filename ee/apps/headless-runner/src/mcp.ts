@@ -1,6 +1,7 @@
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client"
 import { z } from "zod"
-import type { ToolImage, ToolResult, ToolSpec } from "./types.js"
+import { fileName, readToolFile } from "./tool-files.js"
+import type { ToolDocument, ToolImage, ToolResult, ToolSpec } from "./types.js"
 
 /** Tools from one remote MCP server, connected for the duration of one turn. */
 export type ToolSession = {
@@ -27,19 +28,26 @@ export function modelToolName(name: string, taken: ReadonlySet<string>) {
   return candidate
 }
 
-/** Formats every model provider accepts as image input. */
-const IMAGE_TYPES: ReadonlySet<string> = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])
-/** Base64 characters per image (about 3.7 MB decoded, under provider limits) and images per tool result. */
-export const MAX_IMAGE_BASE64 = 5_000_000
-export const MAX_IMAGES_PER_RESULT = 4
-
 const contentBlock = z
   .object({
     type: z.string(),
     text: z.string().optional(),
     data: z.string().optional(),
     mimeType: z.string().optional(),
-    resource: z.object({ blob: z.string().optional(), mimeType: z.string().optional() }).loose().optional(),
+    uri: z.string().optional(),
+    name: z.string().optional(),
+    title: z.string().optional(),
+    resource: z
+      .object({
+        uri: z.string().optional(),
+        name: z.string().optional(),
+        title: z.string().optional(),
+        blob: z.string().optional(),
+        text: z.string().optional(),
+        mimeType: z.string().optional(),
+      })
+      .loose()
+      .optional(),
   })
   .loose()
 const callResult = z
@@ -50,28 +58,44 @@ const callResult = z
   })
   .loose()
 
-export function formatToolResult(value: unknown): ToolResult {
+export async function formatToolResult(value: unknown): Promise<ToolResult> {
   const parsed = callResult.safeParse(value)
   if (!parsed.success) return { output: truncate(JSON.stringify(value)), isError: false }
   const parts: string[] = []
   const images: ToolImage[] = []
+  const documents: ToolDocument[] = []
+  const counts = { images: 0, documents: 0 }
   for (const block of parsed.data.content ?? []) {
     if (block.type === "text" && block.text !== undefined) {
       parts.push(block.text)
       continue
     }
-    const data = block.type === "image" ? block.data : block.type === "resource" ? block.resource?.blob : undefined
-    const mediaType = block.type === "image" ? block.mimeType : block.resource?.mimeType
-    if (data && mediaType && IMAGE_TYPES.has(mediaType)) {
-      if (data.length > MAX_IMAGE_BASE64) parts.push(`[${mediaType} image too large to view]`)
-      else if (images.length >= MAX_IMAGES_PER_RESULT) parts.push(`[more images omitted]`)
-      else {
-        images.push({ mediaType, data })
-        parts.push(`[image ${images.length}: ${mediaType}, attached]`)
-      }
+    const resource = block.resource
+    // Binary content: an image or audio block, or a resource that embeds a file (for example a PDF read from Slack).
+    const data = block.type === "image" || block.type === "audio" ? block.data : block.type === "resource" ? resource?.blob : undefined
+    if (data !== undefined) {
+      const reading = await readToolFile(
+        {
+          name: fileName([resource?.name, resource?.title, block.name, block.title], resource?.uri ?? block.uri),
+          mimeType: (block.type === "resource" ? resource?.mimeType : block.mimeType) ?? "",
+          data,
+        },
+        counts,
+      )
+      parts.push(reading.text)
+      if (reading.image) images.push(reading.image)
+      if (reading.document) documents.push(reading.document)
       continue
     }
-    parts.push(`[${block.type} content omitted]`)
+    if (block.type === "resource" && resource?.text !== undefined) {
+      parts.push(`[${fileName([resource.name, resource.title], resource.uri)}]\n${resource.text}`)
+      continue
+    }
+    if (block.type === "resource_link") {
+      parts.push(`[Linked file: ${fileName([block.name, block.title], block.uri)}${block.mimeType ? ` (${block.mimeType})` : ""}${block.uri ? ` ${block.uri}` : ""}]`)
+      continue
+    }
+    parts.push(`[${block.type} content not readable here]`)
   }
   if (parts.length === 0 && parsed.data.structuredContent !== undefined) {
     parts.push(JSON.stringify(parsed.data.structuredContent))
@@ -80,6 +104,7 @@ export function formatToolResult(value: unknown): ToolResult {
     output: truncate(parts.join("\n") || "(no output)"),
     isError: parsed.data.isError === true,
     ...(images.length ? { images } : {}),
+    ...(documents.length ? { documents } : {}),
   }
 }
 
