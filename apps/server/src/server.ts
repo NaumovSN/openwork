@@ -1284,6 +1284,37 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   return target.toString();
 }
 
+/** The folder a v2 conversation currently runs in, when it belongs to this
+ * workspace. A conversation can move into a worktree, so the files it writes
+ * live under that folder instead of the workspace root. Same ownership check
+ * as the native proxy: the persistent home must be this workspace. */
+async function resolveV2SessionExecutionDirectory(
+  config: ServerConfig,
+  engineV2Preview: EngineV2Preview,
+  workspace: WorkspaceInfo,
+  sessionId: string,
+): Promise<string | null> {
+  if (!sessionId.startsWith("ses_")) return null;
+  const connection = engineV2Preview.connection();
+  if (!connection) return null;
+  const authorization = `Basic ${Buffer.from(`opencode:${connection.password}`).toString("base64")}`;
+  const readNative = async (path: string): Promise<unknown> => {
+    const url = new URL(path, connection.url);
+    url.searchParams.set("location[directory]", workspace.path);
+    const result = await loopbackFetch(url.toString(), { headers: { authorization }, signal: AbortSignal.timeout(10_000) });
+    if (!result.ok) throw new ApiError(result.status, "session_unavailable", "Conversation could not be read");
+    return result.json();
+  };
+  try {
+    const homes = createV2SessionHomes(config, readNative);
+    const session = await readNative(`/api/session/${encodeURIComponent(sessionId)}`);
+    if (await homes.resolve(session) !== await homes.canonical(workspace.path)) return null;
+    return nativeSessionDirectory(session);
+  } catch {
+    return null;
+  }
+}
+
 export async function proxyOpencodeV2Request(input: {
   actor: Actor;
   config: ServerConfig;
@@ -3702,6 +3733,7 @@ function createRoutes(
     resolveOutboxEnabled,
     resolveInboxMaxBytes,
     scopeRank,
+    resolveSessionDirectory: (workspace, sessionId) => resolveV2SessionExecutionDirectory(config, engineV2Preview, workspace, sessionId),
   });
 
   addRoute(routes, "GET", "/workspace/:id/plugins", "client", async (ctx) => {

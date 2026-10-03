@@ -15,6 +15,8 @@ type OpenTargetContextValue = {
   client?: OpenworkServerClient;
   workspaceId?: string;
   workspaceRoot?: string;
+  /** The conversation being shown; lets file reads follow it into a worktree. */
+  sessionId?: string;
   isLocalWorkspace?: boolean;
   openTargets: OpenTarget[];
   onOpenTarget: OpenTargetHandler | undefined;
@@ -25,6 +27,7 @@ type OpenTargetProviderProps = {
   client?: OpenworkServerClient;
   workspaceId?: string;
   workspaceRoot?: string;
+  sessionId?: string;
   isLocalWorkspace?: boolean;
   openTargets?: OpenTarget[] | undefined;
   onOpenTarget?: OpenTargetHandler | undefined;
@@ -42,6 +45,7 @@ export function OpenTargetProvider({
   client,
   workspaceId,
   workspaceRoot,
+  sessionId,
   isLocalWorkspace = false,
   openTargets = EMPTY_OPEN_TARGETS,
   onOpenTarget,
@@ -51,11 +55,12 @@ export function OpenTargetProvider({
       client,
       workspaceId,
       workspaceRoot,
+      sessionId,
       isLocalWorkspace,
       openTargets,
       onOpenTarget,
     }),
-    [client, workspaceId, workspaceRoot, isLocalWorkspace, openTargets, onOpenTarget],
+    [client, workspaceId, workspaceRoot, sessionId, isLocalWorkspace, openTargets, onOpenTarget],
   );
 
   return React.createElement(OpenTargetContext.Provider, { value }, children);

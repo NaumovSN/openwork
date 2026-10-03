@@ -93,12 +93,12 @@ function MarkdownBlockInner({
   const videoCleanups = useRef(new Map<HTMLVideoElement, () => void>());
   const codeCopyResetTimers = useRef(new Map<HTMLButtonElement, number>());
   const codeWrapStates = useRef(new Map<number, boolean>());
-  const { openTargets, onOpenTarget, client, workspaceId, workspaceRoot } = useOpenTargets();
+  const { openTargets, onOpenTarget, client, workspaceId, workspaceRoot, sessionId } = useOpenTargets();
   const openArtifactPath = useOpenArtifactPath();
   useEffect(() => () => {
     videoCleanups.current.forEach((cleanup) => cleanup());
     videoCleanups.current.clear();
-  }, [client, workspaceId, workspaceRoot]);
+  }, [client, workspaceId, workspaceRoot, sessionId]);
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; rect: DOMRect } | null>(null);
   useEffect(() => setLinkMenu(null), [client, workspaceId, workspaceRoot]);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
@@ -261,7 +261,7 @@ function MarkdownBlockInner({
         continue;
       }
       const target = openTargetForHref(href, openTargets, workspaceRoot);
-      void client.downloadWorkspaceFile(workspaceId, target?.exists === true ? target.value : path).then((result) => {
+      void client.downloadWorkspaceFile(workspaceId, target?.exists === true ? target.value : path, { sessionId }).then((result) => {
         if (cancelled) return;
         const extension = path.split(".").pop()?.toLowerCase();
         const fallbackType = extension === "webm" ? "video/webm" : extension === "ogv" ? "video/ogg" : extension === "mov" ? "video/quicktime" : "video/mp4";
@@ -271,7 +271,7 @@ function MarkdownBlockInner({
         video.src = url;
       }).catch(() => { if (!cancelled) showError(); });
     }
-  }, [client, workspaceId, workspaceRoot, openTargets, rendered]);
+  }, [client, workspaceId, workspaceRoot, sessionId, openTargets, rendered]);
 
   useEffect(() => {
     const root = rootRef.current;

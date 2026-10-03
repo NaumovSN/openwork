@@ -335,7 +335,9 @@ function renderVideo(href: string, label: string) {
   const fileLink = remote
     ? `href="${escapeAttribute(safeHref(href))}" target="_blank" rel="noopener noreferrer"`
     : `href="#" data-openwork-inline-code-path="${escapeAttribute(href)}"`;
-  return `<span class="my-4 inline-block w-full max-w-lg align-top"><video data-openwork-video-path="${escapeAttribute(href)}"${source} controls playsinline preload="metadata" aria-label="${escapeAttribute(label)}" class="block max-h-80 w-full rounded-lg border border-border/70 bg-black"></video><span data-openwork-video-error="" hidden class="text-sm text-muted-foreground">Video preview unavailable. Open the file to play it.</span><a ${fileLink} class="text-sm text-indigo-10">${escapeHtml(label)}</a></span>`;
+  // A block-level box: inside a sentence, an inline-block video left the rest
+  // of the sentence floating beside its top edge.
+  return `<span class="my-3 flex w-full max-w-lg flex-col items-start gap-1.5"><video data-openwork-video-path="${escapeAttribute(href)}"${source} controls playsinline preload="metadata" aria-label="${escapeAttribute(label)}" class="block max-h-80 w-full rounded-lg border border-border/70 bg-black"></video><span data-openwork-video-error="" hidden class="text-sm text-muted-foreground">Video preview unavailable. Open the file to play it.</span><a ${fileLink} class="text-sm text-indigo-10">${escapeHtml(label)}</a></span>`;
 }
 
 function renderLink(profile: MarkdownProfile, href: string, title: string | null | undefined, text: string) {

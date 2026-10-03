@@ -2594,10 +2594,11 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         },
       ),
 
-    downloadWorkspaceFile: (workspaceId: string, path: string) =>
+    /** `sessionId` also finds files the conversation wrote after moving into a worktree. */
+    downloadWorkspaceFile: (workspaceId: string, path: string, options?: { sessionId?: string }) =>
       requestBinary(
         baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/files/raw?path=${encodeURIComponent(path)}`,
+        `/workspace/${encodeURIComponent(workspaceId)}/files/raw?path=${encodeURIComponent(path)}${options?.sessionId ? `&session=${encodeURIComponent(options.sessionId)}` : ""}`,
         { token, hostToken, timeoutMs: timeouts.binary },
       ),
 

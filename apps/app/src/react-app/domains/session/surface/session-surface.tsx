@@ -3489,6 +3489,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                   client={props.client}
                   workspaceId={props.workspaceId}
                   workspaceRoot={props.workspaceRoot}
+                  sessionId={props.sessionId}
                   isLocalWorkspace={!props.isRemoteWorkspace}
                   openTargets={verifiedOpenTargets}
                   onOpenTarget={handleOpenTarget}
