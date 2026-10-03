@@ -68,6 +68,7 @@ import {
   DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
   DEFAULT_OPENWORK_MARKETPLACE_NAME,
   type DefaultMarketplacePluginEntry,
+  RETIRED_DEFAULT_OPENWORK_PLUGINS,
   RETIRED_STARTER_MARKETPLACE_DESCRIPTION,
   RETIRED_STARTER_MARKETPLACE_LOGO_URL,
   RETIRED_STARTER_MARKETPLACE_NAME,
@@ -806,31 +807,6 @@ const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
     enablement: [{ type: "toggle-enabled", ref: "openwork-browser", label: "Enabled" }],
     lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:opencode-chrome-devtools"] },
     defaultEnabled: true,
-  },
-  {
-    schemaVersion: 1,
-    id: "computer-use",
-    name: "Computer Use",
-    description: "Mac only: control Mac apps through semantic accessibility refs, screenshots, background-safe clicks, keyboard input, and strict mode.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/openwork-mark.svg" },
-    composer: { prompt: "Use Computer Use to " },
-    setup: { instructions: "Computer Use is Mac only. Grant Accessibility and Screen Recording permissions, then connect the local MCP server in this workspace." },
-    resources: [
-      { type: "mcp", id: "computer-use-mcp", label: "Computer Use MCP", mcpServerName: "computer-use", command: ["npx", "-y", "@openwork/handsfree", "mcp"], localCommandRef: "openwork.computerUseMcp", required: true },
-      { type: "native-binary", id: "computer-use-native", label: "macOS accessibility runtime", packageName: "@openwork/handsfree", required: true },
-    ],
-    contributions: [
-      { type: "setup-instructions", ref: "openwork.computerUse.setup", location: "settings-detail" },
-      { type: "composer-prompt", prompt: "Use Computer Use to ", location: "composer" },
-    ],
-    enablement: [
-      { type: "mcp-connected", ref: "computer-use", label: "MCP server connected" },
-      { type: "permission-granted", ref: "accessibility", label: "Accessibility permission" },
-      { type: "permission-granted", ref: "screenRecording", label: "Screen Recording permission" },
-    ],
-    lifecycle: { reload: ["mcp"], detection: ["mcp:computer-use"] },
-    platform: ["darwin"],
   },
   {
     schemaVersion: 1,
@@ -3120,6 +3096,7 @@ async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext)
 
     const now = new Date()
     await retireStarterPlaceholders({ database: tx, organizationId, retiredAt: now })
+    await retireDefaultOpenWorkPlugins({ database: tx, organizationId, retiredAt: now })
 
     const marketplace = await ensureDefaultMarketplace({
       context,
@@ -3142,6 +3119,9 @@ async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext)
 async function defaultOpenWorkMarketplaceSeedComplete(organizationId: OrganizationId) {
   const retirable = await findRetirableStarterPlaceholders(db, organizationId)
   if (retirable.memberships.length > 0 || retirable.emptyMarketplaceIds.length > 0) {
+    return false
+  }
+  if ((await findRetirableDefaultOpenWorkPluginIds(db, organizationId)).length > 0) {
     return false
   }
 
@@ -3311,6 +3291,49 @@ async function retireStarterPlaceholders(input: { database: DbTransaction; organ
       .set({ deletedAt: input.retiredAt, status: "deleted", updatedAt: input.retiredAt })
       .where(inArray(MarketplaceTable.id, emptyMarketplaceIds))
   }
+}
+
+/**
+ * Retired built-in plugins are retired only while they are still the untouched
+ * system seed: no source, no contents. Anything imported or filled in stays.
+ */
+async function findRetirableDefaultOpenWorkPluginIds(database: typeof db | DbTransaction, organizationId: OrganizationId) {
+  if (RETIRED_DEFAULT_OPENWORK_PLUGINS.length === 0) return []
+  const rows = await database
+    .select({ description: PluginTable.description, id: PluginTable.id, name: PluginTable.name })
+    .from(PluginTable)
+    .where(and(
+      eq(PluginTable.organizationId, organizationId),
+      inArray(PluginTable.name, RETIRED_DEFAULT_OPENWORK_PLUGINS.map((entry) => entry.name)),
+      isNull(PluginTable.sourceFormat),
+      isNull(PluginTable.sourceRepositoryUrl),
+      isNull(PluginTable.deletedAt),
+      notExists(database
+        .select({ id: PluginConfigObjectTable.id })
+        .from(PluginConfigObjectTable)
+        .where(and(
+          eq(PluginConfigObjectTable.pluginId, PluginTable.id),
+          isNull(PluginConfigObjectTable.removedAt),
+        ))),
+    ))
+  return rows
+    .filter((row) => RETIRED_DEFAULT_OPENWORK_PLUGINS.some((entry) => entry.name === row.name && entry.description === row.description))
+    .map((row) => row.id)
+}
+
+async function retireDefaultOpenWorkPlugins(input: { database: DbTransaction; organizationId: OrganizationId; retiredAt: Date }) {
+  const pluginIds = await findRetirableDefaultOpenWorkPluginIds(input.database, input.organizationId)
+  if (pluginIds.length === 0) return
+  await input.database.update(MarketplacePluginTable)
+    .set({ removedAt: input.retiredAt })
+    .where(and(
+      eq(MarketplacePluginTable.organizationId, input.organizationId),
+      inArray(MarketplacePluginTable.pluginId, pluginIds),
+      isNull(MarketplacePluginTable.removedAt),
+    ))
+  await input.database.update(PluginTable)
+    .set({ deletedAt: input.retiredAt, status: "deleted", updatedAt: input.retiredAt })
+    .where(inArray(PluginTable.id, pluginIds))
 }
 
 function defaultMarketplacePluginEntryKey(entry: DefaultMarketplacePluginEntry) {

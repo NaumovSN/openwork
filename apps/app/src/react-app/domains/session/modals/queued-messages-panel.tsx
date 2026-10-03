@@ -46,7 +46,7 @@ function mentionPill(parts: ComposerPart[], segment: string): ComposerPill | nul
   if (!segment.startsWith("@")) return null;
   const value = decodeComposerMentionValue(segment.slice(1));
   for (const part of parts) {
-    if ((part.type === "app" && part.name === value) || (part.type === "computer" && part.target === value)) {
+    if (part.type === "computer" && part.target === value) {
       return composerPillFromPart(part);
     }
   }

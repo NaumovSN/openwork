@@ -37,3 +37,16 @@ export const RETIRED_STARTER_PLUGIN_NAMES = [
   "Human Resources",
   "PDF Viewer",
 ] as const
+
+/**
+ * Built-in plugins earlier Den builds seeded into the OpenWork Marketplace for
+ * desktop features that no longer exist. Den no longer seeds them and retires
+ * any copy that is still an untouched, empty system seed, matched by its exact
+ * name and description. A copy someone imported into or filled in is kept.
+ */
+export const RETIRED_DEFAULT_OPENWORK_PLUGINS: readonly DefaultMarketplacePluginEntry[] = [
+  {
+    name: "Computer Use",
+    description: "Mac only: control Mac apps through semantic accessibility refs, screenshots, background-safe clicks, keyboard input, and strict mode.",
+  },
+]

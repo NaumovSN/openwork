@@ -427,7 +427,6 @@ export function McpView(props: McpViewProps) {
   const [detailSkillContent, setDetailSkillContent] = useState<string | null>(null);
   const [openworkUiMcpCommand, setOpenworkUiMcpCommand] = useState<string[] | null>(null);
   const [openworkUiMcpEnvironment, setOpenworkUiMcpEnvironment] = useState<Record<string, string> | null>(null);
-  const [computerUseMcpCommand, setComputerUseMcpCommand] = useState<string[] | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ExtensionInventoryFilter>(primaryLibraryFilter(props.initialFilter));
   const [onlyNeedsSignIn, setOnlyNeedsSignIn] = useState(props.initialState === "needs_signin");
@@ -985,14 +984,9 @@ export function McpView(props: McpViewProps) {
             ),
           ));
         }
-        const computerUseCommand = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getComputerUseMcpCommand");
-        if (Array.isArray(computerUseCommand) && computerUseCommand.every((part) => typeof part === "string")) {
-          setComputerUseMcpCommand(computerUseCommand);
-        }
       } catch {
         setOpenworkUiMcpCommand(null);
         setOpenworkUiMcpEnvironment(null);
-        setComputerUseMcpCommand(null);
       }
     })();
   }, []);
@@ -1123,7 +1117,6 @@ export function McpView(props: McpViewProps) {
 
   const launchCommandForEntry = (entry: McpDirectoryInfo) => {
     if (entry.serverName === "openwork-ui") return openworkUiMcpCommand ?? undefined;
-    if (entry.serverName === "computer-use") return computerUseMcpCommand ?? entry.command;
     return entry.command;
   };
 
@@ -1200,8 +1193,6 @@ export function McpView(props: McpViewProps) {
         const disabledReason = builtInDisabledReason ?? manageDisabledReasonForEntry(detailEntry);
         const isConnected = builtInDisabledReason
           ? false
-          : detailEntry.serverName === "computer-use"
-          ? enablementForEntry(detailEntry)?.active === true
           : isToggleOnlyExtension(detailEntry)
           ? isOpenWorkExtensionEnabled(detailEntry)
           : detailEntry.kind === "extension" && !isMcpBackedExtension(detailEntry)
@@ -1628,9 +1619,8 @@ export function McpView(props: McpViewProps) {
     const enablement = props.enablementContext ? enablementForEntry(entry) : null;
     const hidden = isOpenWorkExtensionHidden(entry);
     const disabledReason = builtInDisabledReasonForEntry(entry) ?? (configured ? null : manageDisabledReasonForEntry(entry));
-    const isComputerUse = entry.id === "computer-use";
     const runtimeStatus = quickConnectStatus(entry)?.status;
-    const ready = isComputerUse ? enablement?.active === true : runtimeStatus ? runtimeStatus === "connected" : configured || enablement?.active;
+    const ready = runtimeStatus ? runtimeStatus === "connected" : configured || enablement?.active;
     rows.push({
       key: getMcpIdentityKey(entry),
       section: "mac",
@@ -1653,7 +1643,7 @@ export function McpView(props: McpViewProps) {
           disabledReason={disabledReason}
           disabled={props.busy}
           meta={t("extensions.row_local_you")}
-          nextActionLabel={isComputerUse ? ready || disabledReason ? undefined : t("extensions.row_action_set_up") : configured || disabledReason ? undefined : t("connect.row_action_connect")}
+          nextActionLabel={configured || disabledReason ? undefined : t("connect.row_action_connect")}
           onClick={() => openDetail({ kind: "entry", entry })}
         />
       ),

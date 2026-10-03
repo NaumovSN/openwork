@@ -369,29 +369,7 @@ export function createConnectionsStore(options: {
 
     if (!canTryOpenworkServer || !openworkClient || !openworkWorkspaceId) return null;
 
-    let response = await openworkClient.listMcp(openworkWorkspaceId);
-    // Upgrade the enabled bundled helper when a local workspace is opened.
-    // Never enable a disabled entry, rewrite a custom command, or target a remote worker.
-    if (isDesktopRuntime() && options.workspaceType() === "local") {
-      const computer = response.items.find((entry) => entry.name === "computer-use");
-      const config = computer?.config;
-      const command = config?.command;
-      if (config?.type === "local" && config.enabled !== false && Array.isArray(command)
-        && typeof command[0] === "string" && command[0].endsWith("/ComputerUse")
-        && ((command.length === 2 && command[1] === "mcp") || (command.length === 3 && command[1] === "relay"))) {
-        const currentCommand = await resolveDesktopCommand("getComputerUseMcpCommand", false);
-        const bundled = currentCommand && (command[0] === currentCommand[0]
-          || command[0].endsWith("/OpenWork Computer Use.app/Contents/MacOS/ComputerUse"));
-        if (bundled && JSON.stringify(command) !== JSON.stringify(currentCommand)) {
-          const writable = await resolveWritableOpenworkTarget();
-          if (writable.canUseOpenworkServer && writable.openworkClient && writable.openworkWorkspaceId === openworkWorkspaceId
-            && !mcpMutationDenied(true)) {
-            await writable.openworkClient.addMcp(openworkWorkspaceId, { name: "computer-use", config: { ...config, command: currentCommand } });
-            response = await openworkClient.listMcp(openworkWorkspaceId);
-          }
-        }
-      }
-    }
+    const response = await openworkClient.listMcp(openworkWorkspaceId);
     const next = response.items.map((entry) => ({
       name: entry.name,
       // The server relays opencode.json entries verbatim; fold a Claude-style
@@ -440,18 +418,13 @@ export function createConnectionsStore(options: {
     };
   };
 
-  const resolveDesktopCommand = async (commandName: "getComputerUseMcpCommand" | "getOpenworkUiMcpCommand", fallbackOnError = true) => {
+  const resolveDesktopCommand = async (commandName: "getOpenworkUiMcpCommand") => {
     try {
       const command = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.(commandName);
       if (Array.isArray(command) && command.every((part) => typeof part === "string") && command.length > 0) {
         return command;
       }
-    } catch (error) {
-      if (!fallbackOnError) {
-        throw error instanceof Error
-          ? error
-          : new Error("Computer Use helper app is unavailable. Restart OpenWork or reinstall the app.");
-      }
+    } catch {
       // Fall through to the published package command in the manifest/catalog.
     }
     return null;
@@ -459,11 +432,6 @@ export function createConnectionsStore(options: {
 
   const resolveLocalMcpCommand = async (entry: McpDirectoryInfo) => {
     const mcpResource = extensionResource(entry.extensionManifest, "mcp");
-    if (mcpResource?.localCommandRef === "openwork.computerUseMcp") {
-      const command = await resolveDesktopCommand("getComputerUseMcpCommand", false);
-      if (!command) throw new Error("Computer Use requires the bundled OpenWork helper on macOS.");
-      return command;
-    }
     if (mcpResource?.localCommandRef === "openwork.uiMcp" || entry.serverName === "openwork-ui") {
       const command = await resolveDesktopCommand("getOpenworkUiMcpCommand");
       return command ?? entry.command;

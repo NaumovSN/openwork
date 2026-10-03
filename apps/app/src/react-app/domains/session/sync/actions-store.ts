@@ -163,7 +163,7 @@ export function createSessionActionsStore(options: {
         parts.push({ type: "agent", name: part.name } as AgentPartInput);
         continue;
       }
-      if (part.type === "computer" || part.type === "app" || part.type === "skill" || part.type === "connect-skill" || part.type === "connector") {
+      if (part.type === "computer" || part.type === "skill" || part.type === "connect-skill" || part.type === "connector") {
         // The resolved user text already contains the visible pill text.
         const [, instruction] = composerPillPromptParts(composerPillFromPart(part));
         parts.push(instruction);

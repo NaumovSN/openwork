@@ -2431,7 +2431,6 @@ function parseExtensionResourceType(value: unknown): OpenWorkExtensionResourceTy
 
 function parseExtensionLocalCommandRef(value: unknown): OpenWorkExtensionResource["localCommandRef"] | undefined {
   switch (value) {
-    case "openwork.computerUseMcp":
     case "openwork.uiMcp":
       return value;
     default:

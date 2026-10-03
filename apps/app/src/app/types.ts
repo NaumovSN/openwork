@@ -102,8 +102,6 @@ export type ComposerPart =
   /** A connection picked from the composer `+` menu (`[connector …]` pill). */
   | { type: "connector"; name: string }
   | { type: "file"; path: string; label?: string }
-  /** A macOS app targeted via Computer Use (composer "@App" mention). */
-  | { type: "app"; name: string }
   | { type: "computer"; target: "cloud" | "desktop" }
   | { type: "paste"; id: string; label: string; text: string; lines: number };
 
