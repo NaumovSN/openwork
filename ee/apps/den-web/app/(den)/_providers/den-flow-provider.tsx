@@ -323,6 +323,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const pendingWorkersRequestRef = useRef<Promise<{ response: Response; payload: unknown }> | null>(null);
 
   const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
+  // Teammates' cloud workers are listed org-wide, but den-api only lets the
+  // owner read their runtime or tokens (403). Never poll those in the background.
+  const isKnownUncontrollableWorker = (workerId: string | null | undefined) =>
+    Boolean(workerId && workers.some((item) => item.workerId === workerId && !item.canControl));
   const activeWorker =
     worker && workerLookupId === worker.workerId
       ? worker
@@ -780,7 +784,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       const nextSelectedId =
         currentSelection && nextWorkers.some((item) => item.workerId === currentSelection)
           ? currentSelection
-          : nextWorkers[0]?.workerId ?? "";
+          : (nextWorkers.find((item) => item.canControl) ?? nextWorkers[0])?.workerId ?? "";
       const nextSelectedWorker = nextSelectedId
         ? nextWorkers.find((item) => item.workerId === nextSelectedId) ?? null
         : null;
@@ -2177,7 +2181,14 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }, [worker]);
 
   useEffect(() => {
-    if (!user || !worker || actionBusy !== null || launchBusy || pendingRestoredWorkerId === worker.workerId) {
+    if (
+      !user ||
+      !worker ||
+      actionBusy !== null ||
+      launchBusy ||
+      pendingRestoredWorkerId === worker.workerId ||
+      isKnownUncontrollableWorker(worker.workerId)
+    ) {
       return;
     }
 
@@ -2200,7 +2211,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [actionBusy, launchBusy, pendingRestoredWorkerId, user?.id, worker?.workerId, worker?.status, worker?.clientToken, worker?.hostToken, worker?.openworkUrl, worker?.previewOpenworkUrl, worker?.previewExpiresAt]);
+  }, [actionBusy, launchBusy, pendingRestoredWorkerId, user?.id, worker?.workerId, worker?.status, worker?.clientToken, worker?.hostToken, worker?.openworkUrl, worker?.previewOpenworkUrl, worker?.previewExpiresAt, isKnownUncontrollableWorker(worker?.workerId)]);
 
   const provisioningWorkerIds = workers
     .filter((item) => item.status === "provisioning")
@@ -2237,18 +2248,18 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
-    if (!user || !targetWorkerId || pendingRestoredWorkerId === targetWorkerId) {
+    if (!user || !targetWorkerId || pendingRestoredWorkerId === targetWorkerId || isKnownUncontrollableWorker(targetWorkerId)) {
       setRuntimeSnapshot(null);
       setRuntimeError(null);
       return;
     }
 
     void refreshRuntime(targetWorkerId, { quiet: true });
-  }, [user?.id, authToken, activeWorker?.workerId, pendingRestoredWorkerId, selectedWorker?.workerId]);
+  }, [user?.id, authToken, activeWorker?.workerId, pendingRestoredWorkerId, selectedWorker?.workerId, isKnownUncontrollableWorker(activeWorker?.workerId ?? selectedWorker?.workerId)]);
 
   useEffect(() => {
     const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
-    if (!targetWorkerId || runtimeSnapshot?.upgrade.status !== "running") {
+    if (!targetWorkerId || runtimeSnapshot?.upgrade.status !== "running" || isKnownUncontrollableWorker(targetWorkerId)) {
       return;
     }
 
