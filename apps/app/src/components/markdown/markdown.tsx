@@ -240,9 +240,13 @@ function MarkdownBlockInner({
       let cancelled = false;
       let objectUrl: string | null = null;
       const href = video.dataset.openworkVideoPath ?? "";
+      // A video that cannot load reads as its plain inline reference instead
+      // of an empty player in the middle of the sentence.
       const showError = () => {
-        const notice = video.parentElement?.querySelector("[data-openwork-video-error]");
-        if (notice instanceof HTMLElement) notice.hidden = false;
+        const box = video.closest("[data-openwork-video]");
+        const fallback = box?.querySelector(":scope > [data-openwork-video-fallback]");
+        if (!box || !(fallback instanceof HTMLElement)) return;
+        box.replaceWith(...Array.from(fallback.childNodes));
       };
       video.addEventListener("error", showError);
       videoCleanups.current.set(video, () => {
