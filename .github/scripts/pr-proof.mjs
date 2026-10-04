@@ -46,7 +46,7 @@ export function proofLanes(allSpecs, { event, current, repo, actor, triggeringAc
   // Forks and Dependabot cannot reach the Freestyle credential; they skip the
   // core journeys instead of failing selection. A changed checkpoint spec still fails below.
   const specs = trustedProofContext({ event, current, repo, actor, triggeringActor }) ? allSpecs : allSpecs.filter(spec => !CORE_SPECS.includes(spec));
-  const liveSpecs = specs.filter(spec => ["evals/specs/live-stream-continuity.e2e.test.ts", "evals/specs/engine-live-chat.e2e.test.ts"].includes(spec));
+  const liveSpecs = specs.filter(spec => ["evals/specs/live-stream-continuity.e2e.test.ts"].includes(spec));
   // Packaged specs boot a packaged desktop binary, which only the packaged
   // smoke runner builds; running them against a dev build always fails.
   const packagedSpecs = specs.filter(spec => PACKAGED_SPEC.test(spec));

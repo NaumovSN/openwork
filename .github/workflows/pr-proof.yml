@@ -352,7 +352,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(id -u)" -ne 0
-          if [ "$PROOF_SPEC" != 'evals/specs/live-stream-continuity.e2e.test.ts' ] && [ "$PROOF_SPEC" != 'evals/specs/engine-live-chat.e2e.test.ts' ]; then
+          if [ "$PROOF_SPEC" != 'evals/specs/live-stream-continuity.e2e.test.ts' ]; then
             printf '%s\n' '::error::Unsupported live proof selection. Add an explicit reviewed live-spec policy before running another file.' >&2
             exit 1
           fi
@@ -360,13 +360,7 @@ jobs:
             printf '%s\n' '::error::OPENAI_API_KEY is required for selected live proof. Configure repository/environment access; this proof cannot be skipped.' >&2
             exit 1
           fi
-          if [ "$PROOF_SPEC" = 'evals/specs/engine-live-chat.e2e.test.ts' ]; then
-            OPENWORK_LIVE_PROVIDER=OpenAI OPENWORK_LIVE_KEY_ENV=OPENAI_API_KEY \
-              OPENWORK_LIVE_MODELS=gpt-5.4,gpt-4.1-mini OPENWORK_EVAL_CONTAINER_ELECTRON=1 \
-              xvfb-run -a node evals/scripts/run-parity-proof.mjs "$PROOF_SPEC"
-          else
-            xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web
-          fi
+          xvfb-run -a node evals/bin/evals.mjs "${PROOF_SPEC#evals/}" --local --engine v1 --surface web
       - name: Save selected native testkit and Vitest records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
