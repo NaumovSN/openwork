@@ -36,7 +36,8 @@ test(title, async ({ evidence, world, user, probe, step }) => {
     }
   };
   const pick = async (kind: "Connector" | "Skill" | "Plugin") => {
-    await user.click({ text: new RegExp(`^${kind}$`) });
+    // The choice is a radio in the dialog; Library rows behind it also read "Connector" or "Skill" in their Kind lane.
+    await user.click({ role: "radio", label: new RegExp(`^${kind}(\\s|$)`) });
     await user.click({ role: "button", label: "Continue" });
   };
   const backToLibrary = async (name: string) => {
