@@ -91,7 +91,9 @@ jobs:
       # About 20s. Runs on every PR so lint and ratchet baselines cannot drift;
       # it used to run only nightly, and debt piled up unnoticed.
       - name: Check the test framework (lint and ratchets)
-        run: pnpm evals:check
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
+          pnpm evals:check
 
   openwork-tests-build:
     name: Build and boot the desktop app
@@ -245,7 +247,7 @@ jobs:
   openwork-tests-extended:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -261,7 +263,9 @@ jobs:
       # OpenCode binary. macOS keeps the platform builds below.
       - name: Run test-framework checks
         if: (success() || failure()) && steps.setup.outcome == 'success' && runner.os == 'Linux'
-        run: pnpm evals:check
+        run: |
+          git fetch --no-tags --depth=1 origin +refs/heads/dev:refs/remotes/origin/dev
+          pnpm evals:check
       - name: Start MySQL and prepare the bundled OpenCode binary
         id: lane
         if: (success() || failure()) && steps.setup.outcome == 'success' && runner.os == 'Linux'
@@ -271,9 +275,11 @@ jobs:
           pnpm --filter @openwork/email build
           pnpm dev:den:mysql
           pnpm --filter @openwork/desktop prepare:sidecar
+      # One file at a time: every local Den boot resets den-web's shared .next/dev
+      # build directory, so parallel Den specs crash each other's Den web.
       - name: Run all PR specs
         if: (success() || failure()) && steps.lane.outcome == 'success'
-        run: pnpm sdk:build && pnpm evals:pr
+        run: pnpm sdk:build && pnpm --dir evals exec vitest run --config vitest.config.ts --project pr --no-file-parallelism
       - name: Run engine smoke tests
         if: (success() || failure()) && steps.setup.outcome == 'success'
         run: pnpm test:e2e
