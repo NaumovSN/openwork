@@ -1,6 +1,5 @@
 [
   "acme-review.e2e.test.ts",
-  "bench-opencode-engines.test.ts",
   "bench-openwork-app-v1.e2e.test.ts",
   "catalog-fast-mode-wire.test.ts",
   "crash-redaction.test.ts",
