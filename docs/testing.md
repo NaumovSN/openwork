@@ -32,8 +32,9 @@ specs (`pnpm evals:pr`), and the engine smoke (`pnpm test:e2e`) on Linux and
 macOS at 07:37 UTC daily, or through **Run workflow** on a selected branch.
 Packaging can be reproduced with `pnpm --filter openwork-server build` and
 `pnpm --filter @openwork/desktop typecheck:electron`. Check the macOS nightly
-before releases; it is not a PR prerequisite. The Daytona E2E and nightly
-flake-report workflows are unchanged.
+before releases; it is not a PR prerequisite. The core journey and every
+Freestyle world path also run nightly ("Freestyle world check"); the old
+"Product journeys" and "Test reliability" nightlies were retired in October 2026.
 
 A skipped journey is incomplete coverage, even if a runner exits successfully.
 Do not describe a run containing skips as full proof.

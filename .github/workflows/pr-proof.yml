@@ -183,7 +183,7 @@ jobs:
 
   # The proof lane has no model key, so screenshot claims (user.looks and
   # expect:) are recorded as pending, and Evidence preview reports Incomplete
-  # even when every test passed. Judge them here, as Product journeys does.
+  # even when every test passed. Judge them here.
   # Only trusted default-branch code ever sees the key: the PR head never runs
   # in this job, it only supplies the screenshots and records being judged.
   judge-vision:

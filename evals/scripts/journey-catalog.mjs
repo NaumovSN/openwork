@@ -142,7 +142,6 @@ export function selectJourneys(entries, { critical = false, only = '', changed =
 }
 
 // What the CI lane provides to every job: Linux runners and no packaged desktop binary.
-// Keep in step with the e2e and local-journey jobs in .github/workflows/daytona-e2e.yml.
 export const ciLane = Object.freeze({ platform: 'linux', env: Object.freeze([]) });
 
 // Needs the lane cannot meet, phrased as the action that would meet them; empty when the journey is applicable.
