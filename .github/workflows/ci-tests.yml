@@ -71,6 +71,7 @@ jobs:
             core.info(`Den API contract check: ${denContract ? "required" : "not affected"}`)
 
   openwork-tests-core:
+    name: Unit tests
     needs: classify-changes
     if: needs.classify-changes.outputs.lane == 'full'
     runs-on: blacksmith-16vcpu-ubuntu-2204
@@ -89,6 +90,7 @@ jobs:
         run: pnpm --dir evals run test:core
 
   openwork-tests-build:
+    name: Build and boot the desktop app
     needs: classify-changes
     if: needs.classify-changes.outputs.lane == 'full'
     runs-on: blacksmith-16vcpu-ubuntu-2204

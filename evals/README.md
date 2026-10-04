@@ -4,6 +4,60 @@ All executable coverage lives in [`specs/**/*.test.ts`](./specs) and imports
 `test` from `@openwork/testkit`. Tests that drive Electron, Den, or another app
 surface use `.e2e.test.ts`.
 
+## How CI works (start here)
+
+Every PR to `dev` gets three things:
+
+1. **Unit tests and build** (`ci-tests.yml`: "Unit tests", "Build and boot the
+   desktop app"). Compiles everything, runs the unit tests, then packages the
+   real desktop app and boots it once. Red here means a normal code problem.
+2. **The core journey** (`pr-proof.yml`: "Core journey"). One end-to-end test,
+   [`specs/core-chat.e2e.test.ts`](./specs/core-chat.e2e.test.ts): open the app
+   signed in, send "Say hello", read the reply. It runs on every PR that changes
+   more than docs. Any e2e spec your PR adds or changes also runs.
+3. **A preview card** on the PR. **Open preview** opens the app exactly where the
+   core journey left it: signed in, with a chat. Each copy lives 1 hour; the
+   link works for 12 hours.
+
+### The world
+
+The app does not run on the CI runner. It runs in a **world**: a Freestyle VM
+snapshot holding all of OpenWork (web app, server, Den with a demo org, AI
+gateway with a fake model that answers "Acme AI Gateway is working.", and a
+signed-in Chrome). The runner only drives it, so the CI job stays small.
+
+Every push to `dev` keeps `dev`'s world ready ("Freestyle warm dev image"). A PR
+gets its world one of three ways; the job summary says which, and why:
+
+| Your PR changes | What happens | Time |
+| --- | --- | --- |
+| Nothing that runs (docs, tests, CI, website) | reuse `dev`'s world | ~2s |
+| App UI, Den web or Den API code | copy `dev`'s running world, check out, reload | ~15-25s |
+| Anything else | build from the warm image | ~3 min |
+
+The rules are `HOT_RULES` in
+[`packages/freestyle/src/evidence-builder.ts`](../packages/freestyle/src/evidence-builder.ts).
+If the fast path fails, the world is built in full instead: a PR can get
+slower, never red, because of it.
+
+### When it is red
+
+- **Unit tests or build:** read the failing step; it is your code.
+- **Core journey:** open the job. The "Freestyle world" table says which path
+  ran and how long each step took. A failed world prints the VM's own log under
+  "builder log". A failed journey prints what was on screen when it gave up.
+- **Evidence card says "needs attention":** open the report from the card; it
+  has a screenshot of every step.
+
+### Changing CI itself
+
+After touching the world, `HOT_RULES` or the warm image, run the world check:
+`node evals/scripts/check-freestyle-world.ts` (or the manual "Freestyle world
+check" workflow). It pushes throwaway docs, UI, Den API, Den web, server and
+gateway changes, builds each world, runs the core journey on it and prints a
+pass/fail table with timings. Add `--base <sha>` to test your branch as if it
+were `dev`.
+
 ## Paved path
 
 Use the skills in this order:
@@ -11,7 +65,7 @@ Use the skills in this order:
 1. `write-a-spec`
 2. `run-tests`
 3. `diagnose-a-red-run` when the run fails
-4. `open-a-pr`; CI runs the changed specs on the PR head and publishes the evidence
+4. `open-a-pr`; CI runs the core journey and the changed specs on the PR head and publishes the evidence
 
 Demo-driven features start from a world script plus a spec in `evals/specs`.
 
@@ -99,7 +153,6 @@ world's implementation, and selecting Electron for either case is rejected.
 
 ```bash
 pnpm evals:e2e streamed-markdown-answer --local --engine v2 --case CONT-01
-pnpm evals:e2e live-tool-visible-after-session-switch --daytona --engine v1 --case SWITCH-10
 ```
 
 A focused web case avoids legacy Den/Electron suite preparation, but still
@@ -128,15 +181,14 @@ Daytona slot IDs and refs remain advanced environment configuration.
 ### Bounded world migration
 
 The audited migration covers only `CONT-01` (`chatStreamContinuityWeb`) in
-`specs/streamed-markdown-answer.e2e.test.ts` and `SWITCH-10`
-(`sessionSwitchLatencyWeb`) in
-`specs/live-tool-visible-after-session-switch.e2e.test.ts`. Each binding declares
+`specs/streamed-markdown-answer.e2e.test.ts`. (`SWITCH-10` was removed with its
+spec in October 2026.) The binding declares
 `resources: { surfaces: ["appWeb"], services: ["mock"] }` and boots through
-`seed.appWeb`, whose default is `headless: true`. Neither world reads surface
+`seed.appWeb`, whose default is `headless: true`. The world reads no surface
 or headless environment selectors. CONT-01 tests ordinary app UI and has no
 native variant.
 
-Both cases assert the runtime user agent contains `HeadlessChrome`, that the
+The case asserts the runtime user agent contains `HeadlessChrome`, that the
 Electron bridge is absent, and that the app origin, server health, and selected
 engine routes match the fixture. Source SHA metadata is recorded and checked
 when available (required on Daytona); this is not a full source receipt or

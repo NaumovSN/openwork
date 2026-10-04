@@ -47,6 +47,7 @@ jobs:
   # from this commit. The runner installs only the test tools and drives it.
   # The end-state checkpoint is the PR's preview.
   core:
+    name: Core journey
     needs: select
     if: >-
       needs.select.outputs.coreSelected == 'true' &&
