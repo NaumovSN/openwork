@@ -6446,6 +6446,10 @@ export type PostV1BootstrapClaimsAcceptResponses = {
    */
   200: {
     ok: true;
+    /**
+     * Teammates to invite now that the caller owns the workspace. Only returned to the owner.
+     */
+    teammateEmails?: Array<string>;
     organization: {
       /**
        * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
