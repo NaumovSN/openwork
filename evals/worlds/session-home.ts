@@ -1,12 +1,13 @@
 import { browserScript } from "@openwork/cdp";
 import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
-import { mkdir, realpath } from "node:fs/promises";
+import { access, mkdir, readFile, realpath } from "node:fs/promises";
+import { join } from "node:path";
 import { resolveServerConfig } from "../../apps/server/src/config.ts";
 import { createV2SessionHomes } from "../../apps/server/src/opencode-v2-session-home.ts";
 import { configureProvider } from "./chat.ts";
 
 /** Real UI, server and native engine. Only the model's decisions are scripted. */
-async function bootSessionHome(seed: Seed, mode: "stop" | "question") {
+async function bootSessionHome(seed: Seed, mode: "stop" | "question" | "video") {
   if (resolveEvalEngine() !== "v2") throw new SkipError("Session moves require OpenCode v2");
   const requested = seed.tmpPath("conversation-home");
   const requestedWorktree = seed.tmpPath("conversation-worktree");
@@ -20,9 +21,16 @@ async function bootSessionHome(seed: Seed, mode: "stop" | "question") {
   const question = "Which format should the moved task use?";
   const answer = "Short summary";
   const completed = "The moved task received the format answer.";
+  // Video mode: the agent saves a clip relative to its new folder, then names it
+  // by path and also by a bare file name that exists nowhere.
+  const video = { path: "reports/clip.mp4", missing: "missing-take.mp4", prompt: "Move into the prepared worktree and save the demo video there." };
+  const videoReply = `The new cut is ready: \`${video.path}\`, 2 seconds.\n\nI also kept an older take named \`${video.missing}\` out of this folder.`;
+  const videoBase64 = (await readFile(new URL("../fixtures/assistant-video.mp4", import.meta.url))).toString("base64");
+  const move = { tool: "execute", arguments: { code: `return await tools.opencode.session_move({ directory: ${JSON.stringify(destination)} });` } };
   const mock = seed.mock({ isolatedProcessEnv: true, agentWorkloads: [
-    { promptMarker: prompt, finalReply: mode === "question" ? completed : "Waiting finished.", steps: [
-      { tool: "execute", arguments: { code: `return await tools.opencode.session_move({ directory: ${JSON.stringify(destination)} });` } },
+    mode === "video" ? { promptMarker: video.prompt, finalReply: videoReply, steps: [move,
+      { tool: "shell", arguments: { command: `mkdir -p reports && printf '%s' '${videoBase64}' | base64 --decode > ${video.path}`, description: "Save the demo video" } },
+    ] } : { promptMarker: prompt, finalReply: mode === "question" ? completed : "Waiting finished.", steps: [move,
       ...(mode === "question" ? [{ tool: "question", arguments: { questions: [{
         header: "Task format", question, options: [
           { label: answer, description: "Summarize the work" },
@@ -82,12 +90,37 @@ async function bootSessionHome(seed: Seed, mode: "stop" | "question") {
     },
     async [Symbol.asyncDispose]() { await fault?.[Symbol.asyncDispose](); },
     requests: () => witness.agentRequests({ promptMarker: followup }),
+    video,
+    /** Where the saved clip exists on disk: the worktree, the workspace, both or neither. */
+    async videoOnDisk() {
+      const exists = (path: string) => access(path).then(() => true, () => false);
+      return { worktree: await exists(join(destination, video.path)), workspace: await exists(join(home, video.path)) };
+    },
+    /** Status of the workspace file download, with or without naming a conversation. */
+    videoDownloadStatus: (sessionId?: string) => seed.evalIn(app, browserScript(async (workspaceId, path, sessionId) => {
+      const query = "path=" + encodeURIComponent(path) + (sessionId ? "&session=" + encodeURIComponent(sessionId) : "");
+      const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port")
+        + "/workspace/" + encodeURIComponent(workspaceId) + "/files/raw?" + query, {
+        headers: { Authorization: "Bearer " + localStorage.getItem("openwork.server.token") },
+      });
+      await response.arrayBuffer();
+      return response.status;
+    }, [workspace.workspaceId, video.path, sessionId ?? ""]), { awaitPromise: true }),
+    /** The inline player for a referenced path, or null when none is on screen. */
+    videoState: (path: string, play = false) => seed.evalIn(app, browserScript(async (path, play) => {
+      const element = [...document.querySelectorAll("video[data-openwork-video-path]")]
+        .find((node): node is HTMLVideoElement => node instanceof HTMLVideoElement && node.dataset.openworkVideoPath === path);
+      if (!element) return null;
+      if (play) await element.play();
+      return { ready: element.readyState >= 2, time: element.currentTime, error: element.error?.message ?? null };
+    }, [path, play]), { awaitPromise: true }),
   };
 }
 
 // World functions receive (seed, { place }); keep the mode out of that slot.
 export async function sessionHome(seed: Seed) { return bootSessionHome(seed, "stop"); }
 export async function movedSessionQuestion(seed: Seed) { return bootSessionHome(seed, "question"); }
+export async function movedSessionVideo(seed: Seed) { return bootSessionHome(seed, "video"); }
 
 /** Inject only the observed failing HTTP boundary; all session/form APIs stay native. */
 async function failPendingQuestionList(endpoint: string) {

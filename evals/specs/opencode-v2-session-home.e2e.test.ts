@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { sessionHome, movedSessionQuestion } from "../worlds/session-home.ts";
+import { sessionHome, movedSessionQuestion, movedSessionVideo } from "../worlds/session-home.ts";
 
 const test = spec.world(sessionHome, {
   timeout: 240_000, resources: { surfaces: ["appWeb"], services: ["mock"] },
@@ -116,4 +116,66 @@ questionTest("HOME-03 an unavailable global question list cannot prevent answeri
   });
   evidence.recordAssertionEvidence("A failed workspace lookup cannot block a question reply",
     "A real v2 question stays answerable when the global pending-list HTTP endpoint returns the observed 500 session_unavailable error. Only that failing boundary and model decisions are synthetic; form reads and the answer run against the real engine.", true);
+});
+
+const videoTest = spec.world(movedSessionVideo, {
+  timeout: 240_000, resources: { surfaces: ["appWeb"], services: ["mock"] },
+});
+
+videoTest("HOME-04 a member plays a video the agent saved after moving into a worktree", async ({ world, user, agent, probe, step, evidence }) => {
+  await agent.run("session.open", { sessionId: world.session.sessionId });
+  await user.see("composer", { editable: true });
+  await step("the agent moves into its worktree, saves the video there and names it in its reply", async () => {
+    await user.type("composer", world.video.prompt, { replace: true, verify: true });
+    await user.click("Run task");
+    await user.see({ text: /The new cut is ready/ }, { timeoutMs: 60_000 });
+    await user.see("Run task", { timeoutMs: 30_000 });
+    expect(record(sessionInfo(await world.sessionState()).location).directory).toBe(world.destination);
+    const onDisk = await world.videoOnDisk();
+    evidence.recordAssertionEvidence("the video exists only in the conversation's worktree",
+      `worktree: ${onDisk.worktree}; workspace folder: ${onDisk.workspace}`, onDisk.worktree && !onDisk.workspace);
+    expect(onDisk).toEqual({ worktree: true, workspace: false });
+  });
+  await step("before: looking only in the workspace folder, the video is not found", async () => {
+    const status = await world.videoDownloadStatus();
+    evidence.recordAssertionEvidence("workspace-only lookup", `GET files/raw ${world.video.path} → ${status}`, status === 404);
+    expect(status).toBe(404);
+  });
+  await step("after: the referenced video plays inline in the chat", async () => {
+    const ready = await probe.eventually(() => world.videoState(world.video.path), {
+      within: 30_000, label: "worktree video loaded", until: state => state?.ready === true,
+    });
+    expect(ready).toMatchObject({ ready: true, error: null });
+    await world.videoState(world.video.path, true);
+    const playing = await probe.eventually(() => world.videoState(world.video.path), {
+      within: 5_000, label: "worktree video playing", until: state => (state?.time ?? 0) > 0,
+    });
+    evidence.recordAssertionEvidence("video plays from the worktree",
+      `${world.video.path}: loaded, played to ${playing?.time.toFixed(2)} s, error ${playing?.error ?? "none"}`, (playing?.time ?? 0) > 0);
+    await user.notSee({ text: /Video preview unavailable/ });
+    await user.screenshot();
+  });
+  await step("after: a video name that exists nowhere reads as an inline file name, not an empty player", async () => {
+    await user.see({ text: world.video.missing });
+    const gone = await probe.eventually(() => world.videoState(world.video.missing), {
+      within: 15_000, label: "unplayable reference falls back to text", until: state => state === null,
+    });
+    evidence.recordAssertionEvidence("unplayable reference", `${world.video.missing}: no player left in the sentence`, gone === null);
+    expect(gone).toBeNull();
+    await user.screenshot();
+  });
+  await step("a conversation that is not part of this workspace cannot read the worktree", async () => {
+    const status = await world.videoDownloadStatus("ses_not_in_this_workspace");
+    evidence.recordAssertionEvidence("unknown conversation", `GET files/raw with an unrelated session → ${status}`, status === 404);
+    expect(status).toBe(404);
+  });
+  await step("the video still plays after a reload", async () => {
+    await user.reload();
+    await user.see({ text: /The new cut is ready/ }, { timeoutMs: 30_000 });
+    const ready = await probe.eventually(() => world.videoState(world.video.path), {
+      within: 30_000, label: "worktree video loaded after reload", until: state => state?.ready === true,
+    });
+    expect(ready).toMatchObject({ ready: true, error: null });
+    await user.screenshot();
+  });
 });
