@@ -37,12 +37,18 @@ All `/v1` routes require `Authorization: Bearer $HEADLESS_API_TOKEN`.
 | `GET` | `/health` | | `{ ok: true }` |
 | `GET` | `/v1/models` | | `{ defaultModel, models: [{ id, name }] }`: the models the Gateway route serves with the runner's key (cached 5 min), for pickers. Pass one as a turn's `model` |
 | `POST` | `/v1/sessions` | `{ title?, instructions?, repeats?: { maxWaitingMs?, maxIdenticalFailures? } }` | session (`hs_…`) |
+| `PUT` | `/v1/sessions/:id` | same body as `POST` | `201` session when created, `200` when updated. The caller picks the id (`hs_` + 8–96 of `A-Za-z0-9_-`), so it can keep one durable conversation per person without storing the runner's id. Den's Workbot derives one per member |
 | `POST` | `/v1/sessions/:id/turns` | `{ messageId, prompt, model?, credentials: { modelApiKey?, mcpToken? } }` | `202 { state: accepted \| resumed \| already_present, turn }`. A message sent while another turn runs is accepted and answered next (`turn.status: queued`); only a runaway queue of 20+ returns `429 too_many_queued` |
 | `GET` | `/v1/sessions/:id` | `?messageId=&limit=&outputs=` | `{ session, status: idle \| busy, turns, messages, finalAssistantText }`. `outputs=none` returns each tool result's `outputLength` instead of its output, for callers that poll a long turn |
 | `POST` | `/v1/sessions/:id/abort` | `{ messageId? }` | `{ accepted }`. With a `messageId`, stops only that turn (running or queued); without one, stops the running turn and every follow-up queued behind it |
 | `GET` | `/v1/sessions/:id/files` | | `{ files: [{ path, size, updatedAt }] }` |
 | `GET` | `/v1/sessions/:id/files/content` | `?path=` | file text |
-| `DELETE` | `/v1/sessions/:id` | | `204` |
+| `DELETE` | `/v1/sessions/:id` | | `204` (also deletes its saved files' bytes) |
+| `GET` | `/v1/files/status` | | `{ enabled, kind }` |
+| `POST` | `/v1/sessions/:id/saved-files` | `?name=`, raw body typed by `Content-Type` | `201` saved file (`fl_…`). Send its id in a turn's `attachments` |
+| `GET` | `/v1/sessions/:id/saved-files` | | `{ files }`, newest first, `source: user \| agent` |
+| `GET` | `/v1/sessions/:id/saved-files/:fileId` | | the bytes, with `x-file-name` |
+| `DELETE` | `/v1/sessions/:id/saved-files/:fileId` | | `204` |
 
 Turn status is one of `queued`, `running`, `completed`, `failed`, `interrupted` or `aborted`. `failed` and `interrupted` can be resumed by re-sending the same `messageId` with fresh credentials; `aborted` cannot. The `error` field holds a stable code:
 
@@ -71,6 +77,23 @@ The model sees these tools:
 
 - OpenWork MCP tools as the server names them, e.g. `search_capabilities` and `execute_capability`
 - `list_files`, `read_file`, `write_file`, `edit_file`, `delete_file`
+- With saved files on: `list_saved_files`, `open_file` (brings a kept file back into view), `save_file` (hands a scratch file to the person)
+- With a computer on: `bash` and `look` (see below)
+
+## Computer (optional)
+
+`HEADLESS_COMPUTER=freestyle` (plus `FREESTYLE_API_KEY`) gives each conversation its own Linux VM, from [`@openwork-ee/headless-computer`](../../packages/headless-computer). The runner imports that package only when the computer is on, so a runner without one never loads the provider SDK. There is no agent or server inside the VM; the model calls two tools:
+
+| Tool | What it does |
+|---|---|
+| `bash { description, command, timeout_seconds? }` | `bash -c` in `/workspace`, up to 300 s; returns the exit code and the tail of stdout/stderr. `description` is a plain-language progress line for the person. Longer work: `background <name> '<command>'` |
+| `look { paths }` | Shows up to 4 files from the VM like any tool file: images and PDFs as model input, Office files and text as text |
+
+- **Files:** uploads are copied into `/workspace/files`; files written to `/workspace/out` become saved files after each command. A new version of an out file updates the same saved file (same id, newer `updatedAt`).
+- **Previews:** slide decks, documents and PDFs get page images (LibreOffice, then `pdftoppm`), served at `GET /v1/sessions/:id/saved-files/:fileId/preview` and `/preview/:page`.
+- **Lifecycle:** one VM per session, found by a slug derived from the session id. Paused `HEADLESS_COMPUTER_PAUSE_SECONDS` (300) after the last turn unless a `background` job runs; deleted after `HEADLESS_COMPUTER_KEEP_DAYS` (14) unused, or with the session.
+- **Image:** the snapshot is built from the package's install script: `pnpm --filter @openwork-ee/headless-computer snapshot:build`.
+- Every file under `memory/` in the scratch workspace is shown to the model at the start of each turn, so long-term memory survives older turns dropping out of context
 
 ## Configuration
 
@@ -92,6 +115,12 @@ The model sees these tools:
 | `HEADLESS_MAX_OUTPUT_TOKENS` | `8192` | Output cap per model call: Anthropic `max_tokens`, OpenAI `max_completion_tokens` |
 | `HEADLESS_CONTEXT_CHAR_BUDGET` | `400000` | Older whole turns are dropped past this. A turn that outgrows it alone replaces its oldest large tool outputs with a short note, in blocks of eight |
 | `HEADLESS_SYSTEM_PROMPT` | built-in | |
+| `HEADLESS_FILES` | `off` | Saved files: `off`, `disk`, or `s3`. Off means the file routes answer `files_not_configured` and the file tools are not offered |
+| `HEADLESS_FILES_DIR` | `./data/files` | For `disk`. Put it on the persistent volume |
+| `HEADLESS_S3_ENDPOINT` | | For `s3`: any S3-compatible endpoint, e.g. `https://<account>.r2.cloudflarestorage.com`, `https://s3.us-east-1.amazonaws.com`, or a self-hosted MinIO/RustFS |
+| `HEADLESS_S3_REGION` | `auto` | `auto` for R2; the bucket's region for AWS |
+| `HEADLESS_S3_BUCKET`, `HEADLESS_S3_ACCESS_KEY_ID`, `HEADLESS_S3_SECRET_ACCESS_KEY` | | For `s3` |
+| `HEADLESS_S3_FORCE_PATH_STYLE` | `false` | `true` for MinIO and most self-hosted stores |
 
 ## Run
 

@@ -1,10 +1,13 @@
 import { timingSafeEqual } from "node:crypto"
 import { Hono } from "hono"
+import { streamSSE } from "hono/streaming"
+import type { SessionEvents } from "./events.js"
+import type { SavedFiles } from "./saved-files.js"
 import { z } from "zod"
 import { normalizePath } from "./files.js"
 import type { Runner } from "./runner.js"
 import type { Store } from "./store.js"
-import { ACTIVE, repeatLimitsSchema, turnCredentialsSchema } from "./types.js"
+import { ACTIVE, repeatLimitsSchema, turnCredentialsSchema, type SessionComputer } from "./types.js"
 
 const createSessionBody = z
   .object({
@@ -14,20 +17,31 @@ const createSessionBody = z
   })
   .strict()
 const messageIdSchema = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/)
+/** Caller-chosen session ids share the runner's `hs_` prefix so they can never collide with other ids. */
+const sessionIdSchema = z.string().regex(/^hs_[A-Za-z0-9_-]{8,96}$/)
 const sendBody = z
   .object({
     messageId: messageIdSchema,
-    prompt: z.string().min(1).max(100_000),
+    prompt: z.string().max(100_000),
     model: z.string().min(1).max(256).optional(),
     credentials: turnCredentialsSchema.default({}),
+    /** Ids of saved files (POST /v1/sessions/:id/saved-files) sent with this message. */
+    attachments: z.array(z.string().regex(/^fl_[a-f0-9]{32}$/)).optional(),
   })
   .strict()
+  .refine((body) => body.prompt.trim().length > 0 || (body.attachments?.length ?? 0) > 0, "prompt or attachments is required")
 const abortBody = z.object({ messageId: messageIdSchema.optional() }).strict()
 const readQuery = z.object({
   messageId: messageIdSchema.optional(),
-  limit: z.coerce.number().int().min(1).max(500).default(100),
+  limit: z.coerce.number().int().min(1).max(5_000).default(100),
   /** `none` leaves tool outputs out, for callers that poll a long turn and only need its steps. */
   outputs: z.enum(["full", "none"]).default("full"),
+  /**
+   * Only the newest `turns` turns (before `before`, a messageId) and their messages, so reading a long
+   * conversation costs the same as reading a short one. `limit` still caps the messages returned.
+   */
+  turns: z.coerce.number().int().min(1).max(200).optional(),
+  before: messageIdSchema.optional(),
 })
 
 export type ModelCatalog = { defaultModel: string; models: Array<{ id: string; name: string }> }
@@ -38,6 +52,12 @@ export function createApp(input: {
   apiToken: string
   /** Models a caller may pick per turn; without it only the default is listed. */
   models?: () => Promise<ModelCatalog>
+  /** Live session events; without it the events route is not served. */
+  events?: SessionEvents
+  /** Saved files; without them the file routes answer `files_not_configured`. */
+  files?: SavedFiles
+  /** The per-conversation computers, deleted with their conversation. */
+  computer?: SessionComputer
 }) {
   const { store, runner } = input
   const expected = Buffer.from(input.apiToken)
@@ -69,31 +89,47 @@ export function createApp(input: {
     return c.json(store.createSession(body.data), 201)
   })
 
+  app.put("/v1/sessions/:id", async (c) => {
+    const id = sessionIdSchema.safeParse(c.req.param("id"))
+    if (!id.success) return c.json({ error: "invalid_session_id" }, 400)
+    const body = createSessionBody.safeParse(await c.req.json().catch(() => ({})))
+    if (!body.success) return c.json({ error: "invalid_request", issues: body.error.issues }, 400)
+    const { session, created } = store.putSession(id.data, body.data)
+    return c.json(session, created ? 201 : 200)
+  })
+
   app.get("/v1/sessions/:id", (c) => {
     const session = store.getSession(c.req.param("id"))
     if (!session) return c.json({ error: "unknown_session" }, 404)
     const query = readQuery.safeParse(c.req.query())
     if (!query.success) return c.json({ error: "invalid_request", issues: query.error.issues }, 400)
-    const turns = store.listTurns(session.id)
+    const windowed = query.data.turns ? store.recentTurns(session.id, query.data.turns, query.data.before) : null
+    const turns = windowed ? windowed.turns : store.listTurns(session.id)
     const target = query.data.messageId ?? turns.at(-1)?.messageId
-    const all = store.messages(session.id)
-    const scoped = query.data.messageId ? all.filter((entry) => entry.messageId === query.data.messageId) : all
+    const all = query.data.messageId
+      ? store.turnMessages(session.id, query.data.messageId)
+      : windowed
+        ? store.messagesForTurns(session.id, turns.map((turn) => turn.messageId))
+        : store.messages(session.id)
+    const scoped = all
     const finalAssistantText = all
       .filter((entry) => entry.messageId === target && entry.message.role === "assistant")
       .flatMap((entry) => (entry.message.role === "assistant" && entry.message.text ? [entry.message.text] : []))
       .join("\n\n")
     return c.json({
       session,
-      status: turns.some((turn) => ACTIVE.has(turn.status)) ? "busy" : "idle",
+      status: (windowed ? store.activeTurn(session.id) !== null : turns.some((turn) => ACTIVE.has(turn.status))) ? "busy" : "idle",
       turns,
+      ...(windowed ? { hasEarlier: windowed.hasEarlier } : {}),
       // Image and PDF data stay in the store; callers poll this, so they get counts instead.
       messages: scoped.slice(-query.data.limit).map((entry) => {
-        const { seq, messageId, message } = entry
-        if (message.role !== "tool") return { seq, messageId, ...message }
+        const { seq, messageId, message, createdAt } = entry
+        if (message.role !== "tool") return { seq, messageId, ...(createdAt === undefined ? {} : { createdAt }), ...message }
         const { images, documents, output, ...rest } = message
         return {
           seq,
           messageId,
+          ...(createdAt === undefined ? {} : { createdAt }),
           ...rest,
           ...(query.data.outputs === "full" ? { output } : { outputLength: output.length }),
           ...(images ? { imageCount: images.length } : {}),
@@ -104,17 +140,120 @@ export function createApp(input: {
     })
   })
 
-  app.delete("/v1/sessions/:id", (c) => {
+  // Live events for one session as server-sent events: `changed` (re-read the session) and `text` (model text
+  // as it is written). A comment every 15 seconds keeps idle proxies from closing the stream.
+  app.get("/v1/sessions/:id/events", (c) => {
+    const events = input.events
+    if (!events) return c.json({ error: "not_supported" }, 404)
+    const sessionId = c.req.param("id")
+    return streamSSE(c, async (stream) => {
+      const queue: string[] = []
+      let wake: (() => void) | null = null
+      const unsubscribe = events.subscribe(sessionId, (event) => {
+        queue.push(JSON.stringify(event))
+        wake?.()
+      })
+      stream.onAbort(() => {
+        unsubscribe()
+        wake?.()
+      })
+      try {
+        await stream.writeSSE({ event: "ready", data: "{}" })
+        while (!stream.aborted) {
+          while (queue.length) await stream.writeSSE({ data: queue.shift() ?? "" })
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(resolve, 15_000)
+            wake = () => {
+              clearTimeout(timer)
+              resolve()
+            }
+          })
+          wake = null
+          if (!queue.length && !stream.aborted) await stream.write(": keep-alive\n\n")
+        }
+      } finally {
+        unsubscribe()
+      }
+    })
+  })
+
+  app.delete("/v1/sessions/:id", async (c) => {
     const id = c.req.param("id")
     if (store.activeTurn(id)) return c.json({ error: "session_busy" }, 409)
+    await input.files?.deleteSession(id)
+    await input.computer?.delete(id).catch((error: unknown) => {
+      // Freestyle deletes an unused VM on its own after a while, so a failure here only delays the cleanup.
+      console.error("[headless-runner] computer delete failed", { sessionId: id, error: error instanceof Error ? error.message : "unknown" })
+    })
     return store.deleteSession(id) ? c.body(null, 204) : c.json({ error: "unknown_session" }, 404)
+  })
+
+  // Saved files: uploads a person sends with messages, and files the agent hands back. Bytes live in the
+  // configured blob store (disk or any S3-compatible bucket); no size or type limits are applied here.
+  app.get("/v1/files/status", (c) => c.json({ enabled: Boolean(input.files), kind: input.files?.blobs.kind ?? null }))
+
+  app.post("/v1/sessions/:id/saved-files", async (c) => {
+    const files = input.files
+    if (!files) return c.json({ error: "files_not_configured" }, 501)
+    const sessionId = c.req.param("id")
+    if (!store.getSession(sessionId)) return c.json({ error: "unknown_session" }, 404)
+    const name = c.req.query("name")?.trim()
+    if (!name) return c.json({ error: "invalid_request", message: "name is required" }, 400)
+    const source = c.req.query("source") === "agent" ? "agent" : "user"
+    const bytes = new Uint8Array(await c.req.arrayBuffer())
+    const file = await files.add(sessionId, { name, mediaType: c.req.header("content-type"), bytes, source })
+    return c.json(file, 201)
+  })
+
+  app.get("/v1/sessions/:id/saved-files", (c) => {
+    if (!input.files) return c.json({ error: "files_not_configured" }, 501)
+    if (!store.getSession(c.req.param("id"))) return c.json({ error: "unknown_session" }, 404)
+    return c.json({ files: input.files.list(c.req.param("id")) })
+  })
+
+  app.get("/v1/sessions/:id/saved-files/:fileId", async (c) => {
+    if (!input.files) return c.json({ error: "files_not_configured" }, 501)
+    const found = await input.files.read(c.req.param("id"), c.req.param("fileId"))
+    if (!found) return c.json({ error: "unknown_file" }, 404)
+    return c.body(found.bytes, 200, {
+      "content-type": found.file.mediaType,
+      "content-length": String(found.bytes.byteLength),
+      "x-file-name": encodeURIComponent(found.file.name),
+    })
+  })
+
+  app.get("/v1/sessions/:id/saved-files/:fileId/preview", async (c) => {
+    if (!input.files) return c.json({ error: "files_not_configured" }, 501)
+    const sessionId = c.req.param("id")
+    const fileId = c.req.param("fileId")
+    let manifest = await input.files.readPreview(sessionId, fileId)
+    // No preview yet (an older file, or one the person sent): render it now on the conversation's computer.
+    if (!manifest && input.computer) {
+      await input.computer.previewSavedFile(sessionId, fileId).catch(() => undefined)
+      manifest = await input.files.readPreview(sessionId, fileId)
+    }
+    return manifest ? c.json(manifest) : c.json({ error: "no_preview" }, 404)
+  })
+
+  app.get("/v1/sessions/:id/saved-files/:fileId/preview/:page", async (c) => {
+    if (!input.files) return c.json({ error: "files_not_configured" }, 501)
+    const page = Number(c.req.param("page"))
+    if (!Number.isInteger(page) || page < 1 || page > 1_000) return c.json({ error: "unknown_page" }, 404)
+    const png = await input.files.readPreviewPage(c.req.param("id"), c.req.param("fileId"), page)
+    if (!png) return c.json({ error: "unknown_page" }, 404)
+    return c.body(png, 200, { "content-type": "image/png", "content-length": String(png.byteLength) })
+  })
+
+  app.delete("/v1/sessions/:id/saved-files/:fileId", async (c) => {
+    if (!input.files) return c.json({ error: "files_not_configured" }, 501)
+    return (await input.files.delete(c.req.param("id"), c.req.param("fileId"))) ? c.body(null, 204) : c.json({ error: "unknown_file" }, 404)
   })
 
   app.post("/v1/sessions/:id/turns", async (c) => {
     const body = sendBody.safeParse(await c.req.json().catch(() => null))
     if (!body.success) return c.json({ error: "invalid_request", issues: body.error.issues }, 400)
     const result = runner.send({ sessionId: c.req.param("id"), ...body.data })
-    if (!result.ok) return c.json({ error: result.error }, result.error === "unknown_session" ? 404 : 429)
+    if (!result.ok) return c.json({ error: result.error }, result.error === "unknown_session" ? 404 : result.error === "unknown_file" ? 400 : 429)
     return c.json({ state: result.state, turn: result.turn }, 202)
   })
 

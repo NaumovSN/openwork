@@ -1,5 +1,6 @@
 import type { RemoteSessionAction } from "../mcp/remote-session-capabilities.js"
 import { organizationHasCapability } from "../organization-capabilities.js"
+import { stepLabel } from "../headless-runner/client.js"
 import {
   createHeadlessRunnerClient,
   defaultHeadlessRunnerDeps,
@@ -35,30 +36,7 @@ export function slackRuntimeForOrganization(
   return enabled && headlessRunnerConfig(env) !== null ? "headless" : "web"
 }
 
-/** A short, human label for one tool step in Slack's task timeline. */
-export function stepLabel(name: string, input: Record<string, unknown> = {}) {
-  const target = typeof input.name === "string" ? input.name.split(/[:/]/).pop()?.replaceAll("_", " ") : undefined
-  const path = typeof input.path === "string" ? input.path : undefined
-  switch (name) {
-    case "search_capabilities":
-      return "Finding the right tool"
-    case "execute_capability":
-      return target ? `Using ${target}` : "Using your connections"
-    case "execute_capability_script":
-      return "Running a multi-step action"
-    case "list_skills":
-    case "get_skill":
-      return "Reading skills"
-    case "write_file":
-    case "edit_file":
-      return path ? `Writing ${path}` : "Writing a draft"
-    case "read_file":
-    case "list_files":
-      return path ? `Reading ${path}` : "Reading notes"
-    default:
-      return name.replaceAll("_", " ")
-  }
-}
+export { stepLabel }
 
 /**
  * Slack runs remember which run each minted token belongs to, so work the run

@@ -1,16 +1,19 @@
 import { createHash } from "node:crypto"
+import type { SessionEvents } from "./events.js"
 import { FILE_TOOLS, FILE_TOOL_NAMES, runFileTool } from "./files.js"
 import type { McpConnector, ToolSession } from "./mcp.js"
 import { ModelError, type ModelClient } from "./model.js"
 import type { Store, StoredMessage, Turn } from "./store.js"
-import { withoutAttachments } from "./tool-files.js"
-import { RESUMABLE, type Message, type RepeatLimits, type ToolResult, type TurnCredentials } from "./types.js"
+import { asAttachment, runSavedFileTool, SAVED_FILE_TOOL_NAMES, SAVED_FILE_TOOLS, type SavedFiles } from "./saved-files.js"
+import { formatBytes, withoutAttachments } from "./tool-files.js"
+import { RESUMABLE, type Attachment, type Message, type RepeatLimits, type SessionComputer, type ToolResult, type TurnCredentials } from "./types.js"
 
 export const DEFAULT_SYSTEM_PROMPT = `You are OpenWork, an assistant running in the cloud on behalf of one person. There is no UI and nobody can approve actions while you work.
 
 - Use the OpenWork tools (for example search_capabilities, then execute_capability) to reach the person's connected apps and skills.
 - Prefer reading and drafting. Only change data in the person's apps (send, post, create, update, delete) when their message explicitly asks for that exact action.
 - You have a small scratch workspace (list_files, read_file, write_file, edit_file, delete_file) that persists for this conversation. Use it for notes and drafts.
+- Files under memory/ are your long-term memory for this conversation. They are shown to you at the start of every turn, while older messages eventually drop out of view. When you learn something worth keeping (who the person is, their preferences, ongoing work, decisions, people and projects), save it there with write_file or edit_file, one topic per file (for example memory/about-me.md, memory/projects.md). Keep them tidy and current: update or remove what is no longer true.
 - On a long task the person may only see your final message, so make it a complete answer on its own.
 - Reply concisely in Markdown.`
 
@@ -43,6 +46,8 @@ const abortableSleep = (ms: number, signal: AbortSignal) =>
     signal.addEventListener("abort", onAbort, { once: true })
   })
 
+const FILES_PROMPT = `- Files the person sends are kept, and so are files you save for them. You see a file's content in the message it was sent with; later, list_saved_files and open_file bring it back. To give them a file (a draft, a table, notes), write it with write_file, then call save_file; they can download it from their Files.`
+
 export type RunnerOptions = {
   store: Store
   model: ModelClient
@@ -60,6 +65,12 @@ export type RunnerOptions = {
     contextCharBudget: number
   }
   systemPrompt?: string
+  /** Live events for callers that watch a session; turns run the same without it. */
+  events?: SessionEvents
+  /** Saved files; without them, attachments are refused and the file tools are not offered. */
+  files?: SavedFiles
+  /** A Linux computer per conversation; without it the bash and look tools are not offered. */
+  computer?: SessionComputer
   now?: () => number
   /** Waits between repeated steps; tests pass a fake. Rejects with the signal's reason when the turn is stopped. */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>
@@ -71,10 +82,12 @@ export type SendInput = {
   prompt: string
   model?: string
   credentials: TurnCredentials
+  /** Ids of saved files sent with this message. */
+  attachments?: string[]
 }
 export type SendResult =
   | { ok: true; state: "accepted" | "resumed" | "already_present"; turn: Turn }
-  | { ok: false; error: "unknown_session" | "too_many_queued" }
+  | { ok: false; error: "unknown_session" | "too_many_queued" | "unknown_file" }
 
 /** Follow-ups a person can stack behind a running turn in one conversation. */
 export const MAX_QUEUED_PER_SESSION = 20
@@ -91,6 +104,27 @@ const TRIM_MIN_CHARS = 1_000
  * hitting in between.
  */
 const TRIM_BLOCK = 8
+
+/** In earlier turns, a tool output longer than this is cut to its start: the conversation matters more than old raw data. */
+export const PAST_TOOL_OUTPUT_CHARS = 600
+
+/** An earlier turn as the model sees it: attachments dropped and long tool outputs cut to their start. */
+function compactPastTurn(message: Message): Message {
+  if (message.role === "user" && message.attachments?.length) return { role: "user", text: `${message.text}\n${attachmentNote(message.attachments)}` }
+  const light = withoutAttachments(message)
+  if (light.role !== "tool" || light.output.length <= PAST_TOOL_OUTPUT_CHARS) return light
+  return {
+    ...light,
+    output: `${light.output.slice(0, PAST_TOOL_OUTPUT_CHARS)}\n[Earlier result cut from ${light.output.length} characters. Run the tool again if you need the rest.]`,
+  }
+}
+
+/** How an earlier message's files appear once the turn that sent them is over. */
+export function attachmentNote(attachments: Attachment[]) {
+  return attachments
+    .map((file) => `[Sent with this message: ${file.name} (${file.mediaType}, ${formatBytes(file.size)}), id ${file.id}. Use open_file to see it again.]`)
+    .join("\n")
+}
 
 const messageSize = (message: Message) => (message.role === "tool" ? message.output.length + 200 : JSON.stringify(message).length)
 
@@ -130,14 +164,23 @@ export function buildContext(messages: StoredMessage[], currentMessageId: string
     const isCurrent = turn[0].messageId === currentMessageId
     const entries = isCurrent
       ? fitTurn(turn.map((entry) => entry.message), budget)
-      : // Images and PDFs are large; the model sees them in the turn that fetched them, earlier turns keep the text.
-        turn.map(({ message }) => withoutAttachments(message))
+      : // Images, PDFs and long raw outputs belong to the turn that fetched them; earlier turns keep the conversation.
+        turn.map(({ message }) => compactPastTurn(message))
     const size = entries.reduce((sum, message) => sum + messageSize(message), 0)
     if (!isCurrent && used + size > budget) break
     kept.unshift(entries)
     used += size
   }
   return kept.flat()
+}
+
+/** The memory/ folder, shown to the model at the start of every turn. */
+export function memorySection(files: Array<{ path: string; content: string }>) {
+  if (files.length === 0) return ""
+  return [
+    "# Your memory (files under memory/)",
+    ...files.map((file) => `## ${file.path}\n${file.content.trim() || "(empty)"}`),
+  ].join("\n\n")
 }
 
 /** Tool calls whose result was never recorded (process crashed or turn was aborted mid-call). */
@@ -171,7 +214,13 @@ export class Runner {
       store.setTurnStatus(input.sessionId, input.messageId, "queued")
       state = "resumed"
     } else {
-      store.admitTurn({ ...input, model: input.model ?? null })
+      const attachments: Attachment[] = []
+      for (const id of input.attachments ?? []) {
+        const saved = store.getSavedFile(input.sessionId, id)
+        if (!saved) return { ok: false, error: "unknown_file" }
+        attachments.push(asAttachment(saved.file))
+      }
+      store.admitTurn({ sessionId: input.sessionId, messageId: input.messageId, prompt: input.prompt, model: input.model ?? null, attachments })
       state = "accepted"
     }
     this.credentials.set(`${input.sessionId}:${input.messageId}`, input.credentials)
@@ -242,6 +291,7 @@ export class Runner {
 
   private async runTurn({ sessionId, messageId }: Job, controller: AbortController) {
     const { store, limits } = this.options
+    const events = this.options.events
     const key = `${sessionId}:${messageId}`
     const credentials = this.credentials.get(key) ?? {}
     this.credentials.delete(key)
@@ -262,8 +312,7 @@ export class Runner {
     const sleep = this.options.sleep ?? abortableSleep
     console.log(`[headless-runner] turn started ${JSON.stringify({ sessionId, messageId })}`)
 
-    const turnMessages = () =>
-      store.messages(sessionId).filter((entry) => entry.messageId === messageId).map((entry) => entry.message)
+    const turnMessages = () => store.turnMessages(sessionId, messageId).map((entry) => entry.message)
     const closeUnanswered = (reason: string) => {
       for (const call of unansweredCalls(turnMessages())) {
         store.appendMessage(sessionId, messageId, { role: "tool", callId: call.id, name: call.name, output: reason, isError: true })
@@ -298,16 +347,64 @@ export class Runner {
       const session = store.getSession(sessionId)
       const turn = store.getTurn(sessionId, messageId)
       const repeatLimits = { ...DEFAULT_REPEAT_LIMITS, ...session?.repeats }
+      const computer = this.options.computer
+      // Wake the computer while the model thinks, when this turn is likely to need it.
+      const sentFiles = turnMessages().some((message) => message.role === "user" && (message.attachments?.length ?? 0) > 0)
+      if (computer && (sentFiles || computer.known(sessionId))) computer.prewarm(sessionId)
       const baseSystem = [
         this.options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
+        this.options.files ? FILES_PROMPT : "",
+        computer?.prompt ?? "",
         tools ? "" : "No OpenWork connection is available in this conversation, so connected apps cannot be reached.",
         session?.instructions ?? "",
+        memorySection(store.memoryFiles(sessionId)),
         `Current time: ${new Date(this.options.now?.() ?? Date.now()).toISOString()}`,
       ]
         .filter(Boolean)
         .join("\n\n")
-      const toolSpecs = [...FILE_TOOLS, ...(tools?.tools ?? [])]
+      const files = this.options.files
+      const toolSpecs = [...FILE_TOOLS, ...(files ? SAVED_FILE_TOOLS : []), ...(computer?.tools ?? []), ...(tools?.tools ?? [])]
+      // The current turn's files, read once and shown to the model on every step of this turn.
+      const expanded = new Map<string, Message>()
+      const withFiles = async (messages: Message[]) =>
+        Promise.all(
+          messages.map(async (message) => {
+            if (message.role !== "user" || !message.attachments?.length) return message
+            if (!files) return { role: "user" as const, text: `${message.text}\n${attachmentNote(message.attachments)}` }
+            const key = message.attachments.map((file) => file.id).join(",")
+            const cached = expanded.get(key)
+            if (cached) return cached
+            const texts: string[] = []
+            const images: NonNullable<Extract<Message, { role: "user" }>["images"]> = []
+            const documents: NonNullable<Extract<Message, { role: "user" }>["documents"]> = []
+            for (const attachment of message.attachments) {
+              const opened = await files.reading(sessionId, attachment.id).catch(() => null)
+              if (!opened) {
+                texts.push(`[${attachment.name} is no longer available.]`)
+                continue
+              }
+              const unreadable = !opened.reading.image && !opened.reading.document && opened.reading.text.startsWith("[Can't open")
+              texts.push(
+                computer && unreadable
+                  ? `[Attached: ${attachment.name}, id ${attachment.id}. It is on your computer in /workspace/files; use bash to work with it and look to see the results.]`
+                  : `[Attached: ${attachment.name}, id ${attachment.id}]\n${opened.reading.text}`,
+              )
+              if (opened.reading.image) images.push(opened.reading.image)
+              if (opened.reading.document) documents.push(opened.reading.document)
+            }
+            const result: Message = {
+              role: "user",
+              text: [message.text, ...texts].join("\n\n"),
+              ...(images.length ? { images } : {}),
+              ...(documents.length ? { documents } : {}),
+            }
+            expanded.set(key, result)
+            return result
+          }),
+        )
 
+      // The model call index within this turn, counting steps an interrupted run already stored.
+      let modelStep = turnMessages().filter((message) => message.role === "assistant").length
       for (let step = 0; step < limits.maxSteps; step += 1) {
         signal.throwIfAborted()
         if (waitBeforeNextStep) await sleep(waitBeforeNextStep, signal)
@@ -317,14 +414,23 @@ export class Runner {
           store.setTurnStatus(sessionId, messageId, "interrupted", "credentials_refresh")
           return
         }
+        const streamStep = modelStep
         const result = await this.options.model.complete({
           system: askedToStop ? `${baseSystem}\n\n${STOP_REPEATING_INSTRUCTION}` : baseSystem,
-          messages: buildContext(store.messages(sessionId), messageId, limits.contextCharBudget),
+          messages: await withFiles(buildContext(store.contextMessages(sessionId, messageId, limits.contextCharBudget), messageId, limits.contextCharBudget)),
           tools: toolSpecs,
           model: turn?.model ?? this.options.defaultModel,
           apiKey,
           signal,
+          ...(events
+            ? {
+                onText: (delta: string) => events.emit(sessionId, { type: "text", messageId, step: streamStep, delta }),
+                onReset: () => events.emit(sessionId, { type: "text", messageId, step: streamStep, delta: "", reset: true }),
+                onTool: (tool: string) => events.emit(sessionId, { type: "tool", messageId, step: streamStep, tool }),
+              }
+            : {}),
         })
+        modelStep += 1
         steps += 1
         toolCalls += result.toolCalls.length
         store.addUsage(sessionId, messageId, result.usage)
@@ -340,6 +446,16 @@ export class Runner {
             ? { output: call.inputError, isError: true }
             : FILE_TOOL_NAMES.has(call.name)
               ? runFileTool(store, sessionId, call.name, call.input)
+              : files && SAVED_FILE_TOOL_NAMES.has(call.name)
+                ? await runSavedFileTool(files, store, sessionId, call.name, call.input).catch((error: unknown) => ({
+                    output: `File tool failed: ${error instanceof Error ? error.message : "unknown error"}`,
+                    isError: true,
+                  }))
+              : computer?.toolNames.has(call.name)
+                ? await computer.run(sessionId, call.name, call.input).catch((error: unknown) => ({
+                    output: `The computer didn't respond: ${error instanceof Error ? error.message : "unknown error"}. Its outcome is unknown; check before repeating it.`,
+                    isError: true,
+                  }))
               : tools
                 ? await tools.call(call.name, call.input, signal).catch((error: unknown) => ({
                     output: `Tool call failed: ${error instanceof Error ? error.message : "unknown error"}`,
@@ -396,6 +512,7 @@ export class Runner {
     } finally {
       clearTimeout(timeout)
       await tools?.close()
+      this.options.computer?.release(sessionId)
       // One line per turn, never content or credentials: how it ended, how long it ran, and what it cost.
       const turn = store.getTurn(sessionId, messageId)
       // Later turns never see a finished turn's images and PDFs, so their bytes are not kept on the small disk.

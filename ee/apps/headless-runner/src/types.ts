@@ -1,5 +1,9 @@
 import { z } from "zod"
 
+/** A saved file as messages refer to it. */
+export const attachmentSchema = z.object({ id: z.string(), name: z.string(), mediaType: z.string(), size: z.number() })
+export type Attachment = z.infer<typeof attachmentSchema>
+
 export const toolCallSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -11,7 +15,15 @@ export type ToolCall = z.infer<typeof toolCallSchema>
 
 /** Engine-neutral transcript entry. Stored as JSON, one row per entry. */
 export const messageSchema = z.discriminatedUnion("role", [
-  z.object({ role: z.literal("user"), text: z.string() }),
+  z.object({
+    role: z.literal("user"),
+    text: z.string(),
+    /** Saved files sent with this message. Their content reaches the model in the turn they were sent. */
+    attachments: z.array(z.lazy(() => attachmentSchema)).optional(),
+    /** Only while a turn runs, never stored: attachment images and PDFs passed to the model. */
+    images: z.array(z.object({ mediaType: z.string(), data: z.string() })).optional(),
+    documents: z.array(z.object({ mediaType: z.literal("application/pdf"), data: z.string(), name: z.string() })).optional(),
+  }),
   z.object({ role: z.literal("assistant"), text: z.string(), toolCalls: z.array(toolCallSchema) }),
   z.object({
     role: z.literal("tool"),
@@ -71,3 +83,22 @@ export const turnCredentialsSchema = z
   })
   .strict()
 export type TurnCredentials = z.infer<typeof turnCredentialsSchema>
+
+/**
+ * An optional Linux computer per conversation (`@openwork-ee/headless-computer`), loaded only when configured.
+ * The runner offers its tools and prompt, and tells it when a conversation starts, goes quiet, or is deleted.
+ */
+export type SessionComputer = {
+  prompt: string
+  tools: ToolSpec[]
+  toolNames: ReadonlySet<string>
+  /** The snapshot new computers boot from, for logs. */
+  image: string
+  run(sessionId: string, name: string, input: Record<string, unknown>): Promise<ToolResult>
+  known(sessionId: string): boolean
+  prewarm(sessionId: string): void
+  release(sessionId: string): void
+  delete(sessionId: string): Promise<void>
+  /** Renders page images for a kept slide deck, document or PDF that has none yet. */
+  previewSavedFile(sessionId: string, fileId: string): Promise<void>
+}
