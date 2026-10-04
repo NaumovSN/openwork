@@ -86,8 +86,12 @@ jobs:
         run: pnpm --filter @openwork-ee/headless-runner typecheck
       - name: Boot the app provider tree
         run: pnpm test:boot
-      - name: Run core PR journeys
+      - name: Run core unit tests
         run: pnpm --dir evals run test:core
+      # About 20s. Runs on every PR so lint and ratchet baselines cannot drift;
+      # it used to run only nightly, and debt piled up unnoticed.
+      - name: Check the test framework (lint and ratchets)
+        run: pnpm evals:check
 
   openwork-tests-build:
     name: Build and boot the desktop app
@@ -252,11 +256,23 @@ jobs:
       - name: Setup tests
         id: setup
         uses: ./.github/actions/setup-tests
+      # The test framework and its PR lane run on Linux only: some specs boot a
+      # local Den, which needs MySQL in Docker, and the desktop's bundled
+      # OpenCode binary. macOS keeps the platform builds below.
       - name: Run test-framework checks
-        if: (success() || failure()) && steps.setup.outcome == 'success'
+        if: (success() || failure()) && steps.setup.outcome == 'success' && runner.os == 'Linux'
         run: pnpm evals:check
+      - name: Start MySQL and prepare the bundled OpenCode binary
+        id: lane
+        if: (success() || failure()) && steps.setup.outcome == 'success' && runner.os == 'Linux'
+        run: |
+          pnpm --filter @openwork/types build
+          pnpm --filter @openwork-ee/den-db build
+          pnpm --filter @openwork/email build
+          pnpm dev:den:mysql
+          pnpm --filter @openwork/desktop prepare:sidecar
       - name: Run all PR specs
-        if: (success() || failure()) && steps.setup.outcome == 'success'
+        if: (success() || failure()) && steps.lane.outcome == 'success'
         run: pnpm sdk:build && pnpm evals:pr
       - name: Run engine smoke tests
         if: (success() || failure()) && steps.setup.outcome == 'success'
