@@ -3,10 +3,13 @@ name: Freestyle world check
 # Proves the e2e/preview world end to end and prints a timing table:
 # docs, app UI, den-api, Den web and server changes on top of dev (or a branch
 # passed as base), each built (reused, fast or full path) and exercised with the
-# core journey. Run it after changing the world, HOT_RULES or the warm image.
+# core journey. Runs every night on dev, and by hand after changing the world,
+# HOT_RULES or the warm image.
 # Locally: node evals/scripts/check-freestyle-world.ts [--base <sha>]
 
 on:
+  schedule:
+    - cron: "30 9 * * *" # 02:30 Pacific, after the day's merges
   workflow_dispatch:
     inputs:
       base:
