@@ -22,7 +22,7 @@ const test = spec.world(async (seed, ctx) => {
   resources: { surfaces: ["web"], services: ["den", "mock"] },
 });
 
-for (const scenario of ["cancel", "uncertain", "refresh", "stale-target"]) {
+for (const scenario of ["cancel", "uncertain", "refresh", "stale-target", "deadline"]) {
   test(`real member key dialog recovers from ${scenario} without disclosing a candidate`, async ({ world, user, probe, evidence }) => {
     const { id, second } = world;
     const person = user.on(world.web);
@@ -54,6 +54,24 @@ for (const scenario of ["cancel", "uncertain", "refresh", "stale-target"]) {
       const stored = await probe.api(world.den.members.sam, "/v1/mcp-connections?scope=usable");
       expect(inventoryResponse.parse(stored.body).connections.find(row => row.id === id)?.connectedForMe).toBe(true);
       await probe.eventually(async () => (await world.proxy.requestLog()).some(row => row.path.startsWith("/v1/mcp-connections?scope=usable") && row.faulted && row.status === 500), { within: 15_000, until: Boolean, label: "actual failed post-save refresh" });
+    } else if (scenario === "deadline") {
+      await world.proxy.faults.latency(endpoint, 45000, { times: 1 });
+      const startedAt = Date.now();
+      await person.click({ role: "button", label: "Save key" });
+      await probe.eventually(async () => (await page.dom('input[name="member-mcp-api-key"]:disabled')).elements.length === 1, { within: 5000, until: Boolean, label: "hanging request is visibly pending" });
+      await person.see({ role: "alert" }, { text: /Check the connection status before retrying/, timeoutMs: 20000 });
+      const elapsedMs = Date.now() - startedAt;
+      expect(elapsedMs).toBeGreaterThanOrEqual(14000);
+      expect(elapsedMs).toBeLessThan(21000);
+      expect((await page.dom('input[name="member-mcp-api-key"]:disabled')).elements).toHaveLength(0);
+      expect(await page.credentialInputState('input[name="member-mcp-api-key"]', candidate)).toMatchObject({ empty: true, bodyContainsSecret: false, urlContainsSecret: false, storageContainsSecret: false });
+      await probe.eventually(async () => (await world.proxy.requestLog()).some(row => row.path === endpoint && row.faulted && row.status === 499), { within: 5000, until: Boolean, label: "deadline actually canceled the delayed request" });
+      await person.type({ label: "Key recovery A key" }, "synthetic-timeout-retry-candidate", { sensitive: true });
+      await person.click({ role: "button", label: "Save key" });
+      await person.see({ role: "heading", label: "Key recovery A: key saved" }, { timeoutMs: 15000 });
+      const stored = await probe.api(world.den.members.sam, "/v1/mcp-connections?scope=usable");
+      expect(inventoryResponse.parse(stored.body).connections.find(row => row.id === id)?.connectedForMe).toBe(true);
+      evidence.recordAssertionEvidence("Hanging save has a finite caller-preserving deadline", `The real delayed request became uncertain after ${elapsedMs}ms, its input was enabled and empty, the proxy observed cancellation, and the next real save succeeded. No candidate or response body is retained.`, true);
     } else {
       if (!second) throw new Error("Missing second owned connection");
       await world.proxy.faults.latency(endpoint, 2500, { times: 1 });
