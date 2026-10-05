@@ -2612,7 +2612,6 @@ export type ExternalMcpConnectionResponse = {
   url: string;
   authType: "oauth" | "apikey" | "none";
   credentialMode: "shared" | "per_member";
-  apiKeyAuthScheme: "bearer" | "token";
   exposeDirectly: boolean;
   connected: boolean;
   connectedAt: string | null;
@@ -2877,7 +2876,6 @@ export type ExternalMcpConnectionCreatedResponse = {
   url: string;
   authType: "oauth" | "apikey" | "none";
   credentialMode: "shared" | "per_member";
-  apiKeyAuthScheme: "bearer" | "token";
   exposeDirectly: boolean;
   connected: boolean;
   connectedAt: string | null;
@@ -2949,7 +2947,6 @@ export type ExternalMcpConnectionUpdatedResponse = {
   url: string;
   authType: "oauth" | "apikey" | "none";
   credentialMode: "shared" | "per_member";
-  apiKeyAuthScheme: "bearer" | "token";
   exposeDirectly: boolean;
   connected: boolean;
   connectedAt: string | null;
@@ -3008,7 +3005,6 @@ export type ExternalMcpConnectionByKeyUpsertInput = {
   credentialMode?: "shared" | "per_member";
   exposeDirectly?: boolean;
   apiKey?: string;
-  apiKeyAuthScheme?: "bearer" | "token";
   oauthClient?: {
     clientId: string;
     clientSecret?: string;
@@ -3509,7 +3505,20 @@ export type GithubPluginMcpImportResponse = {
       sourcePath: string;
     }>;
     marketplaceId: string | null;
+    mode: "created" | "updated";
     plugin: PluginArchPlugin;
+    /**
+     * Skills and MCP servers imported earlier that were deleted upstream; they are removed from the plugin and archived, not deleted.
+     */
+    removed: Array<{
+      /**
+       * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
+       */
+      configObjectId: string;
+      name: string;
+      objectType: "mcp" | "skill";
+      sourcePath: string;
+    }>;
     skipped: Array<{
       name: string;
       reason:
@@ -3523,6 +3532,18 @@ export type GithubPluginMcpImportResponse = {
     skippedSkills: Array<{
       name: string;
       reason: "invalid_skill";
+      sourcePath: string;
+    }>;
+    unchanged: Array<{
+      name: string;
+      objectType: "mcp" | "skill";
+    }>;
+    updatedSkills: Array<{
+      /**
+       * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
+       */
+      configObjectId: string;
+      name: string;
       sourcePath: string;
     }>;
   };
@@ -21239,7 +21260,6 @@ export type PostV1McpConnectionsData = {
         credentialMode?: "shared" | "per_member";
         exposeDirectly?: boolean;
         apiKey?: string;
-        apiKeyAuthScheme?: "bearer" | "token";
         oauthClient?: {
           clientId: string;
           clientSecret?: string;
@@ -21703,7 +21723,6 @@ export type PutV1McpConnectionsByConnectionIdData = {
     credentialMode: "shared" | "per_member";
     exposeDirectly?: boolean;
     apiKey?: string;
-    apiKeyAuthScheme?: "bearer" | "token";
     oauthClient?: {
       clientId: string;
       clientSecret?: string;
