@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUp, Check, ChevronRight, FileText, Lock } from "lucide-react";
+import { ArrowUp, ChevronRight, FileText, Lock } from "lucide-react";
 import { useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type ReactNode } from "react";
 import { setWorkbotHost, workbotHost, type WorkbotHost } from "./host";
 import { OpenWorkMark } from "./mark";
@@ -761,7 +761,6 @@ function LedgerLine({ row }: { row: LedgerRow }) {
       <span className="flex h-6 items-center gap-2">
         <StepIcon step={row.step} working={row.state === "running"} />
         <span className={row.state === "running" ? "workbot-shimmer truncate text-[13px] leading-4" : "truncate text-[13px] leading-4 text-[var(--wb-faint)]"}>{row.label}</span>
-        {row.state === "done" ? <Check size={12} strokeWidth={2} aria-label="done" className="shrink-0 text-[var(--wb-faint)]" /> : null}
         {row.state === "error" ? <span className="shrink-0 text-[12px] leading-4 text-[var(--wb-faint)]">didn&apos;t work</span> : null}
         {elapsed >= 1_000 ? <span className="shrink-0 text-[12px] leading-4 tabular-nums text-[var(--wb-faint)]">{durationLabel(elapsed)}</span> : null}
       </span>
@@ -777,7 +776,7 @@ function LedgerLine({ row }: { row: LedgerRow }) {
 
 /**
  * A group while Workbot works on it: its last few steps, the current one shimmering with its time, the ones
- * before it quiet with a check. It stays put between steps (a longer pause shows the typing bubble) so the list
+ * before it quiet. It stays put between steps (a longer pause shows the typing bubble) so the list
  * never collapses and reopens (DESIGN P11, T1).
  */
 function LiveLedger({ steps, thinking, starting = null }: { steps: WorkbotStep[]; thinking: boolean; starting?: LiveText["working"] | null }) {
