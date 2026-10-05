@@ -8,6 +8,16 @@ const ROUTING_FIELDS = ["provider", "models", "route", "transforms", "usage", "p
 const RESPONSES_ROUTING_FIELDS = ROUTING_FIELDS.filter((field) => field !== "reasoning")
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value) }
 
+const IMAGE_OMITTED = "[An image was omitted: Auto cannot view images right now.]"
+/** Replaces every image part, in either protocol's message shape, with a short note the model can read. */
+function withoutImages(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutImages)
+  if (!record(value)) return value
+  if (value.type === "input_image") return { type: "input_text", text: IMAGE_OMITTED }
+  if (value.type === "image_url") return { type: "text", text: IMAGE_OMITTED }
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, withoutImages(entry)]))
+}
+
 /**
  * Forward the native SDK's stateless input without translating its tool catalog or continuation items.
  * Older clients keep Chat Completions. Both protocols use the dedicated model and report usage for allowance settlement.
@@ -28,14 +38,16 @@ export function prepareFreeRequest(value: unknown, config: AutoConfig, protocol:
       || value.tools !== undefined && (!Array.isArray(value.tools) || value.tools.some((tool) => !record(tool) || tool.type !== "function"))) {
       throw new FreeRequestError(400, "unsupported_free_inference_input", "Auto supports stateless function calling. Nothing was sent.")
     }
-    const request = Object.fromEntries(Object.entries(value).filter(([key]) => !RESPONSES_ROUTING_FIELDS.includes(key)))
+    const source = config.imageInput ? value : { ...value, input: withoutImages(value.input) }
+    const request = Object.fromEntries(Object.entries(source).filter(([key]) => !RESPONSES_ROUTING_FIELDS.includes(key)))
     return { protocol, stream: value.stream === true, body: JSON.stringify({ reasoning: { effort: "none" }, ...request,
       model: config.upstreamModel, stream: value.stream === true, store: false }) }
   }
   if (!Array.isArray(value.messages) || value.messages.length === 0) {
     throw new FreeRequestError(400, "unsupported_free_inference_input", "Auto needs at least one message. Nothing was sent.")
   }
-  const request = Object.fromEntries(Object.entries(value).filter(([key]) => !ROUTING_FIELDS.includes(key) && key !== "stream_options"))
+  const source = config.imageInput ? value : { ...value, messages: withoutImages(value.messages) }
+  const request = Object.fromEntries(Object.entries(source).filter(([key]) => !ROUTING_FIELDS.includes(key) && key !== "stream_options"))
   const stream = value.stream === true
   const outputLimit = value.max_completion_tokens ?? value.max_tokens
   delete request.max_tokens

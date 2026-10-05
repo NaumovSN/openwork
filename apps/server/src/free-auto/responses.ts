@@ -34,6 +34,7 @@ export function parseStatus(payload: unknown, base: DesktopFreeAccessStatus): De
     ...(Array.isArray(payload.catalog) ? { catalog: payload.catalog.filter(isRecommendation) } : {}),
     // Den's organization Auto pin travels with status so an admin unpin reaches native pickers.
     ...(typeof payload.defaultPinned === "boolean" ? { defaultPinned: payload.defaultPinned } : {}),
+    ...(typeof payload.imageInput === "boolean" ? { imageInput: payload.imageInput } : {}),
   };
 }
 // `anonymous_new_identity_capped` came from gateways that capped new machines per IP; it reads as the free limit.

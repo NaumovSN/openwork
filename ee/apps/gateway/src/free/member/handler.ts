@@ -53,7 +53,8 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       }
       if (method === "GET" && path === MEMBER_FREE_STATUS_PATH) {
         const status: DesktopFreeAccessStatus = { currentVersion: "", minimumVersion: null, providerID: DESKTOP_FREE_PROVIDER_ID,
-          modelID: DESKTOP_FREE_MODEL_ID, catalog: managedModelCatalog(), defaultPinned: await dependencies.defaultPinned(principal), ...await store.read(principal) }
+          modelID: DESKTOP_FREE_MODEL_ID, catalog: managedModelCatalog(), defaultPinned: await dependencies.defaultPinned(principal), imageInput: config.imageInput,
+          ...await store.read(principal) }
         return c.json(status, 200, { "cache-control": "no-store" })
       }
       if (method !== "POST" || (path !== MEMBER_FREE_CHAT_PATH && path !== MEMBER_FREE_RESPONSES_PATH)) return freeError(404, "not_found", "Only Auto is available without an OpenWork Models subscription.")

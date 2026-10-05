@@ -121,7 +121,7 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     const status: DesktopFreeAccessStatus = { state: "unavailable", code: "anonymous_unavailable", currentVersion: auth.currentVersion,
       // Desktops up to v0.18.55 refuse a ready guest status without a minimum; with none configured, this build is it.
       minimumVersion: auth.minimumVersion ?? (auth.currentVersion || null), providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID,
-      allowance: null, catalog: managedModelCatalog(), defaultPinned: false }
+      allowance: null, catalog: managedModelCatalog(), defaultPinned: false, imageInput: config.imageInput }
     if (auth.versionError) {
       status.state = auth.versionError.code === "desktop_update_required" ? "update_required" : "unavailable"
       status.code = auth.versionError.code

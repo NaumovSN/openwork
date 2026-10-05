@@ -96,6 +96,8 @@ export type DesktopFreeAccessStatus = {
   } | null;
   catalog?: ManagedModelRecommendation[];
   defaultPinned?: boolean;
+  /** Whether Auto may read images right now. The Gateway's FREE_AUTO_IMAGE_INPUT decides; absent from older gateways. */
+  imageInput?: boolean;
 };
 export type DesktopFreeVersionError = {
   code: "desktop_update_required" | "desktop_build_unverified";

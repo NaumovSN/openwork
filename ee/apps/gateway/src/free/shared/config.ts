@@ -75,6 +75,11 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
     // OpenAI list prices for the free model, in USD per million tokens.
     inputPrice: integer("INFERENCE_FREE_INPUT_PRICE_MICRO_USD_PER_MILLION", 100000, 1, 100000000) / 1000000,
     outputPrice: integer("INFERENCE_FREE_OUTPUT_PRICE_MICRO_USD_PER_MILLION", 500000, 1, 100000000) / 1000000,
+    /**
+     * Whether Auto may read images, such as a coworker's screenshots or a photo attached in chat. Off, each image is
+     * replaced with a short note before OpenAI is called, so no image is billed and the model knows it cannot see it.
+     */
+    imageInput: flag("FREE_AUTO_IMAGE_INPUT"),
     // Match the paid Gateway body ceiling; free requests do not get a smaller context limit.
     maxBodyBytes: integer("ANONYMOUS_MAX_BODY_BYTES", 32 * 1024 * 1024, 1024, 32 * 1024 * 1024),
     /** The largest single response frame the meter buffers; the answer as a whole is not capped. */
