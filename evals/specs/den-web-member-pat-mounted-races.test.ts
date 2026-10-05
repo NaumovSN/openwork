@@ -1,4 +1,4 @@
-import { GlobalRegistrator } from "../../ee/apps/den-web/node_modules/@happy-dom/global-registrator/lib/index.js";
+import { GlobalRegistrator } from "../../apps/app/node_modules/@happy-dom/global-registrator/lib/index.js";
 import type { Root } from "react-dom/client";
 import type { QueryClient as QueryClientType } from "../../ee/apps/den-web/node_modules/@tanstack/react-query/build/modern/index.js";
 import { afterAll, afterEach, beforeEach, expect, vi } from "vitest";
