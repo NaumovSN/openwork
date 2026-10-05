@@ -16,7 +16,7 @@ export function memberApiKeyProofEnabled({ development, packaged, optIn }) {
  * trusted application state, not a defense against a compromised app renderer.
  * No payloads/errors are logged, persisted, or returned verbatim.
  */
-export function createMemberApiKeyService({ readState, fetch, allowLoopback = false, now = Date.now, observeSaved = (_receipt) => {} }) {
+export function createMemberApiKeyService({ readState, fetch: fetchTransport, allowLoopback = false, now = Date.now, observeSaved = (_receipt) => {} }) {
   const active = new Map();
   const sequence = new Map();
   const ttl = 120_000;
@@ -32,7 +32,7 @@ export function createMemberApiKeyService({ readState, fetch, allowLoopback = fa
   }
 
   async function request(current, path, signal, options = {}) {
-    const response = await fetch(`${current.apiBaseUrl}${path}`, {
+    const response = await fetchTransport(`${current.apiBaseUrl}${path}`, {
       method: options.body === undefined ? "GET" : "POST", redirect: "error",
       credentials: "omit", cache: "no-store", signal,
       headers: { Accept: "application/json", Authorization: `Bearer ${current.token}`,
