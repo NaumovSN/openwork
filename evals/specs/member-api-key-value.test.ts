@@ -1,83 +1,112 @@
-import { expect, vi } from "vitest";
-import { test } from "@openwork/testkit";
-import { validMemberApiKey, memberApiKeyAuthorization } from "../../ee/apps/den-api/src/capability-sources/member-api-key.js";
-import { createGuardedFetch, createRealmSafeFetch } from "../../ee/apps/den-api/src/capability-sources/url-guard.js";
-import { createExternalMcpDiagnosticFetch, ExternalMcpDiagnosticTracker, externalMcpDiagnosticForLog, externalMcpDiagnosticForResponse, providerToolDiagnosticError } from "../../ee/apps/den-api/src/capability-sources/external-mcp-diagnostics.js";
+import { createHash } from "node:crypto";
+import { createServer } from "node:http";
+import { expect } from "vitest";
+import { test, server, mcpMock } from "@openwork/testkit";
+import { denFetch } from "@openwork/behaviors";
+import { connectionResponse, tokenResponse, requireOwnedDen } from "./member-api-key-fixture";
 
-test("personal API keys are raw bounded values, never header instructions", async ({ evidence }) => {
-  expect(memberApiKeyAuthorization("synthetic-member-a")).toBe("Bearer synthetic-member-a");
-  expect(memberApiKeyAuthorization("synthetic-member-a", "token")).toBe("Token synthetic-member-a");
-  for (const value of ["", "Bearer synthetic", "Token synthetic", "x\r\ny:z", "x\0", "x\t", "x ", "é", "x".repeat(8193)]) {
-    expect(validMemberApiKey(value)).toBe(false);
-    expect(() => memberApiKeyAuthorization(value)).toThrow("A valid personal API key is required.");
-  }
-  expect(validMemberApiKey("x".repeat(8192))).toBe(true);
-  evidence.recordAssertionEvidence("Bounded token-only Bearer contract", "Synthetic input accepts raw tokens, rejects prefixes, whitespace, controls, non-ASCII and overlong values without echoing the value.", true);
-});
-
-test("typed Token transport receives the existing diagnostic credential redaction", async ({ evidence }) => {
-  const key = "synthetic-short-token";
-  const tracker = new ExternalMcpDiagnosticTracker("synthetic-token-redaction", { authType: "apikey", credentialMode: "per_member" });
-  tracker.begin("MCP_INITIALIZE");
-  const diagnosticFetch = createExternalMcpDiagnosticFetch({ endpoint: "https://provider.example.test/mcp", tracker,
-    fetch: async () => new Response(JSON.stringify({ error: "invalid_token", error_description: `Rejected Token ${key}` }), { status: 401, headers: { "content-type": "application/json" } }),
+test("Den validates personal key values and redacts provider failures across real MCP requests", { timeout: 180_000 }, async ({ place, evidence }) => {
+  requireOwnedDen();
+  await using den = await server({ place, org: { name: "Personal key value boundary", members: { alice: {} } },
+    mocks: { keyed: mcpMock({ isolatedProcessEnv: true, allowUnauthenticatedMcp: true, tools: [{ name: "value_probe", description: "Synthetic key boundary probe", inputSchema: { type: "object" }, result: { content: [{ type: "text", text: "synthetic response" }] } }] }) } });
+  const alice = den.members.alice;
+  const fingerprint = (value: string) => createHash("sha256").update(value).digest("hex").slice(0, 12);
+  const wire: { scheme: string; fingerprint: string; method: string }[] = [];
+  let providerError: string | undefined;
+  let observedErrors = 0;
+  let redirectStatus = 0;
+  let targetRequests = 0;
+  const witness = createServer(async (request, response) => {
+    if (request.url === "/target") targetRequests += 1;
+    const auth = /^(Bearer|Token) ([\x21-\x7e]+)$/.exec(request.headers.authorization ?? "");
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const body = Buffer.concat(chunks).toString();
+    const rpc = body ? JSON.parse(body) : {};
+    wire.push({ scheme: auth?.[1] ?? "", fingerprint: fingerprint(auth?.[2] ?? ""), method: rpc.method ?? request.method });
+    if (redirectStatus && request.url !== "/target") {
+      response.writeHead(redirectStatus, { location: "/target" }); response.end(); return;
+    }
+    if (providerError && rpc.method === "tools/call") {
+      observedErrors += 1;
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result: { isError: true, content: [{ type: "text", text: providerError }] } }));
+      return;
+    }
+    try {
+      const headers = new Headers();
+      for (const [name, value] of Object.entries(request.headers)) {
+        if (value && !["host", "connection", "content-length"].includes(name)) headers.set(name, Array.isArray(value) ? value.join(",") : value);
+      }
+      const upstream = await fetch(den.mocks.keyed.mcpUrl, { method: request.method, headers, ...(body ? { body } : {}), signal: AbortSignal.timeout(10_000) });
+      response.writeHead(upstream.status, Object.fromEntries(upstream.headers));
+      response.end(Buffer.from(await upstream.arrayBuffer()));
+    } catch { response.writeHead(502); response.end(); }
   });
-  await diagnosticFetch("https://provider.example.test/mcp", { method: "POST", headers: { authorization: `Token ${key}` } });
-  const serialized = JSON.stringify(externalMcpDiagnosticForLog(tracker.error(new Error("Provider rejected credentials")), "synthetic-token-redaction", "MCP_INITIALIZE"));
-  expect(serialized).not.toContain(key);
-  expect(serialized).toContain("[redacted]");
-  evidence.recordAssertionEvidence("Token-prefixed provider diagnostics are redacted", "A synthetic short Token credential in an actual diagnostic fetch response is absent from the log projection and replaced with a redaction marker; no request or real credential was logged.", true);
-});
-
-test("provider tool error projections redact both schemes across the allowed raw-key alphabet", ({ evidence }) => {
+  await new Promise<void>((resolve) => witness.listen(0, "127.0.0.1", resolve));
+  await using ownedWitness = { [Symbol.asyncDispose]: () => new Promise<void>((resolve, reject) => { witness.closeAllConnections(); witness.close(error => error ? reject(error) : resolve()); }) };
+  const address = witness.address();
+  if (!address || typeof address === "string") throw new Error("Missing owned provider witness");
+  const api = (member: typeof alice, path: string, body: unknown) => denFetch(member, path, { method: "POST", headers: { authorization: `Bearer ${member.token}` }, body: JSON.stringify(body) });
+  const minted = await api(alice, "/v1/mcp/token", { scopes: ["mcp:read", "mcp:write"] });
+  expect(minted.response.status).toBe(200);
+  const bearer = tokenResponse.parse(minted.body).token;
+  const invoke = async (id: string) => {
+    const response = await fetch(`${den.ref.apiUrl}/mcp/agent`, { method: "POST", headers: { authorization: `Bearer ${bearer}`, "content-type": "application/json", accept: "application/json, text/event-stream" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "execute_capability", arguments: { name: `mcp:${id}:value_probe`, body: {} } } }), signal: AbortSignal.timeout(30_000) });
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    const line = text.split("\n").find(entry => entry.startsWith("data:"));
+    return JSON.parse(line ? line.slice(5) : text);
+  };
   const strings = (value: unknown): string[] => typeof value === "string" ? [value]
     : Array.isArray(value) ? value.flatMap(strings)
       : value && typeof value === "object" ? Object.values(value).flatMap(strings) : [];
-  const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
-  try {
-    for (const scheme of ["Bearer", "Token", "tOkEn"]) for (const key of ["q", "abc1234", "a:!\"%&'()*+,./;<=>?@[\\]^_`{|}~", "synthetic-bearer-control"]) {
-      const cases = [
-        { text: `403 forbidden ${scheme} ${key}`, expected: `403 forbidden ${scheme} [redacted]` },
-        { text: `403 forbidden Authorization: ${scheme} ${key}`, expected: "403 forbidden Authorization: [redacted] [redacted]" },
-        { text: `403 forbidden ${JSON.stringify({ authorization: `${scheme} ${key}` })}`, expected: `403 forbidden {"authorization":"${scheme} [redacted]` },
-      ];
-      for (const entry of cases) {
-        log.mockClear();
-        const tracker = new ExternalMcpDiagnosticTracker("synthetic-provider-tool-redaction", { authType: "apikey", credentialMode: "per_member" });
-        const error = providerToolDiagnosticError({ tracker, result: { isError: true, content: [{ type: "text", text: entry.text }] } });
-        const projections = strings([externalMcpDiagnosticForResponse(error, "synthetic-provider-tool-redaction", "MCP_TOOL_EXECUTION"),
-          externalMcpDiagnosticForLog(error, "synthetic-provider-tool-redaction", "MCP_TOOL_EXECUTION"), log.mock.calls]);
-        expect(projections.some((value) => value.includes(`${scheme} ${key}`))).toBe(false);
-        expect(projections.includes(entry.expected)).toBe(true);
+  let diagnostics = 0;
+  for (const scheme of ["bearer", "token"]) {
+    const created = await api(den.admin, "/v1/mcp-connections", { name: `Value boundary ${scheme}`, url: `http://127.0.0.1:${address.port}/mcp`, authType: "apikey", credentialMode: "per_member", apiKeyAuthScheme: scheme, access: { orgWide: true } });
+    expect(created.response.status).toBe(200);
+    const id = connectionResponse.parse(created.body).id;
+    const endpoint = `/v1/mcp-connections/${id}/member-api-key`;
+    for (const apiKey of ["", "Bearer synthetic", "Token synthetic", "x\r\ny:z", "x\0", "x\t", "x ", "é", "x".repeat(8193)]) {
+      const before = wire.length;
+      expect((await api(alice, endpoint, { apiKey })).response.status).toBe(400);
+      expect(wire).toHaveLength(before);
+    }
+    const bounded = "x".repeat(8192);
+    expect((await api(alice, endpoint, { apiKey: bounded })).response.status).toBe(200);
+    const before = wire.length;
+    expect((await invoke(id)).result.isError).not.toBe(true);
+    expect(wire.slice(before).some(entry => entry.method === "tools/call" && entry.scheme === (scheme === "bearer" ? "Bearer" : "Token") && entry.fingerprint === fingerprint(bounded))).toBe(true);
+    for (const prefix of ["Bearer", "Token", "tOkEn"]) {
+      for (const key of ["q", "abc1234", "a:!\"%&'()*+,./;<=>?@[\\]^_`{|}~", "synthetic-bearer-control"]) {
+        expect((await api(alice, endpoint, { apiKey: key })).response.status).toBe(200);
+        for (const text of [`403 forbidden ${prefix} ${key}`, `403 forbidden Authorization: ${prefix} ${key}`, `403 forbidden ${JSON.stringify({ authorization: `${prefix} ${key}` })}`]) {
+          providerError = text;
+          const result = await invoke(id);
+          expect(result.result.isError).toBe(true);
+          const log = await den.apiLog();
+          const logValues = log.split("\n").flatMap(line => {
+            try { return strings(JSON.parse(line)); } catch { return [line]; }
+          });
+          const projections = [...strings(result), ...logValues];
+          expect(projections.some(value => value.includes(`${prefix} ${key}`))).toBe(false);
+          diagnostics += 1;
+        }
       }
     }
-    evidence.recordAssertionEvidence("Provider tool errors reuse scheme credential redaction", "Actual exported response/log/console paths match exact redacted excerpts for bare, canonical unquoted and quoted Authorization forms across Bearer/Token/mixed-case, short values and printable punctuation. Prefix redaction runs before pair rules can strip a scheme. No raw fixture output; arbitrary prefixless echo is not claimed.", true);
-  } finally { log.mockRestore(); }
-});
-
-test("credential-bound redirect refusal preserves ordinary shared and OAuth fetch policy", async ({ evidence }) => {
-  for (const status of [301, 302, 303, 307, 308]) {
-    for (const location of ["https://provider.example.test/next", "https://other.example.test/next"]) {
-      let requests = 0;
-      const guarded = createRealmSafeFetch(async () => { requests += 1; return new Response(null, { status, headers: { location } }); });
-      await expect(guarded("https://provider.example.test/start", { redirect: "error", headers: { authorization: "Bearer synthetic", cookie: "synthetic-cookie=fixture" } })).rejects.toThrow("refused a redirect");
-      expect(requests).toBe(1);
+    providerError = undefined;
+    for (const status of [301, 302, 303, 307, 308]) {
+      redirectStatus = status;
+      expect((await api(alice, endpoint, { apiKey: `synthetic-redirect-${status}` })).response.status).toBe(200);
+      expect((await invoke(id)).result.isError).toBe(true);
+      expect(targetRequests).toBe(0);
     }
+    redirectStatus = 0;
   }
-  const ordinary: { url: string; authorization: string | null }[] = [];
-  const shared = createRealmSafeFetch(async (url, init) => {
-    ordinary.push({ url: String(url), authorization: new Headers(init?.headers).get("authorization") });
-    return ordinary.length === 1 ? new Response(null, { status: 302, headers: { location: "/next" } }) : new Response("ok");
-  });
-  expect((await shared("https://provider.example.test/start", { headers: { authorization: "Bearer synthetic-shared" } })).status).toBe(200);
-  expect(ordinary).toEqual([{ url: "https://provider.example.test/start", authorization: "Bearer synthetic-shared" }, { url: "https://provider.example.test/next", authorization: "Bearer synthetic-shared" }]);
-  let loopRequests = 0;
-  const loop = createRealmSafeFetch(async () => { loopRequests += 1; return new Response(null, { status: 302, headers: { location: "/loop" } }); });
-  await expect(loop("https://provider.example.test/loop")).rejects.toThrow("redirect limit");
-  expect(loopRequests).toBeLessThanOrEqual(11);
-  let privateRequests = 0;
-  const hosted = createGuardedFetch(async () => { privateRequests += 1; return new Response("must not run"); });
-  await expect(hosted("https://127.0.0.1/private", { redirect: "error" })).rejects.toThrow("not allowed");
-  expect(privateRequests).toBe(0);
-  evidence.recordAssertionEvidence("Redirect policy composition", "Explicit error policy rejected all five statuses at the first source request with synthetic Authorization/Cookie, unchanged ordinary same-origin policy followed with its shared credential, redirect loops remained bounded, hosted guard rejected literal loopback before fetch.", true);
+  expect(observedErrors).toBe(72);
+  expect(diagnostics).toBe(observedErrors);
+  evidence.recordAssertionEvidence("Raw personal keys are bounded at the real enrollment endpoint", "Both transports reject9 malformed candidates without provider traffic and accept8192-byte raw keys observed by exact fingerprint at the provider.", true);
+  evidence.recordAssertionEvidence("Actual provider errors cannot return scheme-prefixed credentials", `${diagnostics} gateway tool-error responses and real API log observations omit the rejected credential expressions across both transports, mixed-case prefixes, short keys and punctuation. No product internals were imported.`, diagnostics === 72);
+  evidence.recordAssertionEvidence("Personal requests refuse redirects at the actual provider boundary", "All five redirect statuses fail through both transports with zero target requests. Ordinary shared and OAuth policy remain covered by the separate isolation journey, not asserted here.", targetRequests === 0);
 });
