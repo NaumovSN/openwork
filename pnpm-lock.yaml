@@ -649,6 +649,9 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@openwork-ee/workbot-server':
+        specifier: workspace:*
+        version: link:../../packages/workbot-server
       '@openwork/automations':
         specifier: workspace:*
         version: link:../../../packages/automations
@@ -870,6 +873,9 @@ importers:
       '@openwork-ee/utils':
         specifier: workspace:*
         version: link:../../packages/utils
+      '@openwork-ee/workbot-ui':
+        specifier: workspace:*
+        version: link:../../packages/workbot-ui
       '@openwork/types':
         specifier: workspace:*
         version: link:../../../packages/types
@@ -891,6 +897,9 @@ importers:
       lucide-react:
         specifier: ^0.577.0
         version: 0.577.0(react@19.2.8)
+      marked:
+        specifier: ^17.0.1
+        version: 17.0.1
       next:
         specifier: 16.3.3
         version: 16.3.3(@opentelemetry/api@1.9.1)(@types/node@20.12.12)(babel-plugin-react-compiler@1.0.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -1303,6 +1312,59 @@ importers:
       typescript:
         specifier: ^5.5.4
         version: 5.9.3
+
+  ee/packages/workbot-server:
+    dependencies:
+      '@openwork-ee/headless-protocol':
+        specifier: workspace:*
+        version: link:../headless-protocol
+      '@openwork/types':
+        specifier: workspace:*
+        version: link:../../../packages/types
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      tsup:
+        specifier: ^8.5.0
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.23)(tsx@4.23.1)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+
+  ee/packages/workbot-ui:
+    dependencies:
+      '@base-ui/react':
+        specifier: ^1.4.1
+        version: 1.4.1(@types/react@19.2.14)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      '@openwork/workbook':
+        specifier: workspace:*
+        version: link:../../../packages/workbook
+      lucide-react:
+        specifier: ^0.577.0
+        version: 0.577.0(react@19.2.8)
+      marked:
+        specifier: ^17.0.1
+        version: 17.0.1
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@tanstack/react-query':
+        specifier: ^5.96.2
+        version: 5.96.2(react@19.2.8)
+      '@types/react':
+        specifier: 19.2.14
+        version: 19.2.14
+      react:
+        specifier: 'catalog:'
+        version: 19.2.8
+      typescript:
+        specifier: 5.4.5
+        version: 5.4.5
 
   packages/automations:
     dependencies:
