@@ -60,7 +60,6 @@ const explicitAuthGuardHandlers = new WeakSet<object>([
  * Public routes use `publicRoute`; token, webhook, and delegated proxy routes
  * use their named markers and perform their specialized verification in the
  * handler. Common user/org/admin markers execute the shared guard middleware.
- * `test/route-access-policy.test.ts` fails CI when a route omits a marker.
  */
 
 export function verifyOrgRole(input: { roles: readonly string[]; userContext: OrgRoleContext }) {

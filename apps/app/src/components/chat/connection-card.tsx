@@ -81,10 +81,14 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   if (!connection) return null
 
   const name = connection.connectionName
-  const iconUrl = (connectorIdentities ?? messageList?.connectorIdentities ?? []).find(entry => entry.connectionId === connection.connectionId)?.iconUrl
+  const identity = (connectorIdentities ?? messageList?.connectorIdentities ?? []).find(entry => entry.connectionId === connection.connectionId)
+  const iconUrl = identity?.iconUrl
   const readOnly = messageList?.readOnly ?? false
   const skipped = reconnectState === "skipped"
-  const connected = connection.state === "connected" || reconnectState === "connected"
+  // The tool result is a snapshot from when the step ran; the live org
+  // connection list says whether this member is connected now, so a card
+  // signed in earlier stays connected after leaving and reopening the session.
+  const connected = connection.state === "connected" || reconnectState === "connected" || identity?.connectedForMe === true
   const settled = connected || skipped
   const opening = !settled && reconnectState === "opening"
   const waiting = !settled && reconnectState === "authorization_opened"

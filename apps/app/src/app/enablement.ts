@@ -16,8 +16,6 @@ export type EnablementContext = {
   connectedProviders?: Set<string>;
   /** Set of environment variable keys that are configured. */
   configuredEnvKeys?: Set<string>;
-  /** Permission results from the Computer Use --check binary. */
-  permissions?: { accessibility?: boolean; screenRecording?: boolean };
   /** Toggle state reader — returns true if the extension toggle is on. */
   isToggleEnabled?: (ref: string) => boolean;
 };
@@ -37,12 +35,6 @@ function evaluateCondition(condition: EnablementCondition, ctx: EnablementContex
       return ctx.connectedProviders?.has(condition.ref) === true;
     case "env-set":
       return ctx.configuredEnvKeys?.has(condition.ref) === true;
-    case "permission-granted": {
-      if (!ctx.permissions) return false;
-      if (condition.ref === "accessibility") return ctx.permissions.accessibility === true;
-      if (condition.ref === "screenRecording") return ctx.permissions.screenRecording === true;
-      return false;
-    }
     case "toggle-enabled":
       return ctx.isToggleEnabled?.(condition.ref) === true;
     default:

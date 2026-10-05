@@ -94,7 +94,7 @@ function workspaceIdFromRoute(route: string): string {
 async function waitForTaskUi(app: Surface, workspaceId: string): Promise<string> {
   await go(app, `/workspace/${workspaceId}/session`);
   await waitFor(app, browserScript((workspaceId) => {
-    const match = /^#?\/workspace\/([^/?#]+)\/session\/?$/.exec(window.location.hash);
+    const match = /^#?\/workspace\/([^/?#]+)\/session\/?$/.exec(window.location.hash || window.location.pathname);
     const routeReady = match?.[1] === workspaceId;
     const text = document.body.innerText;
     const runTask = [...document.querySelectorAll("button")]

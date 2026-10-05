@@ -34,7 +34,7 @@ const builtMcpAppListResponseSchema = z.object({
 }).meta({ ref: "BuiltMcpAppListResponse" })
 
 /**
- * Apps built in OpenWork that an admin can put on an organization Dashboard,
+ * Apps built in OpenWork that the signed-in member can put on a personal Dashboard,
  * in the same element shape connection MCP Apps use. Each element opens the
  * App through its own MCP server, where the desktop finds it by App id.
  */
@@ -44,14 +44,14 @@ export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVa
     describeRoute({
       tags: ["Dashboards"],
       summary: "List Apps built in OpenWork for dashboards",
-      description: "Lists the Apps built in OpenWork that the calling admin can use, in the element shape organization Dashboards store. Each element opens the App through its own MCP server with open_app, and Dashboards keep it on the App's current revision. Members see a tile only when the App's Plugin is shared with them. Empty when Apps built in OpenWork are turned off. Admin-only.",
+      description: "Lists the Apps built in OpenWork that the calling member can use, in the element shape organization Dashboards store. Each element opens the App through its own MCP server with open_app, and Dashboards keep it on the App's current revision. Members see a tile only when the App's Plugin is shared with them. Empty when Apps built in OpenWork are turned off. Only Apps the member can access are listed.",
       responses: {
         200: jsonResponse("Apps built in OpenWork that can be added to a dashboard.", builtMcpAppListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
-        403: jsonResponse("Only workspace owners and admins can list Apps for dashboards.", forbiddenSchema),
+        403: jsonResponse("The caller must be an organization member.", forbiddenSchema),
       },
     }),
-    orgRoleRoute(["admin"]),
+    orgRoleRoute(["member"]),
     resolveMemberTeamsMiddleware,
     async (c) => {
       const payload = c.get("organizationContext")

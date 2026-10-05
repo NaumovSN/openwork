@@ -126,8 +126,7 @@ sync; its native consent and managed-desktop restrictions remain unchanged.
 Popups force the same sandbox, context isolation and same-origin security as
 ordinary tabs, regardless of website-supplied features. The per-frame preload
 installs only an isolated, sandboxed bridge; it exposes no Node APIs to website
-JavaScript. Native computer use owns OS app and window sessions separately;
-browser tools do not acquire OS pointer control.
+JavaScript. Browser tools do not acquire OS pointer control.
 
 Activity retains operation names and state, not arguments, result bodies or
 cookies. Observations intentionally return requested page content to the
@@ -167,7 +166,7 @@ untrusted even if its tool claims to be read-only.
 ## Integration boundaries
 
 Conversation-owned tabs, background-view parking, viewport recovery, team
-execution policy, native computer use and workflow dashboard panels remain
+execution policy and workflow dashboard panels remain
 owned by their current implementations. Browser tasks reuse those boundaries.
 External profile syncing is provided separately by merged #4452. The browser access
 mechanism from #4481 is superseded by the merged execution policy in #4564;

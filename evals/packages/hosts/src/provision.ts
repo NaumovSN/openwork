@@ -242,6 +242,7 @@ export interface ScriptOnSandbox {
 export interface FaultProxyOnSandboxOptions {
   sandbox: string;
   port?: number;
+  upstream?: "web" | "api";
   upstreamPort?: number;
   log?: (line: string) => void;
   fetchImpl?: typeof fetch;
@@ -1410,7 +1411,7 @@ export async function startFaultProxyOnSandbox(options: FaultProxyOnSandboxOptio
   const log = options.log ?? console.error;
   const fetchImpl = options.fetchImpl ?? fetch;
   const port = options.port ?? 3985;
-  const upstreamPort = options.upstreamPort ?? DEN_WEB_PORT;
+  const upstreamPort = options.upstreamPort ?? (options.upstream === "api" ? DEN_API_PORT : DEN_WEB_PORT);
   const token = randomBytes(16).toString("hex");
   const url = await timedStep(log, "fault proxy preview URL gate", () => previewUrl(exec, options.sandbox, port));
 

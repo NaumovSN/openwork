@@ -40,6 +40,7 @@ import {
 import { getReactQueryClient } from "../../../infra/query-client";
 import {
   clearProviderListQueries,
+  ensureProviderCatalogQuery,
   ensureProviderListQuery,
   getConnectedProviderItems,
 } from "../../../infra/provider-list-query";
@@ -291,6 +292,8 @@ export type ProviderOAuthStartResult = {
  * renderer-side import path owns the state (remote/hostless workspaces).
  */
 export type CloudProviderServerSyncState = {
+  lastRun?: { at: string | number; status: "applied" | "noop" | "failed" | "no_session"; message?: string } | null;
+  lastVerifiedAt?: string | number | null;
   reloadPending: boolean;
   skippedProviders: Record<string, OpenworkCloudProviderSyncSkippedProvider>;
 };
@@ -410,13 +413,17 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
   const getProviderAuthWorkerType = (): "local" | "remote" =>
     options.selectedWorkspaceDisplay().workspaceType === "remote" ? "remote" : "local";
 
+  // Providers that are not connected yet, loaded only when the Connect modal
+  // opens. The everyday provider list holds connected providers only.
+  let providerCatalog: ProviderListItem[] = [];
+
   const getProviderAuthProviders = (): ProviderAuthProvider[] => {
     const merged = new Map<string, ProviderAuthProvider>();
     const restrictToCloud = options.checkDesktopAppRestriction({ restriction: "allowCustomProviders" });
 
-    for (const provider of options.providers()) {
+    for (const provider of [...options.providers(), ...providerCatalog]) {
       const id = provider.id?.trim();
-      if (!id) continue;
+      if (!id || merged.has(id)) continue;
       if (
         !isProviderAllowedByDesktopPolicy({
           providerId: id,
@@ -747,6 +754,11 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           gatewayUsageProviderScope: status.hasSession && verifiedGatewayUsageContext === contextKey
             ? refreshOptions?.verifiedScope ?? current.gatewayUsageProviderScope : null,
           cloudProviderServerSync: {
+            ...(status.lastRun === undefined || status.lastRun === null ? {} : { lastRun: status.lastRun }),
+            ...(() => {
+              const verifiedAt = status.lastRun && (status.lastRun.status === "applied" || status.lastRun.status === "noop") ? status.lastRun.at : current.cloudProviderServerSync?.lastVerifiedAt;
+              return verifiedAt === undefined ? {} : { lastVerifiedAt: verifiedAt };
+            })(),
             reloadPending: status.reloadPending,
             skippedProviders: Object.fromEntries((status.hasSession ? status.skippedProviders.filter((provider) => provider.reason !== "member_auth_required" || verifiedGatewayUsageContext === contextKey) : []).map((provider) => [provider.credentialSetId ? `${provider.cloudProviderId}:${provider.credentialSetId}` : provider.cloudProviderId, provider])),
           },
@@ -1557,12 +1569,33 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     return merged;
   };
 
+  // Best effort: without the catalog the modal still offers connected
+  // providers, sign-in methods and cloud providers.
+  const loadProviderCatalog = async (client: Client) => {
+    try {
+      const catalog = filterProviderList(
+        await ensureProviderCatalogQuery(getReactQueryClient(), {
+          client,
+          baseUrl: options.providerBaseUrl(),
+          directory: options.selectedWorkspaceRoot(),
+        }),
+        options.disabledProviders(),
+      );
+      providerCatalog = catalog.all ?? [];
+    } catch {
+      providerCatalog = [];
+    }
+  };
+
   const loadProviderAuthMethods = async (workerType: "local" | "remote") => {
     const c = options.client();
     if (!c) {
       throw new Error(t("providers.not_connected"));
     }
-    const methods = unwrap(await c.provider.auth());
+    const [methods] = await Promise.all([
+      c.provider.auth().then(unwrap),
+      loadProviderCatalog(c),
+    ]);
     return buildProviderAuthMethods(
       methods as Record<string, ProviderAuthMethod[]>,
       getProviderAuthProviders(),
@@ -1961,6 +1994,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
           source: provider.source,
           updatedAt: provider.updatedAt ?? null,
           modelIds: getProviderModelIds(provider),
+          pinnedModelIds: provider.pinnedModelIds?.filter((id) => getProviderModelIds(provider).includes(id)) ?? [],
           modelConfigVersion: CLOUD_MODEL_CONFIG_VERSION,
           importedAt: Date.now(),
         },

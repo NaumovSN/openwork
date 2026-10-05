@@ -9,7 +9,6 @@ import { readdir, readFile } from 'node:fs/promises';
 // reason; declaring it here would silently drop the runnable cases. The planner
 // reports a journey whose needs the lane cannot meet as "skipped: lane cannot
 // satisfy prerequisites" instead of scheduling a guaranteed skip.
-// journey-ci.test.mjs checks these against what each spec and world guards.
 const PACKAGED_BINARY = { env: ['OPENWORK_EVAL_ELECTRON_BINARY'] };
 const definitions = {
   'opencode-v2-context-activity.e2e.test.ts': {
@@ -20,7 +19,7 @@ const definitions = {
     cases: [{ id: 'EDIT-BUSY', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } }],
   },
   'opencode-v2-session-home.e2e.test.ts': {
-    cases: ['HOME-01', 'HOME-02', 'HOME-03'].map(id => ({ id, engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } })),
+    cases: ['HOME-01', 'HOME-02', 'HOME-03', 'HOME-04'].map(id => ({ id, engines: ['v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v2' } })),
   },
   'gateway-usage-policy.e2e.test.ts': { name: 'Request and approve a Gateway usage extension', placement: 'local' },
   'composer-model-picker-no-subscribe-promo.e2e.test.ts': {
@@ -62,13 +61,9 @@ const definitions = {
   // OPENWORK_EVAL_RELEASED_BASELINE_BINARY (spec-level `needs`); that case skips on its own and the lane that runs
   // this journey must provide both binaries for it to pass (#4848).
   'released-enterprise-activated.e2e.test.ts': { name: 'Open and update an activated enterprise install against its Den', placement: 'local', needs: PACKAGED_BINARY },
-  // Drives a real AppKit window through the native Computer Use helper; only a local macOS host can run it.
-  'computer-use-window-scope.e2e.test.ts': { placement: 'local', needs: { platform: 'darwin' } },
-  'org-team-lifecycle-critical-path.e2e.test.ts': { name: 'Set up a working two-person team', critical: true, model: 'live' },
   'cross-server-handoff-atomic-commit.e2e.test.ts': { name: 'Switch servers and recover enrollment', critical: true, placement: 'local' },
   // Flips sso_connection directly in the testkit database; Daytona Den exposes no database.
   'scim-okta-lifecycle.e2e.test.ts': { name: 'Provision members from an Okta-shaped SCIM client', placement: 'local' },
-  'workspace-new-task-hit-target.e2e.test.ts': { name: 'Keep new tasks and sends instantly responsive', placement: 'local' },
   // Drives the real error boundary and web error monitor in a standalone Chrome; needs no Den or Electron.
   'crash-recovery.e2e.test.ts': { name: 'Recover from a render crash without leaking secrets' },
   // Serves the model mock from the spec process's 127.0.0.1; only the local lane can reach it.
@@ -90,9 +85,6 @@ const definitions = {
       { id: 'CONT-01-live-history', engines: ['v1'], optIns: ['OPENWORK_EVAL_E2E_TESTS', 'OPENWORK_EVAL_LIVE_OPENAI'], example: { placement: '--local', engine: 'v1' } },
     ],
   },
-  'live-tool-visible-after-session-switch.e2e.test.ts': {
-    cases: [{ id: 'SWITCH-10', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--daytona', engine: 'v1' } }],
-  },
   'unfinished-tool-lifecycle.e2e.test.ts': {
     cases: [{ id: 'STOP-01', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
   },
@@ -102,7 +94,6 @@ const definitions = {
       { id: 'APP-DRAFT-ROUTING', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } },
     ],
   },
-  'engine-live-chat.e2e.test.ts': { name: 'Use real models for conversations, skills and connections', placement: 'local', model: 'live' },
   // Native workspace skill tests use local watcher and loopback model fixtures.
   'opencode-v2-skill-jit.e2e.test.ts': {
     name: 'Use workspace skills just in time', placement: 'local',
@@ -151,7 +142,6 @@ export function selectJourneys(entries, { critical = false, only = '', changed =
 }
 
 // What the CI lane provides to every job: Linux runners and no packaged desktop binary.
-// Keep in step with the e2e and local-journey jobs in .github/workflows/daytona-e2e.yml.
 export const ciLane = Object.freeze({ platform: 'linux', env: Object.freeze([]) });
 
 // Needs the lane cannot meet, phrased as the action that would meet them; empty when the journey is applicable.

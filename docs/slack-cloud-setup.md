@@ -4,7 +4,7 @@ Build and demo first; complete Slack Marketplace/RTS distribution approval befor
 
 ## Platform setup
 
-1. Deploy the branch and migration `0115_slack_cloud_installations.sql` to a controlled Cloud demo environment. `DEN_ORG_MODE` must be `multi_org`; single-org enterprise hosting does not expose the platform app.
+1. Deploy the branch and migration `0124_slack_cloud_installations.sql` to a controlled Cloud demo environment. `DEN_ORG_MODE` must be `multi_org`; single-org enterprise hosting does not expose the platform app.
 2. Configure one OpenWork-owned Slack app. Register the exact callback at the public **API** origin: `/v1/oauth-providers/slack/connect/callback`.
 3. Configure the user scope contract below. Set platform credentials through deployment secrets, never the customer Connections settings.
 4. Enable `DEN_SLACK_ENABLED` only on the intended demo/release deployment and ensure organization Connect policy allows use. This flag is default-off. It makes native Slack available to all organizations on that Cloud deployment; it is not a per-workspace eligibility check.
@@ -45,7 +45,7 @@ Slack's Home guide requires a bot scope even though `views.publish` lists no met
 
 The automated journey uses real app-web, agent runtime, Den, encrypted storage and capability dispatch with synthetic Slack/model servers. It demonstrates two Slack workspaces and two Cloud organizations with one platform configuration, all four conversation categories, bounded source-linked threads, private-access isolation, partial consent, and disable/disconnect behavior.
 
-Run `pnpm --filter @openwork-ee/den-api test:slack-native` for the protocol/route suite. The installation-storage suite is `pnpm --filter @openwork-ee/den-api test:slack-native:db`; it requires `DEN_SLACK_TEST_DATABASE_URL` pointing to a disposable loopback database named `*_slack_installations_test` with migration 0115 applied. It deletes that database's installation rows and verifies encrypted storage, workspace/app isolation, and concurrent rotating-grant behavior. Use Docker/Compose for local database services.
+Run `pnpm evals:e2e native-slack-connect --local --engine v2` for the synthetic journey after preparing both pinned engine binaries, Chrome, and owned loopback MySQL/Redis services. The native HTTP fixtures require local placement. The repository now uses E2E journeys rather than package-level unit suites; the earlier protocol and installation-storage unit commands in historical verification receipts are no longer available. The journey does not prove live App Home setup or rotating-grant concurrency; those remain separate activation checks. See [the world notes](../evals/worlds/native-slack-connect.md) and [testing conventions](testing.md).
 
 For a live pre-approval demo, use an eligible internal app and an OpenWork-owned workspace populated with synthetic conversations. Connect two internal members individually, run the same queries, verify source links and inaccessible-private-content behavior, then demonstrate public-only consent. Present this working flow to Slack for distribution/RTS approval. App creation, credentials, activation and outreach are operational steps, not performed by this code change.
 

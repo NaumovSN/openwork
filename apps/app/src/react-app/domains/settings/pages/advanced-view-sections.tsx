@@ -23,6 +23,7 @@ import {
   type DenEndpointSource,
 } from "@/app/lib/den-endpoint-sources";
 import { useOpencodeEngineControls } from "@/react-app/shell/opencode-engine-controls";
+import { showEngineMigrationProgress } from "@/react-app/shell/engine-migration";
 import { isDesktopRuntime } from "@/app/utils";
 import { t } from "@/i18n";
 import { ControlPlaneUrlEditor } from "../cloud/control-plane-url-editor";
@@ -811,6 +812,7 @@ export function AdvancedFeatureFlagsSection(props: AdvancedFeatureFlagsSectionPr
 export function AdvancedEngineV2PreviewSection(props: { client: OpenworkServerClient | null }) {
   const engine = useOpencodeEngineControls(props.client);
   const runtimeError = engine.status?.enabled ? engine.status.lastError : undefined;
+  const engineNote = engine.blockedReason ?? (engine.migrating ? "Wait for chat migration to finish." : undefined);
   return (
     <LayoutSection id="advanced-experimental-engine">
       <LayoutSectionHeader><LayoutSectionTitle>OpenCode engine</LayoutSectionTitle></LayoutSectionHeader>
@@ -825,14 +827,18 @@ export function AdvancedEngineV2PreviewSection(props: { client: OpenworkServerCl
             </ToggleGroup>
           </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
-        {engine.blockedReason ? <p className="text-xs text-muted-foreground">{engine.blockedReason}</p> : null}
+        {engineNote ? <p className="text-xs text-muted-foreground">{engineNote}</p> : null}
         {engine.status?.enabled && !engine.status.running && !engine.status.lastError ? <p role="status" className="text-xs text-muted-foreground">OpenCode v2 is starting…</p> : null}
         {engine.error || runtimeError ? <p role="alert" className="text-xs text-destructive">{engine.error ?? runtimeError}</p> : null}
       </LayoutSectionItem>
       <LayoutSectionItem>
         <LayoutSectionItemHeader>
           <LayoutSectionItemTitle>V1 chat history</LayoutSectionItemTitle>
-          <LayoutSectionItemHeaderActions><Button variant="outline" size="sm" disabled={engine.disabled || !engine.status?.migration} onClick={engine.openMigration}>Migrate chats to OpenCode v2</Button></LayoutSectionItemHeaderActions>
+          <LayoutSectionItemHeaderActions>
+            {engine.migrating
+              ? <Button variant="outline" size="sm" onClick={showEngineMigrationProgress}>{t("engine_migration.show_progress")}</Button>
+              : <Button variant="outline" size="sm" disabled={engine.disabled || !engine.status?.migration} onClick={engine.openMigration}>Migrate chats to OpenCode v2</Button>}
+          </LayoutSectionItemHeaderActions>
         </LayoutSectionItemHeader>
         {engine.message ? <p role="status" className="text-xs text-muted-foreground">{engine.message}</p> : null}
       </LayoutSectionItem>
@@ -840,7 +846,6 @@ export function AdvancedEngineV2PreviewSection(props: { client: OpenworkServerCl
         <p className="py-2">Each engine has its own chat history. Switching engines does not migrate chats.</p>
         {engine.status?.running ? <p>OpenCode {engine.status.version} · {engine.status.mirroredProviderIds.length} providers · {engine.status.catalogModelIds.length} models</p> : null}
       </details>
-      {engine.dialog}
     </LayoutSection>
   );
 }

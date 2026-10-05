@@ -4,11 +4,15 @@ import {
   MCP_APP_LAUNCH_TOOL_NAME,
   mcpAppResourceUri,
   mcpAppSummarySchema,
+  prepareMcpAppInputSchema,
+  prepareMcpAppOutputSchema,
   readMcpAppInputSchema,
   readMcpAppOutputSchema,
   updateMcpAppInputSchema,
   type CreateMcpAppInput,
   type McpAppSummary,
+  type PrepareMcpAppInput,
+  type PrepareMcpAppOutput,
   type ReadMcpAppOutput,
   type UpdateMcpAppInput,
 } from "@openwork/types/mcp-app"
@@ -30,6 +34,7 @@ const appResultSchema = z.object({
   app: mcpAppSummarySchema,
   input: z.record(z.string(), z.json()),
   mcpUrl: z.string(),
+  launch: z.object({ connectionId: z.string(), toolName: z.literal("open_app"), resourceUri: z.string(), arguments: z.object({ input: z.record(z.string(), z.json()) }) }).optional(),
 }).strict()
 
 export class AppBuilderError extends Error {
@@ -59,10 +64,13 @@ function mcpUrl(publicOrigin: string, serverPath: string) {
  * receive the text, the structured App, and its MCP URL. An App the catalog
  * cannot list (canOpen false) is described without a launch OpenWork would fail.
  */
-export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: string; message: string; launchInput?: unknown; canOpen?: boolean }) {
+export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: string; message: string; launchInput?: unknown; canOpen?: boolean; built?: boolean }) {
   const launchInput = mcpAppLaunchInput(input.launchInput)
   const url = mcpUrl(input.publicOrigin, input.app.serverPath)
-  const structuredContent = { app: input.app, input: launchInput, mcpUrl: url }
+  // Code Mode retains structuredContent but omits transport _meta. Keep the
+  // server-issued launch in both projections; capacity-denied Apps have neither.
+  const launch = { connectionId: input.app.appId, toolName: MCP_APP_LAUNCH_TOOL_NAME, resourceUri: input.app.resourceUri, arguments: { input: launchInput } }
+  const structuredContent = { app: input.app, input: launchInput, mcpUrl: url, ...(input.canOpen === false ? {} : { launch }) }
   if (input.canOpen === false) {
     return {
       content: [{ type: "text" as const, text: `${input.message} OpenWork lists at most 100 connections and Apps for you, and this App is past that limit, so it cannot open inside OpenWork. Its MCP URL works in any MCP client: ${url}\n\n${input.app.textFallback}` }],
@@ -70,7 +78,7 @@ export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: st
     }
   }
   return {
-    content: [{ type: "text" as const, text: `${input.message} ${MCP_APP_SHOWN_NOTE}\n\n${input.app.textFallback}` }],
+    content: [{ type: "text" as const, text: `${input.message} ${input.built ? "If you are in OpenWork, the App opens in a tab in the right sidebar. Answer briefly and do not repeat what it shows." : MCP_APP_SHOWN_NOTE}\n\n${input.app.textFallback}` }],
     structuredContent,
     _meta: {
       "openwork/mcpApp": {
@@ -106,12 +114,13 @@ export function searchMcpApps(apps: McpAppEntry[], query: string, publicOrigin: 
 }
 
 export type AppBuilderService = {
+  prepare: (input: PrepareMcpAppInput) => Promise<PrepareMcpAppOutput>
   create: (input: CreateMcpAppInput) => Promise<McpAppSummary>
   update: (input: UpdateMcpAppInput) => Promise<McpAppSummary>
   read: (input: { appId: string }) => Promise<ReadMcpAppOutput>
 }
 
-/** create_app, update_app, and read_app: Connect builds Apps; each App serves itself. */
+/** Connect prepares and builds Apps; each completed App serves itself. */
 export function registerAppBuilderTools(input: {
   server: McpServer
   scopes: ReadonlySet<string>
@@ -124,10 +133,26 @@ export function registerAppBuilderTools(input: {
   const requireScope = (scope: string) => {
     if (!input.scopes.has(scope)) throw new AppBuilderError("insufficient_mcp_scope", `This App operation requires the ${scope} scope.`)
   }
+  input.server.registerTool("prepare_app", {
+    title: "Prepare an App",
+    description: "Start building an App before writing its source. Choose a clear title, briefly describe the view and interactions you will write, and select exact tools from search_capabilities, or no tools for a self-contained App. Verifies available tool bindings and returns their input schemas, an opinionated React/CSS starter, and the steps to finish. Does not run tools, create a Plugin, or publish an App. Then adapt the starter following create_app's authoring rules and call create_app directly with the returned preparationId. Requires mcp:write.",
+    inputSchema: prepareMcpAppInputSchema,
+    outputSchema: prepareMcpAppOutputSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async (request) => {
+    try {
+      requireScope(DEN_MCP_WRITE_SCOPE)
+      const result = await input.service.prepare(request)
+      return { content: [{ type: "text", text: JSON.stringify(result) }], structuredContent: result }
+    } catch (error) {
+      return errorResult(error)
+    }
+  })
   input.server.registerTool("create_app", {
     title: "Create an App",
     description: [
       "Create an App, which is its own MCP server, from complete React/CSS source, a readable textFallback, and the tools it needs. It needs no Workflow, output schema, or Automation.",
+      "Start with prepare_app, adapt its starter and verified schemas, then pass its preparationId here so OpenWork can show the real creation steps. This call independently checks bindings, compiles source, and saves the App; preparationId is only for progress correlation. Older clients may omit it.",
       "Each tool has a snake_case name, a description, and one exact capability from search_capabilities: a saved Workflow, a connection tool, or an OpenWork action that reads (GET). To change data, bind a saved Workflow that makes the change. Use mode live for a Workflow that reads input.runtime. Tools run as the person using the App.",
       "reactSource default-exports a component receiving { app, input, result, hostContext }: input is the launch input, and result is the launch CallToolResult (read result?.structuredContent), undefined until delivered. React is injected: use React.useState and other React APIs without imports. Do not use fetch, browser or host globals, timers, dynamic code, external resources, URL-bearing elements, or <form>, <svg>, <style>, or <math> elements; use labeled inputs and type=button controls.",
       "Call only declared tools, with app.callServerTool({ name, arguments }): a Workflow or connection tool takes the capability's arguments, an OpenWork action { path, query, body }, and a live Workflow only an optional { timeZone }. Show a blocked state if app.getHostCapabilities()?.serverTools is absent.",
@@ -145,6 +170,7 @@ export function registerAppBuilderTools(input: {
       input.notifyCatalogChanged()
       return mcpAppLaunchResult({
         app,
+        built: true,
         publicOrigin: input.publicOrigin,
         message: `Created ${app.title} as its own MCP server with ${app.tools.length} ${app.tools.length === 1 ? "tool" : "tools"} plus ${MCP_APP_LAUNCH_TOOL_NAME}. MCP URL: ${mcpUrl(input.publicOrigin, app.serverPath)}`,
         canOpen: await input.canOpen?.(app.appId) ?? true,
@@ -168,7 +194,7 @@ export function registerAppBuilderTools(input: {
       requireScope(DEN_MCP_WRITE_SCOPE)
       const app = await input.service.update(request)
       input.notifyCatalogChanged()
-      return mcpAppLaunchResult({ app, publicOrigin: input.publicOrigin, message: `Updated ${app.title} to a new revision.`, canOpen: await input.canOpen?.(app.appId) ?? true })
+      return mcpAppLaunchResult({ app, built: true, publicOrigin: input.publicOrigin, message: `Updated ${app.title} to a new revision.`, canOpen: await input.canOpen?.(app.appId) ?? true })
     } catch (error) {
       return errorResult(error)
     }

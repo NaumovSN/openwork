@@ -29,6 +29,8 @@ import type {
   CreateMicrosoft365ReplyDraftErrors,
   CreateMicrosoft365ReplyDraftResponses,
   CreateOrganizationApiKeyRequest,
+  CreateWorkbotRunTokenErrors,
+  CreateWorkbotRunTokenResponses,
   DashboardElement,
   DeactivateAutomationErrors,
   DeactivateAutomationResponses,
@@ -173,6 +175,8 @@ import type {
   GetMcpWellKnownOauthProtectedResourceResponses,
   GetReadyErrors,
   GetReadyResponses,
+  GetV1AdminFreeAutoUsageErrors,
+  GetV1AdminFreeAutoUsageResponses,
   GetV1AdminMetricsErrors,
   GetV1AdminMetricsResponses,
   GetV1AdminOrganizationsByOrganizationIdCapabilitiesErrors,
@@ -301,10 +305,14 @@ import type {
   GetV1GatewayUsageLimitsMembersErrors,
   GetV1GatewayUsageLimitsMembersResponses,
   GetV1GatewayUsageLimitsMeResponses,
+  GetV1InferenceAccessErrors,
+  GetV1InferenceAccessResponses,
   GetV1InferenceAnalyticsActivityResponses,
   GetV1InferenceAnalyticsConsumptionResponses,
   GetV1InferenceAnalyticsSettingsResponses,
   GetV1InferenceErrors,
+  GetV1InferenceFreeProviderErrors,
+  GetV1InferenceFreeProviderResponses,
   GetV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
   GetV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
   GetV1InferenceProvidersByInferenceProviderIdAvailableModelsErrors,
@@ -340,6 +348,7 @@ import type {
   GetV1InstallByPlatformResponses,
   GetV1InstallConfigErrors,
   GetV1InstallConfigResponses,
+  GetV1IntegrationsSlackOauthCallbackErrors,
   GetV1LlmProviderCatalogByProviderIdErrors,
   GetV1LlmProviderCatalogByProviderIdResponses,
   GetV1LlmProviderCatalogErrors,
@@ -376,6 +385,8 @@ import type {
   GetV1McpConnectionsByConnectionIdMcpAppsErrors,
   GetV1McpConnectionsByConnectionIdMcpAppsResponses,
   GetV1McpConnectionsByConnectionIdResponses,
+  GetV1McpConnectionsByConnectionIdSlackAssistantErrors,
+  GetV1McpConnectionsByConnectionIdSlackAssistantResponses,
   GetV1McpConnectionsByConnectionIdToolPolicyErrors,
   GetV1McpConnectionsByConnectionIdToolPolicyResponses,
   GetV1McpConnectionsByConnectionIdToolsErrors,
@@ -487,9 +498,13 @@ import type {
   GetWellKnownOauthProtectedResourceResponses,
   GetWellKnownOpenidConfigurationApiAuthResponses,
   GetWellKnownOpenidConfigurationResponses,
+  GetWorkbotSessionErrors,
+  GetWorkbotSessionResponses,
   GoogleWorkspaceCreateCalendarEventBody,
   GoogleWorkspaceShareDriveFileBody,
   GoogleWorkspaceUpdateCalendarEventBody,
+  ListAutomationRunnersErrors,
+  ListAutomationRunnersResponses,
   ListAutomationRunsErrors,
   ListAutomationRunsResponses,
   ListAutomationsErrors,
@@ -522,6 +537,8 @@ import type {
   PatchApiAuthScimV2UsersByUserIdResponses,
   PatchV1AdminOrganizationsByOrganizationIdDpaErrors,
   PatchV1AdminOrganizationsByOrganizationIdDpaResponses,
+  PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors,
+  PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses,
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsErrors,
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses,
   PatchV1AdminOrganizationsByOrganizationIdPlanErrors,
@@ -542,6 +559,8 @@ import type {
   PatchV1GatewayUsageLimitPoliciesByPolicyIdResponses,
   PatchV1InferenceAnalyticsSettingsResponses,
   PatchV1InferenceErrors,
+  PatchV1InferenceFreePinsErrors,
+  PatchV1InferenceFreePinsResponses,
   PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdErrors,
   PatchV1InferenceProvidersByInferenceProviderIdAccessGrantsByGrantIdResponses,
   PatchV1InferenceProvidersByInferenceProviderIdCredentialSetsByCredentialSetIdErrors,
@@ -702,6 +721,8 @@ import type {
   PostV1InferenceAnalyticsLangfuseConnectResponses,
   PostV1InferenceAnalyticsLangfuseTestErrors,
   PostV1InferenceAnalyticsLangfuseTestResponses,
+  PostV1InferenceFreeCredentialErrors,
+  PostV1InferenceFreeCredentialResponses,
   PostV1InferenceProvidersByInferenceProviderIdAccessGrantsErrors,
   PostV1InferenceProvidersByInferenceProviderIdAccessGrantsResponses,
   PostV1InferenceProvidersByInferenceProviderIdCredentialSetsErrors,
@@ -720,6 +741,12 @@ import type {
   PostV1InstallConnectPreviewResponses,
   PostV1InstallConnectStatusErrors,
   PostV1InstallConnectStatusResponses,
+  PostV1IntegrationsSlackByConnectionIdCommandsErrors,
+  PostV1IntegrationsSlackByConnectionIdCommandsResponses,
+  PostV1IntegrationsSlackByConnectionIdEventsErrors,
+  PostV1IntegrationsSlackByConnectionIdEventsResponses,
+  PostV1IntegrationsSlackByConnectionIdInteractionsErrors,
+  PostV1IntegrationsSlackByConnectionIdInteractionsResponses,
   PostV1InvitationsByInvitationIdCancelErrors,
   PostV1InvitationsByInvitationIdCancelResponses,
   PostV1InvitationsErrors,
@@ -748,6 +775,8 @@ import type {
   PostV1McpConnectionsByConnectionIdDisconnectResponses,
   PostV1McpConnectionsByConnectionIdOauthIssuerReviewErrors,
   PostV1McpConnectionsByConnectionIdOauthIssuerReviewResponses,
+  PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors,
+  PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponses,
   PostV1McpConnectionsByConnectionIdToolsCallErrors,
   PostV1McpConnectionsByConnectionIdToolsCallResponses,
   PostV1McpConnectionsDiscoverErrors,
@@ -866,6 +895,8 @@ import type {
   PutV1McpConnectionsByConnectionIdAccessResponses,
   PutV1McpConnectionsByConnectionIdErrors,
   PutV1McpConnectionsByConnectionIdResponses,
+  PutV1McpConnectionsByConnectionIdSlackAssistantErrors,
+  PutV1McpConnectionsByConnectionIdSlackAssistantResponses,
   PutV1McpConnectionsByConnectionIdToolPolicyErrors,
   PutV1McpConnectionsByConnectionIdToolPolicyResponses,
   PutV1McpConnectionsByKeyByExternalKeyErrors,
@@ -981,6 +1012,29 @@ export class DenClient extends HeyApiClient {
     return (options?.client ?? this.client).get<GetReadyResponses, GetReadyErrors, ThrowOnError>({
       url: "/ready",
       ...options,
+    });
+  }
+
+  /**
+   * Get free Auto usage across all organizations
+   *
+   * Returns free Auto usage for the last `days` UTC days: platform totals, members and guests, a daily series, this week's allowance pressure, and usage per organization. Guests are reported only in aggregate.
+   */
+  public getV1AdminFreeAutoUsage<ThrowOnError extends boolean = false>(
+    parameters?: {
+      days?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "days" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1AdminFreeAutoUsageResponses,
+      GetV1AdminFreeAutoUsageErrors,
+      ThrowOnError
+    >({
+      url: "/v1/admin/free-auto/usage",
+      ...options,
+      ...params,
     });
   }
 
@@ -1131,6 +1185,45 @@ export class DenClient extends HeyApiClient {
       url: "/v1/admin/organizations/{organizationId}/free-seats",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * Set an organization's free Auto rollout
+   *
+   * Allowlisted platform administrators only. Sets the organization rollout override; null restores the deployment default. Default rollout is off. Does not override the global kill switch, DPA, billing eligibility, desktop policy or allowance. Atomically preserves unrelated metadata and records the actor and previous state.
+   */
+  public patchV1AdminOrganizationsByOrganizationIdFreeAuto<ThrowOnError extends boolean = false>(
+    parameters: {
+      organizationId: string;
+      enabled: boolean | null;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "organizationId" },
+            { in: "body", key: "enabled" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).patch<
+      PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses,
+      PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors,
+      ThrowOnError
+    >({
+      url: "/v1/admin/organizations/{organizationId}/free-auto",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 
@@ -2262,7 +2355,7 @@ export class DenClient extends HeyApiClient {
       runnerId: string;
       protocolVersion: 1;
       supportedExecutionTargets: ["desktop"];
-      capabilities?: Array<"model_attention_v1" | "remote_session_v1">;
+      capabilities?: Array<"model_attention_v1" | "remote_session_v1" | "remote_session_control_v1">;
       appVersion: string;
       platform: "darwin" | "win32" | "linux";
       concurrency: number;
@@ -2317,9 +2410,22 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
+   * List where this member's Automations can run
+   *
+   * Returns the member's registered desktops, most recently seen first, and whether OpenWork Cloud can run their agent Automations right now. Any connected desktop may run a Desktop Automation; one pinned to a workspace runs on a desktop that has that workspace. Management surfaces read this to offer a choice of where an Automation runs.
+   */
+  public listAutomationRunners<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      ListAutomationRunnersResponses,
+      ListAutomationRunnersErrors,
+      ThrowOnError
+    >({ url: "/v1/automation-runners", ...options });
+  }
+
+  /**
    * List Automations
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public listAutomations<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -2349,7 +2455,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Create an active Automation from an app surface
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. This compatibility route serves first-party Desktop clients. Agents must use createCloudAutomation so they cannot accidentally create Desktop placement.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. This route creates Desktop Automations for first-party OpenWork clients, Desktop and Web alike. Agents must use createCloudAutomation so they cannot accidentally create Desktop placement.
    */
   public createAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2444,7 +2550,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Create an active OpenWork Cloud Automation
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. This is the Web and Cloud Chat creation surface. Placement is fixed to OpenWork Cloud and the Automation can wake a stopped Cloud container without a desktop. Create only when the person explicitly asks to create or schedule it; there is no draft step.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. This is the Web and Cloud Chat creation surface. Placement is fixed to OpenWork Cloud and the Automation can wake a stopped Cloud container without a desktop. Create only when the person explicitly asks to create or schedule it; there is no draft step.
    */
   public createCloudAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2521,7 +2627,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Archive an Automation
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. Durable run history is retained.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. Durable run history is retained.
    */
   public archiveAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2540,7 +2646,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Get an Automation
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public getAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2559,7 +2665,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Update an Automation
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. Every behavior-changing edit creates an immutable revision and applies it to future runs immediately.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. Every behavior-changing edit creates an immutable revision and applies it to future runs immediately. Set executionTarget to move the Automation between the owner's desktops and OpenWork Cloud; agents may move it to the cloud only.
    */
   public updateAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2646,7 +2752,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Activate an Automation
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public activateAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2665,7 +2771,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Deactivate an Automation
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public deactivateAutomation<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2688,26 +2794,42 @@ export class DenClient extends HeyApiClient {
   /**
    * Run an Automation now
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress. Send executionTarget "cloud" to run a Desktop Automation once in OpenWork Cloud without changing it. Agents cannot run a Cloud Automation on a desktop.
    */
   public runAutomationNow<ThrowOnError extends boolean = false>(
     parameters: {
       id: string;
+      executionTarget?: "desktop" | "cloud";
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "id" }] }]);
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "id" },
+            { in: "body", key: "executionTarget" },
+          ],
+        },
+      ],
+    );
     return (options?.client ?? this.client).post<RunAutomationNowResponses, RunAutomationNowErrors, ThrowOnError>({
       url: "/v1/automations/{id}/run",
       ...options,
       ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 
   /**
    * List Automation runs
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public listAutomationRuns<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2739,7 +2861,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Inspect an Automation run receipt and execution thread
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public getAutomationRun<ThrowOnError extends boolean = false>(
     parameters: {
@@ -2758,7 +2880,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Cancel an active Automation run
    *
-   * Den schedules Automations and keeps durable run history. Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
+   * Den schedules Automations and keeps durable run history. A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud. If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed. Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations. Deactivation stops future runs but does not cancel a run already in progress.
    */
   public cancelAutomationRun<ThrowOnError extends boolean = false>(
     parameters: {
@@ -4083,7 +4205,7 @@ export class DenClient extends HeyApiClient {
   /**
    * List Apps built in OpenWork for dashboards
    *
-   * Lists the Apps built in OpenWork that the calling admin can use, in the element shape organization Dashboards store. Each element opens the App through its own MCP server with open_app, and Dashboards keep it on the App's current revision. Members see a tile only when the App's Plugin is shared with them. Empty when Apps built in OpenWork are turned off. Admin-only.
+   * Lists the Apps built in OpenWork that the calling member can use, in the element shape organization Dashboards store. Each element opens the App through its own MCP server with open_app, and Dashboards keep it on the App's current revision. Members see a tile only when the App's Plugin is shared with them. Empty when Apps built in OpenWork are turned off. Only Apps the member can access are listed.
    */
   public getV1McpApps<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
     return (options?.client ?? this.client).get<GetV1McpAppsResponses, GetV1McpAppsErrors, ThrowOnError>({
@@ -4385,6 +4507,73 @@ export class DenClient extends HeyApiClient {
       PutV1DiagnosticsEgressTokenErrors,
       ThrowOnError
     >({ url: "/v1/diagnostics/egress/token", ...options });
+  }
+
+  /**
+   * Get organization Free provider summary
+   *
+   * Admins only. Returns the organization's Auto pin policy, joined-member allowance counts and recorded free usage attributed to this organization. Allowances are person-wide; usage totals exclude other organizations, anonymous devices and paid inference. No individual balances or identities are returned.
+   */
+  public getV1InferenceFreeProvider<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1InferenceFreeProviderResponses,
+      GetV1InferenceFreeProviderErrors,
+      ThrowOnError
+    >({ url: "/v1/inference/free/provider", ...options });
+  }
+
+  /**
+   * Set the organization Auto pin
+   *
+   * A fresh owner/admin session may change only defaultPinned. Unpinning changes picker curation, not free model availability or personal pins. The atomic metadata update preserves DPA, offerAllowed and all unrelated organization configuration.
+   */
+  public patchV1InferenceFreePins<ThrowOnError extends boolean = false>(
+    parameters: {
+      defaultPinned: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "defaultPinned" }] }]);
+    return (options?.client ?? this.client).patch<
+      PatchV1InferenceFreePinsResponses,
+      PatchV1InferenceFreePinsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/inference/free/pins",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Get my free Auto allowance
+   *
+   * Returns the authenticated joined member's person-wide weekly Auto allowance without credentials.
+   */
+  public getV1InferenceAccess<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<
+      GetV1InferenceAccessResponses,
+      GetV1InferenceAccessErrors,
+      ThrowOnError
+    >({ url: "/v1/inference/access", ...options });
+  }
+
+  /**
+   * Get my free Auto credential
+   *
+   * Issues or reuses the member's OpenWork Models key for free Auto, within the member's weekly allowance. Organizations with an OpenWork Models subscription get it too; Auto is never billed to them. A refusal names its reason: free_not_enrolled (the organization is not in the rollout), free_not_offered (the organization turned the free starter model off) or not_eligible.
+   */
+  public postV1InferenceFreeCredential<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).post<
+      PostV1InferenceFreeCredentialResponses,
+      PostV1InferenceFreeCredentialErrors,
+      ThrowOnError
+    >({ url: "/v1/inference/free/credential", ...options });
   }
 
   /**
@@ -5829,7 +6018,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Read organization Gateway usage by UTC day
    *
-   * Defaults to model grouping and the last 31 UTC calendar days including today. Empty filters mean all. Counts only org_provider traffic. requestCount includes completed request records of all outcomes, including gateway rejections and interrupted requests; unreportedRequests counts records without total tokens, not just successful generations with missing usage. uncountableRequests breaks missing token totals down by outcome (ok, upstream_error, upstream_unreachable, client_aborted, rejected); individual counts are null when historical summaries cannot separate them. These diagnostic counts are separate from plotted usage. Team requestCount and uncountableRequests sum current team attributions like the other totals. Token values omit zero subtotals, and series with neither positive tokens nor positive cost are omitted. Returns tokens and stored approximate cost in integer micro-USD in the same snapshot, without repricing historical requests. totalTokens, unreportedRequests and daily values remain token-only. totalCostMicroUsd sums known stored costs; unpricedRequests counts missing cost observations, or is null when legacy rollup observation counts leave coverage unknown. Daily costValues use the same stable series IDs: zero subtotals with missing or unknown cost coverage are null, fully observed zero costs are 0, and positive recorded subtotals remain numeric even with incomplete coverage indicated by unpricedRequests. Team view attributes each active org member's usage to every distinct current team membership; members without a team are omitted. Team token, cost and missing-observation totals sum these attributions and may exceed model/person totals; cost coverage is evaluated per team/day. No teams returns emptyReason=no_teams, zero totals and missing counts, and empty daily maps without querying usage. Absent keys in a day's sparse values and costValues maps mean no usage and are zero. Limits: 100 filter IDs, 366 days, 10,000 series and 20,000 filter options; oversized results fail without truncation.
+   * Defaults to model grouping and the last 31 UTC calendar days including today. Empty filters mean all. Counts org_provider, openwork_openrouter and openwork_free traffic. requestCount includes completed request records of all outcomes, including gateway rejections and interrupted requests; unreportedRequests counts records without total tokens, not just successful generations with missing usage. uncountableRequests breaks missing token totals down by outcome (ok, upstream_error, upstream_unreachable, client_aborted, rejected); individual counts are null when historical summaries cannot separate them. These diagnostic counts are separate from plotted usage. Team requestCount and uncountableRequests sum current team attributions like the other totals. Token values omit zero subtotals, and series with neither positive tokens nor positive cost are omitted. Returns tokens and stored approximate cost in integer micro-USD in the same snapshot, without repricing historical requests. totalTokens, unreportedRequests and daily values remain token-only. totalCostMicroUsd sums known stored costs; unpricedRequests counts missing cost observations, or is null when legacy rollup observation counts leave coverage unknown. Daily costValues use the same stable series IDs: zero subtotals with missing or unknown cost coverage are null, fully observed zero costs are 0, and positive recorded subtotals remain numeric even with incomplete coverage indicated by unpricedRequests. Team view attributes each active org member's usage to every distinct current team membership; members without a team are omitted. Team token, cost and missing-observation totals sum these attributions and may exceed model/person totals; cost coverage is evaluated per team/day. No teams returns emptyReason=no_teams, zero totals and missing counts, and empty daily maps without querying usage. Absent keys in a day's sparse values and costValues maps mean no usage and are zero. Limits: 100 filter IDs, 366 days, 10,000 series and 20,000 filter options; oversized results fail without truncation.
    */
   public getV1InferenceProvidersUsage<ThrowOnError extends boolean = false>(
     parameters?: {
@@ -6647,7 +6836,7 @@ export class DenClient extends HeyApiClient {
   /**
    * Update inference gateway provider
    *
-   * Partially updates the provider name, model universe or status and returns management details. Provider identity and upstream destination are immutable; changing them requires a new provider. Legacy credential or audience fields are rejected with matrix_write_required: edit credential sets and access grants instead. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
+   * Partially updates the provider name, model universe or status and returns management details. A pin-only PATCH with pinnedModelIds replaces the ordered catalog-model pins without changing models, groups, credentials or grants; duplicates and unknown models are rejected. Pins do not grant access. Provider identity and upstream destination are immutable; changing them requires a new provider. Legacy credential or audience fields are rejected with matrix_write_required: edit credential sets and access grants instead. Requires owner/admin permission and enabled Gateway management; session callers must recently reauthenticate.
    */
   public patchV1InferenceProvidersByInferenceProviderId<ThrowOnError extends boolean = false>(
     parameters: {
@@ -6655,6 +6844,7 @@ export class DenClient extends HeyApiClient {
       name?: string;
       providerId?: string;
       modelIds?: Array<string>;
+      pinnedModelIds?: Array<string>;
       settings?: {
         project?: string;
         location?: string;
@@ -6689,6 +6879,7 @@ export class DenClient extends HeyApiClient {
             { in: "body", key: "name" },
             { in: "body", key: "providerId" },
             { in: "body", key: "modelIds" },
+            { in: "body", key: "pinnedModelIds" },
             { in: "body", key: "settings" },
             { in: "body", key: "status" },
             { in: "body", key: "credentialMode" },
@@ -13943,6 +14134,226 @@ export class DenClient extends HeyApiClient {
       url: "/v1/org/web-origins/{webOriginId}",
       ...options,
       ...params,
+    });
+  }
+
+  /**
+   * Read Slack assistant setup
+   *
+   * Read connector configuration, organization eligibility, recent activity metrics, and the Slack app manifest. Only workspace admins can read setup; stored credentials are never returned.
+   */
+  public getV1McpConnectionsByConnectionIdSlackAssistant<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "connectionId" }] }]);
+    return (options?.client ?? this.client).get<
+      GetV1McpConnectionsByConnectionIdSlackAssistantResponses,
+      GetV1McpConnectionsByConnectionIdSlackAssistantErrors,
+      ThrowOnError
+    >({
+      url: "/v1/mcp-connections/{connectionId}/slack-assistant",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Configure Slack assistant installation
+   *
+   * Save the connector's Slack assistant settings and optionally replace its signing secret. Enabling requires the platform capability and OpenWork Web access. Requires a workspace admin browser session and recent verification.
+   */
+  public putV1McpConnectionsByConnectionIdSlackAssistant<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+      enabled: boolean;
+      signingSecret?: string;
+      channelIds?: Array<string>;
+      shadowMode?: boolean;
+      dailyLimit?: number;
+      model?: string | null;
+      progressUpdates?: boolean;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "connectionId" },
+            { in: "body", key: "enabled" },
+            { in: "body", key: "signingSecret" },
+            { in: "body", key: "channelIds" },
+            { in: "body", key: "shadowMode" },
+            { in: "body", key: "dailyLimit" },
+            { in: "body", key: "model" },
+            { in: "body", key: "progressUpdates" },
+          ],
+        },
+      ],
+    );
+    return (options?.client ?? this.client).put<
+      PutV1McpConnectionsByConnectionIdSlackAssistantResponses,
+      PutV1McpConnectionsByConnectionIdSlackAssistantErrors,
+      ThrowOnError
+    >({
+      url: "/v1/mcp-connections/{connectionId}/slack-assistant",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    });
+  }
+
+  /**
+   * Start Slack bot installation
+   *
+   * Create a short-lived, single-use OAuth state tied to the installing admin and return the Slack authorization URL. The connector must already have OAuth credentials and a signing secret configured.
+   */
+  public postV1McpConnectionsByConnectionIdSlackAssistantInstall<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "connectionId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponses,
+      PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors,
+      ThrowOnError
+    >({
+      url: "/v1/mcp-connections/{connectionId}/slack-assistant/install",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Complete Slack bot installation
+   *
+   * Consume the single-use OAuth state, recheck the installing admin's access, and exchange the Slack authorization code for bot credentials. Redirect to connector settings after a successful installation.
+   */
+  public getV1IntegrationsSlackOauthCallback<ThrowOnError extends boolean = false>(
+    options?: Options<never, ThrowOnError>,
+  ) {
+    return (options?.client ?? this.client).get<unknown, GetV1IntegrationsSlackOauthCallbackErrors, ThrowOnError>({
+      url: "/v1/integrations/slack/oauth/callback",
+      ...options,
+    });
+  }
+
+  /**
+   * Receive signed Slack assistant events
+   *
+   * Verify the Slack signature and workspace, answer URL verification challenges, and durably enqueue supported events before acknowledging. Disabled or ineligible invocations are acknowledged without routing to a member runtime.
+   */
+  public postV1IntegrationsSlackByConnectionIdEvents<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "connectionId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1IntegrationsSlackByConnectionIdEventsResponses,
+      PostV1IntegrationsSlackByConnectionIdEventsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/integrations/slack/{connectionId}/events",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Receive Slack commands
+   *
+   * Verify the signed Slack slash command and return an ephemeral link for the member to connect their own account in OpenWork.
+   */
+  public postV1IntegrationsSlackByConnectionIdCommands<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "connectionId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1IntegrationsSlackByConnectionIdCommandsResponses,
+      PostV1IntegrationsSlackByConnectionIdCommandsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/integrations/slack/{connectionId}/commands",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Receive Slack interactions
+   *
+   * Verify the signed Slack interaction and record supported feedback only for the member who owns the referenced assistant event.
+   */
+  public postV1IntegrationsSlackByConnectionIdInteractions<ThrowOnError extends boolean = false>(
+    parameters: {
+      connectionId: string;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "connectionId" }] }]);
+    return (options?.client ?? this.client).post<
+      PostV1IntegrationsSlackByConnectionIdInteractionsResponses,
+      PostV1IntegrationsSlackByConnectionIdInteractionsErrors,
+      ThrowOnError
+    >({
+      url: "/v1/integrations/slack/{connectionId}/interactions",
+      ...options,
+      ...params,
+    });
+  }
+
+  /**
+   * Who is signed in to Workbot
+   *
+   * For the Workbot app only. With the access token a person got by signing in to Workbot through Den, returns who they are, the workspace they chose, and whether Workbot is on for it.
+   */
+  public getWorkbotSession<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetWorkbotSessionResponses, GetWorkbotSessionErrors, ThrowOnError>({
+      url: "/v1/workbot/session",
+      ...options,
+    });
+  }
+
+  /**
+   * A short-lived token for one Workbot turn
+   *
+   * For the Workbot app only. Mints the member-scoped MCP token a Workbot turn uses to reach the person's connected apps on the headless runner, for at most an hour. Refused when Workbot is off for the workspace.
+   */
+  public createWorkbotRunToken<ThrowOnError extends boolean = false>(
+    parameters?: {
+      ttlMs?: number;
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "ttlMs" }] }]);
+    return (options?.client ?? this.client).post<
+      CreateWorkbotRunTokenResponses,
+      CreateWorkbotRunTokenErrors,
+      ThrowOnError
+    >({
+      url: "/v1/workbot/run-token",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     });
   }
 

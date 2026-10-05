@@ -91,11 +91,11 @@ export async function blankReleaseApp(options: {
  * bootstrap, Den, workspace, or sign-in, so it starts exactly like a fresh
  * install pointed at its built-in defaults.
  */
-export async function standaloneApp(options: { place: Place }): Promise<App> {
+export async function standaloneApp(options: { place: Place; env?: Record<string, string> }): Promise<App> {
   const electronStep = steps.step("electron-standalone", "Electron (app only)");
   let surface: Awaited<ReturnType<typeof desktop>>;
   try {
-    surface = await desktop({ name: "preview-desktop", host: options.place.host() });
+    surface = await desktop({ name: "preview-desktop", host: options.place.host(), ...(options.env ? { env: options.env } : {}) });
   } catch (error) {
     await electronStep.fail(error instanceof Error ? error.message : String(error));
     throw error;

@@ -10,8 +10,17 @@ export function codeModeSummary(
     serviceName: (call: DynamicToolUIPart) => string | null;
   },
 ): string {
-  if (options.failed) return "Couldn't finish this step";
-  if (calls.length === 0) return options.running ? "Working on this step" : "Worked on this step";
+  const failedCalls = calls.filter((call) => call.state === "output-error");
+  // A finished script whose every call failed did not "look up" anything,
+  // even when the engine reports the script itself as completed.
+  const allFailed = !options.running && calls.length > 0 && failedCalls.length === calls.length;
+  if (options.failed || allFailed) {
+    // Name what failed when one call did ("Script on OpenWork Cloud failed").
+    const only = failedCalls.length === 1 ? failedCalls[0] : undefined;
+    const failure = only ? getCapabilityCallSentence(only, { connectionName: options.serviceName(only), includeQuery: false }).failure : undefined;
+    return failure ?? "Script failed";
+  }
+  if (calls.length === 0) return options.running ? "Running a script" : "Ran a script";
 
   const changes = calls.filter((call) => {
     const name = call.toolName.endsWith("_execute_capability") && typeof call.input === "object" && call.input !== null && "name" in call.input
@@ -54,5 +63,9 @@ export function codeModeSummary(
     const verb = options.running ? "Changing" : changes.every(call => call.state === "output-error") ? "Tried to change" : "Changed";
     return `${verb} ${names || "connected services"}`;
   }
+  // A group of searches says so ("Searched Exa"), not a vague "Looked up".
+  const allSearches = calls.length > 0 && calls.every((call) =>
+    getCapabilityCallSentence(call, { includeQuery: false }).past.startsWith("Searched "));
+  if (allSearches && names) return `${options.running ? "Searching" : "Searched"} ${names}`;
   return `${options.running ? "Looking up" : "Looked up"} ${names || "information"}`;
 }

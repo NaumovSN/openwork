@@ -37,11 +37,6 @@ export async function readWorldSupport(path: string): Promise<WorldSupport> {
   return value;
 }
 
-function targetMatches(entry: string, target: WorldTarget): boolean {
-  const [provider, os] = entry.split("/");
-  return provider === target.provider && (os === "host" ? target.os === hostOs() : os === target.os);
-}
-
 export function assertWorldSupport(name: string, support: WorldSupport, target: WorldTarget): void {
   if (support === undefined) {
     if (target.provider === "local") return;
@@ -53,4 +48,24 @@ export function assertWorldSupport(name: string, support: WorldSupport, target: 
 
 export function supportedTargetDescription(support: WorldSupport): string {
   return support?.join(", ") ?? "local only (not declared)";
+}
+
+const SUMMARY = /\bexport\s+const\s+summary\s*=\s*("(?:[^"\\\r\n]|\\.)*")/;
+
+/**
+ * A static, literal `export const summary = "..."` one-line description, read
+ * without importing the script (like `supportedTargets`) so `world help --json`
+ * and `world list --json` can describe every world safely.
+ */
+export async function readWorldSummary(path: string): Promise<string | undefined> {
+  const match = SUMMARY.exec(await readFile(path, "utf8"));
+  if (!match) return undefined;
+  let value: unknown;
+  try { value = JSON.parse(match[1] ?? ""); } catch { throw new Error(`Invalid summary declaration in ${path}: use a literal double-quoted string.`); }
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+export function targetMatches(entry: string, target: WorldTarget): boolean {
+  const [provider, os] = entry.split("/");
+  return provider === target.provider && (os === "host" ? target.os === hostOs() : os === target.os);
 }

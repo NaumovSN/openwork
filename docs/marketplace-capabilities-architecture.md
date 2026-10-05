@@ -63,7 +63,7 @@ A config object's `objectType` determines its execution semantics on the rail.
 | `command` | searchable | accepts `body: { arguments?: string }`, substitutes `$ARGUMENTS`, returns rendered template | Instructional with arguments. No command is run server-side. |
 | `mcp` | searchable | returns declared server spec plus `status`/`hint` guidance | If an External MCP Connection for the same URL exists, hint to search for that connection's tools. Otherwise hint that an org admin can add it in Cloud → Connections, or the user can install locally. No auto-provisioning in Phase 1. |
 | `tool` | searchable | returns source plus `status: "needs_install"` and a hint naming the plugin/marketplace | Local-only in Phase 1. A human, or the agent via the desktop install flow, can finish locally. Phase 3 option: sandboxed execution via Den Worker Runtime. |
-| `hook` | searchable metadata only | returns definition plus an unsupported hint | Hooks are not supported anywhere yet: `apps/server/src/claude-plugin-bundle.ts` warns that OpenWork does not support hooks, and local install skips loading them. |
+| `hook` | searchable metadata only | returns definition plus an unsupported hint | Hooks are not supported anywhere yet; Den's GitHub import lists them as unsupported. |
 
 Instructional payloads include provenance framing: `Content from marketplace plugin <plugin> in your organization's library.` The agent sees where the text came from before deciding how to use it.
 
@@ -226,7 +226,7 @@ nonexistence.
 1. Desktop users without the cloud connection: this code is unreachable; zero change.
 2. Cloud-connected users in opted-out orgs: byte-identical search results and execute behavior.
 3. Tool surface unchanged: still exactly `search_capabilities` + `execute_capability`.
-4. The desktop install flow (`apps/server/src/cloud-plugins.ts`) is untouched; installed plugins keep working identically; nothing migrates, nothing is deprecated in Phase 1.
+4. The desktop install flow was later removed (#2857 stopped desktop installs; the local GitHub import and the install route followed). `apps/server/src/cloud-plugins.ts` now only lists and removes local copies made by older builds.
 5. The rich `/mcp` endpoint and `/mcp/admin` are untouched. External connections also merged only into `/mcp/agent`.
 6. No schema changes, no migrations, no new tables in Phase 1; everything derives from existing plugin-arch tables in `ee/packages/den-db/src/schema/sharables/plugin-arch.ts`.
 7. No prompt changes and no tool-description changes in Phase 1; results are self-describing via `summary`, `status`, and `hint`.
@@ -287,7 +287,7 @@ type CapabilityRecord = {
 
 Compile-at-publish means search reads ready-to-index rows rather than reparsing plugin config objects on every request. A publish transaction writes all records for the new plugin version, then atomically swaps the marketplace pointer from the previous record set to the new set.
 
-Skill envelopes keep the Claude plugin directory contract as the source bundle. The bundle remains compatible with `apps/server/src/claude-plugin-bundle.ts`: a Claude plugin directory with skills, commands, MCP declarations, and metadata. Den stores a `bundleRef`, then the runtime mounts that bundle into an ephemeral harness view when instructional content is executed.
+Skill envelopes keep the Claude plugin directory contract as the source bundle. The bundle is a Claude plugin directory with skills, commands, MCP declarations, and metadata. Den stores a `bundleRef`, then the runtime mounts that bundle into an ephemeral harness view when instructional content is executed.
 
 Instructional records (`skill`, `command`, `context`, `agent`, `custom`) execute by returning a signed envelope: provenance, raw content, arguments schema when present, and a short-lived bundle mount reference. They still do not run arbitrary code inside den-api.
 

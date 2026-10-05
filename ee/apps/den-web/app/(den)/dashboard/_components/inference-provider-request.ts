@@ -292,8 +292,9 @@ export function readInferenceProviderFromPayload(payload: unknown): DenInference
 export function readInferenceProviderDetails(payload: unknown, catalogPayload: unknown): DenInferenceProviderDetails | null {
   const provider = readInferenceProviderFromPayload(payload);
   if (!provider?.modelGroups || !provider.credentialSets || !provider.accessGrants) return null;
-  const catalog = z.object({ models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) }).parse(catalogPayload);
-  return { ...provider, catalogModels: catalog.models, modelGroups: provider.modelGroups, credentialSets: provider.credentialSets, accessGrants: provider.accessGrants };
+  const catalog = z.object({ catalogWarning: z.string().optional(), models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) }).parse(catalogPayload);
+  // Provider reads no longer refresh the catalog; the models endpoint does and carries the warning.
+  return { ...provider, catalogWarning: provider.catalogWarning ?? catalog.catalogWarning ?? null, catalogModels: catalog.models, modelGroups: provider.modelGroups, credentialSets: provider.credentialSets, accessGrants: provider.accessGrants };
 }
 
 export function readInferenceProvidersFromPayload(payload: unknown): DenInferenceProvider[] {

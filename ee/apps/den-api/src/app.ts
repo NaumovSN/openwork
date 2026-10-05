@@ -1,4 +1,6 @@
 import "./load-env.js"
+import { registerSlackAssistantRoutes } from "./slack-assistant/routes.js"
+import { registerWorkbotRoutes } from "./workbot/routes.js"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { swaggerUI } from "@hono/swagger-ui"
 import { and, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
@@ -24,14 +26,16 @@ import { createRequestAccessLogMiddleware, createTelemetryErrorSanitizerMiddlewa
 import { registerAdminRoutes } from "./routes/admin/index.js"
 import { registerAuthRoutes } from "./routes/auth/index.js"
 import { registerBootstrapRoutes } from "./routes/bootstrap/index.js"
+import { registerEmailRoutes } from "./routes/email/index.js"
 import { registerCloudRoutes } from "./routes/cloud/index.js"
 import { registerDeprecatedMemoryRoutes } from "./routes/deprecated-memory.js"
 import { registerDeprecatedSkillHubRoutes } from "./routes/deprecated-skill-hubs.js"
 import { registerDevRoutes } from "./routes/dev/index.js"
 import { registerMcpTokenRoutes } from "./routes/mcp/index.js"
 import { registerAutomationRoutes } from "./routes/automations/index.js"
-import { configureCloudAgentExecutor, configureCloudWorkflowExecutor } from "./automations/service.js"
+import { configureCloudAgentExecutor, configureCloudWorkflowExecutor, configureHeadlessAgentExecutor } from "./automations/service.js"
 import { cloudAgentRuntimeAvailable, executeCloudAgent } from "./automations/cloud-agent-executor.js"
+import { executeHeadlessAgent } from "./automations/headless-agent-executor.js"
 import { getCatalog } from "./mcp/index.js"
 import { buildCapabilityToolTree, createCapabilityRegistryContext } from "./mcp/capability-registry.js"
 import { executeMarketplaceCapability } from "./mcp/marketplace-capabilities.js"
@@ -270,6 +274,7 @@ app.get(
 registerAdminRoutes(app)
 registerAuthRoutes(app)
 registerBootstrapRoutes(app)
+registerEmailRoutes(app)
 registerCloudRoutes(app)
 registerDeprecatedMemoryRoutes(app)
 registerDeprecatedSkillHubRoutes(app)
@@ -277,6 +282,8 @@ registerDevRoutes(app)
 registerMeRoutes(app)
 registerAutomationRoutes(app, { enabled: env.automations.runtimeEnabled })
 registerOrgRoutes(app)
+registerSlackAssistantRoutes(app)
+registerWorkbotRoutes(app)
 registerVersionRoutes(app)
 registerWebhookRoutes(app)
 registerSlackAppHomeRoutes(app, signedWebhookRoute, getSlackHomeToken)
@@ -289,6 +296,7 @@ registerAdminMcpRoutes(app)
 registerTelemetryRoutes(app)
 
 configureCloudAgentExecutor({ execute: executeCloudAgent, runtimeAvailable: cloudAgentRuntimeAvailable })
+configureHeadlessAgentExecutor((input) => executeHeadlessAgent(input))
 
 configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automationRunId, action }) => {
   const normalizedOrganizationId = normalizeDenTypeId("organization", organizationId)
@@ -410,6 +418,7 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
       { name: "Worker Runtime", description: "Worker runtime inspection and upgrade routes." },
       { name: "Worker Activity", description: "Worker heartbeat and activity reporting routes." },
       { name: "Automations", description: "Scheduled Automations, their runs, and desktop runner presence." },
+      { name: "Workbot", description: "The signed-in member's single Workbot conversation." },
       { name: "Workflows", description: "Saved Workflows (Code Mode scripts), their versions, snapshots, and views." },
       { name: "Workflow Runs", description: "Durable Workflow run history." },
       { name: "Codemode Runs", description: "Generated Artifact views produced by Code Mode runs." },

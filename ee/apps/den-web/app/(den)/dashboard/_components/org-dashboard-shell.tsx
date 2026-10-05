@@ -59,6 +59,8 @@ import {
   type DenSearchBarHandle,
 } from "./command-palette/den-search-bar";
 import { useDashboardPrefetch } from "./use-dashboard-prefetch";
+import { useLibraryNeedsSignInCount } from "./library-data";
+import { useLibraryModels } from "./library-models-data";
 import { UserProfileDialog } from "./user-profile-dialog";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
@@ -437,7 +439,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     pathname,
     orgSlug: activeOrg?.slug,
   });
+  const libraryModels = useLibraryModels();
+  const libraryNeedsSignIn = useLibraryNeedsSignInCount(Boolean(activeOrg))
+    + (libraryModels.data ?? []).filter((provider) => provider.state === "needs_signin").length;
   const navSections = buildDashboardNavSections({
+    libraryNeedsSignIn,
     orgSlug: activeOrg?.slug ?? null,
     access,
     capabilities: orgContext?.capabilities ?? {
@@ -688,6 +694,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                           <span className="min-w-0 truncate">{item.label}</span>
                         </span>
                         <span className="flex shrink-0 items-center gap-1.5">
+                          {item.attention ? (
+                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" role="img" aria-label={item.attention} title={item.attention} data-testid="nav-attention" />
+                          ) : null}
                           {item.badge ? (
                             <span className="shrink-0 rounded-full border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium leading-3 text-gray-600" data-testid="nav-badge">
                               {item.badge}

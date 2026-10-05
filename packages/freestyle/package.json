@@ -12,9 +12,6 @@
     "./checkpoint-schema": "./src/checkpoint-schema.ts",
     "./evidence-builder": "./src/evidence-builder.ts"
   },
-  "scripts": {
-    "test": "node --test test/*.test.ts test/*.test.mjs"
-  },
   "dependencies": {
     "freestyle": "0.2.13"
   }

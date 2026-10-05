@@ -71,7 +71,7 @@ These are checks to complete before live activation, not permission granted by t
 
 The user reviewed the documents and approved implementation. App creation, live credential changes, flag enablement, external rollout, and outreach remain separate approval-gated actions.
 
-Tests exercise the approved public seams: member-facing connection discovery and consent state; OAuth start/callback/status/disconnect; native Connect search/thread execution including direct-route and retained-capability denial; the desktop-app connection journey with synthetic providers; and the optional signed Slack connection/help surface. Provider HTTP, credential storage, and identity fixtures may be controlled in tests; private implementation details are not the acceptance contract.
+The retained E2E journey exercises member-facing connection discovery and consent state; OAuth authorization and disconnect; native Connect search/thread execution including direct-route and retained-capability denial; and the app-web connection journey with synthetic providers. It also verifies that limited access is not a policy block and that a disabled deployment names OpenWork as policy owner rather than requesting reconnection. Following the repository's E2E-only verification convention, package-level unit suites are not retained; their historical Home, rotation, diagnostics-rendering and schema-rejection receipts are not current journey coverage. Provider HTTP, credential storage, and identity fixtures may be controlled in tests; private implementation details are not the acceptance contract.
 
 ## References
 

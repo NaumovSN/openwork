@@ -19,7 +19,7 @@ import {
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ownedAccessStatus } from "./access-summary";
 import { draftFromPluginGrants } from "./item-sharing";
-import { FilterInput, ItemMenu, removeEntry, ItemPanel, ItemRow, ItemSection, ItemSectionSkeleton } from "./item-list";
+import { FilterInput, ItemFlatList, ItemMenu, LibraryListRow, removeEntry, ItemSection, ItemSectionSkeleton } from "./item-list";
 import { ItemPage } from "./item-header";
 import { ConnectorLogo, LetterTile } from "./item-logo";
 import { LibraryAddDialog, type LibraryAddChoice, ConnectorLogoStrip } from "./library-add-dialog";
@@ -30,7 +30,12 @@ import {
   LIBRARY_FILTERS,
   type LibraryFilter,
   libraryItemDescription,
+  libraryItemReady,
+  libraryKindLabel,
+  NEEDS_SIGN_IN_STATUS,
+  needsViewerSignIn,
   parseLibraryFilter,
+  parseNeedsSignIn,
   receivedStatus,
 } from "./library-view";
 import { type ExternalMcpConnection, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
@@ -95,7 +100,10 @@ function LibraryItemRow({ item, mine, connection, signIn }: {
     toast({ title: `${item.name} is removed`, description: "Nobody can use it anymore." });
   }
 
-  const status = connection?.policyBlocked ? <DenBadge icon={Lock}>Blocked</DenBadge> : mine
+  const policyMessage = connection?.policyBlocked
+    ? connection.policyMessage ?? "An administrator controls access to this connection."
+    : undefined;
+  const status = connection?.policyBlocked ? policyMessage : mine
     ? item.type === "connection" ? <OwnedConnectionStatus connection={connection} />
       : item.type === "plugin" ? <OwnedPluginStatus pluginId={item.id} /> : "Only you"
     : receivedStatus(item.edges);
@@ -120,12 +128,14 @@ function LibraryItemRow({ item, mine, connection, signIn }: {
   );
 
   return (
-    <div data-library-item={item.name} data-library-kind={item.type}>
-      <ItemRow
+    <div data-library-item={item.name} data-library-kind={item.type} title={policyMessage ?? libraryItemDescription(item)}>
+      <LibraryListRow
         href={href}
         logo={<ItemLogo item={item} />}
         title={item.name}
-        description={connection?.policyBlocked ? connection.policyMessage : libraryItemDescription(item)}
+        ready={!connection?.policyBlocked && libraryItemReady(item)}
+        tag={connection?.policyBlocked ? <DenBadge icon={Lock}>Blocked</DenBadge> : undefined}
+        kind={libraryKindLabel(item)}
         status={status}
         action={action}
       />
@@ -175,6 +185,7 @@ function LibraryContent() {
   const [addOpen, setAddOpen] = useState(searchParams.get("add") === "1");
   const [query, setQuery] = useState("");
   const filter = parseLibraryFilter(searchParams.get("show"));
+  const onlyNeedsSignIn = parseNeedsSignIn(searchParams.get("status"));
 
   const ownedConnections = new Map((usable.data ?? []).filter((connection) => connection.access !== null).map((connection) => [connection.id, connection]));
   const viewerId = orgContext?.currentMember.id ?? null;
@@ -196,12 +207,21 @@ function LibraryContent() {
     filter,
     query,
     isMine: (item) => isOwnedByViewer(item, viewerId, new Set(ownedConnections.keys())),
+    needsSignIn: onlyNeedsSignIn,
   });
 
   function setFilter(next: LibraryFilter) {
     const params = new URLSearchParams(searchParams.toString());
     if (next === "all") params.delete("show");
     else params.set("show", next);
+    const suffix = params.toString();
+    router.replace(suffix ? `?${suffix}` : "?", { scroll: false });
+  }
+
+  function toggleNeedsSignIn() {
+    const params = new URLSearchParams(searchParams.toString());
+    if (onlyNeedsSignIn) params.delete("status");
+    else params.set("status", NEEDS_SIGN_IN_STATUS);
     const suffix = params.toString();
     router.replace(suffix ? `?${suffix}` : "?", { scroll: false });
   }
@@ -217,7 +237,11 @@ function LibraryContent() {
   }
 
   const showModels = filter === "all" || filter === "models";
-  const modelRows = showModels ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query)) : [];
+  const modelRows = showModels
+    ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query) && (!onlyNeedsSignIn || provider.state === "needs_signin"))
+    : [];
+  const needsSignInCount = items.filter(needsViewerSignIn).length
+    + (models.data ?? []).filter((provider) => provider.state === "needs_signin").length;
   const hasModels = (models.data ?? []).length > 0;
   const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels;
 
@@ -249,38 +273,54 @@ function LibraryContent() {
                     role="tab"
                     aria-selected={active}
                     onClick={() => setFilter(entry.value)}
-                    className={`h-[30px] rounded-full px-3 text-[12px] font-medium transition-colors ${active ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-900"}`}
+                    className={`h-7 rounded-full px-3 text-[12px] transition-colors ${active ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200/70"}`}
                   >
                     {entry.label}
                   </button>
                 );
               })}
+              {needsSignInCount > 0 || onlyNeedsSignIn ? (
+                <>
+                  <span className="mx-1 h-4 w-px bg-gray-200" aria-hidden="true" />
+                  <button
+                    type="button"
+                    aria-pressed={onlyNeedsSignIn}
+                    onClick={toggleNeedsSignIn}
+                    data-testid="library-needs-sign-in-filter"
+                    className={`flex h-7 items-center gap-1.5 rounded-full px-3 text-[12px] transition-colors ${onlyNeedsSignIn ? "bg-gray-900 text-white" : "border border-gray-200 bg-white text-gray-700 hover:bg-gray-50"}`}
+                  >
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden="true" />
+                    Needs sign-in
+                    <span className={onlyNeedsSignIn ? "text-white/70" : "text-gray-400"}>{needsSignInCount}</span>
+                  </button>
+                </>
+              ) : null}
             </div>
-            <FilterInput value={query} onChange={setQuery} className="w-[240px]" />
+            <FilterInput value={query} onChange={setQuery} className="w-[200px]" />
           </div>
 
           {library.isLoading ? <ItemSectionSkeleton label="Loading your Library" /> : null}
 
           {groups.mine.length > 0 ? (
-            <ItemSection title="Added by you" testId="library-section-mine">
-              <ItemPanel>
+            <ItemSection title="Added by you" meta={String(groups.mine.length)} testId="library-section-mine" variant="rule">
+              <ItemFlatList>
                 {groups.mine.map((item) => (
                   <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine connection={item.type === "connection" ? connectionsById.get(item.id) : undefined} signIn={signIn} />
                 ))}
-              </ItemPanel>
+              </ItemFlatList>
             </ItemSection>
           ) : null}
 
           {groups.received.length > 0 || modelRows.length > 0 ? (
-            <ItemSection title="From OpenWork" testId="library-section-received">
-              <ItemPanel>
+            <ItemSection title="From OpenWork" meta={`${groups.received.length + modelRows.length} shared with you`} testId="library-section-received" variant="rule">
+              <ItemFlatList>
                 {groups.received.map((item) => (
                   <LibraryItemRow key={`${item.type}:${item.id}`} item={item} mine={false} connection={item.type === "connection" ? connectionsById.get(item.id) : undefined} signIn={signIn} />
                 ))}
                 {modelRows.map((provider) => (
                   <LibraryModelRow key={`model:${provider.id}`} provider={provider} signIn={modelSignIn} />
                 ))}
-              </ItemPanel>
+              </ItemFlatList>
             </ItemSection>
           ) : null}
 

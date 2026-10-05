@@ -6,13 +6,8 @@ import { Blocks } from "lucide-react";
 import { createDenClient, readDenSettings, type DenGrantedDashboard } from "@/app/lib/den";
 import { denSettingsChangedEvent } from "@/app/lib/den-session-events";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
+import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner";
+import { t } from "../../../i18n";
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider";
 import { dashboardTileCacheScopeKey } from "./dashboard-tile-cache";
 import {
@@ -32,8 +27,12 @@ import { DashboardMasonry } from "./dashboard-masonry";
  * Personal apps alongside the dashboards shared by the organization.
  * Company definitions stay in Den; personal placement belongs to each member.
  */
-export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
+export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTarget, onSignIn }: {
   onCreateApp: CreateDashboardApp;
+  /** Opens OpenWork Cloud sign-in, the same action Library offers when signed out. */
+  onSignIn?: () => void;
+  /** Titlebar slot for the Add control, matching Library. */
+  headerActionsTarget?: HTMLElement | null;
   /** Other workspace MCP runtimes tiles may launch through when the primary one lacks their server. */
   fallbackEndpoints?: DashboardLaunchEndpoint[];
 }) {
@@ -78,12 +77,17 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
     staleTime: 30_000,
   });
 
+  // The dashboard belongs to the signed-in member: signed out, no tile mounts
+  // and no dashboard is launched or fetched, and the page leads with the same
+  // sign-in banner as Library.
+  if (denAuth.status !== "checking" && !denAuth.isSignedIn) return <DashboardSignedOut onSignIn={onSignIn} />;
+
   // Hold the board (and every launch) until its user/org scope and managed
   // dashboard payload are final.
   if (denAuth.status === "checking" || (grantedReady && grantedQuery.isPending && !grantedQuery.isFetched)
     || (Boolean(personal.client && personal.orgId) && personal.query.isPending && !personal.query.isFetched)) {
     return (
-      <div className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4" data-dashboard-page>
+      <div className="mx-auto w-full max-w-5xl px-6 py-8 sm:px-8" data-dashboard-page>
         <div className="space-y-2 pt-3" role="status" aria-label="Loading dashboard">
           <Skeleton className="h-8 w-1/3" />
           <Skeleton className="h-40 w-full" />
@@ -100,12 +104,14 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp }: {
       grantedError={grantedReady && grantedQuery.error ? true : false}
       fallbackEndpoints={fallbackEndpoints}
       onCreateApp={onCreateApp}
+      headerActionsTarget={headerActionsTarget}
     />
   );
 }
 
-function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, grantedError, fallbackEndpoints, onCreateApp }: {
+function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, grantedError, fallbackEndpoints, onCreateApp, headerActionsTarget }: {
   onCreateApp: CreateDashboardApp;
+  headerActionsTarget?: HTMLElement | null;
   consentScopeKey: string;
   cacheScopeKey: string;
   /** Organization-managed dashboards granted to this member, rendered read-only. */
@@ -127,12 +133,12 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
 
   return (
     <div
-      className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4"
+      className="mx-auto w-full max-w-5xl px-6 py-8 sm:px-8"
       data-dashboard-page
       data-dashboard-cache-scope={cacheScopeKey}
       data-dashboard-consent-scope={consentScopeKey}
     >
-      <DashboardApps key={cacheScopeKey} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} />
+      <DashboardApps key={cacheScopeKey} onCreateApp={onCreateApp} fallbackEndpoints={fallbackEndpoints} headerActionsTarget={headerActionsTarget} />
       {grantedError ? (
         <p className="mb-4 text-xs text-muted-foreground" role="status">
           Your organization&apos;s dashboards could not be loaded right now.
@@ -145,7 +151,7 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
             <span className="text-xs text-muted-foreground">From your company</span>
           </header>
           {dashboard.elements.length === 0 ? (
-            <p className="text-xs text-muted-foreground">This dashboard has no apps yet.</p>
+            <p className="text-xs text-muted-foreground">This dashboard has no artifacts yet.</p>
           ) : (
             <DashboardMasonry>
               {dashboard.elements.map((element) => {
@@ -166,17 +172,27 @@ function DashboardBoard({ consentScopeKey, cacheScopeKey, grantedDashboards, gra
           )}
         </section>
       ))}
-      {!grantedError && grantedDashboards.length === 0 ? (
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><Blocks /></EmptyMedia>
-            <EmptyTitle>No company apps yet</EmptyTitle>
-            <EmptyDescription>
-              Apps shared by your company will appear here.
-            </EmptyDescription>
-          </EmptyHeader>
-        </Empty>
-      ) : null}
+
+    </div>
+  );
+}
+
+function DashboardSignedOut({ onSignIn }: { onSignIn?: () => void }) {
+  return (
+    <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8" data-dashboard-page data-dashboard-signed-out>
+      <CloudSignInBanner
+        testId="dashboard-sign-in-banner"
+        media={<CloudSignInBannerIcon><Blocks /></CloudSignInBannerIcon>}
+        message={t("dashboard.sign_in_banner")}
+        onSignIn={onSignIn}
+      />
+      <section className="flex min-h-96 flex-col items-center justify-center text-center" data-dashboard-empty>
+        <div aria-hidden="true" className="mb-10 grid w-full max-w-xl grid-cols-[2fr_3fr_2fr] gap-4">{[0, 1, 2].map((index) => <div key={index} className="h-32 rounded-xl border border-dashed bg-muted/30 p-5">
+          <div className="h-2.5 w-3/5 rounded-full bg-muted" />
+          <div className="mt-3 h-6 w-10 rounded-md bg-muted" />
+        </div>)}</div>
+        <h2 className="text-xl font-semibold">Pin the artifacts you check every day</h2>
+      </section>
     </div>
   );
 }

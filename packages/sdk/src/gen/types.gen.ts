@@ -18,6 +18,119 @@ export type DenApiReadinessResponse = {
   };
 };
 
+export type AdminFreeAutoUsageResponse = {
+  generatedAt: string;
+  range: {
+    days: number;
+    from: string;
+    to: string;
+    timezone: "UTC";
+  };
+  settings: {
+    membersEnabled: boolean;
+    rolloutAllOrganizations: boolean;
+    weeklyLimitMicroUsd: number;
+  };
+  totals: {
+    costMicroUsd: number;
+    requests: number;
+    /**
+     * Requests charged the fixed estimate because OpenAI reported no usage.
+     */
+    estimatedRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    activePeople: number;
+    activeOrganizations: number;
+  };
+  members: {
+    costMicroUsd: number;
+    requests: number;
+    /**
+     * Requests charged the fixed estimate because OpenAI reported no usage.
+     */
+    estimatedRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    activePeople: number;
+  };
+  guests: {
+    costMicroUsd: number;
+    requests: number;
+    /**
+     * Requests charged the fixed estimate because OpenAI reported no usage.
+     */
+    estimatedRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+  };
+  week: {
+    startsAt: string;
+    endsAt: string;
+    activePeople: number;
+    peopleAtWeeklyLimit: number;
+  };
+  daily: Array<{
+    date: string;
+    membersMicroUsd: number;
+    guestsMicroUsd: number;
+    requests: number;
+  }>;
+  organizations: Array<{
+    costMicroUsd: number;
+    requests: number;
+    /**
+     * Requests charged the fixed estimate because OpenAI reported no usage.
+     */
+    estimatedRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    id: string;
+    name: string;
+    slug: string | null;
+    /**
+     * Whether the organization's members are offered free Auto by the rollout.
+     */
+    enrolled: boolean;
+    /**
+     * Pays for OpenWork Models, so its members use paid Models rather than free Auto.
+     */
+    subscribed: boolean;
+    memberCount: number;
+    activePeople: number;
+    /**
+     * People in this organization who used free Auto this week and have reached their weekly allowance.
+     */
+    peopleAtWeeklyLimit: number;
+    lastUsedAt: string | null;
+  }>;
+  /**
+   * Organizations past the listed limit, summed so the table always adds up to the members total.
+   */
+  otherOrganizations: {
+    costMicroUsd: number;
+    requests: number;
+    /**
+     * Requests charged the fixed estimate because OpenAI reported no usage.
+     */
+    estimatedRequests: number;
+    inputTokens: number;
+    outputTokens: number;
+    organizations: number;
+  } | null;
+};
+
+export type InvalidRequestError = {
+  error: "invalid_request";
+  message?: string;
+  details: Array<{
+    message: string;
+    path?: Array<string | number>;
+    [key: string]: unknown;
+  }>;
+  capability?: string;
+};
+
 export type UnauthorizedError = {
   error: "unauthorized";
 };
@@ -31,16 +144,6 @@ export type ForbiddenError = {
 export type NotFoundError = {
   error: string;
   message?: string;
-};
-
-export type InvalidRequestError = {
-  error: "invalid_request";
-  details: Array<{
-    message: string;
-    path?: Array<string | number>;
-    [key: string]: unknown;
-  }>;
-  capability?: string;
 };
 
 export type AdminPageInfo = {
@@ -76,12 +179,21 @@ export type AdminOrganizationsPageResponse = {
       auditLogs: boolean;
       orgManagedDashboards: boolean;
       appMcpServers: boolean;
+      slackAssistant: boolean;
+      slackAssistantHeadless: boolean;
+      headlessAutomations: boolean;
+      workbot: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
        * @deprecated
        */
       gatewayDashboard: true;
+    };
+    freeAuto: {
+      enabled: boolean;
+      globallyEnabled: boolean;
+      rolloutAllOrganizations: boolean;
     };
     [key: string]: unknown;
   }>;
@@ -151,12 +263,21 @@ export type AdminOverviewResponse = {
       auditLogs: boolean;
       orgManagedDashboards: boolean;
       appMcpServers: boolean;
+      slackAssistant: boolean;
+      slackAssistantHeadless: boolean;
+      headlessAutomations: boolean;
+      workbot: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
        * @deprecated
        */
       gatewayDashboard: true;
+    };
+    freeAuto: {
+      enabled: boolean;
+      globallyEnabled: boolean;
+      rolloutAllOrganizations: boolean;
     };
     [key: string]: unknown;
   }>;
@@ -363,6 +484,26 @@ export type AutomationRunnerTokenResponse = {
 export type AutomationDesktopRunnerPresence = {
   connected: boolean;
   lastSeenAt: number | null;
+};
+
+export type AutomationDesktopTarget = {
+  kind: "desktop";
+  id: string;
+  platform: "darwin" | "win32" | "linux";
+  appVersion: string;
+  lastSeenAt: number;
+  connected: boolean;
+};
+
+export type AutomationCloudTarget = {
+  kind: "cloud";
+  available: boolean;
+  runtime: "headless" | "web" | null;
+  cloudComputer: boolean;
+};
+
+export type AutomationExecutionTargetList = {
+  items: Array<AutomationDesktopTarget | AutomationCloudTarget>;
 };
 
 export type AutomationRunTrigger = "scheduled" | "recovery" | "manual";
@@ -1036,6 +1177,39 @@ export type DesktopPolicyListResponse = {
   }>;
 };
 
+export type InferenceAccessResponse = {
+  access: {
+    kind: "free" | "paid" | "exhausted" | "unavailable";
+    modelID: string | null;
+    weeklyLimitUsd: number | null;
+    usedUsd: number | null;
+    remainingUsd: number | null;
+    resetsAt: string | null;
+    reason:
+      | "admin_disabled"
+      | "not_eligible"
+      | "free_disabled"
+      | "accounting_unavailable"
+      | "free_allowance_exhausted"
+      | "upstream_unavailable"
+      | null;
+    /**
+     * Organization-managed Auto pin for this membership. False removes only the organization pin; model access and personal pins are unchanged. Pins never grant access.
+     */
+    defaultPinned?: boolean;
+    canUpgrade: false;
+    catalog?: Array<{
+      modelID: string;
+      displayName: string;
+      providerName: string;
+      summary: string;
+      recommended: boolean;
+      rank: number;
+      capabilities: Array<string>;
+    }>;
+  };
+};
+
 export type InferenceStatus = {
   enabled: boolean;
   tier: "tier1" | "tier2";
@@ -1289,7 +1463,11 @@ export type CapabilityDisabledError = {
     | "modelsAnalytics"
     | "auditLogs"
     | "orgManagedDashboards"
-    | "appMcpServers";
+    | "appMcpServers"
+    | "slackAssistant"
+    | "slackAssistantHeadless"
+    | "headlessAutomations"
+    | "workbot";
 };
 
 export type CreateInstallLinkRequest = {
@@ -1462,6 +1640,10 @@ export type GatewayProviderDetails = {
    * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
    */
   modelIds: Array<string>;
+  /**
+   * Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access.
+   */
+  pinnedModelIds: Array<string>;
   catalogWarning?: string;
   /**
    * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
@@ -1623,6 +1805,10 @@ export type GatewayProviderSummary = {
    * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
    */
   modelIds: Array<string>;
+  /**
+   * Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access.
+   */
+  pinnedModelIds: Array<string>;
   catalogWarning?: string;
   /**
    * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
@@ -3250,9 +3436,24 @@ export type PluginArchPluginMcpRequirementConfigureResponse = {
 export type GithubPluginMcpImportServer = {
   authType: "oauth" | null;
   connectionId: string | null;
+  /**
+   * The provider OpenWork already knows for this declared connector: a native connector (Google Workspace, Microsoft 365) or a connection preset.
+   */
+  mapsTo: {
+    displayName: string;
+    kind: "native" | "preset";
+    providerId: string;
+  } | null;
   name: string;
   pluginKey: string;
   pluginName: string;
+  /**
+   * The organization's existing connection this server uses instead of a new one. Only reported to organization admins.
+   */
+  reuse: {
+    connectionId: string;
+    connectionName: string;
+  } | null;
   serverKey: string;
   skippedReason:
     | "headers_unsupported"
@@ -3260,6 +3461,7 @@ export type GithubPluginMcpImportServer = {
     | "invalid_url"
     | "local_unsupported"
     | "missing_url"
+    | "native_connector"
     | "unsupported_auth"
     | null;
   sourceSchemaVersion: string | null;
@@ -3319,6 +3521,11 @@ export type GithubPluginMcpImportResponse = {
   item: {
     imported: Array<{
       connectionId: string;
+      connectionName: string;
+      /**
+       * True when the server uses a connection the organization already had.
+       */
+      existingConnection: boolean;
       name: string;
       url: string;
     }>;
@@ -3331,8 +3538,29 @@ export type GithubPluginMcpImportResponse = {
       sourcePath: string;
     }>;
     marketplaceId: string | null;
+    mode: "created" | "updated";
     plugin: PluginArchPlugin;
+    /**
+     * Skills and MCP servers imported earlier that were deleted upstream; they are removed from the plugin and archived, not deleted.
+     */
+    removed: Array<{
+      /**
+       * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
+       */
+      configObjectId: string;
+      name: string;
+      objectType: "mcp" | "skill";
+      sourcePath: string;
+    }>;
     skipped: Array<{
+      /**
+       * The provider OpenWork already knows for this declared connector: a native connector (Google Workspace, Microsoft 365) or a connection preset.
+       */
+      mapsTo: {
+        displayName: string;
+        kind: "native" | "preset";
+        providerId: string;
+      } | null;
       name: string;
       reason:
         | "headers_unsupported"
@@ -3340,11 +3568,31 @@ export type GithubPluginMcpImportResponse = {
         | "invalid_url"
         | "local_unsupported"
         | "missing_url"
+        | "native_connector"
         | "unsupported_auth";
+      /**
+       * The organization's existing connection this server uses instead of a new one. Only reported to organization admins.
+       */
+      reuse: {
+        connectionId: string;
+        connectionName: string;
+      } | null;
     }>;
     skippedSkills: Array<{
       name: string;
       reason: "invalid_skill";
+      sourcePath: string;
+    }>;
+    unchanged: Array<{
+      name: string;
+      objectType: "mcp" | "skill";
+    }>;
+    updatedSkills: Array<{
+      /**
+       * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
+       */
+      configObjectId: string;
+      name: string;
       sourcePath: string;
     }>;
   };
@@ -4350,6 +4598,27 @@ export type WebOriginNotFoundError = {
 
 export type RemoveWebOriginNotFound = WebOriginNotFoundError | WebOriginOrganizationNotFoundError;
 
+export type WorkbotSession = {
+  user: {
+    id: string;
+    name: string | null;
+    email: string;
+  };
+  organization: {
+    id: string;
+    name: string;
+    brandAppName: string | null;
+  };
+  memberId: string;
+  enabled: boolean;
+  canSchedule: boolean;
+};
+
+export type WorkbotRunToken = {
+  token: string;
+  expiresAt: string;
+};
+
 export type DenAppVersionResponse = {
   minAppVersion: string;
   latestAppVersion: string;
@@ -4655,6 +4924,41 @@ export type GetReadyResponses = {
 };
 
 export type GetReadyResponse = GetReadyResponses[keyof GetReadyResponses];
+
+export type GetV1AdminFreeAutoUsageData = {
+  body?: never;
+  path?: never;
+  query?: {
+    days?: number;
+  };
+  url: "/v1/admin/free-auto/usage";
+};
+
+export type GetV1AdminFreeAutoUsageErrors = {
+  /**
+   * The query parameters were invalid.
+   */
+  400: InvalidRequestError;
+  /**
+   * The caller must be authenticated.
+   */
+  401: UnauthorizedError;
+  /**
+   * The authenticated user is not an admin.
+   */
+  403: ForbiddenError;
+};
+
+export type GetV1AdminFreeAutoUsageError = GetV1AdminFreeAutoUsageErrors[keyof GetV1AdminFreeAutoUsageErrors];
+
+export type GetV1AdminFreeAutoUsageResponses = {
+  /**
+   * Free Auto usage returned.
+   */
+  200: AdminFreeAutoUsageResponse;
+};
+
+export type GetV1AdminFreeAutoUsageResponse = GetV1AdminFreeAutoUsageResponses[keyof GetV1AdminFreeAutoUsageResponses];
 
 export type PostV1AdminAdminsData = {
   body?: never;
@@ -4999,6 +5303,72 @@ export type PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses = {
 export type PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponse =
   PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses[keyof PatchV1AdminOrganizationsByOrganizationIdFreeSeatsResponses];
 
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoData = {
+  body: {
+    enabled: boolean | null;
+  };
+  path: {
+    organizationId: string;
+  };
+  query?: never;
+  url: "/v1/admin/organizations/{organizationId}/free-auto";
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors = {
+  /**
+   * Invalid rollout or organization identifier.
+   */
+  400: {
+    error: "invalid_request";
+    message: string;
+  };
+  /**
+   * The caller must be authenticated.
+   */
+  401: UnauthorizedError;
+  /**
+   * The authenticated user is not an admin.
+   */
+  403: ForbiddenError;
+  /**
+   * Organization not found.
+   */
+  404: NotFoundError;
+  /**
+   * Organization metadata could not be read.
+   */
+  503: {
+    error: "managed_models_policy_unavailable";
+    message: string;
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoError =
+  PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors[keyof PatchV1AdminOrganizationsByOrganizationIdFreeAutoErrors];
+
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses = {
+  /**
+   * Free Auto rollout updated.
+   */
+  200: {
+    ok: true;
+    organization: {
+      /**
+       * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
+       */
+      id: string;
+      freeAuto: {
+        enabled: boolean;
+        globallyEnabled: boolean;
+        rolloutAllOrganizations: boolean;
+      };
+    };
+  };
+};
+
+export type PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponse =
+  PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses[keyof PatchV1AdminOrganizationsByOrganizationIdFreeAutoResponses];
+
 export type PatchV1AdminOrganizationsByOrganizationIdDpaData = {
   body: {
     dpaSigned: boolean;
@@ -5169,6 +5539,10 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       auditLogs: boolean;
       orgManagedDashboards: boolean;
       appMcpServers: boolean;
+      slackAssistant: boolean;
+      slackAssistantHeadless: boolean;
+      headlessAutomations: boolean;
+      workbot: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -5232,6 +5606,10 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       auditLogs: boolean;
       orgManagedDashboards: boolean;
       appMcpServers: boolean;
+      slackAssistant: boolean;
+      slackAssistantHeadless: boolean;
+      headlessAutomations: boolean;
+      workbot: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -6168,6 +6546,10 @@ export type PostV1BootstrapClaimsAcceptResponses = {
    */
   200: {
     ok: true;
+    /**
+     * Teammates to invite now that the caller owns the workspace. Only returned to the owner.
+     */
+    teammateEmails?: Array<string>;
     organization: {
       /**
        * Den TypeID with 'org_' prefix and a 26-character base32 suffix.
@@ -6783,7 +7165,7 @@ export type MintAutomationRunnerTokenData = {
     runnerId: string;
     protocolVersion: 1;
     supportedExecutionTargets: ["desktop"];
-    capabilities?: Array<"model_attention_v1" | "remote_session_v1">;
+    capabilities?: Array<"model_attention_v1" | "remote_session_v1" | "remote_session_control_v1">;
     appVersion: string;
     platform: "darwin" | "win32" | "linux";
     concurrency: number;
@@ -6842,6 +7224,35 @@ export type GetAutomationDesktopRunnerPresenceResponses = {
 
 export type GetAutomationDesktopRunnerPresenceResponse =
   GetAutomationDesktopRunnerPresenceResponses[keyof GetAutomationDesktopRunnerPresenceResponses];
+
+export type ListAutomationRunnersData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/automation-runners";
+};
+
+export type ListAutomationRunnersErrors = {
+  /**
+   * Sign-in required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Organization not found.
+   */
+  404: NotFoundError;
+};
+
+export type ListAutomationRunnersError = ListAutomationRunnersErrors[keyof ListAutomationRunnersErrors];
+
+export type ListAutomationRunnersResponses = {
+  /**
+   * Execution targets.
+   */
+  200: AutomationExecutionTargetList;
+};
+
+export type ListAutomationRunnersResponse = ListAutomationRunnersResponses[keyof ListAutomationRunnersResponses];
 
 export type ListAutomationsData = {
   body?: never;
@@ -7176,6 +7587,10 @@ export type UpdateAutomationErrors = {
    * OpenWork Web access is required for Cloud Automations.
    */
   403: AutomationOpenWorkWebAccessRequiredError;
+  /**
+   * Cloud runtime or model access is unavailable.
+   */
+  409: InvalidRequestError;
 };
 
 export type UpdateAutomationError = UpdateAutomationErrors[keyof UpdateAutomationErrors];
@@ -7248,7 +7663,12 @@ export type DeactivateAutomationResponses = {
 export type DeactivateAutomationResponse = DeactivateAutomationResponses[keyof DeactivateAutomationResponses];
 
 export type RunAutomationNowData = {
-  body?: never;
+  body?: {
+    /**
+     * Run this one occurrence on this target instead of the Automation's own.
+     */
+    executionTarget?: "desktop" | "cloud";
+  };
   path: {
     id: string;
   };
@@ -7258,6 +7678,10 @@ export type RunAutomationNowData = {
 
 export type RunAutomationNowErrors = {
   /**
+   * Invalid request.
+   */
+  400: InvalidRequestError;
+  /**
    * OpenWork Web access is required to run a Cloud Automation.
    */
   403: AutomationOpenWorkWebAccessRequiredError;
@@ -7265,6 +7689,10 @@ export type RunAutomationNowErrors = {
    * Not found.
    */
   404: NotFoundError;
+  /**
+   * Cloud runtime or model access is unavailable.
+   */
+  409: InvalidRequestError;
 };
 
 export type RunAutomationNowError = RunAutomationNowErrors[keyof RunAutomationNowErrors];
@@ -10357,7 +10785,7 @@ export type GetV1McpAppsErrors = {
    */
   401: UnauthorizedError;
   /**
-   * Only workspace owners and admins can list Apps for dashboards.
+   * The caller must be an organization member.
    */
   403: ForbiddenError;
 };
@@ -10904,6 +11332,201 @@ export type PutV1DiagnosticsEgressTokenResponses = {
 
 export type PutV1DiagnosticsEgressTokenResponse =
   PutV1DiagnosticsEgressTokenResponses[keyof PutV1DiagnosticsEgressTokenResponses];
+
+export type GetV1InferenceFreeProviderData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/provider";
+};
+
+export type GetV1InferenceFreeProviderErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Workspace admin permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * Free provider summary unavailable.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type GetV1InferenceFreeProviderError = GetV1InferenceFreeProviderErrors[keyof GetV1InferenceFreeProviderErrors];
+
+export type GetV1InferenceFreeProviderResponses = {
+  /**
+   * Free provider summary returned.
+   */
+  200: {
+    provider: {
+      state: "available" | "disabled" | "unavailable";
+      reason:
+        | "admin_disabled"
+        | "not_eligible"
+        | "free_disabled"
+        | "accounting_unavailable"
+        | "free_allowance_exhausted"
+        | "upstream_unavailable"
+        | null;
+      defaultPinned: boolean;
+      modelGroup: {
+        id: "free";
+        name: "Free";
+      };
+      catalog: Array<{
+        modelID: string;
+        displayName: string;
+        providerName: string;
+        summary: string;
+        recommended: boolean;
+        rank: number;
+        capabilities: Array<string>;
+      }>;
+      allowance: {
+        usageScope: "organization";
+        allowanceScope: "person";
+        windowStartAt: string;
+        resetsAt: string;
+        weeklyLimitUsd: number;
+        joinedMembers: number;
+        eligibleMembers: number;
+        /**
+         * Current eligible members whose recorded weekly usage has reached their person-wide limit; not a probe of Gateway request headroom. Null when accounting cannot be verified.
+         */
+        exhaustedMembers: number | null;
+        usedUsd: number | null;
+        requestCount: number | null;
+      };
+    };
+  };
+};
+
+export type GetV1InferenceFreeProviderResponse =
+  GetV1InferenceFreeProviderResponses[keyof GetV1InferenceFreeProviderResponses];
+
+export type PatchV1InferenceFreePinsData = {
+  body: {
+    defaultPinned: boolean;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/pins";
+};
+
+export type PatchV1InferenceFreePinsErrors = {
+  /**
+   * Provide only defaultPinned.
+   */
+  400: InvalidRequestError;
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Fresh workspace admin permission required.
+   */
+  403: ForbiddenError;
+  /**
+   * Organization policy unavailable.
+   */
+  503: {
+    error: "managed_models_disabled_for_dpa" | "managed_models_policy_unavailable";
+    message: string;
+  };
+};
+
+export type PatchV1InferenceFreePinsError = PatchV1InferenceFreePinsErrors[keyof PatchV1InferenceFreePinsErrors];
+
+export type PatchV1InferenceFreePinsResponses = {
+  /**
+   * Auto pin saved.
+   */
+  200: {
+    defaultPinned: boolean;
+  };
+};
+
+export type PatchV1InferenceFreePinsResponse =
+  PatchV1InferenceFreePinsResponses[keyof PatchV1InferenceFreePinsResponses];
+
+export type GetV1InferenceAccessData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/access";
+};
+
+export type GetV1InferenceAccessErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Active membership required.
+   */
+  403: ForbiddenError;
+};
+
+export type GetV1InferenceAccessError = GetV1InferenceAccessErrors[keyof GetV1InferenceAccessErrors];
+
+export type GetV1InferenceAccessResponses = {
+  /**
+   * Auto allowance returned.
+   */
+  200: InferenceAccessResponse;
+};
+
+export type GetV1InferenceAccessResponse = GetV1InferenceAccessResponses[keyof GetV1InferenceAccessResponses];
+
+export type PostV1InferenceFreeCredentialData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/inference/free/credential";
+};
+
+export type PostV1InferenceFreeCredentialErrors = {
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Auto access denied.
+   */
+  403: ForbiddenError;
+  /**
+   * Auto unavailable.
+   */
+  503: {
+    error: string;
+  };
+};
+
+export type PostV1InferenceFreeCredentialError =
+  PostV1InferenceFreeCredentialErrors[keyof PostV1InferenceFreeCredentialErrors];
+
+export type PostV1InferenceFreeCredentialResponses = {
+  /**
+   * Member Auto credential returned.
+   */
+  200: {
+    credential: {
+      apiKey: string;
+      baseURL: string;
+      statusURL: string;
+      modelID: string;
+    };
+  };
+};
+
+export type PostV1InferenceFreeCredentialResponse =
+  PostV1InferenceFreeCredentialResponses[keyof PostV1InferenceFreeCredentialResponses];
 
 export type GetV1InferenceData = {
   body?: never;
@@ -15276,6 +15899,7 @@ export type PatchV1InferenceProvidersByInferenceProviderIdData = {
      * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
      */
     modelIds?: Array<string>;
+    pinnedModelIds?: Array<string>;
     settings?: {
       project?: string;
       location?: string;
@@ -15421,6 +16045,10 @@ export type GetV1InferenceProvidersByInferenceProviderIdConnectResponses = {
        * Provider universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Does not grant group membership.
        */
       modelIds: Array<string>;
+      /**
+       * Ordered catalog model IDs in management responses; only caller-usable gwm aliases in public list/connect responses. Pins never grant access.
+       */
+      pinnedModelIds: Array<string>;
       catalogWarning?: string;
       /**
        * Den TypeID with 'ipr_' prefix and a 26-character base32 suffix.
@@ -26576,6 +27204,530 @@ export type DeleteV1OrgWebOriginsByWebOriginIdResponses = {
 
 export type DeleteV1OrgWebOriginsByWebOriginIdResponse =
   DeleteV1OrgWebOriginsByWebOriginIdResponses[keyof DeleteV1OrgWebOriginsByWebOriginIdResponses];
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/mcp-connections/{connectionId}/slack-assistant";
+};
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantErrors = {
+  /**
+   * Invalid parameters or incomplete Slack setup.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Admin access, recent verification, or Slack eligibility required.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Organization or connection not found.
+   */
+  404: NotFoundError;
+};
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantError =
+  GetV1McpConnectionsByConnectionIdSlackAssistantErrors[keyof GetV1McpConnectionsByConnectionIdSlackAssistantErrors];
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantResponses = {
+  /**
+   * Slack assistant setup.
+   */
+  200: {
+    enabled: boolean;
+    installed: boolean;
+    teamId: string | null;
+    /**
+     * Whether the platform admin enabled Slack Assistant for this organization.
+     */
+    rolloutEnabled: boolean;
+    hasSigningSecret: boolean;
+    eligible: boolean;
+    webAccess: boolean;
+    channelIds: Array<string>;
+    shadowMode: boolean;
+    dailyLimit: number;
+    /**
+     * Model chosen for headless runs, or null for the runner default.
+     */
+    model: string | null;
+    /**
+     * The headless runner's default model, when this workspace uses it.
+     */
+    defaultModel: string | null;
+    /**
+     * Whether Slack shows steps and notes while a task works, or only its working status.
+     */
+    progressUpdates: boolean;
+    /**
+     * Models the headless runner can use; empty when the workspace doesn't use the headless runner.
+     */
+    models: Array<{
+      id: string;
+      name: string;
+    }>;
+    metrics: {
+      completed: number;
+      failed: number;
+      active: number;
+      awaitingConnection: number;
+      helpful: number;
+      needsWork: number;
+      firstTextMedianMs: number | null;
+      finalMedianMs: number | null;
+      sampledEvents: number;
+    };
+    /**
+     * Slack app manifest to import when configuring the bot.
+     */
+    manifest: {
+      [key: string]: unknown;
+    };
+  };
+};
+
+export type GetV1McpConnectionsByConnectionIdSlackAssistantResponse =
+  GetV1McpConnectionsByConnectionIdSlackAssistantResponses[keyof GetV1McpConnectionsByConnectionIdSlackAssistantResponses];
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantData = {
+  body: {
+    enabled: boolean;
+    signingSecret?: string;
+    channelIds?: Array<string>;
+    shadowMode?: boolean;
+    dailyLimit?: number;
+    /**
+     * Gateway model alias for headless runs; null restores the runner default. Omit to keep the current model.
+     */
+    model?: string | null;
+    /**
+     * Show steps and notes in Slack while a task works. Off (the default) shows only Slack's working status, then the answer. Omit to keep the current setting.
+     */
+    progressUpdates?: boolean;
+  };
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/mcp-connections/{connectionId}/slack-assistant";
+};
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantErrors = {
+  /**
+   * Invalid parameters or incomplete Slack setup.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Admin access, recent verification, or Slack eligibility required.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Organization or connection not found.
+   */
+  404: NotFoundError;
+  /**
+   * Connection changed while saving.
+   */
+  409: {
+    error: "connection_changed";
+  };
+};
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantError =
+  PutV1McpConnectionsByConnectionIdSlackAssistantErrors[keyof PutV1McpConnectionsByConnectionIdSlackAssistantErrors];
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantResponses = {
+  /**
+   * Slack assistant settings saved.
+   */
+  200: OkResponse;
+};
+
+export type PutV1McpConnectionsByConnectionIdSlackAssistantResponse =
+  PutV1McpConnectionsByConnectionIdSlackAssistantResponses[keyof PutV1McpConnectionsByConnectionIdSlackAssistantResponses];
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/mcp-connections/{connectionId}/slack-assistant/install";
+};
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors = {
+  /**
+   * Invalid parameters or incomplete Slack setup.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Authentication required.
+   */
+  401: UnauthorizedError;
+  /**
+   * Admin access, recent verification, or Slack eligibility required.
+   */
+  403:
+    | ForbiddenError
+    | {
+        error:
+          | "individual_accounts_required"
+          | "signing_secret_required"
+          | "setup_required"
+          | "browser_session_required"
+          | "slack_assistant_not_enabled"
+          | "openwork_web_access_required";
+        message?: string;
+      };
+  /**
+   * Organization or connection not found.
+   */
+  404: NotFoundError;
+};
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallError =
+  PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors[keyof PostV1McpConnectionsByConnectionIdSlackAssistantInstallErrors];
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponses = {
+  /**
+   * Slack bot authorization URL.
+   */
+  200: {
+    url: string;
+  };
+};
+
+export type PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponse =
+  PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponses[keyof PostV1McpConnectionsByConnectionIdSlackAssistantInstallResponses];
+
+export type GetV1IntegrationsSlackOauthCallbackData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/integrations/slack/oauth/callback";
+};
+
+export type GetV1IntegrationsSlackOauthCallbackErrors = {
+  /**
+   * Installation cancelled, expired, incomplete, or missing required permissions.
+   */
+  400: string;
+  /**
+   * The installing member no longer has admin access.
+   */
+  403: string;
+  /**
+   * Slack workspace conflicts with an existing installation.
+   */
+  409: string;
+};
+
+export type GetV1IntegrationsSlackOauthCallbackError =
+  GetV1IntegrationsSlackOauthCallbackErrors[keyof GetV1IntegrationsSlackOauthCallbackErrors];
+
+export type PostV1IntegrationsSlackByConnectionIdEventsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/integrations/slack/{connectionId}/events";
+};
+
+export type PostV1IntegrationsSlackByConnectionIdEventsErrors = {
+  /**
+   * Invalid parameters or Slack payload.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        ok: false;
+      };
+  /**
+   * Missing installation or invalid Slack signature.
+   */
+  401: {
+    ok: false;
+  };
+  /**
+   * Slack workspace or app does not match this installation.
+   */
+  403: {
+    ok: false;
+  };
+  /**
+   * Slack payload exceeds the request size limit.
+   */
+  413: string;
+};
+
+export type PostV1IntegrationsSlackByConnectionIdEventsError =
+  PostV1IntegrationsSlackByConnectionIdEventsErrors[keyof PostV1IntegrationsSlackByConnectionIdEventsErrors];
+
+export type PostV1IntegrationsSlackByConnectionIdEventsResponses = {
+  /**
+   * Event acknowledged or URL verification challenge.
+   */
+  200:
+    | OkResponse
+    | {
+        challenge: string;
+      };
+};
+
+export type PostV1IntegrationsSlackByConnectionIdEventsResponse =
+  PostV1IntegrationsSlackByConnectionIdEventsResponses[keyof PostV1IntegrationsSlackByConnectionIdEventsResponses];
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/integrations/slack/{connectionId}/commands";
+};
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsErrors = {
+  /**
+   * Invalid parameters or Slack payload.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        ok: false;
+      };
+  /**
+   * Missing installation or invalid Slack signature.
+   */
+  401: {
+    ok: false;
+  };
+  /**
+   * Slack workspace or app does not match this installation.
+   */
+  403: {
+    ok: false;
+  };
+  /**
+   * Slack payload exceeds the request size limit.
+   */
+  413: string;
+};
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsError =
+  PostV1IntegrationsSlackByConnectionIdCommandsErrors[keyof PostV1IntegrationsSlackByConnectionIdCommandsErrors];
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsResponses = {
+  /**
+   * Private connection instructions.
+   */
+  200: {
+    response_type: "ephemeral";
+    text: string;
+  };
+};
+
+export type PostV1IntegrationsSlackByConnectionIdCommandsResponse =
+  PostV1IntegrationsSlackByConnectionIdCommandsResponses[keyof PostV1IntegrationsSlackByConnectionIdCommandsResponses];
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsData = {
+  body?: never;
+  path: {
+    /**
+     * Den TypeID with 'emc_' prefix and a 26-character base32 suffix.
+     */
+    connectionId: string;
+  };
+  query?: never;
+  url: "/v1/integrations/slack/{connectionId}/interactions";
+};
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsErrors = {
+  /**
+   * Invalid parameters or Slack payload.
+   */
+  400:
+    | InvalidRequestError
+    | {
+        ok: false;
+      };
+  /**
+   * Missing installation or invalid Slack signature.
+   */
+  401: {
+    ok: false;
+  };
+  /**
+   * Slack workspace or app does not match this installation.
+   */
+  403: {
+    ok: false;
+  };
+  /**
+   * Slack payload exceeds the request size limit.
+   */
+  413: string;
+};
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsError =
+  PostV1IntegrationsSlackByConnectionIdInteractionsErrors[keyof PostV1IntegrationsSlackByConnectionIdInteractionsErrors];
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsResponses = {
+  /**
+   * Interaction acknowledged.
+   */
+  200: OkResponse;
+};
+
+export type PostV1IntegrationsSlackByConnectionIdInteractionsResponse =
+  PostV1IntegrationsSlackByConnectionIdInteractionsResponses[keyof PostV1IntegrationsSlackByConnectionIdInteractionsResponses];
+
+export type GetWorkbotSessionData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/workbot/session";
+};
+
+export type GetWorkbotSessionErrors = {
+  /**
+   * The token is missing, expired or revoked, or the membership ended.
+   */
+  401: UnauthorizedError;
+};
+
+export type GetWorkbotSessionError = GetWorkbotSessionErrors[keyof GetWorkbotSessionErrors];
+
+export type GetWorkbotSessionResponses = {
+  /**
+   * The signed-in person and their workspace.
+   */
+  200: WorkbotSession;
+};
+
+export type GetWorkbotSessionResponse = GetWorkbotSessionResponses[keyof GetWorkbotSessionResponses];
+
+export type CreateWorkbotRunTokenData = {
+  body: {
+    ttlMs?: number;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/workbot/run-token";
+};
+
+export type CreateWorkbotRunTokenErrors = {
+  /**
+   * The token is missing, expired or revoked, or the membership ended.
+   */
+  401: UnauthorizedError;
+  /**
+   * Workbot is off for this workspace.
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Too many tokens requested.
+   */
+  429: {
+    error: "rate_limited";
+    retryAfter: number;
+  };
+};
+
+export type CreateWorkbotRunTokenError = CreateWorkbotRunTokenErrors[keyof CreateWorkbotRunTokenErrors];
+
+export type CreateWorkbotRunTokenResponses = {
+  /**
+   * The token.
+   */
+  200: WorkbotRunToken;
+};
+
+export type CreateWorkbotRunTokenResponse = CreateWorkbotRunTokenResponses[keyof CreateWorkbotRunTokenResponses];
 
 export type GetV1AppVersionData = {
   body?: never;

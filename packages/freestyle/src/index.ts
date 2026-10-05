@@ -11,7 +11,9 @@ export const ACCESS_FILE = "/opt/openwork-preview/access.json";
 
 export function client(): Freestyle {
   const apiKey = process.env.FREESTYLE_API_KEY?.trim();
-  if (!apiKey) throw new Error("FREESTYLE_API_KEY is required on the review server.");
+  if (!apiKey) {
+    throw new Error("FREESTYLE_API_KEY is not set. The process that creates or deletes Freestyle VMs needs it: the review server, or `pnpm world` on this computer (see `pnpm world help preview-desktop` for how to load it).");
+  }
   return new Freestyle({ apiKey, fetch });
 }
 

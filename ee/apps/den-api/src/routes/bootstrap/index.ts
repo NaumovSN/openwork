@@ -53,7 +53,9 @@ import {
   DEFAULT_OPENWORK_MARKETPLACE_NAME,
 } from "../org/plugin-system/default-marketplaces.js"
 
-const BOOTSTRAP_TTL_MS = 1000 * 60 * 60 * 24
+// Long enough to come back the next day or after a weekend; the 15-minute
+// pre-claim tokens and claim codes are separate, shorter clocks.
+const BOOTSTRAP_TTL_MS = 1000 * 60 * 60 * 72
 const BOOTSTRAP_RATE_LIMIT_WINDOW_MS = 1000 * 60 * 60
 const BOOTSTRAP_RATE_LIMIT_MAX = 5
 const CLAIM_TOKEN_BYTES = 32
@@ -120,6 +122,7 @@ const bootstrapWorkspaceResponseSchema = z.object({
 
 const acceptClaimResponseSchema = z.object({
   ok: z.literal(true),
+  teammateEmails: z.array(z.string()).optional().describe("Teammates to invite now that the caller owns the workspace. Only returned to the owner."),
   organization: z.object({
     id: denTypeIdSchema("organization"),
     name: z.string(),
@@ -190,7 +193,19 @@ function requestAddress(headers: Headers) {
   return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
 }
 
-function claimUrl(token: string, options?: { prefillEmail?: string | null; inviteEmails?: readonly string[] | null }) {
+/** Teammates saved at setup, handed to the new owner to invite. */
+async function teammateInvitesFor(bootstrapId: string, role: string): Promise<{ teammateEmails?: string[] }> {
+  if (role !== "owner") return {}
+  const [row] = await db
+    .select({ teammateEmails: WorkspaceBootstrapTable.teammateEmails })
+    .from(WorkspaceBootstrapTable)
+    .where(eq(WorkspaceBootstrapTable.id, normalizeDenTypeId("workspaceBootstrap", bootstrapId)))
+    .limit(1)
+  const emails = Array.isArray(row?.teammateEmails) ? row.teammateEmails.filter((email) => typeof email === "string" && email.includes("@")) : []
+  return emails.length > 0 ? { teammateEmails: emails } : {}
+}
+
+export function claimUrl(token: string, options?: { prefillEmail?: string | null; inviteEmails?: readonly string[] | null }) {
   let url = `${env.betterAuthUrl}/workspace-claim?token=${encodeURIComponent(token)}`
   if (options?.prefillEmail) {
     url += `&email=${encodeURIComponent(options.prefillEmail)}`
@@ -392,6 +407,8 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           expiresAt,
           agentUserId: agentUser.id,
           assertionJti,
+          ownerEmail: input.ownerEmail ?? null,
+          teammateEmails: input.teammateEmails && input.teammateEmails.length > 0 ? [...new Set(input.teammateEmails)] : null,
         })
 
         await tx.insert(PluginTable).values({
@@ -683,7 +700,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       await revokePreclaimCredentials(result.bootstrapId)
       await retirePreclaimAgent(result.bootstrapId)
       await db.update(WorkspaceClaimCodeTable).set({ state: "cancelled" }).where(and(eq(WorkspaceClaimCodeTable.bootstrapId, result.bootstrapId), eq(WorkspaceClaimCodeTable.state, "pending")))
-      return c.json({ ok: true, organization: result.organization })
+      return c.json({ ok: true, organization: result.organization, ...(await teammateInvitesFor(result.bootstrapId, result.organization.role)) })
     },
   )
 
@@ -846,7 +863,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
         await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), result.organization.id)
       }
       await ensureMemberGatewayKey({ organizationId: result.organization.id, memberId: result.memberId })
-      return c.json({ ok: true, organization: result.organization })
+      return c.json({ ok: true, organization: result.organization, ...(await teammateInvitesFor(lookup.bootstrapId, result.organization.role)) })
     },
   )
 }

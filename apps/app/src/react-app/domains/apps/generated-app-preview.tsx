@@ -39,7 +39,7 @@ export function GeneratedAppPreview({ html, payload, title, revision, presentati
   }
   const frameProps: McpAppSandboxViewProps = {
     origin, app: resource, toolName: title, inputArguments: PREVIEW_ARGUMENTS, result,
-    unavailableNotice: "This app could not open. Try reopening it, or ask OpenWork to fix the preview.",
+    unavailableNotice: "This artifact could not open. Try reopening it, or ask OpenWork to fix the preview.",
     presentation,
   };
   if (presentation === "dashboard" && geometry) {

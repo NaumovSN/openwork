@@ -102,8 +102,6 @@ export type ComposerPart =
   /** A connection picked from the composer `+` menu (`[connector …]` pill). */
   | { type: "connector"; name: string }
   | { type: "file"; path: string; label?: string }
-  /** A macOS app targeted via Computer Use (composer "@App" mention). */
-  | { type: "app"; name: string }
   | { type: "computer"; target: "cloud" | "desktop" }
   | { type: "paste"; id: string; label: string; text: string; lines: number };
 
@@ -438,9 +436,12 @@ export type ModelOption = {
   behaviorOptions?: ModelBehaviorOption[];
   disabled?: boolean;
   isFree: boolean;
+  /** A free model of the engine's built-in OpenCode Zen provider that nobody configured: the silent fallback. */
+  zenFallback?: boolean;
   isRecommended?: boolean;
   /** "cloud" for org-managed providers (lpr_*), undefined for local. */
-  source?: "cloud";
+  source?: "cloud" | "gateway" | "local";
+  organizationPinOrder?: number;
   gatewayAuthorization?: { cloudProviderId: string; credentialSetId: string };
 };
 

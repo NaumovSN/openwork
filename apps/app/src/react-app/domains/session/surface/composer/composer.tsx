@@ -1,7 +1,7 @@
 /** @jsxImportSource react */
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
-import { AppWindowMac, Cloud, Monitor, ArrowUp, Check, ChevronDown, FileText, LoaderCircle, RefreshCw, Square, Terminal, Zap } from "lucide-react";
+import { Cloud, Monitor, ArrowUp, Check, ChevronDown, FileText, LoaderCircle, RefreshCw, Square, Terminal, Zap } from "lucide-react";
 import fuzzysort from "fuzzysort";
 import { toast } from "@/components/ui/sonner";
 import type { CloudImportedPlugin, CloudImportedPluginFile } from "@/app/cloud/import-state";
@@ -17,7 +17,6 @@ import {
 import { ModelSelect } from "@/components/model-select";
 import { ImageLightbox } from "@/components/chat/image-lightbox";
 import { LexicalPromptEditor, syncAttachmentChipStatus, type ComposerAttachmentToken, type LexicalPromptEditorHandle } from "./editor";
-import { listRunningAppsForMention } from "./app-mentions";
 import { COMPUTER_MENTIONS } from "./computer-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
 import {
@@ -502,18 +501,13 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     void Promise.all([
       props.listAgents().catch(() => []),
       props.searchFiles(mentionQuery).catch(() => []),
-      listRunningAppsForMention(),
-    ]).then(([agentList, files, apps]) => {
+    ]).then(([agentList, files]) => {
       if (cancelled) return;
       const recent = props.recentFiles.slice(0, 8);
       const next: MentionItem[] = [
         ...COMPUTER_MENTIONS,
         ...agentList.map((agent) => ({ id: `agent:${agent.name}`, kind: "agent" as const, value: agent.name, label: agent.name })),
         ...recent.map((file) => ({ id: `file:${file}`, kind: "file" as const, value: file, label: file })),
-        // Running macOS apps (Computer Use targets). Listed after recent files
-        // so an empty "@" stays file-first; fuzzy search surfaces them as the
-        // user types (e.g. "@mus" → Music).
-        ...apps.map((appName) => ({ id: `app:${appName}`, kind: "app" as const, value: appName, label: appName })),
         ...files.filter((file) => !recent.includes(file)).map((file) => ({ id: `file:${file}`, kind: "file" as const, value: file, label: file })),
       ];
       setMentionItems(next);
@@ -1281,8 +1275,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     item.value === "cloud" ? <Cloud size={14} className="mt-0.5 shrink-0 text-gray-9" /> : <Monitor size={14} className="mt-0.5 shrink-0 text-gray-9" />
                   ) : item.kind === "agent" ? (
                     <Zap size={14} className="mt-0.5 shrink-0 text-gray-9" />
-                  ) : item.kind === "app" ? (
-                    <AppWindowMac size={14} className="mt-0.5 shrink-0 text-gray-9" />
                   ) : (
                     <FileText size={14} className="mt-0.5 shrink-0 text-gray-9" />
                   )}
@@ -1291,9 +1283,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     <div className="truncate text-xs text-gray-10">
                       {item.description ? item.description : item.kind === "agent"
                         ? t("composer.agent_label")
-                        : item.kind === "app"
-                          ? t("composer.app_kind")
-                          : t("composer.file_kind")}
+                        : t("composer.file_kind")}
                     </div>
                   </div>
                 </button>

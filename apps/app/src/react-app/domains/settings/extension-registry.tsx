@@ -13,13 +13,6 @@ export type ExtensionConfigContext = {
   openworkServerClient?: OpenworkServerClient | null;
   hostOpenworkServerClient?: OpenworkServerClient | null;
   restartLocalServer?: () => Promise<boolean>;
-  computerUse?: {
-    connected: boolean;
-    connecting: boolean;
-    onConnect: () => void | Promise<void>;
-    onRefresh: () => void | Promise<void>;
-    onPermissionsChange?: (permissions: { accessibility: boolean; screenRecording: boolean }) => void;
-  };
   imageExtension: {
     busy: boolean;
     status: string | null;

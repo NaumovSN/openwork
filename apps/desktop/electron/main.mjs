@@ -1,6 +1,6 @@
 import { processBlankSlateProfile, resolveBlankSlateLaunch } from "./blank-slate-profile.mjs";
 import { DESKTOP_POLICY_ENFORCEMENT_ENABLED } from "@openwork/types/den/desktop-policies-runtime";
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { createServer } from "node:http";
 import net from "node:net";
 import { existsSync, readFileSync } from "node:fs";
@@ -23,15 +23,7 @@ import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@ope
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
 import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./runtime.mjs";
-import { registerUpdaterIpc } from "./updater.mjs";
-import {
-  checkComputerUsePermissions,
-  getComputerUseMcpCommand,
-  getComputerUseState,
-  computerUseAction,
-  listRunningApps,
-  openComputerUseSetupApp,
-} from "./computer-use.mjs";
+import { registerUpdaterIpc, resolveAppVersion } from "./updater.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { createNativeContextMenus } from "./context-menu.mjs";
@@ -63,7 +55,7 @@ import { createDesktopTransferRegistry, downloadBinaryToPath, uploadMultipartFro
 import {
   createLinuxDesktopIntegration,
 } from "./linux-desktop-integration.mjs";
-import { createDesktopAutomationRunner, normalizeRunnerBaseUrl } from "./automation-runner.mjs";
+import { automationRunnerDisabledReason, createComputerDescriber, createDesktopAutomationRunner, normalizeRunnerBaseUrl } from "./automation-runner.mjs";
 import {
   desktopActivationRequired,
   enterprisePreactivationCommandAllowed,
@@ -81,6 +73,8 @@ import {
 } from "./brand-icon-windows.mjs";
 import { resetMacDockIcon } from "./brand-icon-darwin.mjs";
 import { createDesktopVaultKeyProvider } from "./secure-vault-key.mjs";
+import { desktopFreeBootstrapEligible } from "./desktop-free-eligibility.mjs";
+import { applyDesktopFreeBuildSettings } from "./desktop-free-release.mjs";
 import {
   clearOpenworkSentrySession,
   initOpenworkSentry,
@@ -1330,10 +1324,20 @@ function validateSkillName(raw) {
   return trimmed;
 }
 
+// Apply the build opt-out before the runtime captures inherited environment values.
+await applyDesktopFreeBuildSettings({ appVersion: resolveAppVersion(app) });
 const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
+  anonymousInference: {
+    // Signed-out Auto has no device identity: like OpenCode Zen, the gateway limits it by IP.
+    desktop: {
+      // app.getVersion() is Electron's own version in development builds.
+      currentVersion: resolveAppVersion(app),
+      eligible: () => desktopFreeBootstrapEligible(DESKTOP_DISTRIBUTION, workspaceStore.readDesktopBootstrapConfigSync()),
+    },
+  },
   // When OPENWORK_ENCRYPTION_KEY is set, skip the safeStorage provider so it does not shadow the documented env override used by CI/headless/enterprise.
   localManagedMcpVaultKey: process.env.OPENWORK_ENCRYPTION_KEY?.trim()
     ? undefined
@@ -1351,7 +1355,12 @@ const legacyRunnerBaseUrls = [
     : null,
   `${DEFAULT_DEN_BASE_URL}/api/den`,
 ].map((value) => normalizeRunnerBaseUrl(value)).filter(Boolean);
+const automationRunnerDisabledBy = automationRunnerDisabledReason(process.env);
+if (automationRunnerDisabledBy) {
+  console.info(`[automation-runner] disabled by ${automationRunnerDisabledBy}; renderer runner configuration will be ignored`);
+}
 const desktopAutomationRunner = createDesktopAutomationRunner({
+  disabledReason: automationRunnerDisabledBy,
   // v1 credentials predate token audiences. Keep them usable during the Den
   // rollout only for endpoints trusted before the renderer starts issuing IPC.
   legacyBaseUrls: legacyRunnerBaseUrls,
@@ -1359,6 +1368,18 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
     const server = await runtimeManager.openworkServerInfo();
     return { baseUrl: server.baseUrl, token: server.clientToken ?? server.ownerToken };
   },
+  // Remote-session callers choose a computer by this label, then a workspace and model.
+  describeComputer: createComputerDescriber({
+    platform: process.platform,
+    appVersion: resolveAppVersion(app),
+    hostname: () => os.hostname(),
+    readComputerName: () => new Promise((resolve, reject) => {
+      execFile("/usr/sbin/scutil", ["--get", "ComputerName"], { timeout: 2_000 }, (error, stdout) => {
+        if (error) reject(error);
+        else resolve(String(stdout));
+      });
+    }),
+  }),
   log: (state) => console.info(`[automation-runner] ${state}`),
   onCredentialRejected: () => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -1959,33 +1980,6 @@ const desktopCommandHandlers = {
         return ["node", path.resolve(__dirname, "../../..", "packages/openwork-ui-mcp/index.mjs")];
       }
       return ["npx", "-y", "openwork-ui-mcp"];
-  },
-  "getComputerUseState": async () => getComputerUseState(),
-  "computerUseAction": async (event, value) => {
-    if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("Computer Use controls require the main OpenWork window.");
-    return computerUseAction(value);
-  },
-  "getComputerUseMcpCommand": async (event, ...args) => {
-      return getComputerUseMcpCommand();
-  },
-  "checkComputerUsePermissions": async (event, ...args) => {
-      // Read permissions in the same child-process context as setup.
-      return checkComputerUsePermissions();
-  },
-  "listRunningApps": async (event, ...args) => {
-      // Running regular macOS apps for composer @App mentions.
-      return listRunningApps();
-  },
-  "openComputerUsePermissionSetup": async (event, ...args) => {
-      // Open the GUI app. Returns immediately — React shows "verify" CTA.
-      await openComputerUseSetupApp();
-      // Return a fresh check so the UI shows the current state.
-      return checkComputerUsePermissions();
-  },
-  "openComputerUsePermissionSettings": async (event, ...args) => {
-      // Legacy: open the setup app (same as above).
-      await openComputerUseSetupApp();
-      return checkComputerUsePermissions();
   },
   "getOpenworkUiMcpEnvironment": async (event, ...args) => {
       return {

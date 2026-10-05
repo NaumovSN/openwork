@@ -1,6 +1,9 @@
 import { sessionActivityFrom } from "./opencode-plugins/session-activity.js";
-import { isRecord } from "./workspace-kv-store.js";
 
+// Kept dependency-free: the bundled engine plugin imports this adapter.
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 type Read = (path: string) => Promise<unknown>;
 function data(value: unknown): unknown { return isRecord(value) && "data" in value ? value.data : value; }
 function items(value: unknown): Record<string, unknown>[] {

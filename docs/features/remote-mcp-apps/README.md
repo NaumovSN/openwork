@@ -107,17 +107,16 @@ change. In the current product:
 - model and App-host catalogs contain no standalone URL-App tools;
 - no `ui://openwork/library-apps/...` resources are registered;
 - member server indexes and launch metadata contain no standalone URL Apps;
-- REST calls under `/v1/remote-mcp-apps` are not registered and are therefore
-  unavailable.
+- there are no REST routes under `/v1/remote-mcp-apps`.
 
 Existing database rows and cached revisions from earlier development remain
 stored non-destructively. They are inactive and unreachable through the UI,
 MCP catalogs, capability search, resources, launch metadata, and HTTP API. This
 change performs no deletion and introduces no destructive migration.
 
-The retained storage and validation implementation is not a supported runtime
-surface. A future standalone URL-App unit of value must deliberately restore
-its own API, UI, security review, lifecycle, testing, and rollout contract.
+The earlier URL-App routes and validation implementation have been removed; only
+the table remains. A future standalone URL-App unit of value must deliberately
+build its own API, UI, security review, lifecycle, testing, and rollout contract.
 
 ## Host security and compatibility
 

@@ -255,7 +255,9 @@ test("Cloud members connect different Slack workspaces without configuration and
     await user.see({ text: "Connected with limited access" }, { timeoutMs: 60_000 });
     await user.notSee({ text: "slack:TSYNTHETIC:USYNTHFIRST" });
     const connection = await world.connection("first");
-    expect(connection).toMatchObject({ connectedForMe: true, needsReconnect: false });
+    expect(connection).toMatchObject({ connected: true, connectedForMe: true, needsReconnect: false });
+    expect(connection?.policyBlocked).not.toBe(true);
+    expect(connection?.policyOwner).toBeUndefined();
     expect(connection?.missingFeatures).toEqual(expect.arrayContaining(["privateChannels", "directMessages", "groupMessages"]));
     evidence.recordAssertionEvidence("Limited access is product state, not just model prose", "The Library says Connected with limited access while the native account remains connected and does not require reconnect. Optional private/DM feature omissions are retained; the encoded workspace/user identifier is not displayed.", true);
     await user.screenshot();
@@ -313,8 +315,9 @@ test("Cloud members connect different Slack workspaces without configuration and
     expect(world.objects(retained.body).some(entry => entry.error === "policy_blocked")).toBe(true);
     expect(world.slack.calls()).toHaveLength(before);
     const management = await world.memberRequest("first", "/v1/mcp-connections?scope=usable", "GET", undefined, true);
+    expect(management.status).toBe(200);
     expect(world.objects(management.body).find(entry => entry.id === "slack")).toMatchObject({
-      policyBlocked: true, connected: false, connectedForMe: true,
+      policyBlocked: true, policyOwner: "openwork", connected: false, connectedForMe: true, needsReconnect: false,
     });
     const disconnected = await world.memberRequest("first", "/v1/oauth-providers/slack/disconnect", "POST", undefined, true);
     expect(disconnected).toMatchObject({ status: 200, body: { ok: true } });
@@ -325,6 +328,6 @@ test("Cloud members connect different Slack workspaces without configuration and
     const allowedMethods = ["/api/oauth.v2.access", "/api/auth.test", "/api/assistant.search.context", "/api/conversations.replies", "/api/chat.getPermalink"];
     expect(world.slack.calls().every(call => allowedMethods.includes(call.path))).toBe(true);
     expect(world.slack.calls().every(call => call.error === null || call.error === "channel_not_found")).toBe(true);
-    evidence.recordAssertionEvidence("Disabling availability stops retained authorization, not just discovery", `A second isolated Den process reads the same scratch database with Slack disabled. Its audience-valid, read-only member token reaches policy_blocked for the retained capability; OAuth aliases/search/threads returned ${responses.map(response => response.status).join(" / ")}. The saved account stays visible as blocked and can still be disconnected. There were zero additional provider calls; no actual rollout flag changed.`, true);
+    evidence.recordAssertionEvidence("Disabling availability stops retained authorization, not just discovery", `A second isolated Den process reads the same scratch database with Slack disabled. Its audience-valid, read-only member token reaches policy_blocked for the retained capability; OAuth aliases/search/threads returned ${responses.map(response => response.status).join(" / ")}. The saved account stays visible as blocked with OpenWork explicitly identified as its policy owner, not a reconnection requirement, and can still be disconnected. There were zero additional provider calls; no actual rollout flag changed.`, true);
   });
 });

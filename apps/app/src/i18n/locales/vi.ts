@@ -303,7 +303,6 @@ export default {
   "den.sync_provider_failed": "Không thể đồng bộ {name}.",
   "den.synced_provider": "Đã đồng bộ {name}.",
   "den.syncing": "Đang đồng bộ…",
-  "den.uninstall": "Gỡ cài đặt",
   "extensions.inventory_description": "Kỹ năng, kết nối và công cụ mà agent của bạn có thể sử dụng.",
   "extensions.apps_mcp_header": "Ứng dụng (MCP)",
   "extensions.filter_all": "Tất cả",

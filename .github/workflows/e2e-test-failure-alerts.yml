@@ -2,7 +2,7 @@ name: Test alerts
 
 on:
   workflow_run:
-    workflows: [Product journeys, Build and core checks, Test reliability]
+    workflows: [Build and core checks, Freestyle world check]
     types: [completed]
 
 permissions:

@@ -46,7 +46,6 @@ export const CHIP_ICONS = {
   ],
   monitor: [["rect", { width: "20", height: "14", x: "2", y: "3", rx: "2" }], ["line", { x1: "8", x2: "16", y1: "21", y2: "21" }], ["line", { x1: "12", x2: "12", y1: "17", y2: "21" }]],
   cloud: [["path", { d: "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" }]],
-  app: [["rect", { x: "2", y: "4", width: "20", height: "16", rx: "2" }], ["path", { d: "M10 4v4" }], ["path", { d: "M2 8h20" }], ["path", { d: "M6 4v4" }]],
   chevron: [["path", { d: "m9 18 6-6-6-6" }]],
 } satisfies Record<string, IconElement[]>;
 
@@ -56,7 +55,7 @@ export type BadgeTone = "violet" | "sky" | "cyan" | "gray";
 
 export type ComposerBadge = {
   /** Stable kind, exposed as `data-composer-badge`. */
-  kind: "skill" | "connect-skill" | "connector" | "app" | "computer" | "agent" | "file" | "pasted";
+  kind: "skill" | "connect-skill" | "connector" | "computer" | "agent" | "file" | "pasted";
   label: string;
   /** Muted detail after the label, e.g. "42 lines". */
   meta?: string;
@@ -92,8 +91,6 @@ export function composerPillBadge(pill: ComposerPill): ComposerBadge {
       return { kind: "connect-skill", label: humanizeCapabilityName(pill.slug), title, tone: "violet", slot: { icon: "book" } };
     case "connector":
       return { kind: "connector", label: pill.name, title, tone: "gray", slot: { logoUrls: composerConnectorLogoUrls({ name: pill.name }), fallback: "plug" } };
-    case "app":
-      return { kind: "app", label: `@${pill.name}`, title, tone: "cyan", slot: { icon: "app" } };
     case "computer":
       return { kind: "computer", label: `@${pill.target}`, title, tone: "sky", slot: { icon: pill.target === "cloud" ? "cloud" : "monitor" } };
   }

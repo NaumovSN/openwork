@@ -1,5 +1,6 @@
 /** @jsxImportSource react */
 import { useMemo, useState } from "react"
+import { createPortal } from "react-dom"
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertCircle,
@@ -7,6 +8,7 @@ import {
   Archive,
   ArrowLeft,
   CalendarClock,
+  Clock3,
   Cloud,
   History,
   Monitor,
@@ -18,8 +20,10 @@ import {
   Square,
 } from "lucide-react"
 import { useNavigate, useSearchParams } from "react-router"
+import { globalSettingsRoute, workspaceSettingsRoute } from "@/react-app/shell/workspace-routes"
 import type {
   AutomationDetail,
+  AutomationExecutionTarget,
   AutomationRun,
   AutomationRunEvent,
   AutomationSchedule,
@@ -29,6 +33,7 @@ import type {
 import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
 
 import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den"
+import { isDesktopRuntime } from "@/app/lib/runtime-env"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -44,10 +49,17 @@ import {
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/sonner"
+import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
+import { t } from "../../../i18n"
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider"
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
 import { automationCreationPlacement } from "./automation-availability"
+import { automationCloudOptions, automationCloudRunAvailable, automationPlacementChoices, resolveAutomationPlacement } from "./automation-placement"
+import { useOrgMcpConnections } from "../connections/use-org-mcp-connections"
+import { buildConnectorToolIdentities } from "../connections/connector-tool-identity"
+import { isOrgMcpConnectionReady } from "../settings/extension-items"
+import type { AutomationConnectedAccount } from "./automation-editor"
 import { AutomationEditor } from "./automation-editor"
 import { dispatchAutomationsStateChanged } from "./automation-events"
 import { automationExecutionThreadRoute, automationExecutionIdentity, automationLocalSessionRoute } from "./automation-cloud-thread"
@@ -139,9 +151,17 @@ function LoadingState() {
   )
 }
 
-export function AutomationsPage(props: { providerCatalog?: AutomationProviderCatalog; workspaceId?: string | null } = {}) {
+export function AutomationsPage(props: {
+  providerCatalog?: AutomationProviderCatalog
+  workspaceId?: string | null
+  /** Titlebar slot for New Automation, matching Library and Dashboard. */
+  headerActionsTarget?: HTMLElement | null
+  /** Opens OpenWork Cloud sign-in, the same action Library offers when signed out. */
+  onSignIn?: () => void
+} = {}) {
   const denAuth = useDenAuth()
   const navigate = useNavigate()
+  const openProviderSettings = () => navigate(props.workspaceId?.trim() ? workspaceSettingsRoute(props.workspaceId.trim(), "ai") : globalSettingsRoute("ai"))
   const queryClient = useQueryClient()
   const [searchParams, setSearchParams] = useSearchParams()
   const [query, setQuery] = useState("")
@@ -196,6 +216,23 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
   // old to answer, or one that has not answered yet, leaves presence unknown,
   // and claiming there is no desktop on that basis would be worse than silence.
   const noDesktopConnected = runnerPresenceQuery.data?.connected === false
+  const targetsQuery = useQuery({
+    queryKey: [...queryRoot, "execution-targets"],
+    queryFn: () => client!.listAutomationRunners(organizationId!),
+    enabled: ready,
+    // Same contract as presence: an older Den answers null once and keeps today's fixed placement.
+    retry: false,
+    refetchInterval: (queryState) => (queryState.state.data === null ? false : 60_000),
+  })
+  const placementChoices = automationPlacementChoices({ targets: targetsQuery.data, desktopRuntime: isDesktopRuntime() })
+  const cloudRunAvailable = automationCloudRunAvailable(targetsQuery.data)
+  const cloudOptions = automationCloudOptions(targetsQuery.data)
+  // The accounts a cloud run can use, shown on the choice that uses only them.
+  const orgConnections = useOrgMcpConnections()
+  const connectedAccounts = useMemo((): AutomationConnectedAccount[] => buildConnectorToolIdentities({
+    mcpServers: [],
+    orgConnections: orgConnections.connections.filter(isOrgMcpConnectionReady),
+  }).flatMap((identity) => identity.connectionId ? [{ id: identity.connectionId, name: identity.name, iconUrl: identity.iconUrl }] : []), [orgConnections.connections])
   const detailQuery = useQuery({
     queryKey: [...queryRoot, "detail", selectedId],
     queryFn: () => client!.getAutomation(organizationId!, selectedId!),
@@ -226,12 +263,18 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
 
   // The free Zen starter is a published-Desktop exception; Cloud runs revalidate
   // against the organization's own providers.
-  const models = useMemo(
+  const desktopModels = useMemo(
     () => automationModelOptions(providersQuery.data ?? [], {
-      includeFreeStarter: placement === "desktop" && !zenModelRestricted && freeStarterInRuntime,
+      includeFreeStarter: !zenModelRestricted && freeStarterInRuntime,
     }),
-    [freeStarterInRuntime, placement, providersQuery.data, zenModelRestricted],
+    [freeStarterInRuntime, providersQuery.data, zenModelRestricted],
   )
+  const cloudModels = useMemo(
+    () => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: false }),
+    [providersQuery.data],
+  )
+  const modelsFor = (target: AutomationExecutionTarget) => target === "cloud" ? cloudModels : desktopModels
+  const modelsByPlacement = { desktop: desktopModels, cloud: cloudModels }
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     const items = listQuery.data?.items.filter((item) => item.automation.state !== "archived") ?? []
@@ -268,15 +311,22 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
 
   if (denAuth.status === "checking") return <LoadingState />
   if (!denAuth.isSignedIn) {
+    // Automations live in OpenWork Cloud: signed out, nothing here calls Den,
+    // and the page leads with the same sign-in banner as Library.
     return (
-      <div className="mx-auto max-w-xl p-6 pt-16">
-        <Alert variant="warning">
-          <Cloud aria-hidden="true" />
-          <AlertTitle>Sign in to Den to use Automations</AlertTitle>
-          <AlertDescription>
-            Cloud tasks run even when your desktop is offline. Desktop tasks need OpenWork open and connected.
-          </AlertDescription>
-        </Alert>
+      <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8" data-automations-signed-out>
+        <CloudSignInBanner
+          testId="automations-sign-in-banner"
+          media={<CloudSignInBannerIcon><Clock3 /></CloudSignInBannerIcon>}
+          message={t("automations.sign_in_banner")}
+          onSignIn={props.onSignIn}
+        />
+        <Empty>
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><CalendarClock /></EmptyMedia>
+            <EmptyTitle>No Automations yet</EmptyTitle>
+          </EmptyHeader>
+        </Empty>
       </div>
     )
   }
@@ -313,6 +363,9 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
       ? workflow.versions.find((version) => version.id === workflowVersionId) ?? workflow.currentVersion
       : undefined
     if (placement === "cloud" && workflowId && workflowQuery.isLoading) return <LoadingState />
+    // A Workflow runs only in the cloud, so its form keeps the fixed placement.
+    const createChoices = workflowId ? [] : placementChoices
+    const createPlacement = resolveAutomationPlacement(placement, createChoices)
     return (
       <div className="mx-auto max-w-3xl space-y-5 p-6">
         <div className="flex items-center gap-3">
@@ -322,7 +375,9 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
           <div>
             <h2 className="text-xl font-semibold">Create Automation</h2>
             <p className="text-sm text-muted-foreground">
-              {placement === "cloud" ? "Runs on your cloud computer. The schedule starts as soon as you create it." : "Runs on your desktop computer. Keep OpenWork open and connected at the scheduled time."}
+              {createChoices.length > 1
+                ? "The schedule starts as soon as you create it."
+                : createPlacement === "cloud" ? "Runs on your cloud computer. The schedule starts as soon as you create it." : "Runs on your desktop computer. Keep OpenWork open and connected at the scheduled time."}
             </p>
           </div>
         </div>
@@ -333,22 +388,29 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
         ) : null}
         <AutomationEditor
           key={workflowVersion?.id ?? "agent"}
-          placement={placement}
-          initial={workflow && workflowVersion ? { ...inputDefaults(models), name: `${workflow.title} refresh` } : undefined}
+          onOpenProviderSettings={openProviderSettings}
+          placement={createPlacement}
+          placementChoices={createChoices}
+          cloudOptions={cloudOptions}
+          onThisComputer={isDesktopRuntime()}
+          connectedAccounts={connectedAccounts}
+          initial={workflow && workflowVersion ? { ...inputDefaults(modelsFor(createPlacement)), name: `${workflow.title} refresh` } : undefined}
           initialKey={workflowVersion?.id}
           pinnedWorkflow={workflow && workflowVersion ? { title: workflow.title, configObjectVersionId: workflowVersion.id } : undefined}
           busy={busyAction === "create"}
-          modelOptions={models}
+          modelOptions={modelsFor(createPlacement)}
+          modelOptionsByPlacement={modelsByPlacement}
           providerCatalog={props.providerCatalog}
           submitLabel="Create and activate"
           onCancel={() => openAutomation(null)}
-          onSave={async (input) => {
+          onSave={async (input, chosenPlacement) => {
             setBusyAction("create")
             try {
-              // Pin the workspace the person is creating from; targeting must
-              // not follow whichever workspace happens to be active at run time.
-              const workspaceId = props.workspaceId?.trim() || null
-              const detail = placement === "cloud"
+              // Pin the local workspace the person is creating from; targeting
+              // must not follow whichever workspace is active at run time. A
+              // browser has no local workspace, so its desktop runs stay unpinned.
+              const workspaceId = isDesktopRuntime() ? props.workspaceId?.trim() || null : null
+              const detail = chosenPlacement === "cloud"
                 ? await client.createCloudAutomation(organizationId, {
                     name: input.name,
                     schedule: input.schedule,
@@ -406,6 +468,9 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
     const detailPlacement = detail.revision.executionTarget ?? "desktop"
 
     if (editing && editable) {
+      // Where it runs now is always a choice, so an Automation whose target
+      // went away can still be moved to the one that exists.
+      const editChoices = placementChoices.length > 0 ? [...new Set([detailPlacement, ...placementChoices])] : []
       return (
         <div className="mx-auto max-w-3xl space-y-5 p-6">
           <div>
@@ -413,22 +478,34 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
             <p className="text-sm text-muted-foreground">Saving creates an immutable revision for future runs.</p>
           </div>
           <AutomationEditor
+            onOpenProviderSettings={openProviderSettings}
             placement={detailPlacement}
+            placementChoices={editChoices}
+            cloudOptions={cloudOptions}
+            onThisComputer={isDesktopRuntime()}
+            connectedAccounts={connectedAccounts}
             initial={inputFromDetail(detail)}
             initialKey={detail.revision.id}
             busy={busyAction === "update"}
             openModelPickerOnMount={repairingModel}
-            modelOptions={models}
+            modelOptions={modelsFor(detailPlacement)}
+            modelOptionsByPlacement={modelsByPlacement}
             providerCatalog={props.providerCatalog}
             submitLabel="Save changes"
             onCancel={() => {
               setEditing(false)
               setRepairingModel(false)
             }}
-            onSave={async (input) => {
+            onSave={async (input, chosenPlacement) => {
               setBusyAction("update")
               try {
-                await client.updateAutomation(organizationId, task.id, input)
+                const localWorkspaceId = isDesktopRuntime() ? props.workspaceId?.trim() || null : null
+                await client.updateAutomation(organizationId, task.id, chosenPlacement === detailPlacement ? input : {
+                  ...input,
+                  executionTarget: chosenPlacement,
+                  // Moving to the desktops from here pins it to this workspace, as creating here does.
+                  ...(chosenPlacement === "desktop" && localWorkspaceId ? { workspaceId: localWorkspaceId } : {}),
+                })
                 await refresh()
                 setEditing(false)
                 setRepairingModel(false)
@@ -483,6 +560,19 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
                 }, "Automation activated")}
               >
                 <Play />Activate
+              </Button>
+            ) : null}
+            {detailPlacement === "desktop" && cloudRunAvailable ? (
+              <Button
+                variant="outline"
+                data-automation-run-in-cloud
+                disabled={busyAction !== null || task.state === "archived" || task.state === "needs_attention"}
+                onClick={() => void act("run-cloud", async () => {
+                  const run = await client.runAutomationNow(organizationId, task.id, { executionTarget: "cloud" })
+                  setSearchParams(new URLSearchParams({ automation: task.id, run: run.id }))
+                }, "Automation queued in the cloud")}
+              >
+                <Cloud />Run in cloud
               </Button>
             ) : null}
             <Button
@@ -560,7 +650,7 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
                 <CardDescription>{detail.revision.executionTarget === "cloud" ? "Runs on your cloud computer, even when your desktop is offline." : "Runs on your desktop computer. Keep OpenWork open and connected at the scheduled time."}</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-3 text-sm sm:grid-cols-2">
-                <div className="min-w-0"><span className="text-muted-foreground">Model</span><p className="break-words">{describeAutomationModel(detail.revision.model, models)}</p></div>
+                <div className="min-w-0"><span className="text-muted-foreground">Model</span><p className="break-words">{describeAutomationModel(detail.revision.model, modelsFor(detailPlacement))}</p></div>
                 <div className="min-w-0"><span className="text-muted-foreground">Next run</span><p className="break-words">{task.state === "needs_attention" ? "No future run scheduled" : formatAutomationTime(task.nextDueAt)}</p></div>
                 <div className="min-w-0"><span className="text-muted-foreground">Runtime limit</span><p className="break-words">{Math.round(detail.revision.maximumRuntimeMs / 60_000)} minutes</p></div>
                 <div className="min-w-0"><span className="text-muted-foreground">Integrations</span><p className="break-words">Your available OpenWork Connect tools</p></div>
@@ -707,19 +797,14 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
     )
   }
 
+  // The page title lives in the titlebar; New Automation sits beside it there,
+  // as Library and Dashboard place their add controls.
+  const newAutomation = <Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button>
   return (
-    <div className="mx-auto max-w-5xl space-y-5 p-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-semibold">Automations</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {placement === "cloud"
-              ? "Schedule tasks on your cloud computer. They keep running when your desktop is offline."
-              : "Schedule tasks on your desktop or cloud computer. See where each task runs and how it went."}
-          </p>
-        </div>
-        <Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button>
-      </div>
+    <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8">
+      {props.headerActionsTarget
+        ? createPortal(newAutomation, props.headerActionsTarget)
+        : props.headerActionsTarget === undefined ? <div className="flex justify-end">{newAutomation}</div> : null}
       <div className="relative max-w-md">
         <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
         <Input className="pl-9" value={query} placeholder="Search Automations" onChange={(event) => setQuery(event.currentTarget.value)} />
@@ -732,9 +817,11 @@ export function AutomationsPage(props: { providerCatalog?: AutomationProviderCat
             <EmptyDescription>
               {query
                 ? "Try a different search."
-                : placement === "cloud"
-                  ? "Create a task that runs on your cloud computer, even when your desktop is offline."
-                  : "Create a task for this desktop computer. For tasks that run while it’s offline, create a cloud automation in OpenWork Web."}
+                : placementChoices.length > 1
+                  ? "Create a task that runs on your desktops or in the cloud."
+                  : placement === "cloud"
+                    ? "Create a task that runs on your cloud computer, even when your desktop is offline."
+                    : "Create a task for this desktop computer. For tasks that run while it’s offline, create a cloud automation in OpenWork Web."}
             </EmptyDescription>
           </EmptyHeader>
           {!query ? <EmptyContent><Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button></EmptyContent> : null}

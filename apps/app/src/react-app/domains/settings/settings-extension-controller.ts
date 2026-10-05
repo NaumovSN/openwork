@@ -4,7 +4,6 @@ import { useCallback } from "react";
 import type { McpDirectoryInfo } from "../../../app/constants";
 import { evaluateEnablement, type EnablementContext } from "../../../app/enablement";
 import type { OpenworkServerClient } from "../../../app/lib/openwork-server";
-import type { McpServerEntry } from "../../../app/types";
 import { getExtensionConfigSlot, type ExtensionConfigContext } from "./extension-registry";
 import type { LocalProviderInstallInput } from "./openai-image-extension";
 
@@ -17,12 +16,7 @@ type SettingsExtensionControllerInput = {
   openworkServerClient: OpenworkServerClient | null;
   hostOpenworkServerClient: OpenworkServerClient | null;
   enablementContext: EnablementContext;
-  mcpServers: McpServerEntry[];
-  mcpConnectingName: string | null;
-  onComputerUsePermissionsChange: (permissions: { accessibility: boolean; screenRecording: boolean }) => void;
   restartLocalServer?: () => Promise<boolean>;
-  connectMcp: (entry: McpDirectoryInfo) => void | Promise<void>;
-  refreshMcpServers: () => void | Promise<void>;
   providers: ProviderLike[];
   providerConnectedIds: string[];
   userEnvKeys: string[];
@@ -54,13 +48,6 @@ export function useSettingsExtensionController(input: SettingsExtensionControlle
     openworkServerClient: input.openworkServerClient,
     hostOpenworkServerClient: input.hostOpenworkServerClient,
     restartLocalServer: input.restartLocalServer,
-    computerUse: {
-      connected: input.enablementContext.mcpStatuses?.["computer-use"]?.status === "connected",
-      connecting: input.mcpConnectingName === entry.name,
-      onConnect: () => input.connectMcp(entry),
-      onRefresh: input.refreshMcpServers,
-      onPermissionsChange: input.onComputerUsePermissionsChange,
-    },
     imageExtension: {
       ...input.imageExtension,
       envKeyDetected: hasOpenAiEnv(input),
