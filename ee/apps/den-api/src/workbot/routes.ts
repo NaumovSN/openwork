@@ -34,7 +34,7 @@ const sessionSchema = z.object({
   canSchedule: z.boolean(),
 }).meta({ ref: "WorkbotSession" })
 
-const runTokenSchema = z.object({ token: z.string(), expiresAt: z.number() }).meta({ ref: "WorkbotRunToken" })
+const runTokenSchema = z.object({ token: z.string(), expiresAt: z.iso.datetime() }).meta({ ref: "WorkbotRunToken" })
 const signedOutSchema = z.object({ error: z.string(), message: z.string().optional() })
 
 /** Plenty for one person's turns (each send and resume needs one); stops a runaway client minting in a loop. */
@@ -156,7 +156,7 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       if (retryAfter !== null) return c.json({ error: "rate_limited" as const, retryAfter }, 429)
       const ttlMs = c.req.valid("json").ttlMs ?? DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS
       const { token } = await mintHeadlessRunMcpToken({ ...principal, ttlMs })
-      return c.json({ token, expiresAt: Date.now() + ttlMs })
+      return c.json({ token, expiresAt: new Date(Date.now() + ttlMs).toISOString() })
     },
   )
 }

@@ -4542,7 +4542,7 @@ export type WorkbotSession = {
 
 export type WorkbotRunToken = {
   token: string;
-  expiresAt: number;
+  expiresAt: string;
 };
 
 export type DenAppVersionResponse = {
