@@ -41,7 +41,7 @@ function connectionIdentityFields(source: ExternalMcpOAuthStateIdentitySource): 
   if (source.kind === "native_provider") {
     return [source.id, url, authType, credentialMode]
   }
-  if (authType === "apikey") return [url, authType, credentialMode, source.apiKeyAuthScheme ?? "bearer"]
+  if (authType === "apikey") return [url, authType, credentialMode, source.apiKeyAuthScheme === "token" ? "token" : "bearer"]
   return [url, authType, credentialMode]
 }
 

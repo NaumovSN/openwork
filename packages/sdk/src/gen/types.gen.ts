@@ -182,6 +182,7 @@ export type AdminOrganizationsPageResponse = {
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
+      workbot: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -265,6 +266,7 @@ export type AdminOverviewResponse = {
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
+      workbot: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -1464,7 +1466,8 @@ export type CapabilityDisabledError = {
     | "appMcpServers"
     | "slackAssistant"
     | "slackAssistantHeadless"
-    | "headlessAutomations";
+    | "headlessAutomations"
+    | "workbot";
 };
 
 export type CreateInstallLinkRequest = {
@@ -4525,6 +4528,27 @@ export type WebOriginNotFoundError = {
 
 export type RemoveWebOriginNotFound = WebOriginNotFoundError | WebOriginOrganizationNotFoundError;
 
+export type WorkbotSession = {
+  user: {
+    id: string;
+    name: string | null;
+    email: string;
+  };
+  organization: {
+    id: string;
+    name: string;
+    brandAppName: string | null;
+  };
+  memberId: string;
+  enabled: boolean;
+  canSchedule: boolean;
+};
+
+export type WorkbotRunToken = {
+  token: string;
+  expiresAt: string;
+};
+
 export type DenAppVersionResponse = {
   minAppVersion: string;
   latestAppVersion: string;
@@ -5448,6 +5472,7 @@ export type GetV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
+      workbot: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -5514,6 +5539,7 @@ export type PutV1AdminOrganizationsByOrganizationIdCapabilitiesResponses = {
       slackAssistant: boolean;
       slackAssistantHeadless: boolean;
       headlessAutomations: boolean;
+      workbot: boolean;
       /**
        * Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.
        *
@@ -27164,6 +27190,72 @@ export type PostV1IntegrationsSlackByConnectionIdInteractionsResponses = {
 
 export type PostV1IntegrationsSlackByConnectionIdInteractionsResponse =
   PostV1IntegrationsSlackByConnectionIdInteractionsResponses[keyof PostV1IntegrationsSlackByConnectionIdInteractionsResponses];
+
+export type GetWorkbotSessionData = {
+  body?: never;
+  path?: never;
+  query?: never;
+  url: "/v1/workbot/session";
+};
+
+export type GetWorkbotSessionErrors = {
+  /**
+   * The token is missing, expired or revoked, or the membership ended.
+   */
+  401: UnauthorizedError;
+};
+
+export type GetWorkbotSessionError = GetWorkbotSessionErrors[keyof GetWorkbotSessionErrors];
+
+export type GetWorkbotSessionResponses = {
+  /**
+   * The signed-in person and their workspace.
+   */
+  200: WorkbotSession;
+};
+
+export type GetWorkbotSessionResponse = GetWorkbotSessionResponses[keyof GetWorkbotSessionResponses];
+
+export type CreateWorkbotRunTokenData = {
+  body: {
+    ttlMs?: number;
+  };
+  path?: never;
+  query?: never;
+  url: "/v1/workbot/run-token";
+};
+
+export type CreateWorkbotRunTokenErrors = {
+  /**
+   * The token is missing, expired or revoked, or the membership ended.
+   */
+  401: UnauthorizedError;
+  /**
+   * Workbot is off for this workspace.
+   */
+  403: {
+    error: string;
+    message?: string;
+  };
+  /**
+   * Too many tokens requested.
+   */
+  429: {
+    error: "rate_limited";
+    retryAfter: number;
+  };
+};
+
+export type CreateWorkbotRunTokenError = CreateWorkbotRunTokenErrors[keyof CreateWorkbotRunTokenErrors];
+
+export type CreateWorkbotRunTokenResponses = {
+  /**
+   * The token.
+   */
+  200: WorkbotRunToken;
+};
+
+export type CreateWorkbotRunTokenResponse = CreateWorkbotRunTokenResponses[keyof CreateWorkbotRunTokenResponses];
 
 export type GetV1AppVersionData = {
   body?: never;
