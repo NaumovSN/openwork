@@ -181,7 +181,7 @@ declare global {
         hide?: (options?: { preserveShortcutFocus?: boolean }) => Promise<void>;
         openUrl?: (
           url: string,
-          provider?: "auto" | "builtin" | "external",
+          provider?: "auto" | "builtin",
           options?: { sessionId?: string | null },
         ) => Promise<OpenBrowserUrlResult>;
         setVisibleSession?: (sessionId: string | null) => Promise<string | null>;

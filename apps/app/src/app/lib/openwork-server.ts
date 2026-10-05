@@ -964,20 +964,6 @@ export type OpenworkWorkspaceExportWarning = {
   detail: string;
 };
 
-export type OpenworkArtifactItem = {
-  id: string;
-  name?: string;
-  path?: string;
-  size?: number;
-  createdAt?: number;
-  updatedAt?: number;
-  mime?: string;
-};
-
-export type OpenworkArtifactList = {
-  items: OpenworkArtifactItem[];
-};
-
 export type OpenworkConnectState = {
   ok: true;
   schemaVersion: 1;
@@ -2562,12 +2548,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         { token, hostToken, timeoutMs: timeouts.binary },
       ),
 
-    listArtifacts: (workspaceId: string) =>
-      requestJson<OpenworkArtifactList>(baseUrl, `/workspace/${encodeURIComponent(workspaceId)}/artifacts`, {
-        token,
-        hostToken,
-      }),
-
     resolveArtifacts: (
       workspaceId: string,
       targets: Array<{
@@ -2583,13 +2563,6 @@ export function createOpenworkServerClient(options: { baseUrl: string; token?: s
         baseUrl,
         `/workspace/${encodeURIComponent(workspaceId)}/artifacts/resolve`,
         { token, hostToken, method: "POST", body: { targets } },
-      ),
-
-    downloadArtifact: (workspaceId: string, artifactId: string) =>
-      requestBinary(
-        baseUrl,
-        `/workspace/${encodeURIComponent(workspaceId)}/artifacts/${encodeURIComponent(artifactId)}`,
-        { token, hostToken, timeoutMs: timeouts.binary },
       ),
 
     // User-level env vars (host-auth only — desktop shell is the sole caller).

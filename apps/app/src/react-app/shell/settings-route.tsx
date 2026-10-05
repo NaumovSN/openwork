@@ -2033,19 +2033,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     const mcpConfigured = new Set(connectionsSnapshot.mcpServers.map((s) => s.name));
     const connectedProviders = new Set(providerConnectedIds);
     const configuredEnvKeys = new Set(userEnvKeys);
-    const loadedPlugins = new Set<string>();
-    // Browser plugin detection: check if any configured plugin matches the chrome-devtools name.
-    // For now, treat it as loaded if the plugin is in the MCP/plugin list — this will
-    // be refined when we add a real plugin-loaded signal from the engine.
-    const browserPluginConfigured = connectionsSnapshot.mcpServers.some(
-      (s) => s.name === "opencode-chrome-devtools" || s.config.command?.some((c: string) => c.includes("chrome-devtools")),
-    );
-    if (browserPluginConfigured) loadedPlugins.add("opencode-chrome-devtools");
 
     return {
       mcpStatuses: connectionsSnapshot.mcpStatuses,
       mcpConfigured,
-      loadedPlugins,
       connectedProviders,
       configuredEnvKeys,
       // Toggle state reader for extensions with defaultEnabled / explicit toggle.

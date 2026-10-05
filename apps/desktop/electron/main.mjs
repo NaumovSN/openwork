@@ -981,9 +981,9 @@ if (process.platform === "darwin" && INITIAL_APP_ICON_IMAGE && !INITIAL_APP_ICON
   app.dock.setIcon(INITIAL_APP_ICON_IMAGE);
 }
 
-// Expose Chrome DevTools Protocol so the opencode-chrome-devtools plugin can
-// drive the built-in browser panel.  Use OPENWORK_ELECTRON_REMOTE_DEBUG_PORT to
-// pin a specific port; otherwise probe for a free one starting at 9223.
+// Expose the Chrome DevTools Protocol for local debugging and test harnesses.
+// Use OPENWORK_ELECTRON_REMOTE_DEBUG_PORT to pin a specific port; otherwise
+// probe for a free one starting at 9223.
 // Must resolve before app.commandLine.appendSwitch (before `ready`).
 function probePort(port) {
   return new Promise((resolve) => {
@@ -1013,8 +1013,8 @@ if (remoteDebugPort > 0) {
   app.commandLine.appendSwitch("remote-debugging-port", String(remoteDebugPort));
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
 }
-// Make the resolved port available to the embedded server so it flows into
-// agent instructions via ensureOpenworkAgent → resolveAgentTemplate.
+// Publish the resolved port; child processes (and the shells they spawn)
+// inherit it through the environment.
 process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT = String(remoteDebugPort);
 if (isDevMode && !app.isPackaged) {
   const cdpAddress = remoteDebugPort > 0 ? `http://127.0.0.1:${remoteDebugPort}` : "disabled";

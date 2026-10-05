@@ -1434,11 +1434,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
    * Attach the browser view to the main window.
    * @param {object} bounds — { x, y, width, height }
    * @param {object} [opts]
-   * @param {boolean} [opts.preloadDefault=false] - load default URL if the view has no URL
-   * @param {boolean} [opts.ensureTab=false] - create a blank tab if needed
    * @param {string | null} [opts.sessionId] - the conversation whose panel is showing
    */
-  function attachBrowserView(bounds, { preloadDefault = false, ensureTab = false, sessionId } = {}) {
+  function attachBrowserView(bounds, { sessionId } = {}) {
     if (!window() || !acceptBrowserBounds(bounds)) return false;
     browserViewVisible = true;
     if (sessionId !== undefined) {
@@ -1449,16 +1447,9 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
         applySurfacing();
       }
     }
-    if (ensureTab && !registry.onScreenTabId()) {
-      createBrowserTab("about:blank", { ownerSessionId: registry.visibleSessionId() });
-    }
     const view = getActiveBrowserView();
     attachActiveBrowserView();
     resetViewportEmulation(view);
-    const url = view?.webContents.getURL();
-    if (preloadDefault && (!url || url === "about:blank")) {
-      runDetachedTask("load browser default page", () => view?.webContents.loadURL(BROWSER_DEFAULT_URL));
-    }
     sendBrowserState();
     return true;
   }
