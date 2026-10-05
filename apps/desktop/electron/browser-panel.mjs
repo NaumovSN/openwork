@@ -1575,7 +1575,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       sendBrowserState();
       return { tabId, released: true };
     });
-    ipcMain.handle("openwork:browser:closeAllTabs", () => closeAllBrowserTabs());
     ipcMain.handle("openwork:browser:closeSessionTabs", (_event, sessionId) => closeSessionBrowserTabs(sessionId));
     ipcMain.handle("openwork:browser:selectTab", async (_event, tabId) => {
       const id = String(tabId ?? "");
@@ -1585,9 +1584,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return tab.tabId;
     });
     ipcMain.handle("openwork:browser:reorderTabs", (_event, tabIds) => reorderBrowserTabs(tabIds));
-    ipcMain.handle("openwork:browser:listTabs", () => listBrowserTabs());
-    ipcMain.handle("openwork:browser:webmcpListTools", (_event, args) => taskHost.request({ sessionId: registry.visibleSessionId(), operation: "site_tools", args }));
-    ipcMain.handle("openwork:browser:webmcpExecuteTool", (_event, args) => taskHost.request({ sessionId: registry.visibleSessionId(), operation: "site_tool", args }));
     ipcMain.handle("openwork:browser:approve", (event, tabId, approvalId, allowed) => {
       if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame || registry.ownerOf(tabId) !== registry.visibleSessionId()) return false;
       const pending = approvals.get(tabId);
@@ -1608,7 +1604,6 @@ export function createBrowserPanel({ getWindow, remoteDebugPort, onDeepLink, che
       return ensureWebMcpFramePolicy().checkFrame(event.senderFrame);
     });
     ipcMain.handle("openwork:browser:setProxy", (_event, proxy) => setBrowserProxy(proxy));
-    ipcMain.handle("openwork:browser:getProxy", () => browserProxyState());
     ipcMain.handle("openwork:browser:setControlEnabled", (event, enabled) => {
       if (event.sender !== window()?.webContents || event.senderFrame !== window()?.webContents.mainFrame) return false;
       browserControlEnabled = enabled === true;

@@ -91,7 +91,6 @@ const ORG_PROXY_HEADER = "x-openwork-legacy-org-id";
 const ORG_SCOPE_HEADER = "x-openwork-org-id";
 const DEFAULT_DEN_TIMEOUT_MS = 12_000;
 
-export const DEFAULT_DEN_AUTH_NAME = "OpenWork User";
 const BUILD_DEN_BASE_URL =
   (typeof import.meta !== "undefined" && typeof import.meta.env?.VITE_DEN_BASE_URL === "string"
     ? import.meta.env.VITE_DEN_BASE_URL
@@ -123,7 +122,6 @@ function readForceEnvDenSettings(): boolean {
 }
 
 export const HOSTED_DEFAULT_DEN_BASE_URL = "https://app.openworklabs.com";
-export const HOSTED_DEFAULT_DEN_API_BASE_URL = "https://api.app.openworklabs.com";
 export const DEFAULT_DEN_BASE_URL = BUILD_DEN_BASE_URL;
 export const DEN_INFERENCE_PATH = "/dashboard/inference";
 
@@ -3090,18 +3088,6 @@ export function createDenClient(options: {
       return { user: getUser(payload), token: getToken(payload) };
     },
 
-    /**
-     * @deprecated Desktop email/password signup is no longer supported directly.
-     * Open the Den browser signup flow with `buildDenAuthUrl(baseUrl, "sign-up")`
-     * so password-strength feedback and invite handling stay server-compatible.
-     */
-    async signUpEmail(_email: string, _password: string): Promise<DenAuthResult> {
-      throw new DenApiError(
-        410,
-        "desktop_signup_deprecated",
-        "Create your account in the browser to choose a secure password.",
-      );
-    },
 
     async signOut() {
       await requestJson<unknown>(baseUrls, "/api/auth/sign-out", {

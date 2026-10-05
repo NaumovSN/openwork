@@ -62,11 +62,3 @@ export function evaluateEnablement(
     results,
   };
 }
-
-/**
- * For plain MCP entries that don't have an extension manifest,
- * generate a default single-condition enablement: mcp-connected.
- */
-export function defaultMcpEnablement(serverName: string): EnablementCondition[] {
-  return [{ type: "mcp-connected", ref: serverName, label: "MCP server connected" }];
-}

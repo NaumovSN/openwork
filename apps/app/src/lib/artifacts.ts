@@ -58,10 +58,6 @@ export function isTextPreviewSupported(extension: string) {
   return ["txt", "log", "json", "jsonc", "yaml", "yml", "toml", "xml", "ts", "tsx", "js", "jsx", "css", "scss"].includes(extension);
 }
 
-export function isPreviewSupported(extension: string) {
-  return isMarkdownPreviewSupported(extension) || isSheetPreviewSupported(extension) || isImagePreviewSupported(extension) || isPdfPreviewSupported(extension) || isHtmlPreviewSupported(extension) || isTextPreviewSupported(extension);
-}
-
 export function getArtifactType(filename: string): ArtifactType {
   const extension = getFileExtension(filename);
 
@@ -114,25 +110,6 @@ export function getArtifactType(filename: string): ArtifactType {
 
 function getFileExtension(filename: string) {
   return filename.split(".").pop()?.toLowerCase();
-}
-
-const ARTIFACT_TYPE_LABELS: Record<ArtifactType, string> = {
-  website: "Website",
-  markdown: "Markdown",
-  sheet: "Spreadsheet",
-  slides: "Slides",
-  document: "Document",
-  image: "Image",
-  video: "Video",
-  audio: "Audio",
-  pdf: "PDF",
-  html: "HTML",
-  text: "Text",
-  unknown: "File",
-};
-
-export function getArtifactTypeLabel(type: ArtifactType) {
-  return ARTIFACT_TYPE_LABELS[type];
 }
 
 export function canPreviewArtifact(artifact: ArtifactItem) {
@@ -359,16 +336,6 @@ export function getArtifactsFromMessages(messages: UIMessage[], openTargets: Ope
   });
 }
 
-export function useArtifacts(messages: UIMessage[], options: GetArtifactsOptions = {}) {
-  const { openTargets } = useOpenTargets();
-  const includeTargetFallbacks = options.includeTargetFallbacks ?? false;
-
-  return React.useMemo(
-    () => getArtifactsFromMessages(messages, openTargets, { includeTargetFallbacks }),
-    [includeTargetFallbacks, messages, openTargets],
-  );
-}
-
 /** Open any file path in the artifact preview panel (markdown, code, images…). */
 export function useOpenArtifactPath() {
   const { onOpenTarget } = useOpenTargets();
@@ -385,17 +352,5 @@ export function useOpenArtifactPath() {
       reason: "artifact",
     };
     onOpenTarget?.(target, options);
-  }, [onOpenTarget]);
-}
-
-export function usePreviewArtifact() {
-  const { onOpenTarget } = useOpenTargets();
-
-  return React.useCallback((artifact: ArtifactItem) => {
-    async function previewArtifact() {
-      onOpenTarget?.(artifact.legacy_target);
-    }
-
-    void previewArtifact();
   }, [onOpenTarget]);
 }
