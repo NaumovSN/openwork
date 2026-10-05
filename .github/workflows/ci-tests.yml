@@ -82,6 +82,8 @@ jobs:
       - name: Setup tests
         id: setup
         uses: ./.github/actions/setup-tests
+      - name: Check Den web hook order
+        run: pnpm --filter @openwork-ee/den-web lint
       - name: Typecheck the headless runner
         run: pnpm --filter @openwork-ee/headless-runner typecheck
       - name: Boot the app provider tree
