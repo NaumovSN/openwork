@@ -96,8 +96,9 @@ final class SessionRuntime {
             lease = reservation
             controls.show(app: identity, target: target, mode: mode, purpose: purpose)
             if mode == .control {
-                // The person's approval also authorizes initial foreground control.
-                pause("Starting the approved window…")
+                // The person's approval also authorizes initial foreground control. This is
+                // the helper's own startup, not a takeover, so hosts are not told it paused.
+                pause("Starting the approved window…", announce: false)
                 await resume()
             }
             guard let opened = session, opened.id == id else { throw UseError("session_unavailable", "Access ended while starting. Stop work and wait for a new user request.", next: "human_takeover") }
@@ -253,6 +254,11 @@ final class SessionRuntime {
             return UseError(waiting ? "user_interacting" : "requery_required",
                 waiting ? "The person is still interacting. Wait one second, then observe again. Do not send actions." : "The person changed the app. Observe the latest state before sending actions.",
                 next: waiting ? "wait_then_observe" : "observe")
+        }
+        if policy == .coworker {
+            // Say why it paused and where Continue is, so the model can tell the person in one sentence.
+            let reason = current.pauseReason.map { " (\($0))" } ?? ""
+            return UseError("session_paused", "Paused for the person\(reason). They resume with Continue on your pill over the approved window or in Coworker's Computer view. Tell them that once and stop; do not retry automatically.", next: "human_takeover")
         }
         return UseError("session_paused", "The person must choose Continue in the Computer Use controls. Do not retry automatically.", next: "human_takeover")
     }
@@ -527,7 +533,7 @@ final class SessionRuntime {
         session?.interactionDeadline = now + 1
         controls.update(SessionControls.automaticRecovery ? "Waiting for your input to finish…" : "You have control. Waiting for your input to finish…", paused: true, canContinue: false, recoverable: SessionControls.automaticRecovery)
     }
-    func pause(_ reason: String) {
+    func pause(_ reason: String, announce: Bool = true) {
         guard let current = session, !current.paused || current.recoverableInterruption || resumingSessionID == current.id else { return }
         session?.pauseReason = reason
         session?.recoverableInterruption = false
@@ -536,7 +542,7 @@ final class SessionRuntime {
         session?.paused = true; session?.generation += 1; session?.observation = nil; session?.records = []; session?.focus = nil
         stopWatching()
         input.releaseAll()
-        controls.update(reason, paused: true)
+        if announce { controls.update(reason, paused: true) }
     }
     private func resume() async {
         guard let current = session, current.paused, resumingSessionID == nil,

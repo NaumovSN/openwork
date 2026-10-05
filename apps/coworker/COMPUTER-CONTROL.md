@@ -132,6 +132,17 @@ it neither activates the helper nor counts as takeover; its Continue is the same
 human-only Continue as the native menu. The helper is shared with Desktop, which
 shows presence only if it passes the presence environment.
 
+**What pauses control.** In control mode, the helper's own window startup is not
+a takeover and is not reported as one. Afterwards, clicks, typing, scrolling and
+dragging on the approved app pause it, and so does activating another app (a
+click elsewhere does that). Scrolling or dragging over another app without
+activating it, such as reading the conversation while the coworker works, does
+not. A paused call tells the coworker why and that Continue is on its pill or in
+the Computer view. Calls in the wrong order (`session_required` before an open,
+`session_open` during one) dispatch nothing and never revoke the discussion or
+close its session. A coworker whose model cannot read images is told to say so
+rather than blame the session.
+
 **Zoom.** `coworker_computer_zoom` recaptures a region of the current
 observation (image pixels) at full display resolution for reading small text.
 It applies the same protected-field masks, is withheld after a takeover like any

@@ -36,6 +36,8 @@ const withPostObservation = (receipt, status, content = []) => ({ ...receipt, co
 const postWarning = (receipt, code, next = "observe") => withPostObservation(receipt, { ok: false, code, next,
   message: "The fresh observation is unavailable. The original receipt is unchanged; do not replay the input. Review the current control state before observing again." });
 const keyFor = (slug, threadId) => JSON.stringify([slug, threadId]);
+// A call made in the wrong order dispatched nothing: report it without revoking or closing anything.
+const SEQUENCE_CODES = new Set(["session_open", "session_required"]);
 const uiText = (value, limit) => typeof value === "string" && value.length <= limit;
 const uiNumber = (value, max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value >= 0 && value <= max;
 
@@ -743,8 +745,8 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
           latest.assertActive(); progress();
           if (latest.entry.id !== trusted.entry.id || latest.entry.workspaceId !== grant.workspaceId
             || (latest.origin?.threadId ?? context.sessionID) !== originThreadId) throw new Error("This tool no longer belongs to the admitted execution.");
-          if (name === "coworker_computer_open" && current.sessionId) throw new Error("Close the approved session before requesting another app or mode.");
-          if (!["coworker_computer_discover", "coworker_computer_open"].includes(name) && !current.sessionId) throw new Error("Open an approved app session first.");
+          if (name === "coworker_computer_open" && current.sessionId) return failure("session_open", "A session is already open. Keep using it, or close it before requesting another app or mode. Nothing was dispatched.");
+          if (!["coworker_computer_discover", "coworker_computer_open"].includes(name) && !current.sessionId) return failure("session_required", "No session is open in this turn. Call coworker_computer_open first. Nothing was dispatched.");
           if (name === "coworker_computer_open") {
             current.session = { state: "opening", purpose: args.purpose, phase: "native-approval" };
             current.opening = { args: call.args, context, signal, assertActive: progress, decisionSent: false };
@@ -858,7 +860,8 @@ export function createComputerControl({ adapters, adapter, discussionFor, resolv
         void work.then(settled, settled);
         try {
           const result = await limit.wait(() => work);
-          if (name === "coworker_computer_close" || current.nativeStopped || current.handoffFailed || postReadFailed || (name === "coworker_computer_open" && result.isError)) {
+          if (name === "coworker_computer_close" || current.nativeStopped || current.handoffFailed || postReadFailed
+            || (name === "coworker_computer_open" && result.isError && !SEQUENCE_CODES.has(stateOf(result)?.code))) {
             // With Always allow, an app that would not open stays retryable in this turn;
             // the person's denial or native Stop still turns the discussion off.
             const retryable = standing && name === "coworker_computer_open" && result.isError && !current.nativeStopped

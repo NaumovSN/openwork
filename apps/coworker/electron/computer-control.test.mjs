@@ -133,7 +133,7 @@ test("delegated computer control requires origin opt-in, cannot transfer a sessi
   await f.broker.endTurn({ id: "execution-scout-worker", state: "succeeded" });
   f.setExecution("worker-next", "worker-next-message");
   const stale = payload(await f.execute("act", { observation_id: "old", action: { type: "press", ref: "old" } }, worker));
-  assert.equal(stale.ok, false); assert.match(stale.message, /approved app session/);
+  assert.equal(stale.ok, false); assert.equal(stale.code, "session_required");
   assert.equal(f.sent.some((item) => item.name === "computer_act"), false);
   await f.broker.stop({ ...f.scope, expectedRevision: (await f.snapshot()).revision });
   assert.throws(pin.assertActive, /permission or target changed/);
@@ -752,6 +752,19 @@ test("with Always allow, a tool failure stays retryable in the same turn while a
   assert.equal(payload(await f.execute("open", openArgs)).code, "access_denied");
   assert.equal((await f.snapshot()).enabled, false, "the person's denial still turns it off");
   await assert.rejects(f.execute("open", openArgs), /turns back on with the person's next message/);
+  await f.broker.reset(true);
+});
+
+test("calls in the wrong order report it without revoking the discussion or closing its session", async () => {
+  const f = fixture();
+  await f.enable();
+  assert.equal(payload(await f.execute("status")).code, "session_required");
+  assert.equal((await f.snapshot()).enabled, true, "a status call before open does not revoke the discussion");
+  await f.execute("open", openArgs);
+  assert.equal(payload(await f.execute("open", openArgs)).code, "session_open");
+  assert.equal((await f.snapshot()).enabled, true);
+  assert.equal(f.sent.filter((item) => item.name === "computer_close_session").length, 0, "the live session stays open");
+  assert.equal((await f.snapshot()).session?.state, "active");
   await f.broker.reset(true);
 });
 

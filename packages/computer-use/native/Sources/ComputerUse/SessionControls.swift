@@ -540,15 +540,18 @@ final class SessionControls: NSObject {
         statusItem = item
         }
         // Passive pointer motion (including activation-generated motion) is not takeover.
-        // Clicks, typing, scrolling, dragging and app switches still stop agent input.
+        // Clicks, typing, scrolling and dragging on the approved app, and app switches,
+        // still stop agent input. Scrolling or dragging over another app (such as reading
+        // the conversation while the agent works) does not; a click there activates that
+        // app, and the switch below pauses control.
         monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown,
             .keyDown, .scrollWheel, .leftMouseDragged, .rightMouseDragged]) { [weak self] event in
             guard let self else { return }
             // Our own postToPid events cannot be mistaken for a person taking over.
             if event.cgEvent?.getIntegerValueField(.eventSourceUnixProcessID) == Int64(ProcessInfo.processInfo.processIdentifier) { return }
-            if mode == .control || NSWorkspace.shared.frontmostApplication?.processIdentifier == app.pid {
-                self.onUserInteraction?()
-            }
+            let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier == app.pid
+            let counts = event.type == .keyDown ? frontmost : mode == .control ? Self.pointerOnApp(app.pid, frontmost: frontmost) : frontmost
+            if counts { self.onUserInteraction?() }
         }
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification] {
@@ -574,6 +577,27 @@ final class SessionControls: NSObject {
         // Keep expiry and screenshot age current while the menu-bar controls are open.
         if Self.coworkerPresentation || Self.embeddedCoworker, let timer { RunLoop.main.add(timer, forMode: .common) }
     }
+    /// Whether the pointer is over one of the approved app's windows (or the menu bar
+    /// while it is frontmost). Unknown geometry counts, so a missed read never hides a takeover.
+    private static func pointerOnApp(_ pid: pid_t, frontmost: Bool) -> Bool {
+        let mouse = NSEvent.mouseLocation
+        let point = CGPoint(x: mouse.x, y: (NSScreen.screens.first?.frame.maxY ?? 0) - mouse.y)
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return true }
+        let own = ProcessInfo.processInfo.processIdentifier
+        let menuLevel = Int(CGWindowLevelForKey(.mainMenuWindow))
+        // Front to back: the first window under the pointer receives the input.
+        for window in windows {
+            guard let bounds = (window[kCGWindowBounds as String] as? [String: Any]).flatMap({ CGRect(dictionaryRepresentation: $0 as CFDictionary) }),
+                  bounds.contains(point) else { continue }
+            let owner = (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
+            if owner == own { continue }
+            if owner == pid { return true }
+            if (window[kCGWindowLayer as String] as? NSNumber)?.intValue == menuLevel { return frontmost }
+            return false
+        }
+        return false
+    }
+
     func update(_ message: String, paused: Bool, canContinue: Bool = true, recoverable: Bool = false) {
         publish(["phase": paused ? "paused" : "working", "status": message, "canContinue": canContinue, "recoverable": recoverable])
         self.canContinue = canContinue
