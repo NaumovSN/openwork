@@ -3505,7 +3505,20 @@ export type GithubPluginMcpImportResponse = {
       sourcePath: string;
     }>;
     marketplaceId: string | null;
+    mode: "created" | "updated";
     plugin: PluginArchPlugin;
+    /**
+     * Skills and MCP servers imported earlier that were deleted upstream; they are removed from the plugin and archived, not deleted.
+     */
+    removed: Array<{
+      /**
+       * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
+       */
+      configObjectId: string;
+      name: string;
+      objectType: "mcp" | "skill";
+      sourcePath: string;
+    }>;
     skipped: Array<{
       name: string;
       reason:
@@ -3519,6 +3532,18 @@ export type GithubPluginMcpImportResponse = {
     skippedSkills: Array<{
       name: string;
       reason: "invalid_skill";
+      sourcePath: string;
+    }>;
+    unchanged: Array<{
+      name: string;
+      objectType: "mcp" | "skill";
+    }>;
+    updatedSkills: Array<{
+      /**
+       * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
+       */
+      configObjectId: string;
+      name: string;
       sourcePath: string;
     }>;
   };
@@ -4672,6 +4697,11 @@ export type WorkspacePathRequiredError = {
 
 export type WorkerUserEmailRequiredError = {
   error: "user_email_required";
+};
+
+export type WorkerPaymentRequiredError = {
+  error: "cloud_worker_billing_unavailable";
+  message: string;
 };
 
 export type WorkerOpenWorkWebAccessRequiredError = {
@@ -27400,6 +27430,10 @@ export type PostV1WorkersErrors = {
    * The caller must be signed in to create workers.
    */
   401: UnauthorizedError;
+  /**
+   * The caller needs an active cloud plan before launching a cloud worker.
+   */
+  402: WorkerPaymentRequiredError;
   /**
    * OpenWork Web access is required to launch a cloud worker.
    */
