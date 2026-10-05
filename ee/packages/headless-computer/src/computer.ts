@@ -422,7 +422,7 @@ function formatBytes(bytes: number) {
 }
 
 function tail(text: string) {
-  const trimmed = text.replace(/\s+$/, "")
+  const trimmed = text.trimEnd()
   return trimmed.length > OUTPUT_TAIL_CHARS ? `…[${trimmed.length - OUTPUT_TAIL_CHARS} earlier characters cut]\n${trimmed.slice(-OUTPUT_TAIL_CHARS)}` : trimmed
 }
 

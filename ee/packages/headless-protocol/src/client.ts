@@ -25,7 +25,14 @@ export function headlessRunnerConfig(env: Record<string, string | undefined> = p
   const url = env.DEN_HEADLESS_RUNNER_URL?.trim()
   const token = env.DEN_HEADLESS_RUNNER_TOKEN?.trim()
   if (!url || !token || token.length < 32 || !isSafeRunnerUrl(url)) return null
-  return { url: url.replace(/\/+$/, ""), token }
+  return { url: withoutTrailingSlashes(url), token }
+}
+
+/** Drops trailing slashes in one pass (a regex like /\/+$/ can backtrack badly on a long run of slashes). */
+function withoutTrailingSlashes(value: string) {
+  let end = value.length
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1
+  return value.slice(0, end)
 }
 
 export type HeadlessRunnerActor = { userId: string; organizationId: string }
