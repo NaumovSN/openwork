@@ -1,6 +1,5 @@
 import { expect } from "vitest";
 import { spec } from "@openwork/testkit";
-import { resolveEvalEngine } from "@openwork/env";
 import {
   connectionActionMcpApp,
   connectionActionPrompt,
@@ -84,9 +83,7 @@ const journeys = [
   { prompt: connectionStatusSkipPrompt, choice: "Skip", tools: ["search_capabilities", "execute_capability"], source: "a sign-in check" },
 ];
 
-test(resolveEvalEngine() === "v2"
-  ? "a member keeps the work already done, chooses Authenticate or Skip, and continues the same task"
-  : "a member chooses Authenticate or Skip and continues the same task on the legacy engine", async ({ world, agent, user, probe, evidence, step }) => {
+test("a member chooses Authenticate or Skip and continues the same task", async ({ world, agent, user, probe, evidence, step }) => {
   const v2 = world.engine === "v2";
   const connector = world.den.mocks.connector;
   // Observe v2's real forms and context, not the legacy compatibility routes.
