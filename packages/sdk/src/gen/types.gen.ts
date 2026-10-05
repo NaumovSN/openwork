@@ -3428,9 +3428,24 @@ export type PluginArchPluginMcpRequirementConfigureResponse = {
 export type GithubPluginMcpImportServer = {
   authType: "oauth" | null;
   connectionId: string | null;
+  /**
+   * The provider OpenWork already knows for this declared connector: a native connector (Google Workspace, Microsoft 365) or a connection preset.
+   */
+  mapsTo: {
+    displayName: string;
+    kind: "native" | "preset";
+    providerId: string;
+  } | null;
   name: string;
   pluginKey: string;
   pluginName: string;
+  /**
+   * The organization's existing connection this server uses instead of a new one. Only reported to organization admins.
+   */
+  reuse: {
+    connectionId: string;
+    connectionName: string;
+  } | null;
   serverKey: string;
   skippedReason:
     | "headers_unsupported"
@@ -3438,6 +3453,7 @@ export type GithubPluginMcpImportServer = {
     | "invalid_url"
     | "local_unsupported"
     | "missing_url"
+    | "native_connector"
     | "unsupported_auth"
     | null;
   sourceSchemaVersion: string | null;
@@ -3497,6 +3513,11 @@ export type GithubPluginMcpImportResponse = {
   item: {
     imported: Array<{
       connectionId: string;
+      connectionName: string;
+      /**
+       * True when the server uses a connection the organization already had.
+       */
+      existingConnection: boolean;
       name: string;
       url: string;
     }>;
@@ -3509,8 +3530,29 @@ export type GithubPluginMcpImportResponse = {
       sourcePath: string;
     }>;
     marketplaceId: string | null;
+    mode: "created" | "updated";
     plugin: PluginArchPlugin;
+    /**
+     * Skills and MCP servers imported earlier that were deleted upstream; they are removed from the plugin and archived, not deleted.
+     */
+    removed: Array<{
+      /**
+       * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
+       */
+      configObjectId: string;
+      name: string;
+      objectType: "mcp" | "skill";
+      sourcePath: string;
+    }>;
     skipped: Array<{
+      /**
+       * The provider OpenWork already knows for this declared connector: a native connector (Google Workspace, Microsoft 365) or a connection preset.
+       */
+      mapsTo: {
+        displayName: string;
+        kind: "native" | "preset";
+        providerId: string;
+      } | null;
       name: string;
       reason:
         | "headers_unsupported"
@@ -3518,11 +3560,31 @@ export type GithubPluginMcpImportResponse = {
         | "invalid_url"
         | "local_unsupported"
         | "missing_url"
+        | "native_connector"
         | "unsupported_auth";
+      /**
+       * The organization's existing connection this server uses instead of a new one. Only reported to organization admins.
+       */
+      reuse: {
+        connectionId: string;
+        connectionName: string;
+      } | null;
     }>;
     skippedSkills: Array<{
       name: string;
       reason: "invalid_skill";
+      sourcePath: string;
+    }>;
+    unchanged: Array<{
+      name: string;
+      objectType: "mcp" | "skill";
+    }>;
+    updatedSkills: Array<{
+      /**
+       * Den TypeID with 'cob_' prefix and a 26-character base32 suffix.
+       */
+      configObjectId: string;
+      name: string;
       sourcePath: string;
     }>;
   };
