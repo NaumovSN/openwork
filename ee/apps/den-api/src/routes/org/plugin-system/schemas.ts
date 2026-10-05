@@ -1016,14 +1016,29 @@ export const marketplaceResolvedResponseSchema = pluginArchMutationResponseSchem
   }),
 )
 
+const githubPluginMcpImportSkippedReasonSchema = z.enum(["headers_unsupported", "invalid_config", "invalid_url", "local_unsupported", "missing_url", "native_connector", "unsupported_auth"])
+
+const githubPluginMcpImportMappingSchema = z.object({
+  displayName: z.string(),
+  kind: z.enum(["native", "preset"]),
+  providerId: z.string(),
+}).nullable().describe("The provider OpenWork already knows for this declared connector: a native connector (Google Workspace, Microsoft 365) or a connection preset.")
+
+const githubPluginMcpImportReuseSchema = z.object({
+  connectionId: z.string(),
+  connectionName: z.string(),
+}).nullable().describe("The organization's existing connection this server uses instead of a new one. Only reported to organization admins.")
+
 const githubPluginMcpImportServerSchema = z.object({
   authType: z.literal("oauth").nullable(),
   connectionId: z.string().nullable(),
+  mapsTo: githubPluginMcpImportMappingSchema,
   name: z.string(),
   pluginKey: z.string(),
   pluginName: z.string(),
+  reuse: githubPluginMcpImportReuseSchema,
   serverKey: z.string(),
-  skippedReason: z.enum(["headers_unsupported", "invalid_config", "invalid_url", "local_unsupported", "missing_url", "unsupported_auth"]).nullable(),
+  skippedReason: githubPluginMcpImportSkippedReasonSchema.nullable(),
   sourceSchemaVersion: z.string().nullable(),
   sourcePath: z.string(),
   supported: z.boolean(),
@@ -1075,6 +1090,8 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
   z.object({
     imported: z.array(z.object({
       connectionId: z.string(),
+      connectionName: z.string(),
+      existingConnection: z.boolean().describe("True when the server uses a connection the organization already had."),
       name: z.string(),
       url: z.string(),
     })),
@@ -1084,14 +1101,32 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
       sourcePath: z.string(),
     })),
     marketplaceId: marketplaceIdSchema.nullable(),
+    mode: z.enum(["created", "updated"]),
     plugin: pluginSchema,
-    skipped: z.array(z.object({
+    removed: z.array(z.object({
+      configObjectId: configObjectIdSchema,
       name: z.string(),
-      reason: z.enum(["headers_unsupported", "invalid_config", "invalid_url", "local_unsupported", "missing_url", "unsupported_auth"]),
+      objectType: z.enum(["mcp", "skill"]),
+      sourcePath: z.string(),
+    })).describe("Skills and MCP servers imported earlier that were deleted upstream; they are removed from the plugin and archived, not deleted."),
+    skipped: z.array(z.object({
+      mapsTo: githubPluginMcpImportMappingSchema,
+      name: z.string(),
+      reason: githubPluginMcpImportSkippedReasonSchema,
+      reuse: githubPluginMcpImportReuseSchema,
     })),
     skippedSkills: z.array(z.object({
       name: z.string(),
       reason: z.enum(["invalid_skill"]),
+      sourcePath: z.string(),
+    })),
+    unchanged: z.array(z.object({
+      name: z.string(),
+      objectType: z.enum(["mcp", "skill"]),
+    })),
+    updatedSkills: z.array(z.object({
+      configObjectId: configObjectIdSchema,
+      name: z.string(),
       sourcePath: z.string(),
     })),
   }),

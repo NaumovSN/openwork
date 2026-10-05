@@ -1,5 +1,5 @@
 import { and, eq, inArray, isNotNull, isNull, or } from "@openwork-ee/den-db/drizzle"
-import { ConnectedAccountTable, InvitationTable, MemberTable, OrganizationTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
+import { ConnectedAccountTable, ExternalMcpConnectionAccessGrantTable, InvitationTable, MemberTable, OrganizationTable, ScimGroupMemberTable, ScimGroupTable, ScimProviderTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { db } from "./db.js"
 import { withGatewayUsageEntitlementMutation } from "@openwork-ee/den-db/gateway-usage-limits"
 import { organizationRoleValueSatisfies } from "./organization-role-hierarchy.js"
@@ -35,17 +35,56 @@ export function withOrganizationMembershipUsageMutation<T>(
       .where(inArray(TeamMemberTable.orgMembershipId, affected))
     const before = await memberships()
     const result = await withGatewayUsageEntitlementMutation(tx, organizationId, () => mutation(tx), affected)
-    const after = new Set((await memberships()).map((row) => `${row.memberId}:${row.teamId}`))
+    const afterRows = await memberships()
+    const after = new Set(afterRows.map((row) => `${row.memberId}:${row.teamId}`))
     const removed = [...new Set(before.flatMap((row) => row.memberId && !after.has(`${row.memberId}:${row.teamId}`) ? [row.memberId] : []))]
     // Inspect actual lost associations, not a returned Response's truthiness:
     // denied edits and identical member-list replacements must preserve keys.
-    if (removed.length > 0) await tx.delete(ConnectedAccountTable).where(and(
-      eq(ConnectedAccountTable.organizationId, organizationId),
-      eq(ConnectedAccountTable.tokenType, "api_key"),
-      inArray(ConnectedAccountTable.orgMembershipId, removed),
-    ))
+    if (removed.length > 0) await deleteUnreachableMemberApiKeys(tx, organizationId, removed, afterRows)
     return result
   })
+}
+
+// A personal key needs a direct grant (org-wide, member or team) at enrollment,
+// so it is deleted once none of those still reaches its owner.
+async function deleteUnreachableMemberApiKeys(
+  tx: TeamMutationTransaction,
+  organizationId: typeof TeamTable.$inferSelect.organizationId,
+  memberIds: typeof MemberTable.$inferSelect.id[],
+  memberships: { memberId: typeof TeamMemberTable.$inferSelect.orgMembershipId; teamId: typeof TeamTable.$inferSelect.id }[],
+) {
+  const keys = await tx.select({ id: ConnectedAccountTable.id, memberId: ConnectedAccountTable.orgMembershipId, connectionId: ConnectedAccountTable.providerId })
+    .from(ConnectedAccountTable)
+    .where(and(
+      eq(ConnectedAccountTable.organizationId, organizationId),
+      eq(ConnectedAccountTable.tokenType, "api_key"),
+      inArray(ConnectedAccountTable.orgMembershipId, memberIds),
+    ))
+  if (keys.length === 0) return
+  const teamIds = [...new Set(memberships.map((row) => row.teamId))]
+  const grants = await tx.select({
+    connectionId: ExternalMcpConnectionAccessGrantTable.externalMcpConnectionId,
+    orgWide: ExternalMcpConnectionAccessGrantTable.orgWide,
+    memberId: ExternalMcpConnectionAccessGrantTable.orgMembershipId,
+    teamId: ExternalMcpConnectionAccessGrantTable.teamId,
+  })
+    .from(ExternalMcpConnectionAccessGrantTable)
+    .where(and(
+      eq(ExternalMcpConnectionAccessGrantTable.organizationId, organizationId),
+      isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
+      or(
+        eq(ExternalMcpConnectionAccessGrantTable.orgWide, true),
+        inArray(ExternalMcpConnectionAccessGrantTable.orgMembershipId, memberIds),
+        teamIds.length > 0 ? inArray(ExternalMcpConnectionAccessGrantTable.teamId, teamIds) : undefined,
+      ),
+    ))
+  const reaches = (key: (typeof keys)[number]) => grants.some((grant) => grant.connectionId === key.connectionId && (
+    grant.orgWide
+    || grant.memberId === key.memberId
+    || memberships.some((row) => row.memberId === key.memberId && row.teamId === grant.teamId)
+  ))
+  const unreachable = keys.flatMap((key) => reaches(key) ? [] : [key.id])
+  if (unreachable.length > 0) await tx.delete(ConnectedAccountTable).where(inArray(ConnectedAccountTable.id, unreachable))
 }
 
 export function effectiveOrganizationRole(directRole: string, adminTeams: readonly OrganizationAdminTeam[]) {
