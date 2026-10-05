@@ -165,3 +165,80 @@ test("the macOS session title stays clear of the titlebar controls in every side
     });
   }
 });
+
+test("a desktop user sees one boundary below the conversation title in either appearance", async ({ world, user, agent, probe, step, evidence }) => {
+  const [session] = world.sessions;
+  if (!session) throw new Error("The sidebar world did not seed a session.");
+  // TODO(primitive): user.resizeViewport should set a desktop surface's width.
+  await world.app.client.send("Emulation.setDeviceMetricsOverride", {
+    width: 1400, height: 800, deviceScaleFactor: 1, mobile: false,
+  });
+
+  for (const theme of ["dark", "light"]) {
+    await step(`the ${theme} desktop titlebar has no extra divider above the inset chat pane`, async () => {
+      // Select the real setting so Electron's native vibrancy and the renderer
+      // use the same theme; CDP media emulation changes only the renderer.
+      await agent.run("route.settings.appearance");
+      await user.click({ role: "button", label: theme === "dark" ? "Dark" : "Light" });
+      await probe.eventually(() => probe.eval(() => getComputedStyle(document.documentElement).colorScheme), {
+        within: 5_000, label: `${theme} appearance applied`, until: (value) => value === theme,
+      });
+      await user.click({ role: "button", label: "Back to app" });
+      await user.see({ text: session.title });
+      // TODO(primitive): probe.geometry should expose computed borders and adjacent pane clearance.
+      const geometry = await probe.eval(() => {
+        const header = document.querySelector("[data-session-header]");
+        const pane = document.querySelector("[data-session-pane]");
+        if (!header || !pane) throw new Error("The session titlebar and pane must be visible");
+        return {
+          theme: getComputedStyle(document.documentElement).colorScheme,
+          headerBorder: getComputedStyle(header).borderBottomWidth,
+          paneBorder: getComputedStyle(pane).borderTopWidth,
+          paneRadius: getComputedStyle(pane).borderTopLeftRadius,
+          inset: pane.getBoundingClientRect().top - header.getBoundingClientRect().bottom,
+        };
+      });
+      const cleanBoundary = isRecord(geometry) && geometry.theme === theme && geometry.headerBorder === "0px"
+        && geometry.paneBorder === "1px" && geometry.paneRadius === "14px" && geometry.inset === 8;
+      evidence.recordAssertionEvidence(
+        "Only the rounded chat pane defines the boundary below the title",
+        JSON.stringify(geometry), cleanBoundary,
+      );
+      // Renderer evidence only: macOS vibrancy is outside CDP's captured pixels.
+      // Use a native window capture for presentation of the complete desktop.
+      await user.screenshot();
+      expect(cleanBoundary).toBe(true);
+    });
+  }
+
+  await step("a narrow conversation keeps its titlebar separator", async () => {
+    await world.app.client.send("Emulation.setDeviceMetricsOverride", {
+      width: 900, height: 800, deviceScaleFactor: 1, mobile: false,
+    });
+    await user.see({ text: session.title });
+    // TODO(primitive): probe.geometry should expose computed border widths.
+    const border = await probe.eval(() => {
+      const header = document.querySelector("[data-session-header]");
+      return header ? getComputedStyle(header).borderBottomWidth : null;
+    });
+    evidence.recordAssertionEvidence("The narrow titlebar keeps its separator", `Border: ${border}`, border === "1px");
+    await user.screenshot();
+    expect(border).toBe("1px");
+  });
+
+  await step("flat pages keep their titlebar separator", async () => {
+    await world.app.client.send("Emulation.setDeviceMetricsOverride", {
+      width: 1400, height: 800, deviceScaleFactor: 1, mobile: false,
+    });
+    await user.click({ text: "Dashboard" });
+    await user.see({ role: "heading", label: "Dashboard" });
+    // TODO(primitive): probe.geometry should expose computed border widths.
+    const border = await probe.eval(() => {
+      const header = document.querySelector("[data-session-header]");
+      return header ? getComputedStyle(header).borderBottomWidth : null;
+    });
+    evidence.recordAssertionEvidence("The Dashboard keeps its separator", `Border: ${border}`, border === "1px");
+    await user.screenshot();
+    expect(border).toBe("1px");
+  });
+});
