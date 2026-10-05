@@ -80,9 +80,12 @@ export interface CredentialInputState {
   urlContainsSecret: boolean;
   historyContainsSecret: boolean;
   storageContainsSecret: boolean;
+  consoleContainsSecret: boolean;
 }
 
 export interface Probe {
+  desktopBootstrap(): Promise<{ apiBaseUrl: string | null; sessionOriginPresent: boolean; nativeBridgePresent: boolean }>;
+  memberCredentialSaved(connectionId: string, organizationId: string, memberId: string): Promise<boolean>;
   credentialInputState(selector: string, candidate?: string): Promise<CredentialInputState>;
   /** Applied CSS-to-DIP page zoom from Chromium, not the stored zoom preference. */
   zoom(): Promise<number>;

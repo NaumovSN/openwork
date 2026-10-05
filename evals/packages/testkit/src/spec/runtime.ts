@@ -1081,6 +1081,25 @@ export class ProbeChannel implements Probe {
     return this.#runtime.call("probe", "connectorCatalog", "connectorCatalog", surface, () => readConnectorCatalog(surface));
   }
 
+  desktopBootstrap() {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "desktopBootstrap", "desktopBootstrap(<routing-only>)", surface, () => callFunctionOnSurface(surface, async () => {
+      const bootstrap = await window.__OPENWORK_ELECTRON__.invokeDesktop("getDesktopBootstrapConfig");
+      return { apiBaseUrl: bootstrap?.apiBaseUrl ?? null, sessionOriginPresent: Boolean(localStorage.getItem("openwork.den.sessionOrigin")), nativeBridgePresent: "__OPENWORK_MEMBER_API_KEY__" in window };
+    }, []));
+  }
+
+  memberCredentialSaved(connectionId: string, organizationId: string, memberId: string): Promise<boolean> {
+    const surface = requireSurface(this.#surface);
+    return this.#runtime.call("probe", "memberCredentialSaved", "memberCredentialSaved(<fixed-status>)", surface, () => callFunctionOnSurface(surface, (connectionId, organizationId, memberId) => {
+      const values: unknown = Reflect.get(window, "__nativeProofSaved");
+      return Array.isArray(values) && values.some((value: unknown) => value && typeof value === "object"
+        && "httpStatus" in value && value.httpStatus === 200 && "stored" in value && value.stored === true
+        && "connectionId" in value && value.connectionId === connectionId && "organizationId" in value && value.organizationId === organizationId
+        && "memberId" in value && value.memberId === memberId);
+    }, [connectionId, organizationId, memberId]));
+  }
+
   credentialInputState(selector: string, candidate = ""): Promise<CredentialInputState> {
     const surface = requireSurface(this.#surface);
     return this.#runtime.call("probe", "credentialInputState", "credentialInputState(<masked>)", surface, async () => {
@@ -1104,6 +1123,7 @@ export class ProbeChannel implements Probe {
           urlContainsSecret: [location.href, ...performance.getEntriesByType("resource").map(entry => entry.name)].some(contains),
           historyContainsSecret: contains(JSON.stringify(history.state) ?? ""),
           storageContainsSecret: [...storageValues(localStorage), ...storageValues(sessionStorage)].some(contains),
+          consoleContainsSecret: contains(JSON.stringify(Reflect.get(window, "__nativeProofConsole") ?? []) ?? ""),
         };
       }, [selector, candidate]);
       if (!value || Object.values(value).some(field => typeof field !== "boolean" && typeof field !== "string" && field !== null)) {
