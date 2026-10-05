@@ -326,7 +326,6 @@ configureCloudWorkflowExecutor(async ({ organizationId, ownerMemberId, automatio
     redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
     generatedArtifactViewsEnabled: env.generatedArtifactViewsEnabled,
     organizationMetadata,
-    mcpConnectionsGatingEnabled: env.mcpConnectionsGatingEnabled,
   })
   const result = await executeMarketplaceCapability({
     organizationId,
