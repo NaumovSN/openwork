@@ -1,7 +1,7 @@
 import { styleText } from "node:util";
 import type { WorldEvent } from "./events.ts";
 import { formatOutputLines, type OutputMeta } from "./outputs.ts";
-import type { PreflightResult } from "./preflight.ts";
+import { preflightSymbol, type PreflightResult } from "./preflight.ts";
 
 export interface ViewSink {
   write(text: string): void;
@@ -17,6 +17,8 @@ export interface WorldView {
     receipt: string;
     log?: string;
     preflight?: PreflightResult[];
+    /** Preformatted lines such as the source commit or a stale-checkout note. */
+    notes?: string[];
   }): void;
   apply(event: WorldEvent): void;
   ready(input: {
@@ -35,6 +37,8 @@ export interface WorldView {
     lastLog: string[];
     logPath: string;
     hint?: string;
+    /** Known causes recognised in the failure, each with its fix. */
+    hints?: string[];
   }): void;
   stop(): void;
 }
@@ -179,14 +183,16 @@ export function createWorldView(options: {
         ...(input.log ? [`log  ${input.log}`] : []),
       ];
       if (input.preflight && input.preflight.length > 0) {
-        headerLines.push(`preflight  ${input.preflight.map((result) => (
-          `${result.label} ${paint(result.ok ? "green" : "yellow", result.ok ? "✔" : "✖")}`
-        )).join("  ")}`);
+        headerLines.push(`preflight  ${input.preflight.map((result) => {
+          const symbol = preflightSymbol(result);
+          return `${result.label} ${paint(symbol === "✔" ? "green" : "yellow", symbol)}`;
+        }).join("  ")}`);
         for (const result of input.preflight) {
-          if (result.ok) continue;
+          if (result.ok && !result.warning) continue;
           headerLines.push(`${paint("yellow", "⚠")} ${result.label}${result.detail ? ` ${result.detail}` : ""}${result.hint ? ` — ${result.hint}` : ""}`);
         }
       }
+      headerLines.push(...(input.notes ?? []));
       launchedAt = now();
       if (options.mode === "plain") {
         for (const line of headerLines) writeLine(line);
@@ -272,6 +278,7 @@ export function createWorldView(options: {
         `last ${input.lastLog.length} lines of ${input.logPath}:`,
         ...input.lastLog.map((line) => `  ${line}`),
         ...(input.hint ? [`hint: ${input.hint}`] : []),
+        ...(input.hints ?? []).map((hint) => `hint: ${hint}`),
       ];
       if (options.mode === "plain") {
         for (const line of lines) writeLine(line);

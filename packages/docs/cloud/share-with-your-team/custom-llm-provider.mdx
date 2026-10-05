@@ -1,6 +1,7 @@
 ---
 title: "Adding a custom LLM provider"
 description: "Share an OpenAI-compatible endpoint, such as Azure AI Foundry, LiteLLM, or vLLM, with your org from OpenWork Cloud."
+keywords: ["custom provider", "OpenAI-compatible", "Azure AI Foundry", "LiteLLM", "vLLM", "base URL", "custom endpoint", "legacy provider"]
 ---
 
 Use this when the provider isn't in the catalog: Azure AI Foundry, LiteLLM, vLLM, or an internal gateway. You add the endpoint and key once in OpenWork Cloud, and it syncs to members' desktop apps.
@@ -9,15 +10,15 @@ Custom endpoints are legacy providers, so the key is synced to members' apps and
 
 ## Create the custom provider
 
-1. In OpenWork Cloud, open `AI Gateway` > `AI Providers`.
-2. Scroll to `Legacy Providers` and click `Add legacy provider`.
-3. Switch to `Custom provider`.
-4. Paste the shared key into `API key / credential`.
-5. Enter the `Base URL` of the OpenAI-compatible endpoint. It usually ends in `/v1`. For Azure AI Foundry it looks like `https://my-resource.openai.azure.com/openai/v1`.
-6. OpenWork checks the endpoint and lists the models it serves. Pick the ones to share. If a model is missing, click `My model isn't listed — enter IDs manually` and type the IDs in `Model IDs`, one per line. On Azure AI Foundry, these are your deployment names.
-7. Enter a short `Provider ID`, such as `azure-foundry`. Or click `Rename` next to `Name` and type a name, and the `Provider ID` fills in from it. If you don't rename it, the name is based on the endpoint, for example `my-resource.openai.azure.com — key 1`.
-8. Under `Who can use it`, keep `Everyone in <your org>`, or pick specific `Teams` and `People`.
-9. Click `Create Provider`.
+1. In OpenWork Cloud, open **AI Gateway › AI Providers**.
+2. Scroll to **Legacy Providers** and click **Add legacy provider**.
+3. Switch to **Custom provider**.
+4. Paste the shared key into **API key / credential**.
+5. Enter the **Base URL** of the OpenAI-compatible endpoint. It usually ends in `/v1`. For Azure AI Foundry it looks like `https://my-resource.openai.azure.com/openai/v1`.
+6. OpenWork checks the endpoint and lists the models it serves. Pick the ones to share. If a model is missing, click **My model isn't listed — enter IDs manually** and type the IDs in **Model IDs**, one per line. On Azure AI Foundry, these are your deployment names.
+7. Enter a short **Provider ID**, such as `azure-foundry`. Or click **Rename** next to **Name** and type a name, and the **Provider ID** fills in from it. If you don't rename it, the name is based on the endpoint, for example `my-resource.openai.azure.com — key 1`.
+8. Under **Who can use it**, keep **Everyone in** *(your organization name)*, or pick specific **Teams** and **People**.
+9. Click **Create Provider**.
 
 <Frame>
   ![The Custom provider form: Provider ID, API key / credential, Base URL, and Model IDs](/images/cloud-custom-llm-provider-form.png)
@@ -33,7 +34,7 @@ Once saved, the provider page shows its configuration, whether the key is saved,
 
 ### Advanced: raw JSON config
 
-If the provider needs more than the form covers (a different AI SDK package, per-model limits or modalities, custom options), click `Advanced: edit as JSON` and paste a models.dev-style definition into `Custom provider JSON / JSONC`. Click `Use the guided form instead` to go back. The JSON must include `id`, `name`, `npm`, `env`, and `models`; `api` is optional, but most OpenAI-compatible providers use it. The editor requires valid JSON, at least one environment variable, and at least one model.
+If the provider needs more than the form covers (a different AI SDK package, per-model limits or modalities, custom options), click **Advanced: edit as JSON** and paste a models.dev-style definition into **Custom provider JSON / JSONC**. Click **Use the guided form instead** to go back. The JSON must include `id`, `name`, `npm`, `env`, and `models`; `api` is optional, but most OpenAI-compatible providers use it. The editor requires valid JSON, at least one environment variable, and at least one model.
 
 ```json
 {
@@ -77,7 +78,7 @@ If the provider needs more than the form covers (a different AI SDK package, per
 
 ## What members see
 
-Members don't import anything. Their desktop app syncs the provider automatically, and its models show up in the model picker. Members can check status in `Settings` > `AI Providers` > `Cloud providers`. See [What members see](/cloud/share-with-your-team/managed-llm-provider#what-members-see).
+Members don't import anything. Their desktop app syncs the provider automatically, and its models show up in the model picker. Members can check status in **Settings › AI Providers › Cloud providers**. See [What members see](/cloud/share-with-your-team/managed-llm-provider#what-members-see).
 
 ### Functional example: an LLM gateway (Infron)
 
@@ -85,7 +86,7 @@ An LLM gateway is one OpenAI-compatible endpoint that fans out to many model pro
 
 Grab a key from the [API Keys dashboard](https://infron.ai/dashboard/apiKeys). If you don't have an account yet, sign up at [infron.ai/login](https://infron.ai/login) and their [quickstart](https://infron.ai/docs/overview/quickstart/text) walks you through your first request.
 
-Add a legacy provider, switch to `Custom provider`, and paste the key into `API key / credential`. Then click `Advanced: edit as JSON` and use this JSON:
+Add a legacy provider, switch to **Custom provider**, and paste the key into **API key / credential**. Then click **Advanced: edit as JSON** and use this JSON:
 
 ```json
 {

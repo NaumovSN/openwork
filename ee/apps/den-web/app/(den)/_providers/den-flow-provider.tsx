@@ -148,6 +148,8 @@ type DenFlowContextValue = {
   cancelVerification: () => void;
   beginSocialAuth: (provider: SocialAuthProvider) => Promise<void>;
   signOut: () => Promise<void>;
+  /** Re-checks the session with Den; clears the signed-in user when it is gone. */
+  revalidateSession: () => Promise<AuthUser | null>;
   updateUserProfile: (input: { firstName: string; lastName: string }) => Promise<AuthUser>;
   resolveUserLandingRoute: () => Promise<string | null>;
   billingSummary: BillingSummary | null;
@@ -321,6 +323,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const pendingWorkersRequestRef = useRef<Promise<{ response: Response; payload: unknown }> | null>(null);
 
   const selectedWorker = workers.find((item) => item.workerId === workerLookupId) ?? null;
+  // Teammates' cloud workers are listed org-wide, but den-api only lets the
+  // owner read their runtime or tokens (403). Never poll those in the background.
+  const isKnownUncontrollableWorker = (workerId: string | null | undefined) =>
+    Boolean(workerId && workers.some((item) => item.workerId === workerId && !item.canControl));
   const activeWorker =
     worker && workerLookupId === worker.workerId
       ? worker
@@ -498,7 +504,12 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   ): Promise<AuthNavigationResult> {
     let payload = payloadOverride;
 
-    if (payload === undefined || (!getToken(payload) && nextMode === "sign-up" && Boolean(password))) {
+    // Verifying an email proves the mailbox but does not sign anyone in:
+    // /email-otp/verify-email answers with `token: null` and sets no cookie.
+    // Exchange the password the person just typed for a session in sign-in
+    // as well as sign-up, or an existing account that verifies from the
+    // sign-in form is shown as signed in without a session (ENG-550).
+    if (payload === undefined || (!getToken(payload) && Boolean(password))) {
       const signInBody = {
         email: trimmedEmail,
         password,
@@ -528,7 +539,9 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     let authenticatedUser: AuthUser | null = null;
-    const payloadUser = getUser(payload);
+    // A user object alone is not a session: the verify-email reply carries one
+    // with `token: null`. Trust it only next to a token; otherwise ask Den.
+    const payloadUser = token ? getUser(payload) : null;
     if (payloadUser) {
       authenticatedUser = payloadUser;
       setUser(payloadUser);
@@ -539,6 +552,13 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       if (refreshed) {
         authenticatedUser = refreshed;
         appendEvent("success", nextMode === "sign-up" ? "Account created" : "Signed in", refreshed.email);
+      } else if (getUser(payload)) {
+        // Verified, but there is no password to exchange for a session. Keep
+        // the person on the sign-in step instead of a signed-in screen that
+        // every request would reject.
+        setAuthMode("sign-in");
+        setAuthInfo(`Email verified. Sign in as ${trimmedEmail} to continue.`);
+        return null;
       } else {
         setAuthInfo("Authentication succeeded, but session details are still syncing.");
       }
@@ -764,7 +784,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       const nextSelectedId =
         currentSelection && nextWorkers.some((item) => item.workerId === currentSelection)
           ? currentSelection
-          : nextWorkers[0]?.workerId ?? "";
+          : (nextWorkers.find((item) => item.canControl) ?? nextWorkers[0])?.workerId ?? "";
       const nextSelectedWorker = nextSelectedId
         ? nextWorkers.find((item) => item.workerId === nextSelectedId) ?? null
         : null;
@@ -2161,7 +2181,14 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }, [worker]);
 
   useEffect(() => {
-    if (!user || !worker || actionBusy !== null || launchBusy || pendingRestoredWorkerId === worker.workerId) {
+    if (
+      !user ||
+      !worker ||
+      actionBusy !== null ||
+      launchBusy ||
+      pendingRestoredWorkerId === worker.workerId ||
+      isKnownUncontrollableWorker(worker.workerId)
+    ) {
       return;
     }
 
@@ -2184,7 +2211,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [actionBusy, launchBusy, pendingRestoredWorkerId, user?.id, worker?.workerId, worker?.status, worker?.clientToken, worker?.hostToken, worker?.openworkUrl, worker?.previewOpenworkUrl, worker?.previewExpiresAt]);
+  }, [actionBusy, launchBusy, pendingRestoredWorkerId, user?.id, worker?.workerId, worker?.status, worker?.clientToken, worker?.hostToken, worker?.openworkUrl, worker?.previewOpenworkUrl, worker?.previewExpiresAt, isKnownUncontrollableWorker(worker?.workerId)]);
 
   const provisioningWorkerIds = workers
     .filter((item) => item.status === "provisioning")
@@ -2221,18 +2248,18 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
-    if (!user || !targetWorkerId || pendingRestoredWorkerId === targetWorkerId) {
+    if (!user || !targetWorkerId || pendingRestoredWorkerId === targetWorkerId || isKnownUncontrollableWorker(targetWorkerId)) {
       setRuntimeSnapshot(null);
       setRuntimeError(null);
       return;
     }
 
     void refreshRuntime(targetWorkerId, { quiet: true });
-  }, [user?.id, authToken, activeWorker?.workerId, pendingRestoredWorkerId, selectedWorker?.workerId]);
+  }, [user?.id, authToken, activeWorker?.workerId, pendingRestoredWorkerId, selectedWorker?.workerId, isKnownUncontrollableWorker(activeWorker?.workerId ?? selectedWorker?.workerId)]);
 
   useEffect(() => {
     const targetWorkerId = activeWorker?.workerId ?? selectedWorker?.workerId ?? null;
-    if (!targetWorkerId || runtimeSnapshot?.upgrade.status !== "running") {
+    if (!targetWorkerId || runtimeSnapshot?.upgrade.status !== "running" || isKnownUncontrollableWorker(targetWorkerId)) {
       return;
     }
 
@@ -2406,6 +2433,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     cancelVerification,
     beginSocialAuth,
     signOut,
+    revalidateSession: () => refreshSession(true),
     updateUserProfile,
     resolveUserLandingRoute,
     billingSummary,

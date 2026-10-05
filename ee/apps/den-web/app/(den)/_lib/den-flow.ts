@@ -165,6 +165,8 @@ export type WorkerListItem = {
   instanceUrl: string | null;
   provider: string | null;
   isMine: boolean;
+  /** Mirrors den-api canControlWorker: owner of a cloud worker, or any local worker. */
+  canControl: boolean;
   createdAt: string | null;
 };
 
@@ -884,6 +886,7 @@ function parseWorkerListItem(value: unknown): WorkerListItem | null {
     instanceUrl: getDurableWorkerInstanceUrl(instance),
     provider: instance && typeof instance.provider === "string" ? instance.provider : null,
     isMine: value.isMine === true,
+    canControl: value.isMine === true || value.destination === "local",
     createdAt
   };
 }

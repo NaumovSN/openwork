@@ -1,6 +1,13 @@
 import { isDeepStrictEqual } from "node:util"
 import { and, asc, desc, eq, inArray, isNull, or } from "@openwork-ee/den-db/drizzle"
 import {
+  SlackAssistantInstallationTable,
+  SlackAssistantIdentityTable,
+  SlackAssistantThreadTable,
+  SlackAssistantEventTable,
+  SlackAssistantOAuthStateTable,
+  SlackAssistantRunTokenTable,
+  SlackAssistantDesktopHandoffTable,
   ConnectedAccountTable,
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
@@ -983,55 +990,6 @@ export async function replaceExternalMcpConnectionAccessForPluginBinding(input: 
   }
 }
 
-export async function mergeExternalMcpConnectionAccess(input: {
-  organizationId: OrganizationId
-  connectionId: ExternalMcpConnectionId
-  access: ExternalMcpAccessInput
-  createdByOrgMembershipId: OrgMembershipId
-}): Promise<void> {
-  const existing = await listDirectExternalMcpConnectionAccess(input)
-  const rows: (typeof ExternalMcpConnectionAccessGrantTable.$inferInsert)[] = []
-
-  if (input.access.orgWide) {
-    if (!existing.some((grant) => grant.orgWide)) {
-      rows.push({
-        id: createDenTypeId("externalMcpConnectionAccessGrant"),
-        organizationId: input.organizationId,
-        externalMcpConnectionId: input.connectionId,
-        orgWide: true,
-        createdByOrgMembershipId: input.createdByOrgMembershipId,
-      })
-    }
-  } else {
-    const existingMemberIds = new Set(existing.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : []))
-    const existingTeamIds = new Set(existing.flatMap((grant) => grant.teamId ? [grant.teamId] : []))
-    for (const memberId of new Set(input.access.memberIds)) {
-      if (existingMemberIds.has(memberId)) continue
-      rows.push({
-        id: createDenTypeId("externalMcpConnectionAccessGrant"),
-        organizationId: input.organizationId,
-        externalMcpConnectionId: input.connectionId,
-        orgMembershipId: memberId,
-        createdByOrgMembershipId: input.createdByOrgMembershipId,
-      })
-    }
-    for (const teamId of new Set(input.access.teamIds)) {
-      if (existingTeamIds.has(teamId)) continue
-      rows.push({
-        id: createDenTypeId("externalMcpConnectionAccessGrant"),
-        organizationId: input.organizationId,
-        externalMcpConnectionId: input.connectionId,
-        teamId,
-        createdByOrgMembershipId: input.createdByOrgMembershipId,
-      })
-    }
-  }
-
-  if (rows.length > 0) {
-    await db.insert(ExternalMcpConnectionAccessGrantTable).values(rows)
-  }
-}
-
 function directAccessKeys(rows: ExternalMcpConnectionAccessGrantRow[]): Set<string> {
   return new Set(rows.flatMap((row) => {
     if (row.orgWide) return ["org"]
@@ -1620,6 +1578,17 @@ export async function deleteExternalMcpConnection(input: {
       eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
       eq(PluginMcpRequirementBindingTable.externalMcpConnectionId, existing.id),
     ))
+    for (const table of [
+      SlackAssistantIdentityTable,
+      SlackAssistantThreadTable,
+      SlackAssistantEventTable,
+      SlackAssistantOAuthStateTable,
+      SlackAssistantRunTokenTable,
+      SlackAssistantDesktopHandoffTable,
+      SlackAssistantInstallationTable,
+    ]) {
+      await tx.delete(table).where(eq(table.connectionId, existing.id))
+    }
     await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
     return true
   })
@@ -1670,6 +1639,17 @@ export async function deleteExternalMcpConnectionIfUnreferenced(input: {
       eq(OrgOAuthClientTable.organizationId, input.organizationId),
       eq(OrgOAuthClientTable.providerId, existing.id),
     ))
+    for (const table of [
+      SlackAssistantIdentityTable,
+      SlackAssistantThreadTable,
+      SlackAssistantEventTable,
+      SlackAssistantOAuthStateTable,
+      SlackAssistantRunTokenTable,
+      SlackAssistantDesktopHandoffTable,
+      SlackAssistantInstallationTable,
+    ]) {
+      await tx.delete(table).where(eq(table.connectionId, existing.id))
+    }
     await tx.delete(ExternalMcpConnectionTable).where(eq(ExternalMcpConnectionTable.id, existing.id))
     return true
   })

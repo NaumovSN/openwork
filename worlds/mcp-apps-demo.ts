@@ -11,6 +11,7 @@
 // button for the SKU you type), and price_total (Workflow with input, runs on a
 // click).
 // Output includes disposable tokens: keep it out of logs, PRs, and notes.
+export const summary = "Not a world: seeds a ready-to-try MCP App scenario into a running ACME world (run it inside one with node).";
 import { spawn } from "node:child_process";
 import { openSync, readFileSync } from "node:fs";
 

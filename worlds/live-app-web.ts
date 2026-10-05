@@ -1,3 +1,4 @@
+export const summary = "Source web app on your installed production desktop state; needs explicit --allow-shared-state.";
 export const supportedTargets = ["local/macos"];
 
 import { fileURLToPath } from "node:url";

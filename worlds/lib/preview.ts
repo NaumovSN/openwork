@@ -8,6 +8,7 @@ import { app, blankReleaseApp, standaloneApp } from "../../evals/packages/env/sr
 import { server } from "../../evals/packages/env/src/den.ts";
 import type { Den } from "../../evals/packages/env/src/den.ts";
 import { resolvePlace } from "../../evals/packages/env/src/place.ts";
+import { bootDemoWorkspace, connectDemoWorkspace, DEMO_WORKSPACE_SERVICES } from "./demo-workspace.ts";
 import type { Place } from "../../evals/packages/env/src/place.ts";
 import { selectedEnvKeys } from "../../evals/packages/hosts/src/app-env.ts";
 import { daytonaSandbox } from "../../evals/packages/hosts/src/resolve.ts";
@@ -32,12 +33,31 @@ export type PreviewScenario = "blank" | "fresh" | "team" | "restricted" | "works
 export type PreviewSurface = "den" | "desktop" | "full";
 
 const DEN_SCENARIOS: readonly PreviewScenario[] = ["fresh", "team", "restricted", "workspace"];
+/**
+ * Previews are for people, so the app shows OpenWork Models and Auto as an installed app would. Test worlds keep
+ * them off (evals/packages/hosts/src/local.ts); an explicit app env wins over that isolation default.
+ */
+const PREVIEW_APP_ENV = { VITE_DISABLE_OPENWORK_MODELS: "0" };
+/**
+ * preview-full's desktop is wired to the disposable Den it just booted, so it can run that Den's Automations. The
+ * app-only preview keeps the eval default (runner off): a person may sign it in to a real account.
+ */
+const PREVIEW_FULL_APP_ENV = { ...PREVIEW_APP_ENV, OPENWORK_AUTOMATION_RUNNER: "on" };
 /** Scenarios each preview accepts; `blank` is a published desktop release. */
 export const PREVIEW_SCENARIOS: Record<PreviewSurface, readonly PreviewScenario[]> = {
   desktop: ["fresh", "blank"],
   den: DEN_SCENARIOS,
   full: DEN_SCENARIOS,
 };
+
+/** Point a Den scenario asked of the desktop-only preview at the world that has it. */
+function scenarioPointer(surface: PreviewSurface, scenario: string): string {
+  return surface === "desktop" && DEN_SCENARIOS.some((entry) => entry === scenario)
+    ? ` preview-desktop is the app alone; for ${scenario} use preview-full --seed ${scenario}.`
+    : "";
+}
+
+const SIGNED_IN_ELSEWHERE = " For a signed-in desktop use preview-full --place daytona --seed workspace.";
 
 export function parsePreviewOptions(argv: readonly string[], allowExternalRelease = false) {
   let scenario: PreviewScenario = "fresh";
@@ -134,8 +154,9 @@ async function localSourceRef(): Promise<string> {
 
 async function setupTeam(den: Den, restricted: boolean): Promise<void> {
   const headers = { authorization: `Bearer ${den.admin.token}` };
-  // OAuth metadata only: no live provider call or account authorization.
-  for (const [name, url] of [["Notion", "https://mcp.notion.com/mcp"], ["Linear", "https://mcp.linear.app/mcp"]]) {
+  // Real connectors next to the demo ones: OAuth metadata only, no live provider call or account authorization.
+  // Members connect their own accounts; "(live)" keeps them apart from the in-memory demo Notion and Linear.
+  for (const [name, url] of [["Notion (live)", "https://mcp.notion.com/mcp"], ["Linear (live)", "https://mcp.linear.app/mcp"]]) {
     const result = await denFetch(den.ref, "/v1/mcp-connections", {
       method: "POST", headers,
       body: JSON.stringify({ name, url, authType: "oauth", credentialMode: "per_member", access: { orgWide: true, memberIds: [], teamIds: [] } }),
@@ -269,7 +290,7 @@ export async function bootDesktopPreview(stack: AsyncDisposableStack, place: Pla
     outputs.browserShortcut = output(requiredString(meta, "browserShortcut"), { group: "Desktop" });
     return { desktop: releaseDesktop, outputs };
   }
-  const desktop = stack.use(await standaloneApp({ place }));
+  const desktop = stack.use(await standaloneApp({ place, env: PREVIEW_APP_ENV }));
   await desktopOutputs(outputs, place, desktop.handle, true, "The OpenWork desktop window is open on this machine; no Den or account was created");
   return { desktop, outputs };
 }
@@ -290,7 +311,12 @@ export async function bootDenPreview(stack: AsyncDisposableStack, place: Place, 
     ...(!fresh ? { org: { name: "Preview team", admin: { name: "Preview owner", email: `preview-${randomBytes(6).toString("hex")}@example.test` } } } : {}),
     env: { OPENWORK_DEV_MODE: "1", DEN_REQUIRE_EMAIL_VERIFICATION: "false", RESEND_API_KEY: "", SMTP_HOST: "" },
   }));
-  if (scenario === "team" || scenario === "restricted") await setupTeam(den, scenario === "restricted");
+  // Every seeded org gets the in-memory demo apps plus real connectors; fresh stays a true first launch.
+  const demo = fresh ? null : await bootDemoWorkspace(stack, den);
+  if (demo) {
+    await connectDemoWorkspace(den, demo);
+    await setupTeam(den, scenario === "restricted");
+  }
   const outputs: Record<string, WorldOutput> = {
     preview: output(fresh ? `${den.ref.webUrl}/?mode=sign-up` : `${den.ref.webUrl}/dashboard`, { group: "Preview" }),
     denWeb: output(den.ref.webUrl, { group: "Services" }),
@@ -301,13 +327,21 @@ export async function bootDenPreview(stack: AsyncDisposableStack, place: Place, 
     denRef: output(source.ref, { group: "World" }),
   };
   if (den.placement?.kind === "daytona") outputs.denSandbox = output(den.placement.sandboxId, { group: "World" });
+  if (demo) {
+    outputs.demoApps = output(DEMO_WORKSPACE_SERVICES.map((service) => service.name).join(", "), { group: "Demo apps",
+      note: "Acme Robotics demo data (you are Alex Chen); reads and writes stay in memory until the world stops. Notion (live) and Linear (live) are real connectors." });
+    if (demo.stateUrl) outputs.demoState = output(demo.stateUrl, { group: "Demo apps", note: "Live demo data; POST /reset restores the seed" });
+  }
   if (!fresh) {
     outputs.email = output(den.admin.email, { group: "Test account" });
     outputs.password = secret(den.admin.password, { group: "Test account" });
   }
   // Fresh stays a true first launch: only what the app itself creates, no harness workspace.
   const desktop = surface === "full"
-    ? stack.use(await app({ den, place, ...(fresh ? { signIn: false, workspace: false } : { as: "admin" }) }))
+    // A seeded desktop treats its preview Den as the activated organization Den, so org connections exposed directly
+    // (the demo apps) appear as their own apps on every placement. Locally loopback is already trusted; on Daytona the
+    // Den is a public https origin, which only activation makes trusted.
+    ? stack.use(await app({ den, place, env: PREVIEW_FULL_APP_ENV, ...(fresh ? { signIn: false, workspace: false } : { as: "admin", enterpriseActivated: true }) }))
     : undefined;
   if (desktop) {
     await desktopOutputs(outputs, place, desktop.handle, true, "The OpenWork desktop window is open on this machine; Den web is linked in denWeb");
@@ -358,10 +392,10 @@ export function freestyleDesktopPlan(input: {
   const parsed = parsePreviewOptions(input.argv);
   if (parsed.release) throw new Error("Freestyle desktop runs a pushed commit, not a published release; use --place daytona for releases.");
   if (input.argv.includes("--scenario") && parsed.scenario !== "fresh") {
-    throw new Error("Freestyle desktop supports only the signed-out fresh scenario.");
+    throw new Error(`Freestyle desktop supports only the signed-out fresh scenario.${SIGNED_IN_ELSEWHERE}`);
   }
   if (input.seeds.length > 1 || input.seeds.some((seed) => seed.name !== "fresh" || seed.arg !== undefined)) {
-    throw new Error("Freestyle desktop supports only --seed fresh.");
+    throw new Error(`Freestyle desktop supports only --seed fresh.${SIGNED_IN_ELSEWHERE}`);
   }
   const unknown = Object.keys(input.sources).filter((key) => key !== "*" && key !== "desktop");
   if (unknown.length > 0) throw new Error(`Freestyle desktop has no ${unknown.join(", ")} component; it runs without a Den.`);
@@ -465,12 +499,12 @@ export async function runPreview(surface: PreviewSurface, argv = process.argv.sl
   if (new Set(seedNames).size !== seedNames.length || seedNames.length > 1) throw new Error(`${name} accepts one scenario seed; choose ${allowed.join(", ")}.`);
   const seed = seeds[0];
   if (seed && (seed.arg !== undefined || !isPreviewScenario(seed.name) || !allowed.includes(seed.name))) {
-    throw new Error(`${name} --seed accepts exactly ${allowed.join(", ")} without arguments.`);
+    throw new Error(`${name} --seed accepts exactly ${allowed.join(", ")} without arguments.${scenarioPointer(surface, seed.name)}`);
   }
   if (seed && argv.includes("--scenario")) throw new Error("Choose either --seed or -- --scenario, not both.");
   const scenario: PreviewScenario = seed && isPreviewScenario(seed.name)
     ? seed.name : desktopSource?.kind === "release" ? "blank" : parsed.scenario;
-  if (!allowed.includes(scenario)) throw new Error(`${name} supports --scenario ${allowed.join(", ")}.`);
+  if (!allowed.includes(scenario)) throw new Error(`${name} supports --scenario ${allowed.join(", ")}.${scenarioPointer(surface, scenario)}`);
   const release = desktopSource?.kind === "release"
     ? { version: desktopSource.version, distribution: desktopSource.distribution } : parsed.release;
   if (release && scenario !== "blank") throw new Error("Published release previews support only --scenario blank.");

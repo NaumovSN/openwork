@@ -3,7 +3,7 @@ import { createHeadlessThreadClient, type HeadlessThreadTranscript } from "@open
 import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import type { AutomationAction, AutomationError, AutomationUsage } from "@openwork/types/automations"
+import { isAutomationCloudDefaultModel, type AutomationAction, type AutomationError, type AutomationUsage } from "@openwork/types/automations"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import {
@@ -488,6 +488,17 @@ async function abortAndObserve(
 }
 
 async function currentAgentAuthority(input: OwnerScope & { action: AgentAction }): Promise<CloudAgentExecution | null> {
+  if (isAutomationCloudDefaultModel(input.action.model)) {
+    // Only the headless runner can run the cloud default; this organization moved off it.
+    return {
+      ok: false,
+      status: "failed",
+      code: "model_access_lost",
+      message: "This Automation uses the cloud default model, which runs only on the headless runtime. Choose a model to run it on OpenWork Web.",
+      retryable: false,
+      needsAttention: true,
+    }
+  }
   const webAccess = await getOpenWorkWebRuntimeAccess(input.organizationId)
   if (!webAccess.hasAccess) {
     return {

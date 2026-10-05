@@ -352,6 +352,7 @@ export type WorkspaceAttachmentParts = {
   note: TextPartInput;
   /** One entry per attachment, in order; `null` when the model gets no file part. */
   files: Array<FilePartInput | null>;
+  workspaceFiles?: Array<{ filename: string; mime: string; url: string }>;
 };
 
 export async function composerAttachmentsToWorkspaceFileParts(input: {
@@ -360,6 +361,7 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
   sessionId: string;
   workspaceRoot: string;
   createId?: () => string;
+  preserveWorkspaceFiles?: boolean;
 }): Promise<WorkspaceAttachmentParts | null> {
   if (input.attachments.length === 0) return null;
 
@@ -423,6 +425,7 @@ export async function composerAttachmentsToWorkspaceFileParts(input: {
   return {
     note: attachmentPathNotePart(uploaded),
     files: await Promise.all(uploaded.map(uploadedAttachmentFilePart)),
+    ...(input.preserveWorkspaceFiles ? { workspaceFiles: uploaded.map(({ filename, mime, url }) => ({ filename, mime, url })) } : {}),
   };
 }
 

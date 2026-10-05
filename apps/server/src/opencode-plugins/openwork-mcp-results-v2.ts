@@ -15,7 +15,7 @@ type Context = {
   };
 };
 
-/** One OpenWork Cloud call made inside a Code Mode `execute`, kept because it reports a connection. */
+/** One OpenWork Cloud call made inside a Code Mode `execute`, kept because it reports a connection or an App build. */
 export type PreservedMcpResult = (
   | { tool: string; input: unknown; status: "completed"; output: unknown }
   | { tool: string; input: unknown; status: "error"; error: string }
@@ -64,14 +64,20 @@ function jsonCopy(value: unknown): unknown {
   }
 }
 
-export function preservedEntry(event: ExecuteAfter, decision?: HostConnectionDecision | null): PreservedMcpResult | null {
-  // Informational discovery stays quiet; an explicit host decision is retained
-  // even when a later connection in this script becomes the outer call's card.
-  if (!OPENWORK_CLOUD_TOOL.test(event.tool) || (event.tool.endsWith("_search_capabilities") && !decision)) return null;
+/** Code Mode reports inner calls as `openwork-cloud.create_app`; older engines used `_`. */
+function normalizedTool(tool: string): string {
+  return tool.replace(/^(openwork(?:-cloud)?)\./, "$1_");
+}
+
+export function preservedEntry(rawEvent: ExecuteAfter, decision?: HostConnectionDecision | null): PreservedMcpResult | null {
+  const event = { ...rawEvent, tool: normalizedTool(rawEvent.tool) };
+  if (!OPENWORK_CLOUD_TOOL.test(event.tool)) return null;
+  const appBuilder = /_(?:search_capabilities|prepare_app|create_app|update_app)$/.test(event.tool);
+  const appLaunch = event.status === "completed" && isRecord(event.result.output) && isRecord(event.result.output.launch);
   const input = jsonCopy(event.input);
   const entry: PreservedMcpResult | null = event.status === "completed"
-    ? reportsConnection(event.result.output) ? { tool: event.tool, input, status: "completed", output: jsonCopy(event.result.output) } : null
-    : reportsConnection(parseRecord(errorText(event.error))) ? { tool: event.tool, input, status: "error", error: errorText(event.error) } : null;
+    ? (appBuilder || appLaunch || reportsConnection(event.result.output)) ? { tool: event.tool, input, status: "completed", output: jsonCopy(event.result.output) } : null
+    : (appBuilder || reportsConnection(parseRecord(errorText(event.error)))) ? { tool: event.tool, input, status: "error", error: errorText(event.error) } : null;
   if (!entry) return null;
   if (decision) entry.decision = decision;
   return new TextEncoder().encode(JSON.stringify(entry)).byteLength <= MAX_ENTRY_BYTES ? entry : null;
@@ -125,7 +131,10 @@ export default {
     const collector = createMcpResultsCollector();
     const lifetime = new AbortController();
     const before = await context.tool.hook("execute.before", event => collector.before(event));
-    const after = await context.tool.hook("execute.after", async event => {
+    const after = await context.tool.hook("execute.after", async rawEvent => {
+      // Normalize before gating too: current Code Mode calls use dotted names.
+      // Keep the result/error references so the engine receives the decision.
+      const event = { ...rawEvent, tool: normalizedTool(rawEvent.tool) };
       const decision = await waitForConnectionDecision(event, context.options?.connectionGate, lifetime.signal);
       collector.after(event, decision);
     });

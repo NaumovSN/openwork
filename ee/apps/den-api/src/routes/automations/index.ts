@@ -5,12 +5,14 @@ import { streamSSE } from "hono/streaming"
 import {
   AUTOMATION_MODEL_ATTENTION_CAPABILITY,
   AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER,
+  REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
   REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
   automationDesktopRunnerAssignmentSchema,
   automationDesktopRunnerRegistrationSchema,
   automationDesktopRunnerPresenceSchema,
   automationDesktopRunnerResultSchema,
   automationDetailSchema,
+  automationExecutionTargetListSchema,
   automationListSchema,
   automationRunReceiptSchema,
   automationRunSchema,
@@ -22,9 +24,18 @@ import {
   automationRunnerWorkResponseSchema,
   createAutomationSchema,
   createCloudAutomationSchema,
+  desktopRunnerInventoryResponseSchema,
+  desktopRunnerInventorySchema,
   remoteSessionCommandClaimResponseSchema,
   remoteSessionCommandCompleteRequestSchema,
   remoteSessionCommandCompleteResponseSchema,
+  remoteSessionCommandSessionReportResponseSchema,
+  remoteSessionCommandSessionReportSchema,
+  remoteSessionRequestClaimResponseSchema,
+  remoteSessionRequestCompleteRequestSchema,
+  remoteSessionRequestCompleteResponseSchema,
+  remoteSessionRequestPendingResponseSchema,
+  runAutomationNowSchema,
   updateAutomationSchema,
 } from "@openwork/types/automations"
 import {
@@ -32,14 +43,18 @@ import {
   orgMemberRoute,
   paramValidator,
   queryValidator,
+  validationIssuesMessage,
   type OrganizationContextVariables,
 } from "../../middleware/index.js"
+import type { AuthContextVariables } from "../../session.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, textResponse, unauthorizedSchema } from "../../openapi.js"
 import { automationService, type AutomationService } from "../../automations/service.js"
+import { automationRunnerComputerIds } from "../../automations/repository.js"
 import { automationRunnerAudienceFromRequest, automationRunnerAuth } from "../../automations/runner-auth.js"
 import { env } from "../../env.js"
 import { OpenWorkWebAccessRequiredError } from "../../openwork-web-runtime-access.js"
-import { databaseRemoteSessionCommandStore } from "../../remote-sessions/commands.js"
+import { databaseRemoteSessionCommandStore, type RemoteSessionCommandStore } from "../../remote-sessions/commands.js"
+import { databaseRemoteSessionRequestStore, type RemoteSessionRequestStore } from "../../remote-sessions/requests.js"
 import {
   RUNNER_KEEPALIVE_INTERVAL_MS,
   RUNNER_NOTIFICATION_POLL_MIN_MS,
@@ -67,7 +82,7 @@ const describeMcpRoute = (options: McpDescribeRouteOptions) => describeRoute(opt
 type NonMcpDescribeRouteOptions = DescribeRouteOptions & { "x-mcp": false }
 const describeNonMcpRoute = (options: NonMcpDescribeRouteOptions) => describeRoute(options)
 
-type RouteVariables = Partial<OrganizationContextVariables>
+type RouteVariables = Partial<OrganizationContextVariables> & Partial<Pick<AuthContextVariables, "session">>
 
 function scope(c: {
   get(name: "organizationContext"): OrganizationContextVariables["organizationContext"]
@@ -82,6 +97,27 @@ function scope(c: {
   }
 }
 
+/** MCP tool calls reach these routes with the internal agent session. */
+function placementOptions(c: { get(name: "session"): { id: string } | null | undefined }) {
+  return { agentCaller: c.get("session")?.id === "mcp_internal" }
+}
+
+/**
+ * The run body is optional: released clients send `{}` and agents may send
+ * nothing, so it is read here instead of through a required-body validator.
+ */
+async function runNowBody(c: { req: { text(): Promise<string> } }) {
+  const text = await c.req.text()
+  if (!text.trim()) return runAutomationNowSchema.safeParse({})
+  let body: unknown
+  try {
+    body = JSON.parse(text)
+  } catch {
+    body = undefined
+  }
+  return runAutomationNowSchema.safeParse(body)
+}
+
 function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error: string; message?: string } } | null {
   if (error instanceof OpenWorkWebAccessRequiredError) {
     return { status: 403, body: { error: error.code, message: error.message } }
@@ -92,7 +128,10 @@ function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error
   }
   if (error.message === "automation_not_found") return { status: 404, body: { error: "automation_not_found" } }
   if (error.message === "automation_action_target_mismatch") {
-    return { status: 400, body: { error: "automation_action_target_mismatch", message: "Desktop creates local Automations; Web creates OpenWork Cloud Automations." } }
+    return { status: 400, body: { error: "automation_action_target_mismatch", message: "This Automation runs only in OpenWork Cloud." } }
+  }
+  if (error.message === "automation_agent_desktop_placement") {
+    return { status: 400, body: { error: error.message, message: "Agents can run Automations only in OpenWork Cloud. To use a desktop, change where it runs in OpenWork." } }
   }
   if (error.message === "automation_saved_script_input_invalid") {
     return { status: 400, body: { error: "automation_saved_script_input_invalid", message: "The existing Automation input does not match the selected Workflow version. Correct the input before creating the revision." } }
@@ -117,7 +156,7 @@ function failure(error: unknown): { status: 400 | 403 | 404 | 409; body: { error
 
 const routeDescription = [
   "Den schedules Automations and keeps durable run history.",
-  "Automations created by Desktop run on the owner's connected desktop; Automations created by Web run in OpenWork Cloud.",
+  "A Desktop Automation runs on any of the owner's connected desktops (one pinned to a workspace, on a desktop that has it); a Cloud Automation runs in OpenWork Cloud.",
   "If no desktop runner is connected when a desktop occurrence is due, that occurrence is recorded as missed.",
   "Creation makes an Automation active immediately and uses the owner's current OpenWork Connect integrations.",
   "Deactivation stops future runs but does not cancel a run already in progress.",
@@ -125,10 +164,17 @@ const routeDescription = [
 
 export function registerAutomationRoutes<T extends { Variables: RouteVariables }>(
   app: Hono<T>,
-  options: { service?: AutomationService; enabled?: boolean } = {},
+  options: {
+    service?: AutomationService
+    commandStore?: RemoteSessionCommandStore
+    requestStore?: RemoteSessionRequestStore
+    enabled?: boolean
+  } = {},
 ) {
   if (options.enabled === false) return
   const service = options.service ?? automationService
+  const commandStore = options.commandStore ?? databaseRemoteSessionCommandStore
+  const requestStore = options.requestStore ?? databaseRemoteSessionRequestStore
 
   app.post(
     "/v1/automation-runners/token",
@@ -182,6 +228,24 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     async (c) => c.json(await service.desktopRunnerPresence(scope(c))),
   )
 
+  app.get(
+    "/v1/automation-runners",
+    describeNonMcpRoute({
+      tags: ["Automations"], operationId: "listAutomationRunners", "x-mcp": false,
+      summary: "List where this member's Automations can run",
+      description: "Returns the member's registered desktops, most recently seen first, and whether OpenWork Cloud can run their "
+        + "agent Automations right now. Any connected desktop may run a Desktop Automation; one pinned to a workspace runs on a "
+        + "desktop that has that workspace. Management surfaces read this to offer a choice of where an Automation runs.",
+      responses: {
+        200: jsonResponse("Execution targets.", automationExecutionTargetListSchema),
+        401: jsonResponse("Sign-in required.", unauthorizedSchema),
+        404: jsonResponse("Organization not found.", notFoundSchema),
+      },
+    }),
+    orgMemberRoute(),
+    async (c) => c.json(await service.executionTargets(scope(c))),
+  )
+
   // Runner tokens are stateless 12h credentials, so authorization is re-derived
   // per request: a signed token is honored only while its owner remains an
   // active organization member.
@@ -206,6 +270,23 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     },
   })
   const runnerConflictResponse = jsonResponse("The run lease was lost or the request conflicts with the run's current state.", runnerErrorSchema)
+
+  const pendingRequestItems = async (identity: {
+    organizationId: string
+    ownerMemberId: string
+    runnerId: string
+    capabilities: readonly string[]
+  }): Promise<Array<{ kind: "remote_session_request"; requestId: string }>> => {
+    if (!identity.capabilities.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY)) return []
+    const requests = await requestStore.listPendingForRunner({
+      organizationId: identity.organizationId,
+      ownerMemberId: identity.ownerMemberId,
+      runnerId: identity.runnerId,
+      now: Date.now(),
+      limit: 5,
+    })
+    return requests.map((request) => ({ kind: "remote_session_request", requestId: request.id }))
+  }
 
   app.get(
     "/v1/automation-runners/events",
@@ -278,15 +359,21 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     // Automation run items keep their long-standing wire shape untouched;
     // remote-session command items are only appended for runners that
     // registered the remote_session_v1 capability, so released runners never
-    // see the new item kind.
+    // see the new item kind. Session requests are listed first, and only for
+    // runners that registered remote_session_control_v1: they are short and
+    // interactive, and the runner answers them without taking its slot.
     const automationItems = await service.discoverDesktopRunnerWork(identity)
+    const requestItems = await pendingRequestItems(identity)
     const items: Array<
-      (typeof automationItems)[number] | { kind: "remote_session_create"; commandId: string }
-    > = [...automationItems]
+      | (typeof automationItems)[number]
+      | { kind: "remote_session_create"; commandId: string }
+      | { kind: "remote_session_request"; requestId: string }
+    > = [...requestItems, ...automationItems]
     if (identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
-      const commands = await databaseRemoteSessionCommandStore.listPendingForRunner({
+      const commands = await commandStore.listPendingForRunner({
         organizationId: identity.organizationId,
         ownerMemberId: identity.ownerMemberId,
+        computerIds: automationRunnerComputerIds(identity),
         now: Date.now(),
         limit: 5,
       })
@@ -295,6 +382,27 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       }
     }
     return c.json(automationRunnerWorkResponseSchema.parse({ items }))
+    },
+  )
+
+  app.put(
+    "/v1/automation-runner/inventory",
+    runnerRoute({
+      summary: "Report this desktop's computer, workspaces and models",
+      description: "Replaces the runner's latest inventory. Remote-session callers read it through remote-session:targets "
+        + "to choose a computer, workspace and model. Desktops send it when they connect and when it changes.",
+      responses: {
+        200: jsonResponse("The inventory was stored.", desktopRunnerInventoryResponseSchema),
+        404: jsonResponse("The runner is not registered; register it again first.", runnerErrorSchema),
+      },
+    }),
+    jsonValidator(desktopRunnerInventorySchema),
+    async (c) => {
+      const identity = await authenticateRunner(c)
+      if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      const stored = await service.saveDesktopRunnerInventory(identity, c.req.valid("json"))
+      if (!stored) return c.json({ error: "runner_not_registered" }, 404)
+      return c.json(desktopRunnerInventoryResponseSchema.parse({ ok: true, updatedAt: Date.now() }))
     },
   )
 
@@ -315,11 +423,12 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     if (!identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
       return c.json({ error: "runner_capability_missing" }, 403)
     }
-    const command = await databaseRemoteSessionCommandStore.claim({
+    const command = await commandStore.claim({
       commandId: c.req.valid("param").id,
       organizationId: identity.organizationId,
       ownerMemberId: identity.ownerMemberId,
       runnerId: identity.runnerId,
+      computerIds: automationRunnerComputerIds(identity),
       now: Date.now(),
     })
     if (!command) return c.json({ error: "command_claim_conflict" }, 409)
@@ -331,6 +440,9 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         prompt: command.prompt,
         model: command.model,
         expiresAt: command.expiresAt,
+        // Only pinned commands carry the field, so the assignment of an
+        // untargeted command keeps its long-standing shape.
+        ...(command.targetWorkspaceId ? { workspaceId: command.targetWorkspaceId } : {}),
       },
     }))
     },
@@ -353,7 +465,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       if (!identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
         return c.json({ error: "runner_capability_missing" }, 403)
       }
-      const command = await databaseRemoteSessionCommandStore.complete({
+      const command = await commandStore.complete({
         commandId: c.req.valid("param").id,
         runnerId: identity.runnerId,
         ...c.req.valid("json"),
@@ -366,6 +478,132 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
           sessionId: command.sessionId,
           workspaceId: command.workspaceId,
         },
+      }))
+    },
+  )
+
+  app.post(
+    "/v1/remote-session-commands/:id/session",
+    runnerRoute({
+      summary: "Report a delivered remote session's progress",
+      responses: {
+        200: jsonResponse("The report was recorded.", remoteSessionCommandSessionReportResponseSchema),
+        403: jsonResponse("The runner did not register the remote-session capability.", runnerErrorSchema),
+        404: jsonResponse("The command does not exist for this runner's member.", runnerErrorSchema),
+        409: jsonResponse("Another runner claimed the command, or it is not delivered.", runnerErrorSchema),
+      },
+    }),
+    paramValidator(idParamsSchema), jsonValidator(remoteSessionCommandSessionReportSchema),
+    async (c) => {
+      const identity = await authenticateRunner(c)
+      if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      if (!identity.capabilities.includes(REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY)) {
+        return c.json({ error: "runner_capability_missing" }, 403)
+      }
+      const result = await commandStore.report({
+        commandId: c.req.valid("param").id,
+        organizationId: identity.organizationId,
+        ownerMemberId: identity.ownerMemberId,
+        runnerId: identity.runnerId,
+        ...c.req.valid("json"),
+      })
+      if (result === "not_found") return c.json({ error: "command_not_found" }, 404)
+      if (result === "conflict") return c.json({ error: "command_session_conflict" }, 409)
+      return c.json(remoteSessionCommandSessionReportResponseSchema.parse({ ok: true }))
+    },
+  )
+
+  app.get(
+    "/v1/remote-session-requests/pending",
+    runnerRoute({
+      summary: "List remote-session requests for this runner",
+      description: "A read-only poll for read, send, and stop requests addressed to this runner. "
+        + "Runners without the remote_session_control_v1 capability always get an empty list.",
+      responses: { 200: jsonResponse("Pending requests.", remoteSessionRequestPendingResponseSchema) },
+    }),
+    async (c) => {
+      const identity = await authenticateRunner(c)
+      if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      return c.json(remoteSessionRequestPendingResponseSchema.parse({ items: await pendingRequestItems(identity) }))
+    },
+  )
+
+  app.post(
+    "/v1/remote-session-requests/:id/claim",
+    runnerRoute({
+      summary: "Claim a remote-session request",
+      responses: {
+        200: jsonResponse("The claimed request assignment.", remoteSessionRequestClaimResponseSchema),
+        403: jsonResponse("The runner did not register the remote-session control capability.", runnerErrorSchema),
+        409: jsonResponse("The request is not addressed to this runner, already claimed, or expired.", runnerErrorSchema),
+      },
+    }),
+    paramValidator(idParamsSchema),
+    async (c) => {
+      const identity = await authenticateRunner(c)
+      if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      if (!identity.capabilities.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY)) {
+        return c.json({ error: "runner_capability_missing" }, 403)
+      }
+      const request = await requestStore.claim({
+        requestId: c.req.valid("param").id,
+        organizationId: identity.organizationId,
+        ownerMemberId: identity.ownerMemberId,
+        runnerId: identity.runnerId,
+        now: Date.now(),
+      })
+      if (!request) return c.json({ error: "request_claim_conflict" }, 409)
+      return c.json(remoteSessionRequestClaimResponseSchema.parse({
+        assignment: {
+          requestId: request.id,
+          kind: "remote_session_request",
+          commandId: request.commandId,
+          sessionId: request.sessionId,
+          workspaceId: request.workspaceId,
+          engine: request.engine,
+          expiresAt: request.expiresAt,
+          action: request.action,
+          input: request.input,
+        },
+      }))
+    },
+  )
+
+  app.post(
+    "/v1/remote-session-requests/:id/complete",
+    runnerRoute({
+      summary: "Complete a remote-session request",
+      responses: {
+        200: jsonResponse("The completed request.", remoteSessionRequestCompleteResponseSchema),
+        403: jsonResponse("The runner did not register the remote-session control capability.", runnerErrorSchema),
+        409: jsonResponse("The request is not claimed by this runner, or the result answers another action.", runnerErrorSchema),
+      },
+    }),
+    paramValidator(idParamsSchema), jsonValidator(remoteSessionRequestCompleteRequestSchema),
+    async (c) => {
+      const identity = await authenticateRunner(c)
+      if (!identity) return c.json({ error: "runner_unauthorized" }, 401)
+      if (!identity.capabilities.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY)) {
+        return c.json({ error: "runner_capability_missing" }, 403)
+      }
+      const body = c.req.valid("json")
+      const now = Date.now()
+      const request = await requestStore.complete({
+        requestId: c.req.valid("param").id,
+        organizationId: identity.organizationId,
+        ownerMemberId: identity.ownerMemberId,
+        runnerId: identity.runnerId,
+        now,
+        ...body,
+      })
+      if (!request) return c.json({ error: "request_complete_conflict" }, 409)
+      if (request.outcome?.action === "send" && !request.outcome.result.alreadyPresent) {
+        // The runner restarts its progress watcher only after this returns,
+        // so a fast reply can never be overwritten by this reset.
+        await commandStore.markTurnStarted({ commandId: request.commandId, runnerId: identity.runnerId, now })
+      }
+      return c.json(remoteSessionRequestCompleteResponseSchema.parse({
+        request: { id: request.id, status: request.status },
       }))
     },
   )
@@ -489,7 +727,7 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     describeNonMcpRoute({
       tags: ["Automations"], operationId: "createAutomation", "x-mcp": false,
       summary: "Create an active Automation from an app surface",
-      description: `${routeDescription} This compatibility route serves first-party Desktop clients. Agents must use createCloudAutomation so they cannot accidentally create Desktop placement.`,
+      description: `${routeDescription} This route creates Desktop Automations for first-party OpenWork clients, Desktop and Web alike. Agents must use createCloudAutomation so they cannot accidentally create Desktop placement.`,
       responses: {
         201: jsonResponse("Active Automation created.", automationDetailSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
@@ -555,17 +793,19 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     describeMcpRoute({
       tags: ["Automations"], operationId: "updateAutomation", "x-mcp": true,
       summary: "Update an Automation",
-      description: `${routeDescription} Every behavior-changing edit creates an immutable revision and applies it to future runs immediately.`,
+      description: `${routeDescription} Every behavior-changing edit creates an immutable revision and applies it to future runs immediately. `
+        + "Set executionTarget to move the Automation between the owner's desktops and OpenWork Cloud; agents may move it to the cloud only.",
       responses: {
         200: jsonResponse("Automation updated.", automationDetailSchema),
         400: jsonResponse("Invalid request.", invalidRequestSchema),
         403: jsonResponse("OpenWork Web access is required for Cloud Automations.", openWorkWebAccessRequiredSchema),
+        409: jsonResponse("Cloud runtime or model access is unavailable.", invalidRequestSchema),
       },
     }),
     orgMemberRoute(), paramValidator(idParamsSchema), jsonValidator(updateAutomationSchema),
     async (c) => {
       try {
-        const item = await service.update(scope(c), c.req.valid("param").id, c.req.valid("json"))
+        const item = await service.update(scope(c), c.req.valid("param").id, c.req.valid("json"), placementOptions(c))
         return item ? c.json(item) : c.json({ error: "automation_not_found" }, 404)
       } catch (error) {
         const mapped = failure(error)
@@ -613,20 +853,49 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     "/v1/automations/:id/run",
     describeMcpRoute({
       tags: ["Automations"], operationId: "runAutomationNow", "x-mcp": true,
-      summary: "Run an Automation now", description: routeDescription,
+      summary: "Run an Automation now",
+      description: `${routeDescription} Send executionTarget "cloud" to run a Desktop Automation once in OpenWork Cloud without changing it. `
+        + "Agents cannot run a Cloud Automation on a desktop.",
+      // Optional: released clients send `{}` and agents may send no body at all.
+      requestBody: {
+        required: false,
+        content: {
+          "application/json": {
+            schema: {
+              type: "object",
+              properties: {
+                executionTarget: {
+                  type: "string",
+                  enum: ["desktop", "cloud"],
+                  description: "Run this one occurrence on this target instead of the Automation's own.",
+                },
+              },
+            },
+          },
+        },
+      },
       responses: {
         202: jsonResponse("Run queued.", runResponseSchema),
+        400: jsonResponse("Invalid request.", invalidRequestSchema),
         403: jsonResponse("OpenWork Web access is required to run a Cloud Automation.", openWorkWebAccessRequiredSchema),
         404: jsonResponse("Not found.", notFoundSchema),
+        409: jsonResponse("Cloud runtime or model access is unavailable.", invalidRequestSchema),
       },
     }),
     orgMemberRoute(), paramValidator(idParamsSchema),
     async (c) => {
+      const body = await runNowBody(c)
+      if (!body.success) {
+        return c.json({ error: "invalid_request", message: validationIssuesMessage(body.error.issues), details: body.error.issues }, 400)
+      }
       try {
         // Runner presence is advisory and must not require a database
         // heartbeat. The durable claim deadline records an unclaimed desktop
         // run as missed through the same path used by scheduled occurrences.
-        const run = await service.runNow(scope(c), c.req.valid("param").id)
+        const run = await service.runNow(scope(c), c.req.valid("param").id, {
+          ...placementOptions(c),
+          executionTarget: body.data.executionTarget,
+        })
         return run ? c.json({ run }, 202) : c.json({ error: "automation_not_found" }, 404)
       } catch (error) {
         const mapped = failure(error)

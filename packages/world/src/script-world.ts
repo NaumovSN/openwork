@@ -129,7 +129,10 @@ export async function computeLocalSourceHash(cwd: string): Promise<string | unde
   const names = (await git(["ls-files", "--others", "--exclude-standard", "--full-name", "-z"])).split("\0").filter(Boolean).sort();
   for (const name of names) {
     hash.update(JSON.stringify(name));
-    hash.update(createHash("sha256").update(await readFile(join(root, name))).digest());
+    // Git lists a nested repository (e.g. a worktree inside the checkout) as one
+    // `dir/` entry; fingerprint its own state instead of reading it as a file.
+    if (name.endsWith("/")) hash.update(JSON.stringify(await computeLocalSourceHash(join(root, name)) ?? null));
+    else hash.update(createHash("sha256").update(await readFile(join(root, name))).digest());
   }
   return `sha256:${hash.digest("hex")}`;
 }

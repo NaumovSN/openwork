@@ -9,7 +9,6 @@ import {
   ChevronDown,
   ChevronLeft,
   Code2,
-  Download,
   ExternalLink,
   FileText,
   FolderOpen,
@@ -73,18 +72,17 @@ import type { McpServerEntry, McpStatusMap } from "../../../../app/types";
 import { isDesktopRuntime, isWindowsPlatform } from "../../../../app/utils";
 import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
+import { CloudSignInBanner } from "@/react-app/domains/cloud/cloud-sign-in-banner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmModal } from "../../../design-system/modals/confirm-modal";
 import { isConnectDirectMcpServerName } from "../../connections/cloud-mcp-user-state";
 import { AddMcpModal } from "../../connections/modals/add-mcp-modal";
 import type { McpConnectResult } from "../../connections/store";
-import { ClaudePluginImportModal } from "../../connections/modals/claude-plugin-import-modal";
 import {
   canDisconnectMemberConnection,
   canMemberAuthorizeConnection,
 } from "../../connections/native-provider-connections";
-import type { OpenworkClaudePluginPreview } from "../../../../app/lib/openwork-server";
 import {
   isOpenWorkExtensionEnabled,
   isOpenWorkExtensionHidden,
@@ -198,8 +196,10 @@ export type McpViewProps = {
   installedPlugins?: CloudImportedPlugin[];
   /** Uninstall a skill by name. */
   uninstallSkill?: (name: string) => void;
-  /** Remove an imported marketplace package by plugin id. */
+  /** Remove a legacy local copy of an organization plugin by plugin id. */
   removeCloudPlugin?: (pluginId: string) => void | Promise<unknown>;
+  /** Whether this workspace still holds a legacy local copy of the plugin. */
+  hasLocalPluginCopy?: (pluginId: string) => boolean;
   /** Read skill content by name. */
   readSkill?: (name: string) => Promise<{ content: string } | null>;
   readConfigFile?: (scope: "project" | "global") => Promise<OpencodeConfigFile | null>;
@@ -226,10 +226,6 @@ export type McpViewProps = {
   enablementContext?: import("../../../../app/enablement").EnablementContext;
   /** Organization policy restriction for OpenWork-provided built-in extensions. */
   builtInExtensionsDisabled?: boolean;
-  /** Preview a Claude Code plugin bundle from a GitHub URL ("Will install" disclosure). */
-  previewClaudePlugin?: (url: string) => Promise<OpenworkClaudePluginPreview>;
-  /** Install a Claude Code plugin bundle from a GitHub URL. */
-  installClaudePlugin?: (url: string) => Promise<{ ok: boolean; message: string }>;
   /** Connected org-level External MCP Connections rendered in My Extensions. */
   orgMcpItems?: ExtensionItem[];
   /**
@@ -426,11 +422,10 @@ export function McpView(props: McpViewProps) {
   const [detailSkillContent, setDetailSkillContent] = useState<string | null>(null);
   const [openworkUiMcpCommand, setOpenworkUiMcpCommand] = useState<string[] | null>(null);
   const [openworkUiMcpEnvironment, setOpenworkUiMcpEnvironment] = useState<Record<string, string> | null>(null);
-  const [computerUseMcpCommand, setComputerUseMcpCommand] = useState<string[] | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<ExtensionInventoryFilter>(primaryLibraryFilter(props.initialFilter));
+  const [onlyNeedsSignIn, setOnlyNeedsSignIn] = useState(props.initialState === "needs_signin");
   const [layout, setLayout] = useState<ExtensionLayout>(readExtensionLayout);
-  const [claudeImportOpen, setClaudeImportOpen] = useState(false);
   const [screen, setScreen] = useState<LibraryScreen>({ kind: "list" });
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [changedPluginIds, setChangedPluginIds] = useState<Set<string>>(() => new Set());
@@ -523,6 +518,11 @@ export function McpView(props: McpViewProps) {
   const setInventoryFilter = (nextFilter: ExtensionInventoryFilter) => {
     setFilter(nextFilter);
     props.onFilterChange?.(nextFilter);
+  };
+  const toggleNeedsSignIn = () => {
+    const next = !onlyNeedsSignIn;
+    setOnlyNeedsSignIn(next);
+    props.onStateChange?.(next ? "needs_signin" : "all", filter);
   };
   const libraryCloudSignedIn = cloudSession.isSignedIn
     || (Boolean(cloudSession.authToken.trim()) && denAuth.isSignedIn);
@@ -978,14 +978,9 @@ export function McpView(props: McpViewProps) {
             ),
           ));
         }
-        const computerUseCommand = await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("getComputerUseMcpCommand");
-        if (Array.isArray(computerUseCommand) && computerUseCommand.every((part) => typeof part === "string")) {
-          setComputerUseMcpCommand(computerUseCommand);
-        }
       } catch {
         setOpenworkUiMcpCommand(null);
         setOpenworkUiMcpEnvironment(null);
-        setComputerUseMcpCommand(null);
       }
     })();
   }, []);
@@ -1116,7 +1111,6 @@ export function McpView(props: McpViewProps) {
 
   const launchCommandForEntry = (entry: McpDirectoryInfo) => {
     if (entry.serverName === "openwork-ui") return openworkUiMcpCommand ?? undefined;
-    if (entry.serverName === "computer-use") return computerUseMcpCommand ?? entry.command;
     return entry.command;
   };
 
@@ -1193,8 +1187,6 @@ export function McpView(props: McpViewProps) {
         const disabledReason = builtInDisabledReason ?? manageDisabledReasonForEntry(detailEntry);
         const isConnected = builtInDisabledReason
           ? false
-          : detailEntry.serverName === "computer-use"
-          ? enablementForEntry(detailEntry)?.active === true
           : isToggleOnlyExtension(detailEntry)
           ? isOpenWorkExtensionEnabled(detailEntry)
           : detailEntry.kind === "extension" && !isMcpBackedExtension(detailEntry)
@@ -1445,6 +1437,7 @@ export function McpView(props: McpViewProps) {
             description={detailPlugin.description ?? kindLabel(pluginTaxonomy)}
             taxonomy={pluginTaxonomy}
             connected={true}
+            connectedLabel={t("extensions.detail_available_from_org")}
             hidden={hidden}
             facts={[
               {
@@ -1470,10 +1463,11 @@ export function McpView(props: McpViewProps) {
               connectors: pluginConnectors,
             })}
             onShare={shareOwned(detailPlugin.pluginId)}
-            onUninstall={props.removeCloudPlugin ? () => {
+            onUninstall={props.removeCloudPlugin && props.hasLocalPluginCopy?.(detailPlugin.pluginId) ? () => {
               void props.removeCloudPlugin?.(detailPlugin.pluginId);
               closeDetail();
             } : undefined}
+            uninstallLabel={t("extensions.detail_remove_local_copy")}
             onHide={() => setOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, true)}
             onShow={() => setOpenWorkExtensionHidden(`plugin:${detailPlugin.pluginId}`, false)}
           />
@@ -1621,9 +1615,8 @@ export function McpView(props: McpViewProps) {
     const enablement = props.enablementContext ? enablementForEntry(entry) : null;
     const hidden = isOpenWorkExtensionHidden(entry);
     const disabledReason = builtInDisabledReasonForEntry(entry) ?? (configured ? null : manageDisabledReasonForEntry(entry));
-    const isComputerUse = entry.id === "computer-use";
     const runtimeStatus = quickConnectStatus(entry)?.status;
-    const ready = isComputerUse ? enablement?.active === true : runtimeStatus ? runtimeStatus === "connected" : configured || enablement?.active;
+    const ready = runtimeStatus ? runtimeStatus === "connected" : configured || enablement?.active;
     rows.push({
       key: getMcpIdentityKey(entry),
       section: "mac",
@@ -1646,7 +1639,7 @@ export function McpView(props: McpViewProps) {
           disabledReason={disabledReason}
           disabled={props.busy}
           meta={t("extensions.row_local_you")}
-          nextActionLabel={isComputerUse ? ready || disabledReason ? undefined : t("extensions.row_action_set_up") : configured || disabledReason ? undefined : t("connect.row_action_connect")}
+          nextActionLabel={configured || disabledReason ? undefined : t("connect.row_action_connect")}
           onClick={() => openDetail({ kind: "entry", entry })}
         />
       ),
@@ -1661,6 +1654,7 @@ export function McpView(props: McpViewProps) {
     const error = readMcpErrorInfo(props.mcpStatuses[server.name]);
     const attention = libraryRowAttention(group);
     rows.push({
+      needsSignIn: group === "needs_signin",
       key: `server:${server.name}`,
       section: "mac",
       taxonomy: "mcp",
@@ -1718,6 +1712,7 @@ export function McpView(props: McpViewProps) {
     const attention = libraryRowAttention(group);
     const connection = taxonomy === "connection" ? connectionForPlugin(plugin.name) : undefined;
     rows.push({
+      needsSignIn: group === "needs_signin",
       key: `mine:${plugin.id}`,
       section: "mine",
       taxonomy,
@@ -1756,6 +1751,7 @@ export function McpView(props: McpViewProps) {
     const group = connectMcpInventoryGroup(entry, props.availableConnectMcpStatuses ?? {});
     const attention = libraryRowAttention(group);
     rows.push({
+      needsSignIn: group === "needs_signin",
       key: `connect-mcp:${entry.id ?? entry.name}`,
       section: "openwork",
       taxonomy: "connection",
@@ -1793,6 +1789,7 @@ export function McpView(props: McpViewProps) {
     const hidden = isOpenWorkExtensionHidden(`plugin:${plugin.pluginId}`);
     const fileCount = plugin.files.length;
     rows.push({
+      needsSignIn: group === "needs_signin",
       key: `plugin:${plugin.pluginId}`,
       section: "openwork",
       taxonomy,
@@ -1820,6 +1817,7 @@ export function McpView(props: McpViewProps) {
     const group = resolveExtensionInventoryGroup(item);
     const attention = libraryRowAttention(group);
     rows.push({
+      needsSignIn: group === "needs_signin",
       key: item.id,
       section: "openwork",
       taxonomy: "connection",
@@ -1844,6 +1842,7 @@ export function McpView(props: McpViewProps) {
   const sharedOwned = ownedPlugins.filter((plugin) => isLibraryAudienceShared(libraryCloud.audienceFor(plugin.id)));
   const firstSharedOwned = sharedOwned[0];
   const openworkRowCount = rows.filter((row) => row.section === "openwork").length;
+  const needsSignInCount = rows.filter((row) => row.needsSignIn === true).length;
   const sectionMeta: Partial<Record<LibrarySection, string | null>> = {
     mine: firstSharedOwned
       ? t("extensions.section_mine_shared", { count: String(sharedOwned.length), audience: libraryAudienceName(libraryCloud.audienceFor(firstSharedOwned.id)) })
@@ -1859,6 +1858,7 @@ export function McpView(props: McpViewProps) {
       filter={filter}
       search={search}
       sectionMeta={sectionMeta}
+      onlyNeedsSignIn={onlyNeedsSignIn}
       signedOut={signedOut}
       onSignUp={props.onOpenCloudAccount}
       emptyState={(
@@ -2015,7 +2015,7 @@ export function McpView(props: McpViewProps) {
         </div>
       )}
 
-      <div className="mb-6 flex flex-wrap items-center gap-2" aria-label={t("extensions.filters_label")}>
+      <div className="mb-5 flex flex-wrap items-center gap-1.5" aria-label={t("extensions.filters_label")}>
         {extensionInventoryFilters.map((f) => {
           const selected = filter === f;
           return (
@@ -2024,16 +2024,36 @@ export function McpView(props: McpViewProps) {
               type="button"
               aria-pressed={selected}
               onClick={() => setInventoryFilter(f)}
-              className={`inline-flex h-[30px] items-center rounded-full border px-3 text-[13px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring ${
+              className={`inline-flex h-7 items-center rounded-full px-3 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-ring ${
                 selected
-                  ? "border-foreground bg-foreground text-background"
-                  : "border-border bg-background text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+                  ? "bg-foreground text-background"
+                  : "bg-dls-hover text-dls-text hover:bg-dls-border/60"
               }`}
             >
               {extensionFilterLabel(f)}
             </button>
           );
         })}
+        {needsSignInCount > 0 || onlyNeedsSignIn ? (
+          <>
+            <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+            <button
+              type="button"
+              aria-pressed={onlyNeedsSignIn}
+              onClick={toggleNeedsSignIn}
+              data-testid="library-needs-sign-in-filter"
+              className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors focus-visible:outline-2 focus-visible:outline-ring ${
+                onlyNeedsSignIn
+                  ? "border-foreground bg-foreground text-background"
+                  : "border-border bg-background text-muted-foreground hover:border-foreground/40 hover:text-foreground"
+              }`}
+            >
+              <span className="size-1.5 rounded-full bg-amber-9" aria-hidden />
+              {t("extensions.filter_needs_sign_in")}
+              <span className={onlyNeedsSignIn ? "text-background/70" : "text-dls-secondary"}>{needsSignInCount}</span>
+            </button>
+          </>
+        ) : null}
         <div className="ml-auto flex items-center gap-1">
           <div className="mr-1 w-[min(220px,40vw)]">
             <SettingsListSearchInput
@@ -2085,7 +2105,6 @@ export function McpView(props: McpViewProps) {
         onScopeChange={setConfigScope}
         onReveal={revealConfig}
         onAddMcp={props.allowManageExtensions ? () => handleAddKind("workspace-mcp") : undefined}
-        onImportFromGithub={props.allowManageExtensions && props.previewClaudePlugin && props.installClaudePlugin ? () => setClaudeImportOpen(true) : undefined}
       />
 
       <ConfirmModal
@@ -2130,15 +2149,6 @@ export function McpView(props: McpViewProps) {
         busy={props.busy}
         isRemoteWorkspace={props.isRemoteWorkspace}
       />
-
-      {props.allowManageExtensions && props.previewClaudePlugin && props.installClaudePlugin ? (
-        <ClaudePluginImportModal
-          open={claudeImportOpen}
-          onClose={() => setClaudeImportOpen(false)}
-          onPreview={props.previewClaudePlugin}
-          onInstall={props.installClaudePlugin}
-        />
-      ) : null}
 
       <LibraryDeleteDialog
         open={deleteTarget !== null}
@@ -2300,6 +2310,8 @@ export type LibraryRow = {
   section: LibrarySection;
   taxonomy: ExtensionTaxonomy;
   searchText: string;
+  /** Waits on the member's own sign-in; the "Needs sign-in" filter keeps only these. */
+  needsSignIn?: boolean;
   node: ReactNode;
 };
 
@@ -2318,8 +2330,8 @@ function librarySectionLabel(section: LibrarySection) {
 
 function LibrarySectionHeader(props: { section: LibrarySection; label: string; meta?: string | null }) {
   return (
-    <div className="flex items-center justify-between gap-3 px-0.5">
-      <h2 className="flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.06em] text-dls-secondary uppercase">
+    <div className="flex items-center justify-between gap-3 border-b border-dls-border pb-1.5">
+      <h2 className="flex items-center gap-1.5 text-xs font-medium text-dls-text">
         {props.section === "mac" ? <Laptop size={12} /> : null}
         {props.label}
       </h2>
@@ -2343,24 +2355,19 @@ const lockedLibraryPreviews: Array<{ name: string; description: string; iconSrc:
  */
 function LibrarySignUpBanner(props: { onSignUp?: () => void }) {
   return (
-    <div data-testid="library-sign-up-banner" className="flex items-center gap-4 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">
-      <div className="flex shrink-0 -space-x-1.5" aria-hidden>
-        {lockedLibraryPreviews.map((preview) => {
-          const src = resolveExtensionIconUrl({ iconSrc: preview.iconSrc });
-          return (
-            <span key={preview.name} className="flex size-7 items-center justify-center rounded-lg border border-dls-border bg-dls-surface">
-              {src ? <img src={src} alt="" width={16} height={16} loading="lazy" className="block" /> : null}
-            </span>
-          );
-        })}
-      </div>
-      <p className="min-w-0 flex-1 text-[13px] text-dls-text">{t("extensions.sign_up_banner")}</p>
-      {props.onSignUp ? (
-        <Button size="sm" className="shrink-0" onClick={props.onSignUp}>
-          {t("extensions.sign_up_action")}
-        </Button>
-      ) : null}
-    </div>
+    <CloudSignInBanner
+      testId="library-sign-up-banner"
+      message={t("extensions.sign_up_banner")}
+      onSignIn={props.onSignUp}
+      media={lockedLibraryPreviews.map((preview) => {
+        const src = resolveExtensionIconUrl({ iconSrc: preview.iconSrc });
+        return (
+          <span key={preview.name} className="flex size-7 items-center justify-center rounded-lg border border-dls-border bg-dls-surface">
+            {src ? <img src={src} alt="" width={16} height={16} loading="lazy" className="block" /> : null}
+          </span>
+        );
+      })}
+    />
   );
 }
 
@@ -2371,6 +2378,7 @@ export function LibraryInventory(props: {
   filter: ExtensionInventoryFilter;
   search?: string;
   sectionMeta?: Partial<Record<LibrarySection, string | null>>;
+  onlyNeedsSignIn?: boolean;
   signedOut?: boolean;
   onSignUp?: () => void;
   emptyState?: ReactNode;
@@ -2379,14 +2387,15 @@ export function LibraryInventory(props: {
   const category = primaryLibraryFilter(props.filter);
   const visible = props.rows.filter((row) =>
     matchesExtensionFilter(category, row.taxonomy)
+    && (!props.onlyNeedsSignIn || row.needsSignIn === true)
     && (!needle || row.searchText.toLowerCase().includes(needle)));
   const sections = librarySectionOrder
     .map((section) => ({ section, rows: visible.filter((row) => row.section === section) }))
     .filter((entry) => entry.rows.length > 0);
   const containerClassName = props.layout === "list"
-    ? "overflow-hidden rounded-xl border border-dls-border bg-dls-surface [&>div+div]:border-t [&>div+div]:border-dls-border/60"
+    ? "flex flex-col [&>div]:border-b [&>div]:border-dls-border/60"
     : "grid grid-cols-[repeat(auto-fill,minmax(min(100%,20rem),1fr))] gap-3";
-  const showLocked = props.signedOut === true && category === "all" && !needle;
+  const showLocked = props.signedOut === true && category === "all" && !needle && !props.onlyNeedsSignIn;
 
   return (
     <div className="space-y-6">
@@ -2399,7 +2408,7 @@ export function LibraryInventory(props: {
         </div>
       ) : sections.length === 0 && !showLocked ? props.emptyState ?? null : (
         sections.map(({ section, rows }) => (
-          <div key={section} className="space-y-2.5" data-library-section={section}>
+          <div key={section} className={props.layout === "list" ? "" : "space-y-2.5"} data-library-section={section}>
             <LibrarySectionHeader section={section} label={librarySectionLabel(section)} meta={props.sectionMeta?.[section]} />
             <div className={containerClassName}>
               {rows.map((row) => (
@@ -2603,7 +2612,6 @@ export function McpAdvancedConfigSection(props: {
   onScopeChange: (scope: ConfigScope) => void;
   onReveal: () => Promise<void>;
   onAddMcp?: () => void;
-  onImportFromGithub?: () => void;
 }) {
   return (
     <div className="mt-6 overflow-hidden rounded-xl border border-dls-border bg-dls-surface">
@@ -2628,12 +2636,6 @@ export function McpAdvancedConfigSection(props: {
                 <Button variant="outline" onClick={props.onAddMcp}>
                   <Plus size={14} />
                   {t("extensions.add_workspace_mcp")}
-                </Button>
-              ) : null}
-              {props.onImportFromGithub ? (
-                <Button variant="outline" onClick={props.onImportFromGithub}>
-                  <Download size={14} />
-                  From GitHub
                 </Button>
               ) : null}
             </div>

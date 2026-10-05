@@ -74,13 +74,6 @@ capability for selected organizations. A newer desktop receiving an unavailable
 settings route keeps analytics off and leaves chat running; failed checks are cached
 to avoid retrying on every streamed update.
 
-`pnpm evals:e2e models-analytics-upgrade` runs a continuous subscriber journey with
-an isolated Den database, real Gateway HTTP service, browser and desktop. Its
-upstream and Langfuse witnesses use synthetic credentials. The journey starts
-with an existing paid account before the analytics tables exist, applies the real
-migration, and checks the same model key, consent UI, accounting, tenant/member
-isolation, export, downgrade, workspace deletion and continued conversation.
-An independently observed HTTP link first returns 404 for analytics settings,
-proving the newer desktop still chats without uploading task events. Restoring
-the endpoint then exercises live task/skill/tool reporting in the same conversation. It does not make a real
-Stripe purchase or call a paid model provider.
+The `models-analytics-upgrade` e2e journey was removed in October 2026: it could no
+longer pass after the model picker changed. There is no end-to-end coverage of the
+upgrade path today.

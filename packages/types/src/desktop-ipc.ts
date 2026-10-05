@@ -389,20 +389,6 @@ export type UiControlBridgeInfo = {
   token?: string;
 };
 
-export type ComputerUsePermissions = {
-  ok: boolean;
-  accessibility: boolean;
-  screenRecording: boolean;
-  supported?: boolean;
-  protocolVersion?: string;
-  error?: string;
-};
-
-export type RunningAppsResult = {
-  ok: boolean;
-  apps: string[];
-};
-
 // ---------------------------------------------------------------------------
 // The command map
 // ---------------------------------------------------------------------------
@@ -485,16 +471,7 @@ export type DesktopCommandMap = {
   desktopIntegrationRemove: { args: []; result: DesktopIntegrationResult };
   getUiControlBridgeInfo: { args: []; result: UiControlBridgeInfo | null };
   getOpenworkUiMcpCommand: { args: []; result: string[] };
-  getComputerUseMcpCommand: { args: []; result: string[] };
-  getComputerUseState: { args: []; result: unknown };
-  computerUseAction: { args: [value: { connectionId: string; id: string; action: string; windowId?: number }]; result: void };
   getOpenworkUiMcpEnvironment: { args: []; result: Record<string, string> };
-
-  // Computer use
-  checkComputerUsePermissions: { args: []; result: ComputerUsePermissions };
-  listRunningApps: { args: []; result: RunningAppsResult };
-  openComputerUsePermissionSetup: { args: []; result: ComputerUsePermissions };
-  openComputerUsePermissionSettings: { args: []; result: unknown };
 
   // Bootstrap config
   getDesktopBootstrapConfig: { args: []; result: DesktopBootstrapConfig };

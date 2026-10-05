@@ -22,6 +22,19 @@ The CLI prints the placement and reason; copy that line into the report. Use
 `--local` only when the user asks for local. `--daytona` requires Daytona. Never
 switch lanes to turn a red Daytona run green.
 
+## Run the core journey
+
+The test every PR runs. Its world is a Freestyle VM, so this needs only the
+evals install and the Freestyle key:
+
+```bash
+FREESTYLE_API_KEY="$(infisical secrets get FREESTYLE_API_KEY --env dev --path /openwork-ops --plain --silent)" \
+  node evals/bin/evals.mjs specs/core-chat.e2e.test.ts --local --engine v1 --surface web
+```
+
+It runs against the pushed `HEAD` commit; push first. After changing the world
+itself, run `node evals/scripts/check-freestyle-world.ts --base <sha>` instead.
+
 ## Prepare local fallback
 
 ```bash
@@ -56,7 +69,7 @@ pnpm evals:e2e <name>
 ## Match the runtime
 
 Check what runtime the changed code ships on before trusting a green run.
-`apps/server` tests run on Bun; Desktop runs that same code on Electron's
+`apps/server` runs on Bun in evals; Desktop runs that same code on Electron's
 Node (undici). If the change touches fetch, streams, signals, GC, or timers,
 run it on the shipping runtime too:
 

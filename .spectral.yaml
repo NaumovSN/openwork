@@ -255,3 +255,16 @@ overrides:
       - "**/*.json#/paths/~1v1~1memory~1%7Bid%7D"
     rules:
       operation-success-response: "off"
+
+  # Where a member's Automations can run: their own desktops, capped by
+  # DESKTOP_TARGET_LIST_LIMIT, plus the cloud flag. A bounded snapshot, not a
+  # paged collection. lastSeenAt is epoch milliseconds like every other
+  # Automation timestamp (AutomationRun, Automation, AutomationRevision).
+  - files:
+      - "**/*.json#/paths/~1v1~1automation-runners"
+    rules:
+      ow-list-pagination: "off"
+  - files:
+      - "**/*.json#/components/schemas/AutomationDesktopTarget/properties/lastSeenAt"
+    rules:
+      ow-timestamps-date-time: "off"

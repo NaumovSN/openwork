@@ -8,6 +8,7 @@ import { normalizeConfiguredPublicApiBaseUrl } from "./request-url.js"
 import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
+import { readFreeInferenceConfig } from "@openwork/types/den/inference"
 
 export const DEFAULT_DEN_DIAGNOSTICS_ORIGIN = "https://diagnostic.openworklabs.com"
 
@@ -125,6 +126,7 @@ const EnvSchema = z.object({
   DEN_AUTOMATIONS_POLL_INTERVAL_MS: z.string().optional(),
   DEN_AUTOMATIONS_BATCH_SIZE: z.string().optional(),
   DEN_AUTOMATIONS_MAX_CONCURRENCY: z.string().optional(),
+  DEN_HEADLESS_AUTOMATIONS_MAX_CONCURRENCY: z.string().optional(),
   DEN_AUTOMATIONS_LEASE_MS: z.string().optional(),
   DEN_AUTOMATIONS_RUN_TIMEOUT_MS: z.string().optional(),
   DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS: z.string().optional(),
@@ -158,6 +160,8 @@ const EnvSchema = z.object({
   DEN_GENERATED_ARTIFACT_VIEWS_ENABLED: z.string().optional(),
   DEN_APP_MCP_SERVERS_ENABLED: z.string().optional(),
   SCIM_MAINTENANCE_INTERVAL_MS: z.string().optional(),
+  LIFECYCLE_EMAILS_ENABLED: z.string().optional(),
+  LIFECYCLE_EMAILS_INTERVAL_MS: z.string().optional(),
   POLAR_FEATURE_GATE_ENABLED: z.string().optional(),
   POLAR_API_BASE: z.string().optional(),
   POLAR_ACCESS_TOKEN: z.string().optional(),
@@ -711,6 +715,12 @@ export const env = {
   generatedArtifactViewsEnabled,
   appMcpServersEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
+  // Lifecycle reminder emails (claim reminder, team nudge). Off unless
+  // LIFECYCLE_EMAILS_ENABLED=1 so self-hosted deployments opt in explicitly.
+  lifecycleEmails: {
+    enabled: parsed.LIFECYCLE_EMAILS_ENABLED?.trim() === "1",
+    intervalMs: Number(parsed.LIFECYCLE_EMAILS_INTERVAL_MS ?? "900000"),
+  },
   requireEmailVerification,
   passwordBreachScreeningEnabled,
   github: {
@@ -832,6 +842,9 @@ export const env = {
     pollIntervalMs: automationTuning(parsed.DEN_AUTOMATIONS_POLL_INTERVAL_MS, 15_000),
     batchSize: automationTuning(parsed.DEN_AUTOMATIONS_BATCH_SIZE, 25),
     maxConcurrency: automationTuning(parsed.DEN_AUTOMATIONS_MAX_CONCURRENCY, 4),
+    // Headless runs hold no computer, only a turn on the shared runner, so
+    // they get their own, larger pool instead of the OpenWork Web slots.
+    headlessMaxConcurrency: automationTuning(parsed.DEN_HEADLESS_AUTOMATIONS_MAX_CONCURRENCY, 16),
     leaseMs: automationTuning(parsed.DEN_AUTOMATIONS_LEASE_MS, 60_000),
     runTimeoutMs: automationTuning(parsed.DEN_AUTOMATIONS_RUN_TIMEOUT_MS, 900_000),
     // How long a desktop occurrence stays claimable. A desktop is a laptop
@@ -847,6 +860,7 @@ export const env = {
   auditSelfHostedEnabled: parsed.DEN_AUDIT_SELF_HOSTED_ENABLED === "true",
   corsHandledByEdge,
   openworkWebEnabled,
+  inferenceFree: readFreeInferenceConfig(process.env),
   inferenceProxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   // Keep known public Models destinations even when Gateway management is off.
   modelsPublicBaseUrl: gatewayDeployment.modelsPublicBaseUrl ?? optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",

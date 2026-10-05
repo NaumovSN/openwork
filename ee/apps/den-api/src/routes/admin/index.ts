@@ -31,6 +31,7 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, isDenTypeId } from "@openwork-ee/utils/typeid"
 import { ManagedModelsPolicyError, readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
+import { freeInferenceRolloutEnabled, withFreeInferenceRollout } from "@openwork/types/den/inference"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
@@ -38,6 +39,7 @@ import { cache } from "../../cache.js"
 import { db } from "../../db.js"
 import { parseOrganizationPlan, type PlanTier } from "../../entitlements.js"
 import { adminRoute, jsonValidator, queryValidator } from "../../middleware/index.js"
+import { registerAdminFreeAutoUsageRoutes } from "./free-auto-usage.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import { appLogger } from "../../observability/logger.js"
 import { memberFacingMcpConnectionsEnabled } from "../../capability-sources/external-mcp-rollout.js"
@@ -97,6 +99,13 @@ const updateOrganizationOpenWorkWebAccessSchema = z.object({
   reason: z.string().trim().min(3).max(500),
 })
 
+const updateOrganizationFreeAutoSchema = z.object({ enabled: z.boolean().nullable() }).strict()
+const adminFreeAutoSchema = z.object({ enabled: z.boolean(), globallyEnabled: z.boolean(), rolloutAllOrganizations: z.boolean() })
+
+function readAdminFreeAuto(metadata: unknown) {
+  return { enabled: freeInferenceRolloutEnabled(metadata, env.inferenceFree), globallyEnabled: env.inferenceFree.enabled, rolloutAllOrganizations: env.inferenceFree.rolloutAllOrganizations }
+}
+
 const updateOrganizationDpaSchema = z.object({
   dpaSigned: z.boolean(),
   reason: z.string().trim().min(3).max(500),
@@ -110,6 +119,10 @@ const updateOrganizationCapabilitiesSchema = z.object({
     auditLogs: z.boolean().nullable().optional(),
     orgManagedDashboards: z.boolean().nullable().optional(),
     appMcpServers: z.boolean().nullable().optional(),
+    slackAssistant: z.boolean().nullable().optional(),
+    slackAssistantHeadless: z.boolean().nullable().optional(),
+    headlessAutomations: z.boolean().nullable().optional(),
+    workbot: z.boolean().nullable().optional(),
     gatewayDashboard: z.boolean().nullable().optional().meta({
       deprecated: true,
       description: "Accepted for compatibility only and ignored; AI Gateway no longer has an organization rollout override.",
@@ -124,6 +137,10 @@ const adminOrganizationCapabilitiesSchema = z.object({
   auditLogs: z.boolean(),
   orgManagedDashboards: z.boolean(),
   appMcpServers: z.boolean(),
+  slackAssistant: z.boolean(),
+  slackAssistantHeadless: z.boolean(),
+  headlessAutomations: z.boolean(),
+  workbot: z.boolean(),
   gatewayDashboard: z.literal(true).meta({
     deprecated: true,
     description: "Compatibility field, always true. AI Gateway is available to every organization; deployment configuration and authorization still apply.",
@@ -198,7 +215,7 @@ const adminOverviewResponseSchema = z.object({
   admins: z.array(z.object({}).passthrough()),
   summary: adminSummarySchema,
   users: z.array(z.object({}).passthrough()),
-  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema }).passthrough()),
+  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema, freeAuto: adminFreeAutoSchema }).passthrough()),
   userPage: adminPageInfoSchema,
   organizationPage: adminPageInfoSchema,
   generatedAt: z.string().datetime(),
@@ -212,7 +229,7 @@ const adminUsersPageResponseSchema = z.object({
 }).meta({ ref: "AdminUsersPageResponse" })
 
 const adminOrganizationsPageResponseSchema = z.object({
-  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema }).passthrough()),
+  organizations: z.array(z.object({ capabilities: adminOrganizationCapabilitiesSchema, freeAuto: adminFreeAutoSchema }).passthrough()),
   page: adminPageInfoSchema,
   generatedAt: z.string().datetime(),
 }).meta({ ref: "AdminOrganizationsPageResponse" })
@@ -302,6 +319,10 @@ function readAdminVisibleOrganizationCapabilities(metadata: Record<string, unkno
     auditLogs: normalizeOrganizationCapabilities(metadata).auditLogs,
     orgManagedDashboards: normalizeOrganizationCapabilities(metadata).orgManagedDashboards,
     appMcpServers: normalizeOrganizationCapabilities(metadata).appMcpServers,
+    slackAssistant: normalizeOrganizationCapabilities(metadata).slackAssistant,
+    slackAssistantHeadless: normalizeOrganizationCapabilities(metadata).slackAssistantHeadless,
+    headlessAutomations: normalizeOrganizationCapabilities(metadata).headlessAutomations,
+    workbot: normalizeOrganizationCapabilities(metadata).workbot,
     gatewayDashboard: true,
   }
 }
@@ -341,7 +362,7 @@ function readUnmanagedCapabilityMetadata(metadata: Record<string, unknown>): Rec
     // OpenWork Web access instead), so stale stored overrides stay managed
     // (dropped on the next capabilities write) instead of passing through as
     // unmanaged metadata.
-    if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "auditLogs" && key !== "orgManagedDashboards" && key !== "appMcpServers" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
+    if (key !== "gatewayDashboard" && key !== "modelsAnalytics" && key !== "auditLogs" && key !== "orgManagedDashboards" && key !== "appMcpServers" && key !== "slackAssistant" && key !== "slackAssistantHeadless" && key !== "headlessAutomations" && key !== "workbot" && key !== "installLinks" && key !== "mcpConnections" && key !== "workflows" && key !== "codemodeScripts" && key !== "remoteMcpApps" && key !== "cloud") {
       capabilities[key] = value
     }
   }
@@ -466,6 +487,7 @@ type AdminOrganizationRow = {
   billableSeatCount: number
   capabilities: ReturnType<typeof readAdminVisibleOrganizationCapabilities>
   openworkWebAccess: AdminOpenWorkWebAccess
+  freeAuto: ReturnType<typeof readAdminFreeAuto>
 }
 
 type AdminOpenWorkWebSubscription = Pick<
@@ -983,6 +1005,7 @@ async function shapeAdminOrganizationRows(rows: Array<Pick<typeof OrganizationTa
       freeSeatCount: seatCounts.free,
       seatsFreeAdditional: seatCounts.additionalFree,
       billableSeatCount: seatCounts.chargeable,
+      freeAuto: readAdminFreeAuto(metadata),
       capabilities: readAdminVisibleOrganizationCapabilities(metadata),
       openworkWebAccess: readAdminOpenWorkWebAccess(metadata, webSubscriptionByOrg.get(entry.id) ?? null),
     }
@@ -1286,6 +1309,7 @@ const adminRouteErrors = {
 }
 
 export function registerAdminRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  registerAdminFreeAutoUsageRoutes(app)
   app.post(
     "/v1/admin/admins",
     describeRoute({
@@ -1792,6 +1816,51 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
   )
 
   app.patch(
+    "/v1/admin/organizations/:organizationId/free-auto",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Set an organization's free Auto rollout",
+      description: "Allowlisted platform administrators only. Sets the organization rollout override; null restores the deployment default. Default rollout is off. Does not override the global kill switch, DPA, billing eligibility, desktop policy or allowance. Atomically preserves unrelated metadata and records the actor and previous state.",
+      responses: {
+        200: jsonResponse("Free Auto rollout updated.", z.object({ ok: z.literal(true), organization: z.object({ id: denTypeIdSchema("organization"), freeAuto: adminFreeAutoSchema }) })),
+        400: jsonResponse("Invalid rollout or organization identifier.", adminRequestErrorSchema),
+        ...adminRouteErrors,
+        404: jsonResponse("Organization not found.", notFoundSchema),
+        503: jsonResponse("Organization metadata could not be read.", z.object({ error: z.literal("managed_models_policy_unavailable"), message: z.string() })),
+      },
+    }),
+    adminRoute(),
+    jsonValidator(updateOrganizationFreeAutoSchema),
+    async (c) => {
+      const body = c.req.valid("json")
+      const organizationId = c.req.param("organizationId")
+      if (!isOrganizationId(organizationId)) return c.json({ error: "invalid_request", message: "Invalid organization id." }, 400)
+      const actorUserId = c.get("user")?.id
+      if (!actorUserId) return c.json({ error: "unauthorized" }, 401)
+      const result = await db.transaction(async (tx) => {
+        const [organization] = await tx.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
+          .where(eq(OrganizationTable.id, organizationId)).limit(1).for("update")
+        if (!organization) return "not_found"
+        let metadata: Record<string, unknown>
+        try { metadata = readOrganizationMetadata(organization.metadata) } catch { return "policy_unavailable" }
+        const next = withFreeInferenceRollout(metadata, body.enabled)
+        const auditEvent = buildOrganizationAuditEvent({ organizationId, actorUserId, action: ORGANIZATION_AUDIT_ACTIONS.freeAutoRolloutUpdated,
+          payload: { previousEnabled: freeInferenceRolloutEnabled(metadata, env.inferenceFree), enabled: body.enabled } })
+        await tx.update(OrganizationTable).set({ metadata: next }).where(eq(OrganizationTable.id, organizationId))
+        await tx.insert(AuditEventTable).values(auditEvent)
+        return { auditEvent, freeAuto: readAdminFreeAuto(next) }
+      })
+      if (result === "not_found") return c.json({ error: "not_found", message: "Organization not found." }, 404)
+      if (result === "policy_unavailable") {
+        const error = new ManagedModelsPolicyError("managed_models_policy_unavailable")
+        return c.json({ error: error.code, message: error.message }, error.status)
+      }
+      logOrganizationAuditEvent(result.auditEvent)
+      return c.json({ ok: true, organization: { id: organizationId, freeAuto: result.freeAuto } })
+    },
+  )
+
+  app.patch(
     "/v1/admin/organizations/:organizationId/dpa",
     describeRoute({
       tags: ["Admin"],
@@ -2079,6 +2148,23 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         const appMcpServers = body.data.capabilities.appMcpServers
         if (appMcpServers === null) delete capabilities.appMcpServers
         else if (appMcpServers !== undefined) capabilities.appMcpServers = appMcpServers
+
+        const slackAssistant = body.data.capabilities.slackAssistant
+        if (slackAssistant === null) delete capabilities.slackAssistant
+        else if (slackAssistant !== undefined) capabilities.slackAssistant = slackAssistant
+
+        const slackAssistantHeadless = body.data.capabilities.slackAssistantHeadless
+        if (slackAssistantHeadless === null) delete capabilities.slackAssistantHeadless
+        else if (slackAssistantHeadless !== undefined) capabilities.slackAssistantHeadless = slackAssistantHeadless
+
+        const headlessAutomations = body.data.capabilities.headlessAutomations
+        if (headlessAutomations === null) delete capabilities.headlessAutomations
+        else if (headlessAutomations !== undefined) capabilities.headlessAutomations = headlessAutomations
+
+
+        const workbot = body.data.capabilities.workbot
+        if (workbot === null) delete capabilities.workbot
+        else if (workbot !== undefined) capabilities.workbot = workbot
 
         return {
           ...current,

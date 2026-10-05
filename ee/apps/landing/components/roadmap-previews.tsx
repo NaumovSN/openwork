@@ -433,3 +433,48 @@ export function RoadmapSlackPreview() {
     </div>
   );
 }
+
+/* The phone app starts with MCP Apps: the same quick views as Dashboards. */
+export function RoadmapPhonePreview() {
+  return (
+    <div className="flex h-[500px] w-[250px] shrink-0 rounded-[40px] bg-[var(--lp-ink)] p-2 shadow-[0_24px_48px_-24px_rgba(1,22,39,0.45)]" aria-label="OpenWork phone app preview">
+      <div className="flex flex-1 flex-col overflow-hidden rounded-[32px] bg-[#FCFDFE]">
+        <div className="flex items-center justify-between px-5 pt-4 text-[11px] font-semibold text-[#111827]">
+          <span>9:41</span>
+          <span className="h-[18px] w-16 rounded-full bg-[var(--lp-ink)]" aria-hidden="true" />
+          <span className="w-6" />
+        </div>
+        <div className="flex flex-1 flex-col gap-2.5 px-3.5 pt-4">
+          <span className="flex items-baseline justify-between px-0.5">
+            <span className="text-[17px] font-semibold tracking-[-0.01em] text-[#111827]">Your apps</span>
+            <span className="text-[11px] font-medium text-[#6B7280]">Edit</span>
+          </span>
+          <div className="flex flex-col gap-1.5 rounded-2xl bg-white p-3 shadow-[0_0_0_1px_#EEF0F3]">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-[#111827]"><GoogleMark className="h-3.5 w-3.5" />Today</span>
+            {[["10:00", "Thursday call prep"], ["13:30", "Design review"], ["16:00", "1:1 with Priya"]].map(([time, event]) => (
+              <span key={time} className="flex gap-2.5 text-[11px]"><span className="w-8 text-[#9CA3AF]">{time}</span><span className="text-[#111827]">{event}</span></span>
+            ))}
+          </div>
+          <div className="grid grid-cols-2 gap-2.5">
+            <div className="flex flex-col gap-1 rounded-2xl bg-white p-3 shadow-[0_0_0_1px_#EEF0F3]">
+              <span className="flex items-center gap-1.5 text-xs font-medium text-[#111827]"><LinearMark className="h-3.5 w-3.5" />Issues</span>
+              <span className="text-xl font-semibold text-[#111827]">4</span>
+              <span className="text-[10.5px] text-[#6B7280]">2 due this week</span>
+            </div>
+            <div className="flex flex-col gap-1 rounded-2xl bg-white p-3 shadow-[0_0_0_1px_#EEF0F3]">
+              <span className="flex items-center gap-1.5 text-xs font-medium text-[#111827]"><BrandLogo name="hubspot" className="h-3.5 w-3.5 text-[#FF7A59]" />Pipeline</span>
+              <span className="text-xl font-semibold text-[#111827]">$412k</span>
+              <span className="text-[10.5px] text-[#047857]">3 deals moved</span>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1 rounded-2xl bg-white p-3 shadow-[0_0_0_1px_#EEF0F3]">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-[#111827]"><BrandLogo name="notion" className="h-3.5 w-3.5 text-[#111827]" />Team wiki</span>
+            <span className="text-[11px] font-medium text-[#111827]">Launch checklist</span>
+            <span className="text-[10.5px] text-[#6B7280]">Edited by Priya, 20m</span>
+          </div>
+        </div>
+        <div className="mx-3.5 mb-5 mt-3 flex h-10 items-center rounded-full bg-white pl-4 text-xs text-[#9CA3AF] shadow-[0_0_0_1px_#E3E7EE]">Ask OpenWork</div>
+      </div>
+    </div>
+  );
+}

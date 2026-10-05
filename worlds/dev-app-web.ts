@@ -1,3 +1,4 @@
+export const summary = "Your working tree as the local server plus web app, keeping its state between runs.";
 export const supportedTargets = ["local/host"];
 
 import { fileURLToPath } from "node:url";

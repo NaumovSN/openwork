@@ -295,6 +295,10 @@ export type SessionPageProps = {
   settingsSlot?: React.ReactNode;
   /** Workspace-scoped first-class surface rendered in place of the conversation. */
   primarySlot?: React.ReactNode;
+  /** The primary slot is itself a conversation (a first send still being created), so it keeps chat chrome. */
+  primarySlotIsConversation?: boolean;
+  /** Standalone pages use the main canvas instead of the inset conversation pane. */
+  primarySurface?: "flat";
   primaryTitle?: string;
   terminalOpen?: boolean;
   onTerminalOpenChange?: (open: boolean) => void;
@@ -1020,7 +1024,7 @@ export function SessionPage(props: SessionPageProps) {
   const providerCount = props.hasUsableModel ? 1 : props.providerConnectedIds.length;
   const messageCountVisible = props.selectedSessionId ? 1 : 0;
   const hasMainContentTakeover = Boolean(props.mainContentTakeover);
-  const sidebarOnlyChrome = isMobile && !isElectronRuntime() && shellConfig.sidebar && !props.primarySlot && !hasMainContentTakeover && !props.mainContentHeaderActionsRef && !props.primaryTitle && !props.mainContentTitle;
+  const sidebarOnlyChrome = isMobile && !isElectronRuntime() && shellConfig.sidebar && (!props.primarySlot || props.primarySlotIsConversation) && !hasMainContentTakeover && !props.mainContentHeaderActionsRef && !props.primaryTitle && !props.mainContentTitle;
   const showWorkspaceSetupEmptyState = props.workspaces.length === 0 && !props.selectedSessionId;
   const showStartupSkeleton =
     !bootOverlayVisible &&
@@ -1648,14 +1652,14 @@ export function SessionPage(props: SessionPageProps) {
             </div>}
           </header>}
 
-          <div className="flex min-h-0 flex-1 max-lg:p-0 lg:pb-2 lg:pl-2 lg:pt-2">
+          <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && "lg:pb-2 lg:pl-2 lg:pt-2")}>
           <ResizablePanelGroup
             orientation="horizontal"
             onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
-            className="min-h-0 flex-1 max-lg:rounded-none lg:rounded-[14px]"
+            className={cn("min-h-0 flex-1 max-lg:rounded-none", props.primarySurface !== "flat" && "lg:rounded-[14px]")}
           >
             <ResizablePanel minSize={isMobile ? "0px" : "360px"} className="min-w-0">
-              <main data-session-pane className="flex h-full min-w-0 flex-col overflow-hidden bg-dls-surface max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150">
+              <main data-session-pane className={cn("flex h-full min-w-0 flex-col overflow-hidden bg-dls-surface", props.primarySurface !== "flat" && "max-lg:rounded-none max-lg:border-0 max-lg:shadow-none lg:rounded-[14px] lg:border lg:border-border lg:shadow-[0_8px_24px_rgba(15,23,42,0.06)] dark:lg:shadow-[0_10px_30px_rgba(0,0,0,0.45)] mac:bg-dls-surface/85 mac:backdrop-blur-2xl mac:backdrop-saturate-150")}>
           {showNarrowPaneSwitcher ? (
             <NarrowPaneSwitcher
               activePane={narrowPane}
@@ -2020,7 +2024,7 @@ export function SessionPage(props: SessionPageProps) {
               </>
             ) : null}
           </ResizablePanelGroup>
-          <aside className="hidden w-10 shrink-0 flex-col items-center gap-1 px-1 py-2 text-muted-foreground lg:flex mac:titlebar-no-drag">
+          <aside className={cn("hidden w-10 shrink-0 flex-col items-center gap-1 px-1 py-2 text-muted-foreground mac:titlebar-no-drag", props.primarySurface !== "flat" && "lg:flex")}>
             {isElectronRuntime() ? (
               <Button
                 variant="ghost"

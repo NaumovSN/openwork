@@ -1,13 +1,12 @@
 import type { TextPartInput } from "@opencode-ai/sdk/v2/client";
 
 import type { ComposerPart } from "@/app/types";
-import { appMentionInstruction } from "./app-mentions";
 import { computerMentionInstruction, isComputerTarget, type ComputerTarget } from "./computer-mentions";
 import { connectSkillPrompt, encodeConnectSkillToken, parseConnectSkillToken } from "./connect-skill-token";
 import { connectorPrompt, encodeConnectorToken, parseConnectorToken } from "./connector-token";
 
 /**
- * One source of truth for composer pills: the skills, connectors, apps and
+ * One source of truth for composer pills: the skills, connectors and
  * computers picked from the composer `+` menu or `@` mentions.
  *
  * A pill has three faces, and each is owned here:
@@ -24,10 +23,9 @@ export type ComposerPill =
   | { kind: "skill"; name: string }
   | { kind: "connect-skill"; slug: string; name: string; marketplace: string; capability: string }
   | { kind: "connector"; name: string }
-  | { kind: "app"; name: string }
   | { kind: "computer"; target: ComputerTarget };
 
-type ComposerPillPart = Extract<ComposerPart, { type: "skill" | "connect-skill" | "connector" | "app" | "computer" }>;
+type ComposerPillPart = Extract<ComposerPart, { type: "skill" | "connect-skill" | "connector" | "computer" }>;
 
 /** Splits a draft into text and token segments (one capture group, keep it for `split`). */
 export const COMPOSER_DRAFT_TOKEN_RE = /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|@[^\s@]+)/;
@@ -55,8 +53,6 @@ export function composerPillFromPart(part: ComposerPillPart): ComposerPill {
       return { kind: "connect-skill", slug: part.slug, name: part.name, marketplace: part.marketplace, capability: part.capability };
     case "connector":
       return { kind: "connector", name: part.name };
-    case "app":
-      return { kind: "app", name: part.name };
     case "computer":
       return { kind: "computer", target: part.target };
   }
@@ -71,8 +67,6 @@ export function composerPillToken(pill: ComposerPill): string {
       return encodeConnectSkillToken(pill);
     case "connector":
       return encodeConnectorToken(pill.name);
-    case "app":
-      return `@${pill.name}`;
     case "computer":
       return `@${pill.target}`;
   }
@@ -100,8 +94,6 @@ export function composerPillTitle(pill: ComposerPill): string {
       return `Skill: ${pill.name}`;
     case "connector":
       return `Connector: ${pill.name}`;
-    case "app":
-      return `@${pill.name}`;
     case "computer":
       return `@${pill.target}`;
   }
@@ -116,8 +108,6 @@ export function composerPillInstruction(pill: ComposerPill): string {
       return connectSkillPrompt(pill);
     case "connector":
       return connectorPrompt(pill.name);
-    case "app":
-      return appMentionInstruction(pill.name);
     case "computer":
       return computerMentionInstruction(pill.target);
   }
@@ -160,7 +150,7 @@ function stringField(value: object, key: string): string | null {
 export function readComposerPill(value: unknown): ComposerPill | null {
   if (!value || typeof value !== "object") return null;
   const kind = stringField(value, "kind");
-  if (kind === "skill" || kind === "connector" || kind === "app") {
+  if (kind === "skill" || kind === "connector") {
     const name = stringField(value, "name");
     return name ? { kind, name } : null;
   }
@@ -199,15 +189,6 @@ function templateRegExp(render: (slot: string) => string) {
   return new RegExp(source, "g");
 }
 
-function decodeJsonString(value: string) {
-  try {
-    const decoded: unknown = JSON.parse(`"${value}"`);
-    return typeof decoded === "string" ? decoded : value;
-  } catch {
-    return value;
-  }
-}
-
 let pillMatchers: PillMatcher[] | null = null;
 
 function getPillMatchers(): PillMatcher[] {
@@ -221,7 +202,6 @@ function getPillMatchers(): PillMatcher[] {
     // string, left inline in the user's text.
     { re: templateRegExp(skillInstruction), toPill: (match) => match[1] ? { kind: "skill", name: match[1] } : null },
     { re: templateRegExp(connectorPrompt), toPill: (match) => match[1] ? { kind: "connector", name: match[1] } : null },
-    { re: templateRegExp(appMentionInstruction), toPill: (match) => match[1] ? { kind: "app", name: decodeJsonString(match[1]) } : null },
     ...(["cloud", "desktop"] as const).map((target): PillMatcher => ({
       re: new RegExp(escapeRegExp(computerMentionInstruction(target)), "g"),
       toPill: () => ({ kind: "computer", target }),

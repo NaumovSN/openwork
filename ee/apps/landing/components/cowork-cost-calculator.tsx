@@ -799,6 +799,17 @@ export function CoworkCostCalculator({
               {notice}
             </p>
           ))}
+          <p className="mt-5 text-[13px] leading-[19px] text-[var(--lp-body)]">
+            <span className="font-medium text-[var(--lp-ink)]">Estimate only, not a quote.</span> OpenWork prices here are
+            for OpenWork Cloud (hosted by us). Self-hosted deployments have their own SLA, support, and pricing.{" "}
+            <a
+              href="/enterprise#book"
+              className={`font-medium text-[var(--lp-ink)] underline decoration-[var(--lp-border)] underline-offset-4 hover:decoration-[var(--lp-ink)] ${focusRing}`}
+            >
+              Talk to sales
+            </a>{" "}
+            for a quote.
+          </p>
 
           <div className="mt-8">
             <CostChart
@@ -886,11 +897,16 @@ export function CoworkCostCalculator({
             </li>
             <li>
               OpenWork Team on OpenWork Cloud: first {planPrices.openworkFreeSeats} seats free, then $
-              {planPrices.openworkTeamSeat}/seat. OpenWork Enterprise: {describeEnterpriseVolumeTiers()}, billed annually.
-              Tokens billed by your own provider or gateway.
+              {planPrices.openworkTeamSeat}/seat. OpenWork Enterprise on OpenWork Cloud: {describeEnterpriseVolumeTiers()},
+              billed annually. Tokens billed by your own provider or gateway.
             </li>
             <li>
-              Costs accrue monthly. List prices from models.dev ({modelPricesFetchedAt}); Anthropic plans checked{" "}
+              All OpenWork prices assume OpenWork Cloud. Self-hosted deployments are scoped and priced separately, with their
+              own SLA and support terms, so they are not shown here.
+            </li>
+            <li>
+              These figures are indicative. Your real cost depends on usage, model choice, and contract terms. Costs accrue
+              monthly. List prices from models.dev ({modelPricesFetchedAt}); Anthropic plans checked{" "}
               {anthropicPricingCheckedAt}. Committed-spend discounts are not included.
             </li>
             <li className="flex flex-wrap gap-x-3 gap-y-1 pt-1">

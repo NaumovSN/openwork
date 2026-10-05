@@ -33,12 +33,41 @@ replacement (`RENAMED_WORLDS` in `packages/world/src/loader.ts`).
 
 ```sh
 pnpm world help preview-desktop --json
-pnpm world list
+pnpm world list --json
+pnpm world plan preview-desktop --place daytona --stage example
 pnpm world up preview-desktop --place daytona --stage example \
   --source desktop=release:0.18.52/enterprise --seed blank --detach
 pnpm world outputs preview-desktop --stage example --json
 pnpm world down preview-desktop --stage example
 ```
+
+`world help <name> --json` is the discovery contract for agents: each target's
+seeds and sources, what an omitted `--source` means, the login or key each
+placement needs with its fix, and example commands by intent. For the maintained
+previews this comes from `packages/world/src/catalog.ts`, which `world up` also
+uses to compose `--source`/`--seed`; tests keep it in step with the scripts and
+parse every example. Requirements are preflight checks marked `blocking` (a
+Daytona identity the CLI accepts, `FREESTYLE_API_KEY`): `world plan --place <place>` reports
+them without creating anything, and `world up` refuses to start while one is
+unmet. Health badges such as docker or mysql only warn.
+
+What `plan` and `up` print besides the checks:
+
+- **Identity.** The Daytona check passes with who the world will run as, e.g.
+  `using the API key in this command's environment (DAYTONA_API_KEY)` or
+  `using your Daytona browser login, organization "..."`. It warns (⚠, never
+  blocks) on a personal organization, and on a `DAYTONA_API_KEY` that the CLI
+  ignores because `DAYTONA_API_URL` is unset. It reads only non-secret fields of
+  the CLI profile (`DAYTONA_CONFIG_DIR`, else the OS config directory).
+- **Source.** `source  <short sha> (origin/dev) <subject>` names the commit a
+  remote world builds (`plan` resolves `origin/dev` with `git ls-remote`).
+- **Drift note.** The driver and recipes run from this checkout, not from that
+  commit. When this checkout's world recipes differ from it, a `note` line says
+  so and prints a worktree command for running from that commit instead.
+- **Failure diagnoses.** A failed `up` appends `hint:` lines for recognised
+  provider failures (Daytona organization memory limit, rejected credentials,
+  CLI/API version mismatch), each with its fix
+  (`diagnoseWorldFailure` in `evals/packages/env/src/world-requirements.ts`).
 
 `--place` selects who runs it (`local`, `daytona`, or `freestyle`); `--os`
 selects the guest OS. `preview-desktop --place freestyle` runs the signed-out
@@ -80,14 +109,24 @@ The selected keys appear in the `appEnv` output. Freestyle refuses `--env` for
 desktops: its snapshot starts the app while the snapshot is built, so a
 launch-time setting could not reach it.
 
+Eval and world desktops start with `OPENWORK_AUTOMATION_RUNNER=off`, so they
+never claim Automation runs or remote-session commands, even when signed in to
+a real account (`live-desktop` always is). `--env` cannot turn it back on; a
+spec or world opts in in code with `env: { OPENWORK_AUTOMATION_RUNNER: "on" }`,
+as `preview-full` does for its own disposable Den.
+
 ## Writing a world
 
-In a script, declare supported targets as a literal string array so discovery
-can read it **without importing or running** your script:
+In a script, declare a one-line summary and the supported targets as literals
+so discovery can read them **without importing or running** your script:
 
 ```ts
+export const summary = "Den plus a seeded demo organization for connector testing.";
 export const supportedTargets = ["local/host", "daytona/linux"];
 ```
+
+Use a double-quoted string for `summary`; `world help` and `world list --json`
+show it next to the world's name.
 
 Do not advertise a target until its provisioning and teardown actually work.
 For a new composition, export a `boot(stack, place)` function for reuse in tests

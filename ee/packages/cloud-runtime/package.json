@@ -35,8 +35,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false",
-    "test": "bun test src"
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

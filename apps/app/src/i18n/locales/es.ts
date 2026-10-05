@@ -308,7 +308,6 @@ export default {
   "den.synced_provider": "Sincronizado {name}.",
   "den.syncing": "Sincronizando...",
   "den.installed_name_badge": "Local: {name}",
-  "den.uninstall": "Desinstalar",
   "extensions.inventory_description": "Skills, conexiones y herramientas que tu agente puede usar.",
   "extensions.apps_mcp_header": "Aplicaciones (MCP)",
   "extensions.filter_all": "Todo",

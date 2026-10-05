@@ -1279,7 +1279,6 @@ export default {
   "den.synced_provider": "Синхронизирован {name}.",
   "den.syncing": "Синхронизация...",
   "den.installed_name_badge": "Локально: {name}",
-  "den.uninstall": "Удалить",
   "extensions.inventory_description": "Навыки, подключения и инструменты, которые может использовать ваш агент.",
   "extensions.apps_mcp_header": "Приложения (MCP)",
   "extensions.filter_all": "Все",

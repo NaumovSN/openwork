@@ -1,5 +1,9 @@
 "use memo";
 
+import { appCreationRuns } from "@/react-app/domains/apps/app-creation-progress"
+import { BuiltAppPreviewSync } from "@/react-app/domains/apps/built-app-chat-preview"
+import { builtAppSummary } from "@/react-app/domains/apps/built-mcp-app-model"
+import { AppBuilderStep } from "./app-builder-step"
 import * as React from "react"
 import {
   AlertTriangle,
@@ -34,6 +38,10 @@ import { useOpenTargets } from "@/lib/target-provider"
 import { openTargetFromUrl } from "@/react-app/domains/session/artifacts/open-target"
 import { presentOpencodeSessionError, sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error"
 import { TaskRecovery } from "./task-recovery"
+import { messageAutoAccessWall } from "@/app/lib/inference-access"
+import { AutoAccessNotice } from "@/react-app/domains/cloud/auto-access-ui"
+import { rejectedRecoveryFromMessage } from "@/react-app/domains/session/sync/rejected-turn"
+import { replyModelLabel } from "@/react-app/domains/session/sync/reply-model"
 import { openModelPickerEvent } from "@/react-app/shell/new-providers-listener"
 import { ApplyPatchTool } from "@/components/tools/apply-patch"
 import { BashTool } from "@/components/tools/bash"
@@ -90,11 +98,12 @@ import {
 } from "@/components/ui/message"
 import { Tool } from "@/components/ui/tool"
 import { CapabilityCallLine } from "@/components/chat/capability-call-line"
-import { CodeModeTool } from "@/components/chat/code-mode-tool"
+import { CodeModeTool, isSilentCodeModePart } from "@/components/chat/code-mode-tool"
 import { ConnectionCard } from "@/components/chat/connection-card"
 import { connectionFromChatToolPart, settledConnectionDecisionFromChatToolPart } from "@/components/tools/error-attribution"
 import { isReservedConnectionQuestion, type ChatConnectionDecisionBinding } from "@/react-app/domains/session/surface/mcp-chat-reconnect"
 import { codeModeToolCalls } from "@/lib/code-mode-tools"
+import { dedupeRenderedTurnErrors } from "@/react-app/domains/session/sync/transcript-reconcile"
 import { builtMcpAppId, hasPreservedMcpAppResult, isNativeConnectionAppLaunch, McpAppFrame } from "@/components/chat/mcp-app-frame"
 import { ReasoningBlock } from "@/components/chat/reasoning-block"
 import { SubagentRunLine } from "@/components/chat/subagent-run-line"
@@ -141,6 +150,7 @@ const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
 /** Above this many step rows a finished turn folds into one summary line. */
 const COLLAPSED_STEP_RUN_MIN_ROWS = 4
 
+const AppCreationPartsContext = React.createContext<ReadonlySet<string>>(new Set())
 const ParentRunActiveContext = React.createContext(true)
 
 function MessageTimestamp({ message, className }: { message: UIMessage; className?: string }) {
@@ -234,6 +244,8 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const resolveLifecycle = useCurrentToolLifecycleResolver()
   const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
   const connectionCardParts = React.useContext(ConnectionCardPartsContext)
+  const appCreationParts = React.useContext(AppCreationPartsContext)
+  if (appCreationParts.has(part.toolCallId)) return null
   if (part.toolCallId === connectionQuestionToolCallId || isReservedConnectionQuestionPart(part)) return null
 
   // The card owns the decision, not the whole Code Mode execution. Keep the
@@ -363,6 +375,20 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
 
 const isEmptyMessage = (message: UIMessage): boolean => message.parts.length === 0
 
+function withoutSilentSteps(messages: UIMessage[]): UIMessage[] {
+  let changed = false
+  const next = messages.flatMap((message) => {
+    if (message.role !== "assistant") return [message]
+    const parts = message.parts.filter((part) => !(part.type === "dynamic-tool"
+      && !settledConnectionDecisionFromChatToolPart(part)
+      && isSilentCodeModePart(part)))
+    if (parts.length === message.parts.length) return [message]
+    changed = true
+    return parts.length > 0 ? [{ ...message, parts }] : []
+  })
+  return changed ? next : messages
+}
+
 type RetryStatus = Extract<SessionStatus, { type: "retry" }>
 
 function isSessionErrorMessage(message: UIMessage) {
@@ -382,9 +408,9 @@ function FileMessage({ part, tone }: FileMessageProps) {
   const openArtifactPath = useOpenArtifactPath()
   const title = getFileTitle(part)
   const badge = getMediaBadge(part)
-  const isImage = part.mediaType.startsWith("image/") && Boolean(part.url)
-  const downloadUrl = getSafeFileDownloadUrl(part)
   const revealPath = getSafeFileRevealPath(part)
+  const isImage = part.mediaType.startsWith("image/") && Boolean(part.url) && !revealPath
+  const downloadUrl = getSafeFileDownloadUrl(part)
   const canReveal = isElectronRuntime() && Boolean(revealPath)
 
   const handleDownload = React.useCallback(() => {
@@ -867,6 +893,8 @@ const UserMessage = React.memo(
     const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, onEditUserMessage, highlightQuery, readOnly } = useMessageList()
     const references = useSessionReferencesMaybe()
     const branching = forkingMessageId === message.id
+    const wall = messageAutoAccessWall(message.metadata)
+    const { sessionId, workspaceId } = useMessageList()
     const { onOpenTarget } = useOpenTargets()
     const openLink = (event: React.MouseEvent) => {
       if (event.defaultPrevented || !onOpenTarget || !(event.target instanceof Element)) return
@@ -884,10 +912,10 @@ const UserMessage = React.memo(
     const hasContent = inlineParts.length > 0
     const menuActions: MenuAction[] = []
     if (messageText) menuActions.push(
-      { type: "item", id: "edit", label: "Edit message", icon: <Pencil className="size-4" />, disabled: readOnly, onSelect: () => onEditUserMessage(message.id, messageText) },
+      { type: "item", id: "edit", label: "Edit message", icon: <Pencil className="size-4" />, disabled: readOnly || Boolean(wall), onSelect: () => onEditUserMessage(message.id, messageText) },
       { type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />, onSelect: () => navigator.clipboard.writeText(messageText) },
     )
-    menuActions.push(
+    if (!wall) menuActions.push(
       { type: "item", id: "branch", label: branching ? "Branching..." : "Branch in new chat", icon: <Split className="size-4 rotate-90" />, disabled: Boolean(forkingMessageId), onSelect: () => onForkAtMessage(message.id) },
       { type: "item", id: "revert", label: "Revert", icon: <Undo2 className="size-4" />, disabled: readOnly, onSelect: () => onRevertToUserMessage(message.id) },
     )
@@ -906,7 +934,8 @@ const UserMessage = React.memo(
             className="!select-text"
             render={
               <div
-                className="group flex w-full flex-col items-end gap-1 !select-text"
+                className={cn("group flex w-full flex-col items-end gap-1 !select-text", wall && "opacity-50")}
+                data-unprocessed={wall ? "true" : undefined}
                 style={{ userSelect: "text" }}
               >
                 {hasContent ? (
@@ -949,7 +978,7 @@ const UserMessage = React.memo(
                     })}
                   </MessageContent>
                 ) : null}
-                {!isStreaming && (
+                {!isStreaming && !wall && (
                   <MessageActions
                     className={cn(
                       "flex items-center gap-0 transition-opacity duration-150 group-hover:opacity-100 max-lg:opacity-100 pointer-coarse:opacity-100",
@@ -1000,6 +1029,7 @@ const UserMessage = React.memo(
               </div>
             }
           />
+          {wall ? <div className="w-full"><AutoAccessNotice wall={wall} sessionId={sessionId} workspaceId={workspaceId} recovery={rejectedRecoveryFromMessage(message)} /></div> : null}
       </Message>
     )
   }
@@ -1019,6 +1049,7 @@ const MessageComponent = React.memo(
   ({ message, isLastMessage, isStreaming, isLastStep, hideReasoning }: MessageComponentProps) => {
     if (isSessionErrorMessage(message)) {
       const presentation = sessionErrorPresentationFromUIMessage(message)
+      if (presentation?.autoAccessWall) return <TranscriptAutoAccessNotice wall={presentation.autoAccessWall} />
       return (
         <ErrorMessage
           error={getMessagesText([message]) || "Session failed"}
@@ -1029,7 +1060,7 @@ const MessageComponent = React.memo(
           technicalDetails={presentation?.technicalDetails}
           gatewayConnectUrl={presentation?.kind === "gateway-auth-required" || presentation?.kind === "provider-credentials" ? presentation.connectUrl ?? null : undefined}
           gatewaySelectionRequired={presentation?.kind === "gateway-selection-required"}
-          changeModel={presentation !== null && ["provider-access-denied", "provider-unavailable", "rate-limited", "conversation-too-long", "attachment-unsupported"].includes(presentation.kind)}
+          changeModel={presentation !== null && ["provider-access-denied", "provider-unavailable", "provider-unreachable", "model-unavailable", "rate-limited", "conversation-too-long", "attachment-unsupported"].includes(presentation.kind)}
         />
       )
     }
@@ -1058,6 +1089,11 @@ const MessageComponent = React.memo(
     )
   }
 )
+
+function TranscriptAutoAccessNotice({ wall }: { wall: NonNullable<ReturnType<typeof messageAutoAccessWall>> }) {
+  const { sessionId, workspaceId } = useMessageList()
+  return <div className="mx-auto w-full max-w-3xl px-2 md:px-10"><AutoAccessNotice wall={wall} sessionId={sessionId} workspaceId={workspaceId} /></div>
+}
 
 MessageComponent.displayName = "MessageComponent"
 
@@ -1139,7 +1175,7 @@ interface ErrorMessageProps {
 }
 
 function ErrorMessage({ error, description, showDescriptionOnResume, resumePrompt, canRetry = true, technicalDetails, gatewayConnectUrl, gatewaySelectionRequired, changeModel }: ErrorMessageProps) {
-  const { onResumeInterrupted, developerMode, dispatchAction, sessionId } = useMessageList()
+  const { onResumeInterrupted, dispatchAction, sessionId } = useMessageList()
   const selection = error?.includes("gateway_selection_required") ? presentOpencodeSessionError(error) : null
   const displayError = selection?.title ?? error
   const displayDescription = selection?.description ?? description
@@ -1151,7 +1187,7 @@ function ErrorMessage({ error, description, showDescriptionOnResume, resumePromp
       description={showDescriptionOnResume && displayDescription
         ? <span data-testid="session-error-interruption-warning">{displayDescription}</span>
         : !resumePrompt ? displayDescription : null}
-      technicalDetails={developerMode ? displayDetails : null}
+      technicalDetails={displayDetails}
       onRetry={canRetry && resumable && resumePrompt ? () => onResumeInterrupted?.(resumePrompt) : undefined}
       retryTestId="session-error-resume"
       actions={gatewaySelectionRequired || selection || changeModel || gatewayConnectUrl !== undefined ? <>
@@ -1172,7 +1208,7 @@ interface RetryMessageProps {
 }
 
 const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
-  const { dispatchAction, developerMode } = useMessageList()
+  const { dispatchAction } = useMessageList()
   const [seconds, setSeconds] = React.useState(() => retryDelaySeconds(status))
 
   React.useEffect(() => {
@@ -1194,12 +1230,18 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
   const action = status.action
   const freeModelLimit = action?.reason === "free_tier_limit"
   const presentation = presentOpencodeSessionError({ name: "APIError", data: { message: status.message } })
+  // Transport failures are the engine reconnecting, not a failure yet: say so
+  // and show progress instead of echoing the raw fetch error.
+  const reconnecting = !freeModelLimit && !action
+    && ["network-unavailable", "provider-unreachable", "provider-connection-dropped"].includes(presentation.kind)
+  const progress = seconds > 0 ? `Attempt ${status.attempt}, next try in ${seconds}s` : `Attempt ${status.attempt}`
 
   return (
     <TaskRecovery state="retrying" testId="session-retrying"
-      title={`${(freeModelLimit ? "The free starter model is busy right now" : action?.title ?? presentation.title).replace(/[.!…]+$/, "")}. Retrying…`}
-      description={freeModelLimit ? "To keep working now, connect your own model provider." : action?.message}
-      technicalDetails={[info, ...(developerMode ? [presentation.technicalDetails] : [])].join("\n")}
+      title={reconnecting ? "Reconnecting to the model"
+        : `${(freeModelLimit ? "The free starter model is busy right now" : action?.title ?? presentation.title).replace(/[.!?…]+$/, "")}. Retrying…`}
+      description={freeModelLimit ? "To keep working now, connect your own model provider." : reconnecting ? progress : action?.message}
+      technicalDetails={[info, presentation.technicalDetails].join("\n")}
       actions={freeModelLimit ? <Button variant="ghost" size="xs"
         onClick={() => dispatchAction({ target: "settings", action: "open", section: "providers" })}>Connect a model provider</Button>
         : action?.link ? <Button variant="ghost" size="xs" onClick={openDesktopUrl.bind(null, action.link)}>{action.label}</Button> : null} />
@@ -1230,17 +1272,27 @@ function getRenderableMessage(message: UIMessage) {
  * chat jumped; holding the tallest height seen during the run keeps it still.
  * The hold ends when the turn folds (this element unmounts).
  */
-function LiveSteps({ children }: { children: React.ReactNode }) {
+function LiveSteps({ children, active }: { children: React.ReactNode; active: boolean }) {
   const ref = React.useRef<HTMLDivElement>(null)
   React.useLayoutEffect(() => {
     const element = ref.current
-    if (!element || typeof ResizeObserver === "undefined") return
+    if (!element) return
+    // The hold only protects a running turn from the engine's own shrinks.
+    // A finished turn, or a group the person collapsed, may get shorter.
+    if (!active || typeof ResizeObserver === "undefined") {
+      element.style.minHeight = ""
+      return
+    }
     let tallest = 0
     const hold = () => {
       element.style.minHeight = ""
       const height = element.getBoundingClientRect().height
       if (height > tallest) tallest = height
       element.style.minHeight = `${tallest}px`
+    }
+    const release = () => {
+      tallest = 0
+      element.style.minHeight = ""
     }
     hold()
     const observer = new ResizeObserver(hold)
@@ -1251,11 +1303,16 @@ function LiveSteps({ children }: { children: React.ReactNode }) {
       hold()
     })
     mutations.observe(element, { childList: true })
+    element.addEventListener("pointerdown", release)
+    element.addEventListener("keydown", release)
     return () => {
       observer.disconnect()
       mutations.disconnect()
+      element.removeEventListener("pointerdown", release)
+      element.removeEventListener("keydown", release)
+      element.style.minHeight = ""
     }
-  }, [])
+  }, [active])
   return <div ref={ref} data-live-steps="" className="flex flex-col gap-2">{children}</div>
 }
 
@@ -1265,7 +1322,7 @@ function LiveSteps({ children }: { children: React.ReactNode }) {
  * unprompted; once the answer is in, the reasoning is available but out
  * of the way.
  */
-function CompletedStepRun({ label, children }: { label: string; children: React.ReactNode }) {
+function CompletedStepRun({ label, modelLabel, children }: { label: string; modelLabel?: string | null; children: React.ReactNode }) {
   const [open, setOpen] = React.useState(false)
 
   return (
@@ -1273,9 +1330,9 @@ function CompletedStepRun({ label, children }: { label: string; children: React.
       <div className="mx-auto flex w-full max-w-3xl px-2 md:px-10">
         <CollapsibleTrigger
           className="group flex cursor-pointer items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
-          aria-label={open ? `${label}. Hide steps` : `${label}. Show steps`}
+          aria-label={`${label}${modelLabel ? ` · ${modelLabel}` : ""}. ${open ? "Hide steps" : "Show steps"}`}
+          data-testid="completed-work-rail"
         >
-          <span>{label}</span>
           <ChevronRight
             aria-hidden="true"
             className={cn(
@@ -1283,6 +1340,8 @@ function CompletedStepRun({ label, children }: { label: string; children: React.
               open && "rotate-90"
             )}
           />
+          <span>{label}</span>
+          {modelLabel ? <span data-testid="reply-model"> · {modelLabel}</span> : null}
         </CollapsibleTrigger>
       </div>
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-out data-starting-style:h-0 data-ending-style:h-0 [&[hidden]:not([hidden='until-found'])]:hidden">
@@ -1298,6 +1357,7 @@ interface AssistantMessageGroupProps {
   isStreaming: boolean
   /** Newline-joined tool call ids of each built App's newest card in the conversation. */
   newestAppCallIds: string
+  creationRequested: boolean
 }
 
 function isMcpAppFramePart(part: UIMessage["parts"][number]): part is DynamicToolUIPart {
@@ -1341,6 +1401,7 @@ function MessageGroup({
   isLastGroup,
   isStreaming,
   newestAppCallIds,
+  creationRequested,
 }: AssistantMessageGroupProps) {
   const { onRevertToUserMessage, onForkAtMessage, forkingMessageId, showThinking, readOnly, getConnectionDecision } = useMessageList()
   const connectionCardParts = React.useMemo(() => connectionCardPartIds(items, getConnectionDecision), [items, getConnectionDecision])
@@ -1350,6 +1411,9 @@ function MessageGroup({
   // client-side messages (e.g. session errors) don't exist on the server and
   // silently corrupt fork/revert boundaries.
   const lastRealItem = items.findLast((item) => !isSessionErrorMessage(item.message))
+  const parentActive = React.useContext(ParentRunActiveContext)
+  const creationRuns = React.useMemo(() => appCreationRuns(items.map(item => item.message), creationRequested), [items, creationRequested])
+  const creationParts = React.useMemo(() => new Set(creationRuns.flatMap(run => [...(run.executions ?? []).map(part => part.toolCallId), ...(run.discoveries ?? []).map(part => part.toolCallId), ...(run.attempts ?? []).map(part => part.toolCallId), ...(run.preparation ? [run.preparation.toolCallId] : []), ...run.builds.map(part => part.toolCallId)])), [creationRuns])
   const isLiveGroup = isStreaming && isLastGroup
 
   if (!lastItem || isMessageEmptyGroup(items)) {
@@ -1358,6 +1422,7 @@ function MessageGroup({
 
   const renderableItems = getRenderableMessages(items)
   const lastTextMessage = getLastTextPart(lastItem.message)
+  const resolvedReplyModel = lastRealItem?.message.role === "assistant" ? replyModelLabel(lastRealItem.message) : null
   const mcpAppParts = collectMcpAppParts(items)
 
   // Leading messages without prose (tool/reasoning steps) render inline and
@@ -1387,7 +1452,7 @@ function MessageGroup({
     >
       {builtMcpAppId(part) && !newestAppCalls.has(part.toolCallId)
         ? <p className="mt-2 text-xs text-muted-foreground">This App has a newer version below.</p>
-        : <McpAppFrame part={part} />}
+        : builtAppSummary(part) ? null : <McpAppFrame part={part} />}
     </Message>
   )
   // How long the turn spent working, from the first step to when the answer
@@ -1433,6 +1498,10 @@ function MessageGroup({
   // A short finished run reads fine as a list, so only long ones fold away.
   const collapseSteps =
     !isLiveGroup && !hasPendingConnection && stepItems.length > 0 && stepRowCount > COLLAPSED_STEP_RUN_MIN_ROWS
+  const replyStartedAt = stepsStartedAt ?? (lastRealItem ? getMessageCreated(lastRealItem.message) : null)
+  const replySummaryLabel = replyStartedAt !== null && stepsEndedAt !== null && stepsEndedAt > replyStartedAt
+    ? `Worked for ${formatToolCallDuration(stepsEndedAt - replyStartedAt)}${stepRowCount ? ` · ${stepRowCount} ${stepRowCount === 1 ? "step" : "steps"}` : ""}`
+    : stepRowCount ? stepRunLabel : ""
   const foldedReasoning = collapseSteps
     ? proseReasoning.map((reasoning) => (
       <Message
@@ -1448,7 +1517,9 @@ function MessageGroup({
     const isLastMessage = isLastGroup && item.index === lastItem.index
 
     return (
-      <div key={item.message.id}>
+      // A message whose parts all render nothing (empty reasoning, step
+      // markers, hidden steps) must not take a slot in the list's spacing.
+      <div key={item.message.id} className="[&:not(:has(:is(span,p,img,svg,button,pre,a,li,iframe,video,canvas,input,textarea,hr,table)))]:hidden">
         <MessageComponent
           message={item.message}
           isLastMessage={isLastMessage}
@@ -1496,25 +1567,30 @@ function MessageGroup({
 
   return (
     <DevProfiler id={`MessageGroup:${lastItem.message.id}`}>
+      <AppCreationPartsContext.Provider value={creationParts}>
       <ConnectionCardPartsContext.Provider value={connectionCardParts}>
       <div className="flex flex-col gap-2 group/message-group">
       {/* The scroll area keeps the same 8px rhythm the parts inside a single
           message use, so a step row is spaced identically whether or not a
           message boundary happens to fall between it and the previous row. */}
+      {!isLiveGroup && resolvedReplyModel && !collapseSteps ? <div data-testid="completed-work-rail" className="mx-auto flex w-full max-w-3xl flex-wrap items-center gap-1 px-2 text-sm text-muted-foreground md:px-10">
+        {replySummaryLabel ? <span>{replySummaryLabel} · </span> : null}<span data-testid="reply-model">{resolvedReplyModel}</span>
+      </div> : null}
       {stepItems.length > 0 ? (
         collapseSteps ? (
-          <CompletedStepRun label={stepRunLabel}>
+          <CompletedStepRun label={resolvedReplyModel ? replySummaryLabel : stepRunLabel} modelLabel={resolvedReplyModel}>
             <div className="flex flex-col gap-2">
               {renderItems(stepItems, 0)}
               {foldedReasoning}
             </div>
           </CompletedStepRun>
         ) : (
-          <LiveSteps>
+          <LiveSteps active={isLiveGroup}>
             {renderItems(stepItems, 0)}
           </LiveSteps>
         )
       ) : null}
+      {creationRuns.map(run => <Message key={`creation-${run.id}`} className="mx-auto flex w-full max-w-3xl flex-col px-2 md:px-10"><AppBuilderStep run={run} active={parentActive && isLastGroup && !readOnly && (run === creationRuns.at(-1) || Boolean(run.preparation && isToolPartInFlight(run.preparation)) || run.builds.some(isToolPartInFlight))} /></Message>)}
       {mcpAppParts.map(appFrame)}
       {renderItems(proseItems, stepItems.length, collapseSteps)}
       {lastTextMessage && !isStreaming && (
@@ -1550,12 +1626,13 @@ function MessageGroup({
               </>
             ) : null}
           </MessageActions>
-          <MessageTimestamp message={lastItem.message} />
+           <MessageTimestamp message={lastItem.message} />
           {/* <MessageSources messages={items.map((item) => item.message)} /> */}
         </div>
       )}
       </div>
       </ConnectionCardPartsContext.Provider>
+      </AppCreationPartsContext.Provider>
     </DevProfiler>
   )
 }
@@ -1563,6 +1640,7 @@ function MessageGroup({
 function sameMessageGroupProps(left: AssistantMessageGroupProps, right: AssistantMessageGroupProps): boolean {
   return left.isLastGroup === right.isLastGroup
     && left.isStreaming === right.isStreaming
+    && left.creationRequested === right.creationRequested
     && left.newestAppCallIds === right.newestAppCallIds
     && left.items.length === right.items.length
     && left.items.every((item, index) => (
@@ -1684,7 +1762,8 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     return () => window.clearInterval(interval)
   }, [activityActive, runStartedAt, syncDegraded])
   const latestUserMessageId = React.useMemo(() => messages.findLast((message) => message.role === "user")?.id, [messages])
-  const items = React.useMemo(() => groupMessages(messages, status), [messages, status]);
+  // Steps that render nothing are removed before layout, so they leave no gap.
+  const items = React.useMemo(() => groupMessages(dedupeRenderedTurnErrors(withoutSilentSteps(messages)), status), [messages, status]);
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
   const latestAssistantToolParts = React.useMemo(
@@ -1712,6 +1791,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
 
   return (
     <ParentRunActiveContext.Provider value={runActive}>
+    <BuiltAppPreviewSync key={sessionId} messages={messages} active={runActive}>
     <CurrentToolLifecycleProvider
       activityStatus={activityStatus}
       currentToolCallIds={currentToolCallIds}
@@ -1734,6 +1814,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
               isLastGroup={item.messages.at(-1)?.index === messages.length - 1}
               isStreaming={isStreaming && item.messages.at(-1)?.index === messages.length - 1}
               newestAppCallIds={newestAppCallIds}
+              creationRequested={messages.slice(0, item.messages[0]?.index ?? 0).findLast(message => message.role === "user")?.parts.some(part => part.type === "text" && /\b(?:build|create|make|edit|update)\b[\s\S]*\b(?:mcp\s+)?app\b/i.test(part.text)) ?? false}
             />
           )
         }
@@ -1779,6 +1860,7 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
         {error && !hasSessionErrorMessage && !sessionErrorHandled ? <ErrorMessage error={error} /> : null}
       </ProgressiveMessageList>
     </CurrentToolLifecycleProvider>
+    </BuiltAppPreviewSync>
     </ParentRunActiveContext.Provider>
   )
 }

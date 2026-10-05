@@ -306,7 +306,6 @@ export default {
   "den.sync_provider_failed": "Falha ao sincronizar {name}.",
   "den.synced_provider": "{name} sincronizado.",
   "den.syncing": "Sincronizando…",
-  "den.uninstall": "Desinstalar",
   "extensions.inventory_description": "Skills, conexões e ferramentas que seu agente pode usar.",
   "extensions.apps_mcp_header": "Apps (MCP)",
   "extensions.filter_all": "Todos",

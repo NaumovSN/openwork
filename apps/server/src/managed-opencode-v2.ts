@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 // deliberately has no reload/dispose call, unlike managed-opencode.ts and server.ts reloadOpencodeEngine.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-output.js";
 
@@ -37,6 +37,16 @@ export interface OpencodeV2ProviderSpec {
 export interface ManagedOpencodeV2ServerOptions {
   bin: string;
   rootDir: string;
+  /**
+   * Scopes this server's generated config and plugin loaders under
+   * `<rootDir>/instances/<instanceId>`. Several OpenWork apps (an installed
+   * build, a dev build, a test world) can share one engine state directory;
+   * with one shared config they overwrite each other's file, each write
+   * reloads the engine's model catalog, and a turn that starts mid-reload or
+   * after the other app's write fails with "Model unavailable". History
+   * (`opencode.db`) and the workspace stay shared.
+   */
+  instanceId?: string;
   hostname?: string;
   port?: number;
   env?: Record<string, string>;
@@ -188,11 +198,12 @@ export async function createManagedOpencodeV2Server(
   const hostname = options.hostname ?? "127.0.0.1";
   const port = options.port ?? 0;
   const bootTimeoutMs = options.bootTimeoutMs ?? 60_000;
-  const configDir = join(options.rootDir, "config");
-  const gatewayQuotaPluginDirectory = join(options.rootDir, "gateway-quota-plugin");
-  const providerFiltersPluginDirectory = join(options.rootDir, "provider-filters-plugin");
-  const mcpResultsPluginDirectory = join(options.rootDir, "mcp-results-plugin");
-  const contextPluginDirectory = join(options.rootDir, "context-plugin");
+  const instanceRoot = options.instanceId ? join(options.rootDir, "instances", options.instanceId) : options.rootDir;
+  const configDir = join(instanceRoot, "config");
+  const gatewayQuotaPluginDirectory = join(instanceRoot, "gateway-quota-plugin");
+  const providerFiltersPluginDirectory = join(instanceRoot, "provider-filters-plugin");
+  const mcpResultsPluginDirectory = join(instanceRoot, "mcp-results-plugin");
+  const contextPluginDirectory = join(instanceRoot, "context-plugin");
   const password = randomBytes(24).toString("base64url");
   const username = "opencode";
   let url = "";
@@ -337,8 +348,7 @@ export async function createManagedOpencodeV2Server(
 
   async function writeConfigNow(): Promise<void> {
     const target = join(configDir, "opencode.json");
-    const temporary = `${target}.tmp-${randomBytes(8).toString("hex")}`;
-    await writeFile(temporary, `${JSON.stringify(renderOpencodeV2Config({
+    const next = `${JSON.stringify(renderOpencodeV2Config({
       providers: [...providers.values()],
       disabledProviderIds,
       gatewayQuotaPluginDirectory,
@@ -349,7 +359,14 @@ export async function createManagedOpencodeV2Server(
       connectionGate: options.connectionGate,
       ...(options.permissions ? { permissions: await options.permissions() } : {}),
       skills,
-    }), null, 2)}\n`, { mode: 0o600 });
+    }), null, 2)}\n`;
+    // The engine watches this file and reloads its model catalog on every
+    // change; an identical rewrite would only open a window where models are
+    // briefly unavailable.
+    const current = await readFile(target, "utf8").catch(() => null);
+    if (current === next) return;
+    const temporary = `${target}.tmp-${randomBytes(8).toString("hex")}`;
+    await writeFile(temporary, next, { mode: 0o600 });
     await rename(temporary, target);
   }
 

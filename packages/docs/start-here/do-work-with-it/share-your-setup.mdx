@@ -1,59 +1,72 @@
 ---
 title: "Share skills and MCP servers with your team"
-description: "Give non-technical teammates the same skills, plugins, and MCP connections without copying files or editing MCP JSON, using OpenWork Cloud."
+description: "Give teammates the same skills, plugins, connectors, and models through OpenWork Cloud, without copying files or editing MCP config."
+keywords: ["share skill", "share plugin", "share with team", "who can use it", "collections", "share MCP server", "connectors", "team setup", "library"]
 ---
 
-Set it up once in OpenWork Cloud and your teammates get it automatically. An admin publishes skills inside a plugin and adds MCP servers as connectors, then chooses who can use each one: everyone in the organization, selected teams, or individual people. Members see them in the desktop app without copying folders or editing MCP config files.
+Set something up once in OpenWork Cloud, choose who can use it, and your teammates get it in the desktop app. Nobody copies folders or edits MCP config files.
+
+You can share three kinds of things:
+
+- **Skills and plugins**: instructions and bundles your team's AI follows.
+- **Connectors**: apps and MCP servers the AI can work in, like Slack or Notion.
+- **Models**: the AI models your team is allowed to use.
 
 <Note>
-**Local or managed.** Local workspace skills are free and need no OpenWork Cloud sign-in; you can copy their files yourself for a one-off handoff. Central assignment, access control, and updates use OpenWork Cloud (or a self-hosted deployment) and are part of the Team and Enterprise plans; see [Pricing and licensing](/start-here/pricing-and-licensing).
+**Local or managed.** Local workspace skills are free and need no OpenWork Cloud sign-in. You can copy their files to a teammate yourself. Sharing with access control and automatic updates uses OpenWork Cloud (or a self-hosted deployment) and is part of the Team and Enterprise plans. See [Pricing and licensing](/start-here/pricing-and-licensing).
 </Note>
 
 ## Share skills
 
-1. In the OpenWork Cloud dashboard, open `Plugins` and click `Create plugin` (or open an existing plugin).
-2. Add a skill: give it a clear name, describe when the agent should use it, and write the instructions. You can also bundle MCP servers, commands, and other components in the same plugin.
-3. In the plugin's `Share` section, open `Who can access this` and add teams, individual members, or `Everyone in the organization`.
-4. Ask a teammate to open `Settings > Library` in the desktop app and confirm the plugin and its skills are there. They can click `Refresh` if a change has not appeared yet.
+A skill is a set of plain-language instructions. Each skill lives in a plugin, and a plugin can hold one skill or several.
 
-For several plugins that go to the same audience, group them in a [Collection](/cloud/share-with-your-team/collections) (under `Settings > Advanced` in the dashboard) so one access change covers the whole set. For step-by-step publishing and copying, see [Publish and copy a skill](/start-here/do-work-with-it/publish-and-copy-a-skill).
+1. Create the skill or plugin in OpenWork Cloud. Any member can do this from **My Library**.
+2. Open it and choose **Who can use it**: everyone in the organization, selected teams, or selected people.
+3. Teammates find it in **Settings › Library** in the desktop app.
+
+Any member can share what they made with people and teams. Only admins can share with everyone in the organization.
+
+For the full steps, and for making your own copy of a shared skill, see [Publish and copy a skill](/start-here/do-work-with-it/publish-and-copy-a-skill). To give the same audience several plugins at once, an admin can group them in a [Collection](/cloud/share-with-your-team/collections).
 
 ## Share MCP servers
 
-1. In the OpenWork Cloud dashboard, open `Connectors` and click `Add connector`.
-2. Pick a preset or enter any remote MCP server URL.
-3. Choose how people sign in: `Each person signs in` (everyone uses their own account) or `One account for everyone` (an admin signs in once).
-4. Choose who can use it, then create the connector.
-5. Members open `Settings > OpenWork Connect` in the desktop app. If each person signs in, they connect their own account once.
+Admins add MCP servers as connectors. Members never see server URLs or tokens.
 
-Nobody edits MCP JSON: the connection reaches each member through OpenWork Connect, so members never handle server URLs or tokens. For account modes, Slack, and troubleshooting, see [Sharing MCP connections](/cloud/share-with-your-team/shared-mcp-connections) and [MCP server compatibility](/cloud/share-with-your-team/mcp-server-compatibility).
+1. In the OpenWork Cloud dashboard, open **Manage › Connectors** and click **Add connector**.
+2. Pick a preset, like GitHub or Notion. To use another server, paste its URL in the filter box or click **Add any MCP**.
+3. OpenWork checks the server. If it asks, sign in to the service or enter its API key and click **Save key**.
+4. Under **How people sign in**, choose **Each person signs in** (everyone uses their own account) or **One account for everyone** (you sign in once for the team).
+5. Under **Who can use it**, choose who gets it, then click **Add** followed by the connector name.
+6. Members open **Settings › Library** in the desktop app. If each person signs in, they click **Sign in** on the connector once.
+
+For sign-in options, Slack, and troubleshooting, see [Sharing MCP connections](/cloud/share-with-your-team/shared-mcp-connections) and [MCP server compatibility](/cloud/share-with-your-team/mcp-server-compatibility).
 
 ## Use the same setup in other AI tools
 
-The same assigned skills and connectors are available outside the desktop app through the OpenWork MCP Gateway: [add it to Claude Code, Codex, Cursor, VS Code, or another MCP client in one command](/start-here/connect-openwork-mcp).
+The same shared skills and connectors work outside the desktop app through the OpenWork MCP Gateway. [Add it to Claude Code, Codex, Cursor, VS Code, or another MCP client in one command](/start-here/connect-openwork-mcp).
 
 ## Share models too
 
-To give the team the same models, an admin adds a [managed](/cloud/share-with-your-team/managed-llm-provider) or [custom LLM provider](/cloud/share-with-your-team/custom-llm-provider) once. Use [desktop policies](/cloud/share-with-your-team/desktop-policies) to lock down what members can change.
+To give the team the same models, an admin adds a [managed](/cloud/share-with-your-team/managed-llm-provider) or [custom LLM provider](/cloud/share-with-your-team/custom-llm-provider) once. To control which settings members can change in the app, see [desktop policies](/cloud/share-with-your-team/desktop-policies).
 
 ## Share without OpenWork Cloud
 
-Skills are plain `SKILL.md` folders. A workspace keeps its skills in `.opencode/skills/`, so you can copy a skill folder into a teammate's workspace or commit it to a shared repository. You lose central access control and updates, and each person still has to connect MCP servers themselves.
+Skills are plain `SKILL.md` folders. A workspace keeps its skills in `.opencode/skills/`. You can copy a skill folder into a teammate's workspace or commit it to a shared repository. You lose access control and automatic updates, and each person still connects MCP servers on their own.
 
 ## FAQ
 
 <AccordionGroup>
   <Accordion title="Do my teammates need to be technical?">
-    No. Once an admin assigns a plugin or connector, it shows up in the desktop app. At most, a member signs in to a service once.
+    No. Once something is shared with them, it shows up in the desktop app. At most, a member signs in to a service once.
   </Accordion>
   <Accordion title="Who can publish skills for other people?">
-    Owners and admins by default. Members can create personal skills for themselves.
+    Any member can create a skill or plugin and share it with selected people or teams. Only admins (owners, super-admins, and admins) can share with everyone in the organization, change sharing on plugins other people made, or manage Collections.
   </Accordion>
   <Accordion title="If I update a shared skill, does everyone get the change?">
-    Yes. Everyone with access to the plugin gets the new version. To experiment without affecting others, copy the skill into a private plugin first.
+    Yes. Everyone who has the skill gets the new version in their next task. To try a change on your own first, make a copy. See [Copy without changing the shared skill](/start-here/do-work-with-it/publish-and-copy-a-skill#copy-without-changing-the-shared-skill).
   </Accordion>
   <Accordion title="Can I share a local (stdio) MCP server?">
-    Connectors are remote MCP servers reached by URL. For a server that only runs locally, add it per machine with [Add a custom MCP server](/start-here/connect-your-stack/add-an-mcp-server).
+    No. Connectors are remote MCP servers reached by URL. For a server that only runs on your computer, add it on each machine with [Add a custom MCP server](/start-here/connect-your-stack/add-an-mcp-server).
   </Accordion>
   <Accordion title="Can I run this on my own infrastructure?">
     Yes. The organization control plane that manages plugins, connectors, and access can be [self-hosted](/start-here/self-host).

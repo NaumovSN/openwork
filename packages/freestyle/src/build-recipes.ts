@@ -47,7 +47,7 @@ export function compiledRecipe(world: PreviewWorld): string {
 export PATH="/opt/openwork-preview/tools/node_modules/.bin:$PATH"
 node --input-type=module -e 'await import("./evals/packages/cdp/src/index.ts")'
 ` : ""}${world !== "app-web" ? `
-(node apps/desktop/scripts/prepare-sidecar.mjs --force --outdir apps/desktop/resources/sidecars && node apps/desktop/scripts/prepare-computer-use-helper.mjs --force --outdir apps/desktop/resources/helpers) &
+node apps/desktop/scripts/prepare-sidecar.mjs --force --outdir apps/desktop/resources/sidecars &
 DESKTOP_BUILD=$!
 ${world === "acme-web" ? "pnpm --filter @openwork-ee/den-api run build:workspace-dependencies" : "pnpm --filter @openwork/headless-threads build"}
 pnpm --filter openwork-server build
@@ -64,7 +64,7 @@ for (const root of ['packages', 'ee/packages', 'apps', 'ee/apps']) {
     if (existsSync(path)) paths.push(path);
   }
 }
-for (const path of ['apps/desktop/resources/sidecars', 'apps/desktop/resources/helpers']) {
+for (const path of ['apps/desktop/resources/sidecars']) {
   if (existsSync(path)) paths.push(path);
 }
 writeFileSync('/opt/openwork-preview/compiled-files', paths.join('\\0') + '\\0');

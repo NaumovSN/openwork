@@ -1,3 +1,4 @@
+export const summary = "Source desktop on your installed production state; needs explicit --allow-shared-state.";
 export const supportedTargets = ["local/macos"];
 
 import { localHost, resolveInstalledProductionDesktopState } from "../evals/packages/hosts/src/index.ts";

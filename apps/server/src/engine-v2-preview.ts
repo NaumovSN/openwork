@@ -1,9 +1,11 @@
 import { createV2ContextBridge } from "./opencode-v2-context-bridge.js";
 import { createV2ConnectionGateBridge } from "./opencode-v2-connection-gate.js";
+import { ApiError } from "./errors.js";
 import { migrateOpencodeV1History, opencodeV1DatabasePath, type EngineV2MigrationStatus } from "./opencode-v2-migration.js";
 import { executionRules } from "./managed-policy-rules.js";
 import { waitForEngineSkillChanges } from "./opencode-v2-skill-settle.js";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -29,6 +31,18 @@ import {
 import type { EnvService } from "./env-file.js";
 import { selectPrimaryCredentialEnvName } from "./managed-provider-auth.js";
 import type { ServerConfig } from "./types.js";
+
+/**
+ * A stable id for this OpenWork app's engine config. Each desktop app gives
+ * its server its own state path, so an installed build, a dev build and a
+ * test world sharing one engine state directory stop overwriting each other's
+ * engine config. A server without one keeps the shared layout.
+ */
+export function engineInstanceId(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const key = env.OPENWORK_SERVER_STATE_PATH?.trim() || env.OPENWORK_ELECTRON_APP_IDENTIFIER?.trim();
+  return key ? createHash("sha256").update(key).digest("hex").slice(0, 12) : undefined;
+}
+import { findManagedEngineWorkspace } from "./workspaces.js";
 import { localProviderDefinitions, readLocalProviderApiKeys } from "./opencode-v2-local-auth.js";
 
 const OPENCODE_V2_VERSION = constants.opencodeV2Version;
@@ -681,6 +695,7 @@ export function createEngineV2Preview(options: {
       connectionGate,
       bin: resolved.bin,
       rootDir,
+      instanceId: engineInstanceId(),
       env: { OPENCODE_MODELS_URL: opencodeModelsUrl },
       permissions: async () => {
         const runtime = await readGlobalRuntimeOpencodeConfig(config);
@@ -713,6 +728,9 @@ export function createEngineV2Preview(options: {
       const unsubscribeEnv = options.env?.onChange(scheduleMirror);
       unsubscribe = () => { unsubscribeConfig(); unsubscribeEnv?.(); };
       scheduleMirror();
+      // Readiness joins the provider push itself; it must not wait for the
+      // mirror's slower catalog confirmation.
+      warmActiveWorkspace();
       if (mirrorInFlight) await mirrorInFlight;
       if (!enabled || !allowRunning) {
         await closeSidecar();
@@ -754,8 +772,14 @@ export function createEngineV2Preview(options: {
     await closeSidecar();
   }
 
+  function requireNoMigration(): void {
+    if (migration.state === "running") {
+      throw new ApiError(409, "engine_migration_running", "Wait for chat migration to finish before switching engines.");
+    }
+  }
+
   async function setEnabled(nextEnabled: boolean): Promise<EngineV2PreviewStatus> {
-    if (migration.state === "running") throw new Error("Wait for history migration to finish before switching engines.");
+    requireNoMigration();
     if (nextEnabled && enabled && running) return status();
     await writeEngineV2PreviewState(config, { enabled: nextEnabled, chatRouting });
     enabled = nextEnabled;
@@ -773,9 +797,10 @@ export function createEngineV2Preview(options: {
   }
 
   async function setChatRouting(nextChatRouting: boolean): Promise<EngineV2PreviewStatus> {
-    if (migration.state === "running") throw new Error("Wait for history migration to finish before switching engines.");
+    requireNoMigration();
     await writeEngineV2PreviewState(config, { enabled, chatRouting: nextChatRouting });
     chatRouting = nextChatRouting;
+    warmActiveWorkspace();
     return status();
   }
 
@@ -819,9 +844,18 @@ export function createEngineV2Preview(options: {
     void syncWorkspaceMcp(workspaceId, directory).catch((error) => warn(`MCP: ${errorMessage(error)}`));
   }
 
+  // When v2 serves chats, open the active workspace as soon as the sidecar is
+  // up, so the window's first model read does not wait on the location's setup.
+  function warmActiveWorkspace(): void {
+    if (!chatRouting || !sidecar) return;
+    const workspace = findManagedEngineWorkspace(config.workspaces);
+    if (workspace?.path) warmWorkspace(workspace.id, workspace.path);
+  }
+
   function migrateHistory(): EngineV2PreviewStatus {
     if (migration.state === "running") return status();
-    migration = { state: "running", imported: 0, skipped: 0, total: 0 };
+    const startedAt = new Date().toISOString();
+    migration = { state: "running", phase: "starting", imported: 0, skipped: 0, total: 0, startedAt };
     migrationJob = (async () => {
       try {
         const source = opencodeV1DatabasePath();
@@ -832,7 +866,7 @@ export function createEngineV2Preview(options: {
         await start();
         if (!sidecar) throw new Error("OpenCode v2 could not start. Retry migration.");
         await migrateOpencodeV1History({ source, storageDir: join(runtimeStorageDir(config), "opencode-v2"),
-          bin: resolved.bin, target: sidecar, progress: (next) => { migration = next; } });
+          bin: resolved.bin, target: sidecar, progress: (next) => { migration = { ...next, startedAt }; } });
       } catch (error) {
         migration = { ...migration, state: "error", error: errorMessage(error) };
       }

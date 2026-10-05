@@ -111,6 +111,8 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
     let pendingSubmittedMessageId: string | null = null;
     let mobileTurnId: string | null = null;
     let mobileTurnPinned = false;
+    // User turns already on screen when the latest message was submitted; any other is that message.
+    let userTurnIdsAtSubmit = new Set<string>();
     let turnSpace = 0;
     const previousPaddingBottom = content.style.paddingBottom;
     let cancelledWhileLoading = false;
@@ -275,7 +277,19 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
         mobileTurnId = pendingSubmittedMessageId;
         mobileTurnPinned = true;
       }
-      const turn = mobileTurnId ? messageElementById(container, mobileTurnId) : null;
+      let turn = mobileTurnId ? messageElementById(container, mobileTurnId) : null;
+      if (mobile && mobileTurnId && !turn) {
+        // OpenCode v2 gives the sent message its own ID: the submitted ID never renders, or its optimistic row
+        // is replaced. Follow the newest user turn that was not already on screen when it was sent.
+        const users = [...container.querySelectorAll<HTMLElement>('[data-message-role="user"][data-message-id]')];
+        const latest = users.at(-1);
+        const latestId = latest ? messageIdForElement(latest) : null;
+        if (latest && latestId && !userTurnIdsAtSubmit.has(latestId)) {
+          turn = latest;
+          mobileTurnId = latestId;
+          if (pendingSubmittedMessageId) pendingSubmittedMessageId = latestId;
+        }
+      }
       // Reserve only the unfilled part of this turn. The same observer that
       // handles transcript growth also consumes this space and follows keyboard
       // resize; no second scrolling owner or timeout is needed.
@@ -582,6 +596,8 @@ export function useSessionScrollController(options: SessionScrollControllerOptio
             submittedMessagesRef.current.add(key);
             cancelTop();
             pendingSubmittedMessageId = messageId;
+            userTurnIdsAtSubmit = new Set([...container.querySelectorAll<HTMLElement>('[data-message-role="user"][data-message-id]')]
+              .flatMap((element) => { const id = messageIdForElement(element); return id && id !== messageId ? [id] : []; }));
             cancelFrames();
           }
         }

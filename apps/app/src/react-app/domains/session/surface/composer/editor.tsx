@@ -127,8 +127,6 @@ function mentionBadge(value: string, kind: ComposerMentionKind): ComposerBadge {
       return agentBadge(value);
     case "file":
       return fileMentionBadge(value);
-    case "app":
-      return composerPillBadge({ kind: "app", name: value });
     case "computer":
       return isComputerTarget(value) ? composerPillBadge({ kind: "computer", target: value }) : agentBadge(value);
   }

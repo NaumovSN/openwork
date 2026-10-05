@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   LibraryBig,
   LockKeyhole,
+  MessageCircle,
   ScrollText,
   Plug,
   SlidersHorizontal,
@@ -50,6 +51,8 @@ export type DashboardNavItem = {
   label: string;
   icon: LucideIcon;
   badge?: string;
+  /** Quiet dot beside the label when something here is waiting on the viewer. */
+  attention?: string;
   testId?: string;
   /** Extra pathname prefixes that select this entry. */
   matchHrefs?: string[];
@@ -77,6 +80,8 @@ export type BuildDashboardNavSectionsInput = {
   capabilities: DenOrgCapabilities;
   orgMode: DenOrgMode;
   runtimeConfigLoaded: boolean;
+  /** How many Library items wait on the viewer's sign-in. */
+  libraryNeedsSignIn?: number;
 };
 
 export function buildDashboardNavSections({
@@ -84,14 +89,21 @@ export function buildDashboardNavSections({
   access,
   capabilities,
   runtimeConfigLoaded,
+  libraryNeedsSignIn = 0,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
   const workItems: DashboardNavItem[] = [
+    ...(capabilities.workbot
+      ? [{ href: "/workbot", label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot" }]
+      : []),
     {
       href: orgSlug ? getLibraryRoute(orgSlug) : "#",
       label: "My Library",
       icon: LibraryBig,
+      ...(libraryNeedsSignIn > 0
+        ? { attention: `${libraryNeedsSignIn} ${libraryNeedsSignIn === 1 ? "needs" : "need"} your sign-in` }
+        : {}),
     },
     ...(workflowsEnabled && orgSlug
       ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }]

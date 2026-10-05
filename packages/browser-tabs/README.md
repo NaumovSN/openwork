@@ -22,7 +22,5 @@ Consumers: `apps/desktop/electron/browser-panel.mjs` (main process) and the
 session side panel in `apps/app`. The shared IPC shapes (`BrowserPanelTab`,
 `BrowserStatePayload`, `OpenBrowserUrlResult`) live in `index.d.ts`.
 
-Run `bun test` here for the policy tests; `apps/desktop/electron/browser-panel.test.mjs`
-covers the Electron wiring with a stubbed `WebContentsView`, and
 `evals/specs/browser-tabs-owned-by-thread.e2e.test.ts` proves the user journey
 on the real app.

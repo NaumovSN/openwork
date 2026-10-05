@@ -33,7 +33,10 @@ export default defineConfig({
           name: "pr",
           // Live specs are attached-system incident signals: exclude them unless explicitly named.
           include: ["specs/**/*.test.ts", "../scenarios/**/*.test.ts"],
-          exclude: ["**/*.e2e.test.ts", "**/e2e.test.ts", ...(namedLiveSpec ? [] : ["**/*.live.test.ts", "**/live.test.ts"])],
+          // Custom excludes replace Vitest's defaults, so keep dependencies out explicitly.
+          // "**" does not match "../", so ../scenarios needs its own patterns.
+          exclude: ["**/node_modules/**", "**/*.e2e.test.ts", "**/e2e.test.ts", "../**/node_modules/**", "../**/*.e2e.test.ts", "../**/e2e.test.ts",
+            ...(namedLiveSpec ? [] : ["**/*.live.test.ts", "**/live.test.ts", "../**/*.live.test.ts", "../**/live.test.ts"])],
         },
       },
       {

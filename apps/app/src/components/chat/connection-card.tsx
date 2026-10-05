@@ -84,10 +84,13 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   if (!connection) return null
 
   const name = connection.connectionName
-  const iconUrl = (connectorIdentities ?? messageList?.connectorIdentities ?? []).find(entry => entry.connectionId === connection.connectionId)?.iconUrl
+  const identity = (connectorIdentities ?? messageList?.connectorIdentities ?? []).find(entry => entry.connectionId === connection.connectionId)
+  const iconUrl = identity?.iconUrl
   const readOnly = messageList?.readOnly ?? false
   const skipped = persistedDecision ? persistedDecision.outcome === "skipped" : reconnectState === "skipped"
-  const connected = persistedDecision ? persistedDecision.outcome === "connected" : connection.state === "connected" || reconnectState === "connected"
+  // Host-owned decisions preserve this turn's outcome. Legacy cards can use
+  // the live connection list to stay connected after reopening the session.
+  const connected = persistedDecision ? persistedDecision.outcome === "connected" : connection.state === "connected" || reconnectState === "connected" || identity?.connectedForMe === true
   const settled = connected || skipped
   const opening = !settled && reconnectState === "opening"
   const waiting = !settled && reconnectState === "authorization_opened"

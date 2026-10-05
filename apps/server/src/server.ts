@@ -18,6 +18,7 @@ import {
   isEngineConnectionFailure,
   setEnginePoolForConfig,
   type EnginePoolConnection,
+  type EnginePoolStandby,
   type EngineEventProxyLease,
   type EngineSpawnTemplate,
   rolloverOutcomeApplied,
@@ -35,6 +36,7 @@ import {
 import { shouldDeferInPlaceEngineReload } from "./engine-reload-defer.js";
 import { LatestTrailingWorkQueue } from "./latest-trailing-work-queue.js";
 import { buildEngineAuthProbeHeader } from "./engine-registry.js";
+import { warmEngineFolder, type EngineFolderWarmupResult } from "./engine-folder-warmup.js";
 import { addPlugin, listPlugins, normalizePluginSpec, removePlugin } from "./plugins.js";
 import { sanitizePortableOpencodeConfig } from "./portable-opencode.js";
 import { addMcp, listMcp, removeMcp, setMcpEnabled } from "./mcp.js";
@@ -84,8 +86,8 @@ import {
   readWorkspaceCloudImports,
   syncDesktopCloudResources,
 } from "./desktop-cloud-sync.js";
-import { installCloudPlugin, readCloudPluginResolved, readInstalledCloudPlugins, removeCloudPlugin } from "./cloud-plugins.js";
-import { resolveClaudePluginBundle } from "./claude-plugin-bundle.js";
+import { readInstalledCloudPlugins, removeCloudPlugin } from "./cloud-plugins.js";
+import { AnonymousInferenceService } from "./anonymous-inference.js";
 import { resolveWorkspaceOpencodeConnection } from "./opencode-connection.js";
 import { listPortableFiles } from "./portable-files.js";
 import {
@@ -102,6 +104,7 @@ import { registerFileRoutes } from "./routes/files.js";
 import { registerOperationRoutes } from "./routes/operations.js";
 import { addRoute, matchRoute, type AuthMode, type RequestContext, type Route } from "./routes/registry.js";
 import { registerSessionGroupRoutes } from "./routes/session-groups.js";
+import { registerWorkspaceDefaultModelRoutes } from "./routes/workspace-default-model.js";
 import { registerUiControlRoutes } from "./routes/ui-control.js";
 import { registerWorkspaceRoutes } from "./routes/workspaces.js";
 import { registerCloudMcpRoutes } from "./routes/cloud-mcp.js";
@@ -838,7 +841,12 @@ export async function startServer(
     },
     logger: toManagedProviderAuthLogger(logger),
   });
+  const anonymousInference = new AnonymousInferenceService(config, logger);
+  anonymousInference.onEngineConfigChanged = () => { if (config.workspaces.length > 0 || enginePoolForConfig(config)) cloudProviderSync.markReloadPending(); };
   managedDesktopPolicy(config).onChange = () => {
+    void anonymousInference.initialize(config.port).then((changed) => {
+      if (changed && config.workspaces.length > 0) cloudProviderSync.markReloadPending();
+    }).catch(() => undefined);
     // Sign-in can precede the first workspace. A managed engine is already
     // running then and must pick up the policy; an attached server with no
     // workspace has no engine to reload.
@@ -855,6 +863,7 @@ export async function startServer(
     cloudProviderSync,
     engineV2Preview,
     () => managedEngineReady,
+    anonymousInference,
   );
 
   const serverOptions: {
@@ -926,6 +935,7 @@ export async function startServer(
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           await validateEngineRequestBody(request);
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
+          await anonymousInference.assertTaskAccess(request, mount.restPath);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           const ownership = assertWorkspaceOwnsProxiedSessionRead(config, workspace, request.method, mount.restPath, false,
             request.method === "GET" || request.method === "HEAD" ? request.signal : undefined);
@@ -966,6 +976,7 @@ export async function startServer(
           assertOpencodeProxyAllowed(actor, request.method, mount.restPath);
           await validateEngineRequestBody(request);
           await managedDesktopPolicy(config).assertRequest(request, mount.restPath, true);
+          await anonymousInference.assertTaskAccess(request, mount.restPath);
           const workspace = await resolveWorkspaceWithoutBootstrap(config, mount.workspaceId);
           const connection = engineV2Preview.connection();
           if (!connection) {
@@ -1065,6 +1076,7 @@ export async function startServer(
           assertOpencodeProxyAllowed(actor, request.method, url.pathname);
           await validateEngineRequestBody(request);
           await managedDesktopPolicy(config).assertRequest(request, url.pathname, true);
+          await anonymousInference.assertTaskAccess(request, url.pathname);
           proxyService = "opencode";
           const workspace = config.workspaces[0];
           const ownership = workspace
@@ -1159,7 +1171,8 @@ export async function startServer(
   try {
     if (config.resumeInterruptedTasks && !config.readOnly) {
       taskRecovery = await createTaskRecovery(config, async (request) => serverOptions.fetch(request),
-        () => managedDesktopPolicy(config).assert("sync"));
+        () => managedDesktopPolicy(config).assert("sync"),
+        { engineAvailable: (engine) => engine === "v1" || engineV2Preview.connection() !== undefined });
       setTaskRecovery(config, taskRecovery);
     }
     server = await serve({
@@ -1169,6 +1182,7 @@ export async function startServer(
   } catch (error) {
     await taskRecovery?.stop().catch(() => undefined);
     captureServerException(error, { method: "START", route: "startServer" });
+    anonymousInference.stop();
     cloudProviderSync.stop();
     await engineV2Preview.stop().catch(() => undefined);
     engineInstanceReaper.close();
@@ -1188,6 +1202,12 @@ export async function startServer(
         error: error instanceof Error ? error.message : "unknown",
       });
     }
+  }
+  try {
+    if (await anonymousInference.initialize(server.port)) await writeOpenworkRuntimeConfigFile(config);
+  } catch {
+    anonymousInference.stop();
+    logger.log("warn", "Desktop free access could not be initialized.");
   }
   // Policy hooks must receive the listener that actually bound, including
   // ephemeral ports and retries after a port collision.
@@ -1232,12 +1252,16 @@ export async function startServer(
         throw new Error("Managed engine primary changed during startup");
       }
       managedEngineReady = true;
+      // Set the active folder up now, while the desktop window is still
+      // loading, instead of on the window's first reads.
+      void warmActiveEngineFolder(config, logger, "startup");
     },
     stop: async () => {
       stopped = true;
       let recoveryError: unknown;
       try { await taskRecovery?.stop(); } catch (error) { recoveryError = error; }
       managedDesktopPolicy(config).onChange = undefined;
+      anonymousInference.stop();
       cloudProviderSync.stop();
       await engineV2Preview.stop().catch(() => undefined);
       engineInstanceReaper.close();
@@ -1257,6 +1281,37 @@ function buildOpencodeProxyUrl(baseUrl: string, path: string, search: string) {
   target.pathname = trimmedPath.startsWith("/") ? trimmedPath : `/${trimmedPath}`;
   target.search = search;
   return target.toString();
+}
+
+/** The folder a v2 conversation currently runs in, when it belongs to this
+ * workspace. A conversation can move into a worktree, so the files it writes
+ * live under that folder instead of the workspace root. Same ownership check
+ * as the native proxy: the persistent home must be this workspace. */
+async function resolveV2SessionExecutionDirectory(
+  config: ServerConfig,
+  engineV2Preview: EngineV2Preview,
+  workspace: WorkspaceInfo,
+  sessionId: string,
+): Promise<string | null> {
+  if (!sessionId.startsWith("ses_")) return null;
+  const connection = engineV2Preview.connection();
+  if (!connection) return null;
+  const authorization = `Basic ${Buffer.from(`opencode:${connection.password}`).toString("base64")}`;
+  const readNative = async (path: string): Promise<unknown> => {
+    const url = new URL(path, connection.url);
+    url.searchParams.set("location[directory]", workspace.path);
+    const result = await loopbackFetch(url.toString(), { headers: { authorization }, signal: AbortSignal.timeout(10_000) });
+    if (!result.ok) throw new ApiError(result.status, "session_unavailable", "Conversation could not be read");
+    return result.json();
+  };
+  try {
+    const homes = createV2SessionHomes(config, readNative);
+    const session = await readNative(`/api/session/${encodeURIComponent(sessionId)}`);
+    if (await homes.resolve(session) !== await homes.canonical(workspace.path)) return null;
+    return nativeSessionDirectory(session);
+  } catch {
+    return null;
+  }
 }
 
 export async function proxyOpencodeV2Request(input: {
@@ -1315,10 +1370,22 @@ export async function proxyOpencodeV2Request(input: {
   headers.delete("origin");
   headers.set("authorization", `Basic ${Buffer.from(`opencode:${input.connection.password}`).toString("base64")}`);
 
+  // Like the v1 proxy: an engine that is down or restarting is an expected
+  // 502, not an unhandled server exception.
+  const engineFetch = async (...args: Parameters<typeof loopbackFetch>): Promise<Response> => {
+    try {
+      return await loopbackFetch(...args);
+    } catch (error) {
+      if (isExpectedRequestCancellation(error, signal)) throw error;
+      if (isEngineConnectionFailure(error)) throw opencodeUnreachableError(error, input.proxyPath);
+      throw error;
+    }
+  };
+
   const readNative = async (path: string): Promise<unknown> => {
     const url = new URL(path, input.connection.url);
     url.searchParams.set("location[directory]", input.workspace.path);
-    const result = await loopbackFetch(url.toString(), {
+    const result = await engineFetch(url.toString(), {
       headers: { authorization: headers.get("authorization") ?? "" },
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000),
     });
@@ -1353,7 +1420,7 @@ export async function proxyOpencodeV2Request(input: {
     const mcpUrl = new URL(target);
     mcpUrl.pathname = "/api/mcp";
     const internalHeaders = new Headers({ authorization: headers.get("authorization") ?? "", "content-type": "application/json" });
-    const mcpResponse = await loopbackFetch(mcpUrl.toString(), { headers: internalHeaders, signal: AbortSignal.timeout(10_000) });
+    const mcpResponse = await engineFetch(mcpUrl.toString(), { headers: internalHeaders, signal: AbortSignal.timeout(10_000) });
     const mcpPayload: unknown = mcpResponse.ok ? await mcpResponse.json() : null;
     const connectReady = isRecord(mcpPayload) && Array.isArray(mcpPayload.data) && mcpPayload.data.some((entry) =>
       isRecord(entry) && entry.name === "openwork-cloud" && isRecord(entry.status) && entry.status.status === "connected");
@@ -1362,7 +1429,7 @@ export async function proxyOpencodeV2Request(input: {
     const value = buildOpenWorkV2Instructions(connectReady);
     const instructionUrl = new URL(target);
     instructionUrl.pathname = `/api/session/${encodeURIComponent(sessionId)}/instructions/entries/${OPENWORK_V2_INSTRUCTION_KEY}`;
-    const synced = await loopbackFetch(instructionUrl.toString(), {
+    const synced = await engineFetch(instructionUrl.toString(), {
       method: "PUT", headers: internalHeaders, body: JSON.stringify({ value }), signal: AbortSignal.timeout(15_000),
     });
     if (!synced.ok) throw new ApiError(502, "engine_instruction_sync_failed", "OpenWork instructions could not be updated");
@@ -1387,7 +1454,7 @@ export async function proxyOpencodeV2Request(input: {
     headers.delete("content-length");
     headers.set("content-type", "application/json");
   }
-  const response = await loopbackFetch(target.toString(), { method, headers, body, signal });
+  const response = await engineFetch(target.toString(), { method, headers, body, signal });
   if (method === "GET" && /^\/api\/skill(?:\/|$)/.test(decodeURIComponent(forwardedPath))
     && input.actor.scope !== "owner" && response.ok) {
     // A shared client token is not authorization to bulk-read the owner's Cloud
@@ -1521,7 +1588,15 @@ export async function proxyOpencodeV2Request(input: {
       }
       for (const value of page.data) {
         const session = nativeSession(value);
-        if (typeof session?.id !== "string" || await homes.resolve(value) !== expectedHome) continue;
+        if (typeof session?.id !== "string") continue;
+        let home: string | null;
+        try { home = await homes.resolve(value); }
+        catch (error) {
+          // One unreadable conversation must not hide every other pending request.
+          if (signal?.aborted) throw error;
+          continue;
+        }
+        if (home !== expectedHome) continue;
         owned.add(session.id);
         const directory = nativeSessionDirectory(value);
         if (directory && await homes.canonical(directory) !== expectedHome) moved.add(session.id);
@@ -1547,7 +1622,11 @@ export async function proxyOpencodeV2Request(input: {
       let result: unknown;
       try { result = await readNative(`/api/session/${encodeURIComponent(id)}/${pendingKind}`); }
       catch (error) {
-        if (error instanceof ApiError && error.status === 404) continue; // Deleted while listing.
+        // Deleted while listing, or moved into a folder that no longer exists
+        // (the engine answers 500 for it). Either way it has nothing to answer,
+        // and failing here returned 500 for the whole workspace on every poll.
+        if (signal?.aborted) throw error;
+        if (error instanceof ApiError) continue;
         throw error;
       }
       if (!isRecord(result) || !Array.isArray(result.data)) {
@@ -2531,8 +2610,23 @@ function createRoutes(
   cloudProviderSync: CloudProviderSync,
   engineV2Preview: EngineV2Preview,
   isReady: () => boolean,
+  anonymousInference: AnonymousInferenceService,
 ): Route[] {
   const routes: Route[] = [];
+  addRoute(routes, "GET", "/anonymous-inference/status", "client", async () =>
+    jsonResponse(await anonymousInference.status()));
+  for (const action of ["preflight", "refresh"]) {
+    addRoute(routes, "POST", `/anonymous-inference/${action}`, "client", async (ctx) => {
+      requireClientScope(ctx, "collaborator");
+      return jsonResponse(await anonymousInference.preflight());
+    });
+  }
+  addRoute(routes, "GET", "/anonymous-inference/v1/models", "none", (ctx) =>
+    anonymousInference.handle(ctx.request, "models"));
+  addRoute(routes, "POST", "/anonymous-inference/v1/chat/completions", "none", (ctx) =>
+    anonymousInference.handle(ctx.request, "chat/completions"));
+  addRoute(routes, "POST", "/anonymous-inference/v1/responses", "none", (ctx) =>
+    anonymousInference.handle(ctx.request, "responses"));
   // A rollover-capable pool can apply this immediately without disposing
   // the generation that owns live sessions. Legacy/external engines keep
   // the established busy deferral.
@@ -2557,6 +2651,23 @@ function createRoutes(
     cloudProviderSync.markReloadPending();
     return "deferred";
   };
+  const privateProviderResponse = (value: unknown) => {
+    const response = jsonResponse(value);
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  };
+  addRoute(routes, "GET", "/anonymous-inference/preferences", "host-token", async () =>
+    privateProviderResponse(await anonymousInference.preferences()));
+  addRoute(routes, "PUT", "/anonymous-inference/preferences", "host-token", async (ctx) => {
+    ensureWritable(config);
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.enabled !== "boolean" || Object.keys(body).some((key) => key !== "enabled")) {
+      throw new ApiError(400, "invalid_payload", "Only enabled is accepted.");
+    }
+    const preferences = await anonymousInference.setEnabled(body.enabled);
+    const refresh = await applyManagedProviderReload(resolveEngineRuntimeWorkspace(config));
+    return jsonResponse({ ...preferences, refresh });
+  });
   const nativeEngineForWorkspace = createNativeCloudMcpResolver(engineV2Preview);
   registerCoreRoutes({
     nativeEngineForWorkspace,
@@ -2614,6 +2725,16 @@ function createRoutes(
     ensureWritable,
     requireClientScope,
     resolveWorkspace,
+    resolveWorkspaceWithoutBootstrap,
+  });
+
+  registerWorkspaceDefaultModelRoutes({
+    routes,
+    config,
+    jsonResponse,
+    readJsonBody,
+    ensureWritable,
+    requireClientScope,
     resolveWorkspaceWithoutBootstrap,
   });
 
@@ -2766,143 +2887,6 @@ function createRoutes(
     const workspace = await resolveWorkspace(config, ctx.params.id);
     const cloudImports = await readInstalledCloudPlugins(config, workspace.id);
     return jsonResponse({ marketplaces: cloudImports.marketplaces, plugins: cloudImports.plugins });
-  });
-
-  addRoute(routes, "POST", "/workspace/:id/cloud-plugins", "client", async (ctx) => {
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const body = await readJsonBody(ctx.request);
-    const resolved = readCloudPluginResolved(body.resolved);
-    const marketplace = body.marketplace && typeof body.marketplace === "object" && !Array.isArray(body.marketplace)
-      ? Object.fromEntries(Object.entries(body.marketplace))
-      : null;
-    const marketplaceId = typeof body.marketplaceId === "string" && body.marketplaceId.trim()
-      ? body.marketplaceId.trim()
-      : null;
-
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "cloud_plugins.install",
-      summary: `Install cloud plugin ${resolved.plugin.name}`,
-      paths: [openworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
-    });
-
-    const result = await installCloudPlugin({
-      serverConfig: config,
-      workspaceId: workspace.id,
-      workspaceRoot: workspace.path,
-      marketplaceId,
-      marketplace: marketplaceId
-        ? {
-            id: marketplaceId,
-            name: typeof marketplace?.name === "string" ? marketplace.name : marketplaceId,
-            updatedAt: typeof marketplace?.updatedAt === "string" ? marketplace.updatedAt : null,
-          }
-        : null,
-      resolved,
-    });
-    const imported = result.item;
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "cloud_plugins.install",
-      target: openworkConfigPath(workspace.path),
-      summary: `Installed cloud plugin ${resolved.plugin.name}`,
-      timestamp: Date.now(),
-    });
-
-    for (const file of imported.files) {
-      emitReloadEvent(ctx.reloadEvents, workspace, file.objectType === "mcp" ? "mcp" : file.objectType === "skill" ? "skills" : file.objectType === "agent" ? "agents" : file.objectType === "command" ? "commands" : "config", {
-        type: file.objectType === "skill" || file.objectType === "agent" || file.objectType === "command" || file.objectType === "mcp" ? file.objectType : "config",
-        name: file.title,
-        action: "added",
-      });
-    }
-    if (imported.files.some((file) => file.objectType === "skill") && workspace.workspaceType !== "remote") {
-      await engineV2Preview.settleWorkspaceSkills(workspace.path);
-    }
-
-    // Hot-register any bundled MCP servers with the running engine.
-    await syncRuntimeMcpToOpencodeEngine(
-      config,
-      workspace,
-      undefined,
-      undefined,
-      engineMcpServerState,
-    ).catch(() => undefined);
-
-    return jsonResponse({ item: imported, warnings: result.warnings });
-  });
-
-  // Claude Code plugin bundles (MCP + skills + commands + agents) installed
-  // straight from a GitHub repo. `dryRun: true` returns the "Will install"
-  // preview without writing anything; install reuses the cloud-plugin
-  // machinery, so uninstall goes through DELETE /cloud-plugins/:pluginId.
-  addRoute(routes, "POST", "/workspace/:id/claude-plugins", "client", async (ctx) => {
-    const workspace = await resolveWorkspace(config, ctx.params.id);
-    const body = await readJsonBody(ctx.request);
-    const url = typeof body.url === "string" ? body.url.trim() : "";
-    if (!url) throw new ApiError(400, "invalid_payload", "GitHub URL is required");
-    const ref = typeof body.ref === "string" && body.ref.trim() ? body.ref.trim() : undefined;
-    const dryRun = body.dryRun === true;
-
-    const bundle = await resolveClaudePluginBundle({ url, ref });
-    if (dryRun) {
-      return jsonResponse({ preview: bundle.preview });
-    }
-
-    ensureWritable(config);
-    requireClientScope(ctx, "collaborator");
-    await requireApproval(ctx, {
-      workspaceId: workspace.id,
-      action: "cloud_plugins.install",
-      summary: `Install Claude plugin ${bundle.resolved.plugin.name} from ${bundle.preview.source.owner}/${bundle.preview.source.repo}`,
-      paths: [openworkConfigPath(workspace.path), join(workspace.path, ".opencode")],
-    });
-
-    const result = await installCloudPlugin({
-      serverConfig: config,
-      workspaceId: workspace.id,
-      workspaceRoot: workspace.path,
-      marketplaceId: null,
-      resolved: bundle.resolved,
-    });
-    const imported = result.item;
-
-    await recordAudit(workspace.path, {
-      id: shortId(),
-      workspaceId: workspace.id,
-      actor: ctx.actor ?? { type: "remote" },
-      action: "cloud_plugins.install",
-      target: openworkConfigPath(workspace.path),
-      summary: `Installed Claude plugin ${bundle.resolved.plugin.name} from ${url}`,
-      timestamp: Date.now(),
-    });
-
-    for (const file of imported.files) {
-      emitReloadEvent(ctx.reloadEvents, workspace, file.objectType === "mcp" ? "mcp" : file.objectType === "skill" ? "skills" : file.objectType === "agent" ? "agents" : file.objectType === "command" ? "commands" : "config", {
-        type: file.objectType === "skill" || file.objectType === "agent" || file.objectType === "command" || file.objectType === "mcp" ? file.objectType : "config",
-        name: file.title,
-        action: "added",
-      });
-    }
-    if (imported.files.some((file) => file.objectType === "skill") && workspace.workspaceType !== "remote") {
-      await engineV2Preview.settleWorkspaceSkills(workspace.path);
-    }
-
-    // Hot-register any bundled MCP servers with the running engine.
-    await syncRuntimeMcpToOpencodeEngine(
-      config,
-      workspace,
-      undefined,
-      undefined,
-      engineMcpServerState,
-    ).catch(() => undefined);
-
-    return jsonResponse({ item: imported, preview: bundle.preview, warnings: result.warnings });
   });
 
   addRoute(routes, "DELETE", "/workspace/:id/cloud-plugins/:pluginId", "client", async (ctx) => {
@@ -3206,6 +3190,7 @@ function createRoutes(
     ensureWritable(config);
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
     if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
+    anonymousInference.setMemberSession(session);
     const suspended = cloudProviderSync.suspend();
     try {
       await managedDesktopPolicy(config).setSession(session);
@@ -3219,6 +3204,7 @@ function createRoutes(
     ensureWritable(config);
     const session = parseCloudProviderDenSession(await readJsonBody(ctx.request));
     if (!session) throw new ApiError(400, "invalid_payload", "baseUrl, token, and orgId are required");
+    anonymousInference.setMemberSession(session);
     await managedDesktopPolicy(config).setSession(session);
     await cloudProviderSync.setSession(session);
     return new Response(null, { status: 204 });
@@ -3226,8 +3212,10 @@ function createRoutes(
 
   addRoute(routes, "DELETE", "/den-session", "host-token", async () => {
     ensureWritable(config);
+    anonymousInference.setMemberSession(null);
     await managedDesktopPolicy(config).clearSession();
     await cloudProviderSync.clearSession();
+    await anonymousInference.initialize(config.port);
     return new Response(null, { status: 204 });
   });
 
@@ -3274,10 +3262,32 @@ function createRoutes(
     return jsonResponse(engineV2Preview.status());
   });
 
+  // Counts only. The app checks this before a switch or migration so it can
+  // say what is still running instead of orphaning or copying it mid-turn.
+  addRoute(routes, "GET", "/experimental/engine-v2-preview/activity", "client", async () => {
+    const response = jsonResponse(await describeEngineActivity(config, engineV2Preview));
+    response.headers.set("Cache-Control", "no-store");
+    return response;
+  });
+
   addRoute(routes, "POST", "/experimental/engine-v2-preview/migrate", "host-token", async (ctx) => {
     ensureWritable(config);
     const body = await readJsonBody(ctx.request);
     if (!isRecord(body) || body.confirm !== true) throw new ApiError(400, "invalid_payload", "Confirm history migration first");
+    if (body.allowActiveSessions !== undefined && typeof body.allowActiveSessions !== "boolean") {
+      throw new ApiError(400, "invalid_payload", "allowActiveSessions must be a boolean");
+    }
+    // A chat copied while its turn is still running lands in v2 half-finished
+    // while v1 keeps running it. Make that an explicit choice.
+    if (body.allowActiveSessions !== true && engineV2Preview.status().migration.state !== "running") {
+      const v1 = await describeV1EngineActivity(config);
+      if (v1.verdict === "busy") {
+        throw new ApiError(409, "engine_migration_active_sessions", "Wait for running tasks to finish before migrating chats.", {
+          busySessions: v1.busySessions,
+          waitingRequests: v1.waitingRequests,
+        });
+      }
+    }
     return jsonResponse(engineV2Preview.migrateHistory());
   });
 
@@ -3585,6 +3595,7 @@ function createRoutes(
     resolveOutboxEnabled,
     resolveInboxMaxBytes,
     scopeRank,
+    resolveSessionDirectory: (workspace, sessionId) => resolveV2SessionExecutionDirectory(config, engineV2Preview, workspace, sessionId),
   });
 
   addRoute(routes, "GET", "/workspace/:id/plugins", "client", async (ctx) => {
@@ -4875,6 +4886,78 @@ export async function describeRuntimeActivity(config: ServerConfig): Promise<{
   };
 }
 
+export type EngineActivityCount = {
+  verdict: "idle" | "busy" | "unknown";
+  busySessions: number;
+  waitingRequests: number;
+};
+
+/** Running work on the v1 engine across this server's local workspaces. */
+async function describeV1EngineActivity(config: ServerConfig): Promise<EngineActivityCount> {
+  const local = config.workspaces.filter((workspace) => workspace.workspaceType === "local");
+  const probes = await Promise.all(local.map((workspace) => probeWorkspaceActivity(config, workspace)));
+  const busySessions = probes.reduce((total, probe) => total + probe.busySessions, 0);
+  const waitingRequests = probes.reduce((total, probe) => total + probe.waitingRequests, 0);
+  const verdict = busySessions > 0 || waitingRequests > 0
+    ? "busy"
+    : probes.some((probe) => probe.verdict === "unknown") ? "unknown" : "idle";
+  return { verdict, busySessions, waitingRequests };
+}
+
+/** Running conversations on the v2 sidecar, or null while it is not running. */
+async function describeV2EngineActivity(
+  config: ServerConfig,
+  connection: { url: string; username: string; password: string } | undefined,
+): Promise<EngineActivityCount | null> {
+  if (!connection) return null;
+  const authorization = buildEngineAuthProbeHeader(connection.username, connection.password);
+  const running = new Set<string>();
+  let unknown = false;
+  const local = config.workspaces.filter((workspace) => workspace.workspaceType === "local");
+  await Promise.all(local.map(async (workspace) => {
+    try {
+      const url = new URL("/api/session/active", connection.url);
+      url.searchParams.set("location[directory]", workspace.path);
+      const response = await loopbackFetch(url.toString(), {
+        headers: { Authorization: authorization },
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!response.ok) throw new Error(`Activity probe failed with status ${response.status}`);
+      const payload: unknown = await response.json();
+      const data = isRecord(payload) && isRecord(payload.data) ? payload.data : null;
+      if (!data) {
+        unknown = true;
+        return;
+      }
+      for (const [id, status] of Object.entries(data)) {
+        if (isRecord(status) && ["running", "busy", "retry"].includes(String(status.type))) running.add(id);
+      }
+    } catch {
+      unknown = true;
+    }
+  }));
+  return {
+    verdict: running.size > 0 ? "busy" : unknown ? "unknown" : "idle",
+    busySessions: running.size,
+    waitingRequests: 0,
+  };
+}
+
+/**
+ * What switching or migrating would interrupt: v1 work keeps running unseen
+ * after chats move to v2, and switching back to v1 stops the v2 sidecar.
+ */
+export async function describeEngineActivity(
+  config: ServerConfig,
+  engineV2Preview: Pick<EngineV2Preview, "connection">,
+): Promise<{ v1: EngineActivityCount; v2: EngineActivityCount | null; checkedAt: string }> {
+  const [v1, v2] = await Promise.all([
+    describeV1EngineActivity(config),
+    describeV2EngineActivity(config, engineV2Preview.connection()),
+  ]);
+  return { v1, v2, checkedAt: new Date().toISOString() };
+}
+
 /**
  * True when the managed engine reports any non-idle session (subagent child
  * sessions carry their own ids and statuses, so they count too). Unknown
@@ -5739,6 +5822,39 @@ export function registerTrustedOpencodeProcess(
 }
 
 /**
+ * Set the active workspace's folder up on the managed engine (or on a standby
+ * about to replace it). Logs how long the setup took, so slow folder setups
+ * are visible in the server log.
+ */
+export async function warmActiveEngineFolder(
+  config: ServerConfig,
+  logger: Pick<ServerLogger, "log">,
+  reason: "startup" | "rollover" | "reload",
+  standby?: Pick<EnginePoolStandby, "baseUrl" | "username" | "password" | "generationId">,
+): Promise<EngineFolderWarmupResult | null> {
+  const workspace = findManagedEngineWorkspace(config.workspaces);
+  const directory = workspace ? resolveOpencodeDirectory(workspace) : null;
+  if (!workspace || !directory) return null;
+  const connection = standby
+    ? { baseUrl: standby.baseUrl, authHeader: buildEngineAuthProbeHeader(standby.username, standby.password) }
+    : resolveWorkspaceOpencodeConnection(config, workspace);
+  if (!connection.baseUrl) return null;
+  const result = await warmEngineFolder({
+    target: { baseUrl: connection.baseUrl, ...(connection.authHeader ? { authHeader: connection.authHeader } : {}) },
+    directory,
+  });
+  logger.log(result.ok ? "info" : "warn", result.ok ? "Engine folder warmed." : "Engine folder warm-up failed.", {
+    "engine.warmup.reason": reason,
+    "engine.warmup.duration_ms": result.durationMs,
+    "workspace.id": workspace.id,
+    ...(standby ? { "engine.rollover.generation": standby.generationId } : {}),
+    ...(!result.ok && result.status ? { "http.status": result.status } : {}),
+    ...(!result.ok && result.error ? { "engine.warmup.error": result.error } : {}),
+  });
+  return result;
+}
+
+/**
  * Build the engine pool for a config and register it.
  *
  * Lives here so the pool can reuse server-private helpers (in-place reload,
@@ -5767,6 +5883,8 @@ export function createEnginePoolForConfig(input: {
         reloadOpencodeEngineInPlace(poolConfig, workspace, undefined, options),
       engineBusy: (poolConfig, workspace) => engineHasActiveSessions(poolConfig, workspace),
       postRefreshSync: async (poolConfig, workspace) => {
+        // An in-place reload drops every folder; set the active one up again.
+        void warmActiveEngineFolder(poolConfig, logger, "reload");
         await postEngineRefreshSync(poolConfig, workspace, activeEngineMcpServerState(poolConfig));
         await syncAllWorkspacesRuntimeMcpToEngine(poolConfig);
       },
@@ -5792,6 +5910,10 @@ export function createEnginePoolForConfig(input: {
             `Managed provider credential seed failed for ${result.failed.map((entry) => entry.providerId).join(", ")}`,
           );
         }
+        // Set the active folder up on the standby before it takes traffic, so
+        // a rollover never hands the picker a cold folder. Best effort: a
+        // failed warm-up never blocks the flip.
+        await warmActiveEngineFolder(poolConfig, logger, "rollover", standby);
       },
       writeRuntimeConfigFile: (poolConfig) => writeOpenworkRuntimeConfigFile(poolConfig),
       registerTrusted: (poolConfig, generation) => registerTrustedOpencodeProcess(poolConfig, generation),
