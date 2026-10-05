@@ -35,7 +35,9 @@ async function target(req, auth) {
   if ((name === "app" || name === "den") && /^\/api\/den(?:\/|\?|$)/.test(path)) {
     name = "api";
     path = path.replace(/^\/api\/den(?=\/|\?|$)/, "") || "/";
-  } else if (name === "den" && /^(?:\/v1(?:\/|\?|$)|\/mcp(?:\/|\?|$)|\/health(?:\?|$)|\/oauth\/client-metadata\.json(?:\?|$))/.test(path)) {
+  } else if (name === "den" && /^(?:\/v1(?:\/|\?|$)|\/mcp(?!\/(?:consent|select-organization)(?:[/?]|$))(?:\/|\?|$)|\/health(?:\?|$)|\/oauth\/client-metadata\.json(?:\?|$))/.test(path)) {
+    // Den's API serves /mcp, /mcp/agent and /mcp/admin; /mcp/consent and /mcp/select-organization are Den web pages
+    // an OAuth sign-in passes through.
     name = "api";
   }
   const url = new URL(services[name]);

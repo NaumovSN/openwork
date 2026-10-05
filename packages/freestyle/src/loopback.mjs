@@ -5,7 +5,7 @@
 // Den API by path, as the preview gateway routes browsers.
 //
 //   OPENWORK_PREVIEW_LOOPBACK='{"den-0000….preview.openwork.software":{"web":"http://127.0.0.1:3005","api":"http://127.0.0.1:8788"}}'
-const API_PATH = /^(?:\/v1(?:\/|$)|\/mcp(?:\/|$)|\/health$|\/oauth\/client-metadata\.json$)/;
+const API_PATH = /^(?:\/v1(?:\/|$)|\/mcp(?!\/(?:consent|select-organization)(?:\/|$))(?:\/|$)|\/health$|\/oauth\/client-metadata\.json$)/;
 
 function readRoutes(text) {
   try {
