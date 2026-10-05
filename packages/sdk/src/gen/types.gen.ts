@@ -2612,7 +2612,6 @@ export type ExternalMcpConnectionResponse = {
   url: string;
   authType: "oauth" | "apikey" | "none";
   credentialMode: "shared" | "per_member";
-  apiKeyAuthScheme: "bearer" | "token";
   exposeDirectly: boolean;
   connected: boolean;
   connectedAt: string | null;
@@ -2877,7 +2876,6 @@ export type ExternalMcpConnectionCreatedResponse = {
   url: string;
   authType: "oauth" | "apikey" | "none";
   credentialMode: "shared" | "per_member";
-  apiKeyAuthScheme: "bearer" | "token";
   exposeDirectly: boolean;
   connected: boolean;
   connectedAt: string | null;
@@ -2949,7 +2947,6 @@ export type ExternalMcpConnectionUpdatedResponse = {
   url: string;
   authType: "oauth" | "apikey" | "none";
   credentialMode: "shared" | "per_member";
-  apiKeyAuthScheme: "bearer" | "token";
   exposeDirectly: boolean;
   connected: boolean;
   connectedAt: string | null;
@@ -3008,7 +3005,6 @@ export type ExternalMcpConnectionByKeyUpsertInput = {
   credentialMode?: "shared" | "per_member";
   exposeDirectly?: boolean;
   apiKey?: string;
-  apiKeyAuthScheme?: "bearer" | "token";
   oauthClient?: {
     clientId: string;
     clientSecret?: string;
@@ -4738,11 +4734,6 @@ export type WorkspacePathRequiredError = {
 
 export type WorkerUserEmailRequiredError = {
   error: "user_email_required";
-};
-
-export type WorkerPaymentRequiredError = {
-  error: "cloud_worker_billing_unavailable";
-  message: string;
 };
 
 export type WorkerOpenWorkWebAccessRequiredError = {
@@ -21301,7 +21292,6 @@ export type PostV1McpConnectionsData = {
         credentialMode?: "shared" | "per_member";
         exposeDirectly?: boolean;
         apiKey?: string;
-        apiKeyAuthScheme?: "bearer" | "token";
         oauthClient?: {
           clientId: string;
           clientSecret?: string;
@@ -21765,7 +21755,6 @@ export type PutV1McpConnectionsByConnectionIdData = {
     credentialMode: "shared" | "per_member";
     exposeDirectly?: boolean;
     apiKey?: string;
-    apiKeyAuthScheme?: "bearer" | "token";
     oauthClient?: {
       clientId: string;
       clientSecret?: string;
@@ -27473,10 +27462,6 @@ export type PostV1WorkersErrors = {
    * The caller must be signed in to create workers.
    */
   401: UnauthorizedError;
-  /**
-   * The caller needs an active cloud plan before launching a cloud worker.
-   */
-  402: WorkerPaymentRequiredError;
   /**
    * OpenWork Web access is required to launch a cloud worker.
    */
