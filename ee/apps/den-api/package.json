@@ -47,6 +47,7 @@
     "@openwork-ee/headless-protocol": "workspace:*",
     "@openwork-ee/telemetry": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
+    "@openwork-ee/workbot-server": "workspace:*",
     "@openwork/automations": "workspace:*",
     "@openwork/codemode": "workspace:*",
     "@openwork/connect-link": "workspace:*",

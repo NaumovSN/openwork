@@ -64,8 +64,18 @@ const nextConfig = {
   reactStrictMode: true,
   skipTrailingSlashRedirect: true,
   poweredByHeader: false,
-  transpilePackages: ["@openwork/ui", "@openwork-ee/utils", "@openwork-ee/telemetry-contracts"],
+  transpilePackages: ["@openwork/ui", "@openwork/workbook", "@openwork-ee/utils", "@openwork-ee/telemetry-contracts", "@openwork-ee/workbot-ui"],
   outputFileTracingRoot: path.join(__dirname, "../../.."),
+  turbopack: {
+    rules: {
+      // @openwork/workbook is TypeScript source with Node-style `./file.js` imports; see the loader.
+      "*.ts": {
+        condition: { path: /packages\/workbook\/src\// },
+        loaders: [require.resolve("./scripts/ts-relative-imports-loader.cjs")],
+        as: "*.ts",
+      },
+    },
+  },
   async headers() {
     return [{ source: "/(.*)", headers: securityHeaders }];
   },
