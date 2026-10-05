@@ -2,9 +2,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { expect } from "vitest";
 import type { DenSession } from "@openwork/testkit";
-import { allocateFreePorts, browserScript, listTargets, setViewport, type Surface, chrome, faultProxy as startFaultProxy } from "@openwork/testkit";
+import { allocateFreePorts, listTargets, setViewport, type Surface, chrome, faultProxy as startFaultProxy } from "@openwork/testkit";
 import { requireOwnedDen } from "./member-api-key-fixture";
-import { eventually, inviteMember, mcpMock, server, spec, type Probe, type Seed, type User } from "@openwork/testkit";
+import { eventually, inviteMember, mcpMock, spec, type Probe, type Seed, type User, type Place } from "@openwork/testkit";
 
 const CONNECTION_NAME = "Synthetic Personal Keys";
 const SHARED_NAME = "Synthetic Shared Key Control";
@@ -15,7 +15,7 @@ const SHARED_KEY = "synthetic-shared-control-key";
 const READINESS_TIMEOUT_MS = 120_000;
 const BROWSER_TIMEOUT_MS = 300_000;
 
-const test = spec.world(async () => ({}), {
+const test = spec.world(memberKeyBrowserWorld, {
   timeout: READINESS_TIMEOUT_MS + BROWSER_TIMEOUT_MS,
   needs: { optIn: ["OPENWORK_EVAL_E2E_TESTS"], placement: "local" },
   resources: { surfaces: ["web"], services: ["den", "mock"] },
@@ -60,38 +60,15 @@ async function pageTargetIds(surface: Surface): Promise<string[]> {
 }
 
 async function dialogSecurity(probe: Probe, connectionName: string) {
-  return probe.eval(browserScript((name) => {
-    const dialog = document.querySelector('[data-testid="member-api-key-dialog"]');
-    const input = dialog?.querySelector<HTMLInputElement>(`input[aria-label="${name} key"]`);
-    return {
-      dialogPresent: Boolean(dialog),
-      dialogExcludedFromCapture: dialog?.hasAttribute("data-ph-no-capture") === true,
-      inputExcludedFromCapture: input?.hasAttribute("data-ph-no-capture") === true,
-      inputType: input?.type ?? null,
-      autoComplete: input?.getAttribute("autocomplete") ?? null,
-      empty: input?.value === "",
-    };
-  }, [connectionName]));
+  const state = await probe.credentialInputState(`input[aria-label="${connectionName} key"]`);
+  const { dialogPresent, dialogExcludedFromCapture, inputExcludedFromCapture, inputType, autoComplete, empty } = state;
+  return { dialogPresent, dialogExcludedFromCapture, inputExcludedFromCapture, inputType, autoComplete, empty };
 }
 
 async function secretChannels(probe: Probe, connectionName: string, secret: string) {
-  return probe.eval(browserScript((name, rawSecret) => {
-    const dialog = document.querySelector('[data-testid="member-api-key-dialog"]');
-    const input = dialog?.querySelector<HTMLInputElement>(`input[aria-label="${name} key"]`);
-    const storageValues = (storage: Storage) => Array.from({ length: storage.length }, (_, index) => {
-      const key = storage.key(index);
-      return key ? `${key}:${storage.getItem(key) ?? ""}` : "";
-    });
-    const resourceUrls = performance.getEntriesByType("resource").map((entry) => entry.name);
-    const serializedHistory = JSON.stringify(history.state) ?? "";
-    return {
-      inputContainsSecret: input?.value === rawSecret,
-      bodyContainsSecret: (document.body?.innerText ?? "").includes(rawSecret),
-      urlContainsSecret: [location.href, ...resourceUrls].some((value) => value.includes(rawSecret)),
-      historyContainsSecret: serializedHistory.includes(rawSecret),
-      storageContainsSecret: [...storageValues(localStorage), ...storageValues(sessionStorage)].some((value) => value.includes(rawSecret)),
-    };
-  }, [connectionName, secret]));
+  const state = await probe.credentialInputState(`input[aria-label="${connectionName} key"]`, secret);
+  const { inputContainsSecret, bodyContainsSecret, urlContainsSecret, historyContainsSecret, storageContainsSecret } = state;
+  return { inputContainsSecret, bodyContainsSecret, urlContainsSecret, historyContainsSecret, storageContainsSecret };
 }
 
 function connectionRows(body: unknown): JsonRecord[] {
@@ -106,13 +83,7 @@ async function connectionFor(probe: Probe, session: DenSession, connectionId: st
   return connection;
 }
 
-async function invokeIdentityProbe(seed: Seed, member: DenSession, apiUrl: string, connectionId: string): Promise<boolean> {
-  const minted = await seed.api(member, "/v1/mcp/token", {
-    method: "POST",
-    body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }),
-  });
-  expect(minted.response.status, minted.text).toBe(200);
-  const token = stringField(minted.body, "token");
+async function invokeIdentityProbe(token: string, apiUrl: string, connectionId: string): Promise<boolean> {
   const response = await fetch(`${apiUrl}/mcp/agent`, {
     method: "POST",
     headers: {
@@ -178,13 +149,12 @@ async function addMemberKey(input: {
   expect(await pageTargetIds(input.surface)).toEqual(targetsBefore);
 }
 
-test("Den Web gives two ordinary members private keys on one admin-created connection", async ({ evidence, place, probe, seed, step, user }) => {
+async function memberKeyBrowserWorld(seed: Seed, { place }: { place: Place }) {
   requireOwnedDen();
   const [apiPort, webPort] = await allocateFreePorts(2);
   const apiOrigin = `http://127.0.0.1:${apiPort}`;
-  await using proxy = await startFaultProxy({ apiUrl: apiOrigin, webUrl: apiOrigin }, { place });
-  await using den = await server({
-    place,
+  const proxy = await startFaultProxy({ apiUrl: apiOrigin, webUrl: apiOrigin }, { place });
+  const den = await seed.den({
     web: true,
     ports: { api: apiPort, web: webPort },
     webApiBase: proxy.ref.webUrl,
@@ -238,7 +208,7 @@ test("Den Web gives two ordinary members private keys on one admin-created conne
     response.end(Buffer.from(await upstream.arrayBuffer()));
   });
   await new Promise<void>((resolve) => witness.listen(0, "127.0.0.1", resolve));
-  await using ownedWitness = {
+  const ownedWitness = {
     [Symbol.asyncDispose]: () => new Promise<void>((resolve, reject) => {
       witness.closeAllConnections();
       witness.close((error) => error ? reject(error) : resolve());
@@ -272,6 +242,31 @@ test("Den Web gives two ordinary members private keys on one admin-created conne
     },
   });
 
+  accepted.add(SHARED_KEY);
+  const shared = await seed.api(den.admin, "/v1/mcp-connections", { method: "POST", body: JSON.stringify({ name: SHARED_NAME, url: `${witnessUrl}/shared-control`, authType: "apikey", credentialMode: "shared", apiKey: SHARED_KEY, access: { orgWide: true } }) });
+  expect(shared.response.status).toBe(200);
+  const oauth = await seed.api(den.admin, "/v1/mcp-connections", { method: "POST", body: JSON.stringify({ name: OAUTH_NAME, url: den.mocks.oauth.mcpUrl, authType: "oauth", credentialMode: "per_member", access: { orgWide: true } }) });
+  expect(oauth.response.status).toBe(200);
+  const sharedId = stringField(shared.body, "id");
+  const oauthId = stringField(oauth.body, "id");
+  const tokens = new Map<string, string>();
+  for (const member of [alpha, beta]) {
+    const minted = await seed.api(member, "/v1/mcp/token", { method: "POST", body: JSON.stringify({ scopes: ["mcp:read", "mcp:write"] }) });
+    expect(minted.response.status).toBe(200);
+    tokens.set(member.email, stringField(minted.body, "token"));
+  }
+  const tokenFor = (member: DenSession) => {
+    const token = tokens.get(member.email);
+    if (!token) throw new Error("Missing owned member MCP token");
+    return token;
+  };
+  return { den, proxy, alpha, beta, accepted, wire, sharedId, oauthId, tokenFor,
+    async [Symbol.asyncDispose]() { await ownedWitness[Symbol.asyncDispose](); await proxy[Symbol.asyncDispose](); },
+  };
+}
+
+test("Den Web gives two ordinary members private keys on one admin-created connection", async ({ world, evidence, place, probe, step, user }) => {
+  const { den, proxy, alpha, beta, accepted, wire, sharedId, oauthId, tokenFor } = world;
   for (const member of [alpha, beta]) {
     const org = await probe.api(member, "/v1/org");
     expect(org.response.status, org.text).toBe(200);
@@ -389,11 +384,11 @@ test("Den Web gives two ordinary members private keys on one admin-created conne
 
   await step("a provider rejection changes only Blair to replacement required", async () => {
     accepted.add(BETA_KEY);
-    expect(await invokeIdentityProbe(seed, beta, den.ref.apiUrl, connectionId)).toBe(false);
+    expect(await invokeIdentityProbe(tokenFor(beta), den.ref.apiUrl, connectionId)).toBe(false);
     const afterAcceptedCall = await connectionFor(probe, beta, connectionId);
     expect(afterAcceptedCall.credentialHealth === undefined || afterAcceptedCall.credentialHealth === "unknown").toBe(true);
     accepted.delete(BETA_KEY);
-    expect(await invokeIdentityProbe(seed, beta, den.ref.apiUrl, connectionId)).toBe(true);
+    expect(await invokeIdentityProbe(tokenFor(beta), den.ref.apiUrl, connectionId)).toBe(true);
     await eventually(() => connectionFor(probe, beta, connectionId), {
       within: 30_000,
       label: "Blair personal key marked for replacement",
@@ -432,27 +427,12 @@ test("Den Web gives two ordinary members private keys on one admin-created conne
   });
 
   await step("shared API-key and per-member OAuth controls keep their existing UI routes", async () => {
-    accepted.add(SHARED_KEY);
-    const shared = await seed.api(den.admin, "/v1/mcp-connections", {
-      method: "POST",
-      body: JSON.stringify({ name: SHARED_NAME, url: witnessUrl, authType: "apikey", credentialMode: "shared", apiKey: SHARED_KEY, access: { orgWide: true } }),
-    });
-    expect(shared.response.status, shared.text).toBe(200);
-    const sharedId = stringField(shared.body, "id");
-    const oauth = await seed.api(den.admin, "/v1/mcp-connections", {
-      method: "POST",
-      body: JSON.stringify({ name: OAUTH_NAME, url: den.mocks.oauth.mcpUrl, authType: "oauth", credentialMode: "per_member", access: { orgWide: true } }),
-    });
-    expect(oauth.response.status, oauth.text).toBe(200);
-    const oauthId = stringField(oauth.body, "id");
-
     await alphaUser.reload();
     await alphaUser.see({ text: SHARED_NAME }, { timeoutMs: 30_000 });
     await alphaUser.see({ text: OAUTH_NAME }, { timeoutMs: 30_000 });
     expect((await alphaPage.dom(`[data-testid="connect-my-mcp-account-${sharedId}"]`)).elements).toHaveLength(0);
     expect((await alphaPage.dom(`[data-testid="connect-my-mcp-account-${oauthId}"]`)).elements).toHaveLength(1);
     const oauthStartedAt = new Date().toISOString();
-    const existingTargets = new Set(await pageTargetIds(alphaBrowser));
     await alphaUser.click({ testId: `connect-my-mcp-account-${oauthId}` });
     const authorization = await den.mocks.oauth.authorizeRequestSince(oauthStartedAt, { timeoutMs: 30_000 });
     expect(authorization.path).toBe("/authorize");
@@ -461,9 +441,6 @@ test("Den Web gives two ordinary members private keys on one admin-created conne
       label: "OAuth control starts OAuth",
       until: (requests) => requests.length === 1,
     });
-    for (const target of await listTargets(alphaBrowser.handle.cdpUrl)) {
-      if (target.type === "page" && !existingTargets.has(target.id)) await alphaBrowser.client.send("Target.closeTarget", { targetId: target.id });
-    }
     expect((await proxy.requestLog()).filter((entry) => entry.path === `/v1/mcp-connections/${connectionId}/connect/start`)).toHaveLength(0);
     evidence.recordAssertionEvidence(
       "Shared keys and OAuth do not enter the member-key dialog path",

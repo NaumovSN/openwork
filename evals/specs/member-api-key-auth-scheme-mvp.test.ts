@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
 import { expect } from "vitest";
 import { test, server, mcpMock } from "@openwork/testkit";
 import { denFetch } from "@openwork/behaviors";
@@ -107,12 +106,8 @@ test("admin Bearer and Token schemes preserve member isolation and invalidate ch
   expect(wire.at(-1)?.scheme).toBe("Token");
 
   if (!den.database?.name.startsWith("openwork_eval_")) throw new Error("Owned isolated schema required");
-  await queryDenDatabase(den.database.url, "CREATE TABLE member_scheme_legacy_fixture (id varchar(64) PRIMARY KEY)");
-  await queryDenDatabase(den.database.url, "INSERT INTO member_scheme_legacy_fixture (id) VALUES ('legacy-row')");
-  const migration = (await readFile(new URL("../../ee/packages/den-db/drizzle/0124_rapid_magus.sql", import.meta.url), "utf8")).trim();
-  expect(migration).toBe("ALTER TABLE `external_mcp_connection` ADD `api_key_auth_scheme` enum('bearer','token') DEFAULT 'bearer' NOT NULL;");
-  await queryDenDatabase(den.database.url, migration.replace("`external_mcp_connection`", "`member_scheme_legacy_fixture`"));
-  expect(await queryDenDatabase(den.database.url, "SELECT api_key_auth_scheme FROM member_scheme_legacy_fixture WHERE id = 'legacy-row'")).toEqual([{ api_key_auth_scheme: "bearer" }]);
+  expect(await queryDenDatabase(den.database.url, "SELECT COLUMN_DEFAULT AS default_value, IS_NULLABLE AS nullable, COLUMN_TYPE AS column_type FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'external_mcp_connection' AND COLUMN_NAME = 'api_key_auth_scheme'"))
+    .toEqual([{ default_value: "bearer", nullable: "NO", column_type: "enum('bearer','token')" }]);
   evidence.recordAssertionEvidence("Admin-selected scheme controls actual enterprise member transport", "The real Den enterprise client emitted exact Bearer or Token Authorization for both members' distinct key fingerprints during catalog initialization and gateway/direct tool calls. Shared Token retained its explicit shared identity; stored-only enrollment remained exactly200{ok:true}.", true);
-  evidence.recordAssertionEvidence("Scheme mutation is an identity change, not a member-controlled prefix", "Omitted update preserved existing Token and live credential; member admin-edit/extra enrollment scheme denied; unsupported/control-character/header-name values rejected; changing scheme cleared both member credentials before further upstream calls. Actual one-column migration defaulted an existing isolated fixture row to bearer.", true);
+  evidence.recordAssertionEvidence("Scheme mutation is an identity change, not a member-controlled prefix", "Omitted update preserved existing Token and live credential; member admin-edit/extra enrollment scheme denied; unsupported/control-character/header-name values rejected; changing scheme cleared both member credentials before further upstream calls. The live isolated Den database exposes a non-null Bearer-default enum column. Migration replay is separately scoped, not inferred from repository SQL.", true);
 });
