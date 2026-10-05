@@ -1,7 +1,7 @@
 import { serve } from "@hono/node-server"
 import { createApp } from "./app.js"
 import { SessionEvents } from "./events.js"
-import { diskBlobStore, s3BlobStore } from "./blobs.js"
+import { diskBlobStore, s3BlobStore, vercelBlobStore } from "./blobs.js"
 import { mediaTypeFor, SavedFiles, SAVED_FILE_TOOL_NAMES } from "./saved-files.js"
 import { loadConfig } from "./config.js"
 import { FILE_TOOL_NAMES } from "./files.js"
@@ -17,8 +17,14 @@ const store = new Store(config.dbPath)
 const recovered = store.recoverInterruptedTurns()
 const events = new SessionEvents()
 const blobs =
-  config.files.kind === "disk" ? diskBlobStore(config.files.directory) : config.files.kind === "s3" ? s3BlobStore(config.files) : null
-const files = blobs ? new SavedFiles(store, blobs) : undefined
+  config.files.kind === "disk"
+    ? diskBlobStore(config.files.directory)
+    : config.files.kind === "s3"
+      ? s3BlobStore(config.files)
+      : config.files.kind === "vercel"
+        ? await vercelBlobStore(config.files)
+        : null
+const files = blobs ? new SavedFiles(store, blobs, config.fileLimits) : undefined
 // The computer and its provider SDK load only when configured, so a runner without one never imports them.
 const computer: SessionComputer | undefined = config.computer
   ? new (await import("@openwork-ee/headless-computer")).Computers(config.computer, {

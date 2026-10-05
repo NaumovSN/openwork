@@ -1,8 +1,10 @@
 import { timingSafeEqual } from "node:crypto"
-import { Hono } from "hono"
+import { Hono, type MiddlewareHandler } from "hono"
+import { bodyLimit } from "hono/body-limit"
 import { streamSSE } from "hono/streaming"
 import type { SessionEvents } from "./events.js"
-import type { SavedFiles } from "./saved-files.js"
+import { SavedFileLimitError, type SavedFiles } from "./saved-files.js"
+import { formatBytes } from "./tool-files.js"
 import { z } from "zod"
 import { normalizePath } from "./files.js"
 import type { Runner } from "./runner.js"
@@ -14,6 +16,10 @@ const createSessionBody = z
     title: z.string().max(200).optional(),
     instructions: z.string().max(20_000).optional(),
     repeats: repeatLimitsSchema.optional(),
+    /** Keep files in this conversation (needs HEADLESS_FILES). Off unless asked for. */
+    files: z.boolean().optional(),
+    /** Give this conversation a Linux computer (needs HEADLESS_COMPUTER). Off unless asked for. */
+    computer: z.boolean().optional(),
   })
   .strict()
 const messageIdSchema = z.string().regex(/^[A-Za-z0-9_.:-]{1,128}$/)
@@ -189,20 +195,48 @@ export function createApp(input: {
   })
 
   // Saved files: uploads a person sends with messages, and files the agent hands back. Bytes live in the
-  // configured blob store (disk or any S3-compatible bucket); no size or type limits are applied here.
-  app.get("/v1/files/status", (c) => c.json({ enabled: Boolean(input.files), kind: input.files?.blobs.kind ?? null }))
+  // configured blob store (disk, any S3-compatible bucket, or Vercel Blob), only for conversations created with
+  // `files: true`, within a per-file and a per-conversation limit.
+  app.get("/v1/files/status", (c) =>
+    c.json({
+      enabled: Boolean(input.files),
+      kind: input.files?.blobs.kind ?? null,
+      ...(input.files ? { maxFileBytes: input.files.limits.maxFileBytes, maxSessionBytes: input.files.limits.maxSessionBytes } : {}),
+    }),
+  )
 
-  app.post("/v1/sessions/:id/saved-files", async (c) => {
+  /** Refuses an upload before its body is read: no file store, unknown session, or a session without files. */
+  const uploadAllowed: MiddlewareHandler = async (c, next) => {
+    if (!input.files) return c.json({ error: "files_not_configured" }, 501)
+    const session = store.getSession(c.req.param("id") ?? "")
+    if (!session) return c.json({ error: "unknown_session" }, 404)
+    if (!session.files) return c.json({ error: "files_not_enabled", message: "This conversation was not created with files: true." }, 403)
+    if (!c.req.query("name")?.trim()) return c.json({ error: "invalid_request", message: "name is required" }, 400)
+    await next()
+  }
+  /** Stops reading a body past the per-file limit, whether or not it declares its length. */
+  const uploadSizeLimit: MiddlewareHandler = (c, next) => {
+    const maxSize = input.files?.limits.maxFileBytes ?? 0
+    return bodyLimit({
+      maxSize,
+      onError: (limited) => limited.json({ error: "file_too_large", message: `The most a kept file can be is ${formatBytes(maxSize)}.` }, 413),
+    })(c, next)
+  }
+
+  app.post("/v1/sessions/:id/saved-files", uploadAllowed, uploadSizeLimit, async (c) => {
     const files = input.files
     if (!files) return c.json({ error: "files_not_configured" }, 501)
     const sessionId = c.req.param("id")
-    if (!store.getSession(sessionId)) return c.json({ error: "unknown_session" }, 404)
-    const name = c.req.query("name")?.trim()
-    if (!name) return c.json({ error: "invalid_request", message: "name is required" }, 400)
+    const name = c.req.query("name")?.trim() ?? "file"
     const source = c.req.query("source") === "agent" ? "agent" : "user"
     const bytes = new Uint8Array(await c.req.arrayBuffer())
-    const file = await files.add(sessionId, { name, mediaType: c.req.header("content-type"), bytes, source })
-    return c.json(file, 201)
+    try {
+      const file = await files.add(sessionId, { name, mediaType: c.req.header("content-type"), bytes, source })
+      return c.json(file, 201)
+    } catch (error) {
+      if (error instanceof SavedFileLimitError) return c.json({ error: error.code, message: error.message }, 413)
+      throw error
+    }
   })
 
   app.get("/v1/sessions/:id/saved-files", (c) => {
@@ -227,8 +261,9 @@ export function createApp(input: {
     const sessionId = c.req.param("id")
     const fileId = c.req.param("fileId")
     let manifest = await input.files.readPreview(sessionId, fileId)
-    // No preview yet (an older file, or one the person sent): render it now on the conversation's computer.
-    if (!manifest && input.computer) {
+    // No preview yet (an older file, or one the person sent): render it now on the conversation's computer,
+    // when it has one. A conversation without a computer never starts one here.
+    if (!manifest && input.computer && store.getSession(sessionId)?.computer) {
       await input.computer.previewSavedFile(sessionId, fileId).catch(() => undefined)
       manifest = await input.files.readPreview(sessionId, fileId)
     }

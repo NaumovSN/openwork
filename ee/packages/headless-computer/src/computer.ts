@@ -3,7 +3,7 @@ import { posix } from "node:path"
 import { Freestyle, FreestyleApiError, type Vm } from "freestyle"
 import { z } from "zod"
 import { computerSnapshotSlug } from "./image.js"
-import type { ComputerFiles, FileReader, ToolResult, ToolSpec } from "./types.js"
+import type { ComputerFile, ComputerFiles, FileReader, ToolResult, ToolSpec } from "./types.js"
 
 /**
  * One Linux computer per conversation: a Freestyle VM booted from the prepared snapshot (see image.ts).
@@ -258,8 +258,10 @@ export class Computers {
   }
 
   /** Adds new or changed files under /workspace/out to the person's Files. Returns their names. */
-  private async exportOutputs(sessionId: string): Promise<string[]> {
-    if (!this.files) return []
+  /** Adds new or changed files in /workspace/out to the person's files. Returns what was added, and what wasn't. */
+  private async exportOutputs(sessionId: string): Promise<{ saved: string[]; skipped: string[] }> {
+    if (!this.files) return { saved: [], skipped: [] }
+    const maxBytes = Math.min(MAX_EXPORT_BYTES, this.files.maxFileBytes)
     const vm = await this.vm(sessionId)
     const listing = await vm.exec({
       command: `find ${OUT_DIR} -type f -not -name '.*' -printf '%P\\t%s\\t%T@\\n' 2>/dev/null; echo '${MANIFEST_MARKER}'; cat ${EXPORTED_MANIFEST} 2>/dev/null || echo '{}'`,
@@ -269,6 +271,7 @@ export class Computers {
     // path → "size:mtime|fileId": the version last added, and the saved file it became.
     const manifest = z.record(z.string(), z.string()).catch({}).parse(safeJson(manifestText.trim()))
     const saved: string[] = []
+    const skipped: string[] = []
     let changed = false
     for (const line of listed.split("\n").filter(Boolean)) {
       const [relative, sizeText, mtime] = line.split("\t")
@@ -279,17 +282,33 @@ export class Computers {
       if (previousSignature === signature) continue
       // Outputs recorded before ids were kept: the newest file it made under that name is the earlier version.
       const previousId = recordedId || (previousSignature ? this.files.list(sessionId).find((file) => file.source === "agent" && file.name === posix.basename(relative))?.id : undefined)
-      if (size > MAX_EXPORT_BYTES) {
+      // A version that doesn't fit is recorded as seen, so it is reported once rather than after every command.
+      const notKept = (reason: string) => {
+        skipped.push(`${relative} (${reason})`)
         manifest[relative] = `${signature}|${previousId ?? ""}`
         changed = true
+      }
+      if (size > maxBytes) {
+        notKept(`${formatBytes(size)}; the most a kept file can be is ${formatBytes(maxBytes)}`)
         continue
       }
       const bytes = new Uint8Array(await vm.fs.readFile(`${OUT_DIR}/${relative}`))
       // A new version of a file already handed over updates it in place: one file in their Files, and anything
       // showing it (the answer's card, an open preview) moves to the new version.
-      const file =
-        (previousId ? await this.files.replace(sessionId, previousId, { bytes }) : null) ??
-        (await this.files.add(sessionId, { name: posix.basename(relative), bytes, source: "agent" }))
+      let file: ComputerFile | null = null
+      try {
+        file =
+          (previousId ? await this.files.replace(sessionId, previousId, { bytes }) : null) ??
+          (await this.files.add(sessionId, { name: posix.basename(relative), bytes, source: "agent" }))
+      } catch (error) {
+        // Over the conversation's limits: final for this version. Anything else (storage briefly unreachable)
+        // is left unrecorded, so the next command tries again.
+        if (isLimitError(error)) {
+          notKept(error.message)
+          continue
+        }
+        throw error
+      }
       manifest[relative] = `${signature}|${file.id}`
       changed = true
       saved.push(file.name)
@@ -297,7 +316,7 @@ export class Computers {
       if (canPreview(relative)) void this.renderPreview(sessionId, file.id, `${OUT_DIR}/${relative}`).catch(() => undefined)
     }
     if (changed) await vm.fs.writeFile(EXPORTED_MANIFEST, JSON.stringify(manifest))
-    return saved
+    return { saved, skipped }
   }
 
   /** Renders a kept file's preview on demand (files from before previews, or ones the person sent). */
@@ -357,7 +376,7 @@ export class Computers {
   async bash(sessionId: string, command: string, timeoutSeconds: number): Promise<ToolResult> {
     const copied = await this.copyUploads(sessionId)
     const result = await this.exec(sessionId, command, timeoutSeconds)
-    const saved = await this.exportOutputs(sessionId).catch(() => [])
+    const { saved, skipped } = await this.exportOutputs(sessionId).catch(() => ({ saved: [], skipped: [] }))
     const killed = result.statusCode === null || result.statusCode === undefined
     const parts = [
       copied.length ? `[Copied the person's files to: ${copied.join(", ")}]` : "",
@@ -367,6 +386,7 @@ export class Computers {
       tail(result.stdout ?? ""),
       result.stderr?.trim() ? `[stderr]\n${tail(result.stderr)}` : "",
       saved.length ? `[Added to their Files: ${saved.join(", ")}]` : "",
+      skipped.length ? `[Not added to their Files: ${skipped.join("; ")}. Make it smaller, or tell them it is too big to hand over.]` : "",
     ]
     return { output: parts.filter(Boolean).join("\n"), isError: killed || result.statusCode !== 0 }
   }
@@ -415,7 +435,13 @@ function pngSize(bytes: Uint8Array | undefined) {
   return { width: view.getUint32(16), height: view.getUint32(20) }
 }
 
+/** The file store's "doesn't fit" error (a per-file or per-conversation limit); its message is for the model. */
+function isLimitError(error: unknown): error is Error {
+  return error instanceof Error && "code" in error && (error.code === "file_too_large" || error.code === "files_full")
+}
+
 function formatBytes(bytes: number) {
+  if (bytes >= 1024 * 1024 * 1024) return `${Number((bytes / (1024 * 1024 * 1024)).toFixed(1))} GB`
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`
   return `${bytes} bytes`

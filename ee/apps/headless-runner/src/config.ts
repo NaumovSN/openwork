@@ -1,3 +1,4 @@
+import { dirname, join } from "node:path"
 import { z } from "zod"
 
 /** Allow https anywhere, and plain http only for loopback development hosts. */
@@ -44,9 +45,22 @@ const configSchema = z.object({
   HEADLESS_CREDENTIAL_REFRESH_MS: z.coerce.number().int().min(60_000).default(50 * 60_000),
   HEADLESS_CONTEXT_CHAR_BUDGET: z.coerce.number().int().min(10_000).default(400_000),
   HEADLESS_SYSTEM_PROMPT: z.string().optional(),
-  /** Saved files (uploads and files the agent hands back): off, a folder on disk, or any S3-compatible bucket. */
-  HEADLESS_FILES: z.enum(["off", "disk", "s3"]).default("off"),
-  HEADLESS_FILES_DIR: z.string().min(1).default("./data/files"),
+  /**
+   * Saved files (uploads and files the agent hands back): off, a folder on disk, any S3-compatible bucket, or a
+   * private Vercel Blob store. Only conversations created with `files: true` use them.
+   */
+  HEADLESS_FILES: z.enum(["off", "disk", "s3", "vercel"]).default("off"),
+  /** For `disk`. Defaults to a `files` folder next to the database, so both live on the same persistent volume. */
+  HEADLESS_FILES_DIR: z.string().min(1).optional(),
+  /** The largest single file a conversation may keep (uploads, saved files, computer outputs). */
+  HEADLESS_FILES_MAX_BYTES: z.coerce.number().int().min(1024).default(100 * 1024 * 1024),
+  /** How much one conversation may keep in total. */
+  HEADLESS_FILES_MAX_SESSION_BYTES: z.coerce.number().int().min(1024).default(5 * 1024 * 1024 * 1024),
+  /** For `vercel`: the read-write token of one private Blob store, used only for that store. */
+  HEADLESS_VERCEL_BLOB_TOKEN: z
+    .string()
+    .optional()
+    .transform((value) => value || undefined),
   HEADLESS_S3_ENDPOINT: safeUrl.optional(),
   HEADLESS_S3_REGION: z.string().min(1).default("auto"),
   HEADLESS_S3_BUCKET: z.string().min(1).optional(),
@@ -89,6 +103,8 @@ export type Config = {
     | { kind: "off" }
     | { kind: "disk"; directory: string }
     | { kind: "s3"; endpoint: string; region: string; bucket: string; accessKeyId: string; secretAccessKey: string; forcePathStyle: boolean }
+    | { kind: "vercel"; token: string }
+  fileLimits: { maxFileBytes: number; maxSessionBytes: number }
   computer?: { apiKey: string; snapshot?: string; idlePauseMs: number; keepDays: number }
 }
 
@@ -122,6 +138,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     },
     systemPrompt: value.HEADLESS_SYSTEM_PROMPT,
     files: filesConfig(value),
+    fileLimits: { maxFileBytes: value.HEADLESS_FILES_MAX_BYTES, maxSessionBytes: value.HEADLESS_FILES_MAX_SESSION_BYTES },
     computer: computerConfig(value),
   }
 }
@@ -138,7 +155,11 @@ function computerConfig(value: z.infer<typeof configSchema>): Config["computer"]
 }
 
 function filesConfig(value: z.infer<typeof configSchema>): Config["files"] {
-  if (value.HEADLESS_FILES === "disk") return { kind: "disk", directory: value.HEADLESS_FILES_DIR }
+  if (value.HEADLESS_FILES === "disk") return { kind: "disk", directory: value.HEADLESS_FILES_DIR ?? join(dirname(value.HEADLESS_DB_PATH), "files") }
+  if (value.HEADLESS_FILES === "vercel") {
+    if (!value.HEADLESS_VERCEL_BLOB_TOKEN) throw new Error("Invalid headless-runner configuration:\nHEADLESS_FILES=vercel needs HEADLESS_VERCEL_BLOB_TOKEN")
+    return { kind: "vercel", token: value.HEADLESS_VERCEL_BLOB_TOKEN }
+  }
   if (value.HEADLESS_FILES !== "s3") return { kind: "off" }
   const { HEADLESS_S3_ENDPOINT: endpoint, HEADLESS_S3_BUCKET: bucket, HEADLESS_S3_ACCESS_KEY_ID: accessKeyId, HEADLESS_S3_SECRET_ACCESS_KEY: secretAccessKey } = value
   if (!endpoint || !bucket || !accessKeyId || !secretAccessKey) {

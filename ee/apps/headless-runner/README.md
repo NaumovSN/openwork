@@ -36,16 +36,16 @@ All `/v1` routes require `Authorization: Bearer $HEADLESS_API_TOKEN`.
 |---|---|---|---|
 | `GET` | `/health` | | `{ ok: true }` |
 | `GET` | `/v1/models` | | `{ defaultModel, models: [{ id, name }] }`: the models the Gateway route serves with the runner's key (cached 5 min), for pickers. Pass one as a turn's `model` |
-| `POST` | `/v1/sessions` | `{ title?, instructions?, repeats?: { maxWaitingMs?, maxIdenticalFailures? } }` | session (`hs_…`) |
-| `PUT` | `/v1/sessions/:id` | same body as `POST` | `201` session when created, `200` when updated. The caller picks the id (`hs_` + 8–96 of `A-Za-z0-9_-`), so it can keep one durable conversation per person without storing the runner's id. Den's Workbot derives one per member |
+| `POST` | `/v1/sessions` | `{ title?, instructions?, repeats?: { maxWaitingMs?, maxIdenticalFailures? }, files?, computer? }` | session (`hs_…`). `files` and `computer` are off unless set to `true` (see [Isolation](#isolation)) |
+| `PUT` | `/v1/sessions/:id` | same body as `POST` | `201` session when created, `200` when updated; settings left out keep their value. The caller picks the id (`hs_` + 8–96 of `A-Za-z0-9_-`), so it can keep one durable conversation per person without storing the runner's id. Den's Workbot derives one per member |
 | `POST` | `/v1/sessions/:id/turns` | `{ messageId, prompt, model?, credentials: { modelApiKey?, mcpToken? } }` | `202 { state: accepted \| resumed \| already_present, turn }`. A message sent while another turn runs is accepted and answered next (`turn.status: queued`); only a runaway queue of 20+ returns `429 too_many_queued` |
 | `GET` | `/v1/sessions/:id` | `?messageId=&limit=&outputs=` | `{ session, status: idle \| busy, turns, messages, finalAssistantText }`. `outputs=none` returns each tool result's `outputLength` instead of its output, for callers that poll a long turn |
 | `POST` | `/v1/sessions/:id/abort` | `{ messageId? }` | `{ accepted }`. With a `messageId`, stops only that turn (running or queued); without one, stops the running turn and every follow-up queued behind it |
 | `GET` | `/v1/sessions/:id/files` | | `{ files: [{ path, size, updatedAt }] }` |
 | `GET` | `/v1/sessions/:id/files/content` | `?path=` | file text |
 | `DELETE` | `/v1/sessions/:id` | | `204` (also deletes its saved files' bytes) |
-| `GET` | `/v1/files/status` | | `{ enabled, kind }` |
-| `POST` | `/v1/sessions/:id/saved-files` | `?name=`, raw body typed by `Content-Type` | `201` saved file (`fl_…`). Send its id in a turn's `attachments` |
+| `GET` | `/v1/files/status` | | `{ enabled, kind, maxFileBytes, maxSessionBytes }` |
+| `POST` | `/v1/sessions/:id/saved-files` | `?name=`, raw body typed by `Content-Type` | `201` saved file (`fl_…`). Send its id in a turn's `attachments`. `403 files_not_enabled` for a session without `files: true`; `413 file_too_large` or `413 files_full` past the limits |
 | `GET` | `/v1/sessions/:id/saved-files` | | `{ files }`, newest first, `source: user \| agent` |
 | `GET` | `/v1/sessions/:id/saved-files/:fileId` | | the bytes, with `x-file-name` |
 | `DELETE` | `/v1/sessions/:id/saved-files/:fileId` | | `204` |
@@ -77,8 +77,18 @@ The model sees these tools:
 
 - OpenWork MCP tools as the server names them, e.g. `search_capabilities` and `execute_capability`
 - `list_files`, `read_file`, `write_file`, `edit_file`, `delete_file`
-- With saved files on: `list_saved_files`, `open_file` (brings a kept file back into view), `save_file` (hands a scratch file to the person)
-- With a computer on: `bash` and `look` (see below)
+- In a session with `files: true` (and files configured): `list_saved_files`, `open_file` (brings a kept file back into view), `save_file` (hands a scratch file to the person)
+- In a session with `computer: true` (and a computer configured): `bash` and `look` (see below)
+
+## Isolation
+
+The runner is a private service with one caller (Den), which authorizes each person before it reaches a session. Within the runner:
+
+- **Opt-in per session.** Configuring files or a computer makes them *available*; a session only gets them when it is created (or updated) with `files: true` / `computer: true`. Slack replies and Automations don't ask, so they keep their exact behavior: no file tools, no computer, no uploads, and the preview route never starts a computer for them.
+- **Files belong to one session.** Every read, download, preview and delete looks a file up by session id *and* file id, and bytes are stored under `sessions/<sessionId>/<fileId>`. Deleting a session deletes its bytes and its computer.
+- **Limits.** `HEADLESS_FILES_MAX_BYTES` (100 MB) per file, enforced while the upload streams in (with or without `Content-Length`), and on `save_file` and computer outputs. `HEADLESS_FILES_MAX_SESSION_BYTES` (5 GB) per session in total. Past either, the upload gets `413`, and the model is told why so it can say so.
+- **Storage credentials.** Use a store or bucket for this runner alone, with credentials scoped to it. For Vercel Blob, the store's own read-write token is passed explicitly, so the SDK never uses other `BLOB_READ_WRITE_TOKEN` or OIDC credentials in the environment. Neither the storage credentials nor the Freestyle key ever enter a computer.
+- **Computers.** One VM per session, created only when that session first runs a command; it holds no credentials and has outbound internet only.
 
 ## Computer (optional)
 
@@ -91,6 +101,7 @@ The model sees these tools:
 
 - **Files:** uploads are copied into `/workspace/files`; files written to `/workspace/out` become saved files after each command. A new version of an out file updates the same saved file (same id, newer `updatedAt`).
 - **Previews:** slide decks, documents and PDFs get page images (LibreOffice, then `pdftoppm`), served at `GET /v1/sessions/:id/saved-files/:fileId/preview` and `/preview/:page`.
+- **Only for sessions with `computer: true`.** Others never see the tools, and nothing starts a VM for them.
 - **Lifecycle:** one VM per session, found by a slug derived from the session id. Paused `HEADLESS_COMPUTER_PAUSE_SECONDS` (300) after the last turn unless a `background` job runs; deleted after `HEADLESS_COMPUTER_KEEP_DAYS` (14) unused, or with the session.
 - **Image:** the snapshot is built from the package's install script: `pnpm --filter @openwork-ee/headless-computer snapshot:build`.
 - Every file under `memory/` in the scratch workspace is shown to the model at the start of each turn, so long-term memory survives older turns dropping out of context
@@ -115,12 +126,20 @@ The model sees these tools:
 | `HEADLESS_MAX_OUTPUT_TOKENS` | `8192` | Output cap per model call: Anthropic `max_tokens`, OpenAI `max_completion_tokens` |
 | `HEADLESS_CONTEXT_CHAR_BUDGET` | `400000` | Older whole turns are dropped past this. A turn that outgrows it alone replaces its oldest large tool outputs with a short note, in blocks of eight |
 | `HEADLESS_SYSTEM_PROMPT` | built-in | |
-| `HEADLESS_FILES` | `off` | Saved files: `off`, `disk`, or `s3`. Off means the file routes answer `files_not_configured` and the file tools are not offered |
-| `HEADLESS_FILES_DIR` | `./data/files` | For `disk`. Put it on the persistent volume |
+| `HEADLESS_FILES` | `off` | Saved files: `off`, `disk`, `s3`, or `vercel`. Only sessions created with `files: true` use them. Off means the file routes answer `files_not_configured` |
+| `HEADLESS_FILES_MAX_BYTES` | `104857600` (100 MB) | Largest single kept file |
+| `HEADLESS_FILES_MAX_SESSION_BYTES` | `5368709120` (5 GB) | Most one session may keep in total |
+| `HEADLESS_FILES_DIR` | `files` next to `HEADLESS_DB_PATH` | For `disk`. Defaults to the database's volume so files survive deploys; disk is for development, use a store in production |
+| `HEADLESS_VERCEL_BLOB_TOKEN` | | For `vercel`: the read-write token of one **private** Vercel Blob store used only by this runner |
 | `HEADLESS_S3_ENDPOINT` | | For `s3`: any S3-compatible endpoint, e.g. `https://<account>.r2.cloudflarestorage.com`, `https://s3.us-east-1.amazonaws.com`, or a self-hosted MinIO/RustFS |
 | `HEADLESS_S3_REGION` | `auto` | `auto` for R2; the bucket's region for AWS |
 | `HEADLESS_S3_BUCKET`, `HEADLESS_S3_ACCESS_KEY_ID`, `HEADLESS_S3_SECRET_ACCESS_KEY` | | For `s3` |
 | `HEADLESS_S3_FORCE_PATH_STYLE` | `false` | `true` for MinIO and most self-hosted stores |
+| `HEADLESS_COMPUTER` | `off` | `freestyle` makes a computer available to sessions created with `computer: true` |
+| `FREESTYLE_API_KEY` | | For `freestyle`. Use a Freestyle account for this runner alone; the key never enters a VM |
+| `HEADLESS_COMPUTER_SNAPSHOT` | built from the package | Snapshot id or slug new computers boot from |
+| `HEADLESS_COMPUTER_PAUSE_SECONDS` | `300` | Pause a computer this long after its last turn, unless a `background` job runs |
+| `HEADLESS_COMPUTER_KEEP_DAYS` | `14` | Freestyle deletes a computer unused this long |
 
 ## Run
 
@@ -144,6 +163,16 @@ Create a **private service** so it has no public URL; only den-api reaches it. U
 | Disk | Mount at `/var/data`, then set `HEADLESS_DB_PATH=/var/data/headless.sqlite` |
 | Instances | 1. A service with a disk runs as a single instance, and a deploy restarts in-flight turns, which Den resumes |
 | Env | `HEADLESS_API_TOKEN`, `HEADLESS_MODEL_PROTOCOL`, `HEADLESS_MODEL_BASE_URL`, `HEADLESS_MODEL`, `HEADLESS_MODEL_API_KEY`, `HEADLESS_MCP_URL` |
+| Files (optional) | `HEADLESS_FILES=vercel` and `HEADLESS_VERCEL_BLOB_TOKEN`. Keep the 1 GB disk for SQLite only |
+
+**Kept files in production** use a private Vercel Blob store in the `prologe` team, region `iad1` (next to the service's Virginia region):
+
+| Store | For | Token |
+|---|---|---|
+| `openwork-headless-files` | the Render runner | Infisical `prod`, `/headless-runner/HEADLESS_VERCEL_BLOB_TOKEN` |
+| `openwork-headless-files-dev` | local runs and tests | Infisical `dev`, `/headless-runner/HEADLESS_VERCEL_BLOB_TOKEN` |
+
+Both are connected only to the empty Vercel project `openwork-headless-runner` (no code, no deployments), which exists to hold their tokens: production to the production environment, dev to development. Each token reaches only its own store.
 
 On den-api, set `DEN_HEADLESS_RUNNER_URL` to the private service address (for example `http://headless-runner:8795`) and `DEN_HEADLESS_RUNNER_TOKEN` to the same value as `HEADLESS_API_TOKEN`. Then, per organization in `/admin`, turn on **Slack Assistant** and **Slack Assistant: headless runtime** for Slack, and **Cloud Automations: headless runtime** for scheduled cloud Automations.
 

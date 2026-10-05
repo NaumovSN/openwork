@@ -347,13 +347,15 @@ export class Runner {
       const session = store.getSession(sessionId)
       const turn = store.getTurn(sessionId, messageId)
       const repeatLimits = { ...DEFAULT_REPEAT_LIMITS, ...session?.repeats }
-      const computer = this.options.computer
+      // Files and the computer only for conversations that asked for them (see Session.files / .computer).
+      const files = session?.files ? this.options.files : undefined
+      const computer = session?.computer ? this.options.computer : undefined
       // Wake the computer while the model thinks, when this turn is likely to need it.
       const sentFiles = turnMessages().some((message) => message.role === "user" && (message.attachments?.length ?? 0) > 0)
       if (computer && (sentFiles || computer.known(sessionId))) computer.prewarm(sessionId)
       const baseSystem = [
         this.options.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-        this.options.files ? FILES_PROMPT : "",
+        files ? FILES_PROMPT : "",
         computer?.prompt ?? "",
         tools ? "" : "No OpenWork connection is available in this conversation, so connected apps cannot be reached.",
         session?.instructions ?? "",
@@ -362,7 +364,6 @@ export class Runner {
       ]
         .filter(Boolean)
         .join("\n\n")
-      const files = this.options.files
       const toolSpecs = [...FILE_TOOLS, ...(files ? SAVED_FILE_TOOLS : []), ...(computer?.tools ?? []), ...(tools?.tools ?? [])]
       // The current turn's files, read once and shown to the model on every step of this turn.
       const expanded = new Map<string, Message>()
@@ -512,6 +513,7 @@ export class Runner {
     } finally {
       clearTimeout(timeout)
       await tools?.close()
+      // A no-op for conversations whose computer never started; pauses one that did, even if since switched off.
       this.options.computer?.release(sessionId)
       // One line per turn, never content or credentials: how it ended, how long it ran, and what it cost.
       const turn = store.getTurn(sessionId, messageId)

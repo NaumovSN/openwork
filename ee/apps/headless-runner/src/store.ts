@@ -26,7 +26,8 @@ const sessionRow = z.object({
   created_at: z.number(),
   updated_at: z.number(),
 })
-const sessionOptions = z.object({ repeats: repeatLimitsSchema.optional() })
+const sessionOptions = z.object({ repeats: repeatLimitsSchema.optional(), files: z.boolean().optional(), computer: z.boolean().optional() })
+type SessionOptions = z.infer<typeof sessionOptions>
 const tableColumns = z.array(z.object({ name: z.string() }).loose())
 const turnRow = z.object({
   session_id: z.string(),
@@ -50,9 +51,39 @@ export type Session = {
   instructions: string
   /** The caller's limits for repeated steps; null uses the runner's defaults. */
   repeats: RepeatLimits | null
+  /**
+   * Whether this conversation keeps files (uploads, files the agent hands back) and has a computer. Both are off
+   * unless the caller asks for them, so turning a capability on for the runner changes nothing for callers that
+   * never asked (Slack replies and Automations keep their exact behavior). The runner must also be configured
+   * for them; a conversation asking for a capability the runner lacks simply doesn't get it.
+   */
+  files: boolean
+  computer: boolean
   createdAt: number
   updatedAt: number
 }
+/** What a caller may set on a session: its text, and its settings (stored together as JSON). */
+export type SessionInput = { title?: string; instructions?: string; repeats?: RepeatLimits; files?: boolean; computer?: boolean }
+
+/** The settings part of a session, leaving out what the caller didn't set. */
+function optionsOf(input: { repeats?: RepeatLimits | null; files?: boolean; computer?: boolean }): SessionOptions {
+  return {
+    ...(input.repeats ? { repeats: input.repeats } : {}),
+    ...(input.files !== undefined ? { files: input.files } : {}),
+    ...(input.computer !== undefined ? { computer: input.computer } : {}),
+  }
+}
+
+/** Stable JSON for the options column (null when there is nothing to keep), so equal settings compare equal. */
+function serializeOptions(options: SessionOptions) {
+  const ordered = {
+    ...(options.repeats ? { repeats: options.repeats } : {}),
+    ...(options.files ? { files: true } : {}),
+    ...(options.computer ? { computer: true } : {}),
+  }
+  return Object.keys(ordered).length ? JSON.stringify(ordered) : null
+}
+
 export type Turn = {
   sessionId: string
   messageId: string
@@ -224,19 +255,22 @@ export class Store {
     }
   }
 
-  createSession(input: { title?: string; instructions?: string; repeats?: RepeatLimits }): Session {
+  createSession(input: SessionInput): Session {
     const at = this.now()
+    const options = optionsOf(input)
     const session: Session = {
       id: `hs_${randomUUID().replaceAll("-", "")}`,
       title: input.title ?? "Untitled",
       instructions: input.instructions ?? "",
-      repeats: input.repeats ?? null,
+      repeats: options.repeats ?? null,
+      files: options.files ?? false,
+      computer: options.computer ?? false,
       createdAt: at,
       updatedAt: at,
     }
     this.db
       .prepare("INSERT INTO sessions (id, title, instructions, options, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(session.id, session.title, session.instructions, input.repeats ? JSON.stringify({ repeats: input.repeats }) : null, at, at)
+      .run(session.id, session.title, session.instructions, serializeOptions(options), at, at)
     return session
   }
 
@@ -245,22 +279,25 @@ export class Store {
    * instructions when it already exists. Lets a caller keep one durable
    * conversation per person without storing the runner's id itself.
    */
-  putSession(id: string, input: { title?: string; instructions?: string; repeats?: RepeatLimits }): { session: Session; created: boolean } {
+  putSession(id: string, input: SessionInput): { session: Session; created: boolean } {
     const existing = this.getSession(id)
     const at = this.now()
-    const options = input.repeats ? JSON.stringify({ repeats: input.repeats }) : null
     if (!existing) {
       this.db
         .prepare("INSERT INTO sessions (id, title, instructions, options, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(id, input.title ?? "Untitled", input.instructions ?? "", options, at, at)
-    } else if (
-      (input.title !== undefined && input.title !== existing.title) ||
-      (input.instructions !== undefined && input.instructions !== existing.instructions) ||
-      (input.repeats !== undefined && JSON.stringify(input.repeats) !== JSON.stringify(existing.repeats))
-    ) {
-      this.db
-        .prepare("UPDATE sessions SET title = ?, instructions = ?, options = COALESCE(?, options), updated_at = ? WHERE id = ?")
-        .run(input.title ?? existing.title, input.instructions ?? existing.instructions, options, at, id)
+        .run(id, input.title ?? "Untitled", input.instructions ?? "", serializeOptions(optionsOf(input)), at, at)
+    } else {
+      // Settings the caller leaves out keep their current value.
+      const options = { ...optionsOf(existing), ...optionsOf(input) }
+      const changed =
+        (input.title !== undefined && input.title !== existing.title) ||
+        (input.instructions !== undefined && input.instructions !== existing.instructions) ||
+        serializeOptions(options) !== serializeOptions(optionsOf(existing))
+      if (changed) {
+        this.db
+          .prepare("UPDATE sessions SET title = ?, instructions = ?, options = ?, updated_at = ? WHERE id = ?")
+          .run(input.title ?? existing.title, input.instructions ?? existing.instructions, serializeOptions(options), at, id)
+      }
     }
     const session = this.getSession(id)
     if (!session) throw new Error("session_missing_after_put")
@@ -277,6 +314,8 @@ export class Store {
       title: value.title,
       instructions: value.instructions,
       repeats: options?.success ? (options.data.repeats ?? null) : null,
+      files: options?.success ? (options.data.files ?? false) : false,
+      computer: options?.success ? (options.data.computer ?? false) : false,
       createdAt: value.created_at,
       updatedAt: value.updated_at,
     }
@@ -495,6 +534,12 @@ export class Store {
   }
 
   /** Storage keys of every saved file in a session, so deleting the session can delete their bytes. */
+  /** Bytes kept for a conversation, across all its saved files. */
+  savedFilesBytes(sessionId: string): number {
+    const row = this.db.prepare("SELECT COALESCE(SUM(size), 0) AS n FROM saved_files WHERE session_id = ?").get(sessionId)
+    return countRow.parse(row).n
+  }
+
   savedFileKeys(sessionId: string): string[] {
     return this.db
       .prepare("SELECT storage_key FROM saved_files WHERE session_id = ?")

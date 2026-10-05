@@ -9,7 +9,7 @@ import type { Attachment, ToolResult, ToolSpec } from "./types.js"
 /**
  * Saved files: what a person sends with a message, and files the agent hands back. They outlive the turn
  * and the context window: the model sees a file's content in the turn it was sent, and can open it again in
- * any later turn. Only offered when the runner has a blob store.
+ * any later turn. Only offered when the runner has a blob store and the conversation asked for files.
  */
 
 const EXTENSION_TYPES: Record<string, string> = {
@@ -63,14 +63,49 @@ function safeJson(text: string): unknown {
 
 export const asAttachment = (file: SavedFile): Attachment => ({ id: file.id, name: file.name, mediaType: file.mediaType, size: file.size })
 
+/** How much one conversation may keep: per file, and in total. */
+export type SavedFileLimits = { maxFileBytes: number; maxSessionBytes: number }
+
+/** A file that would go over a limit; `message` is written for the model and the person. */
+export class SavedFileLimitError extends Error {
+  constructor(
+    readonly code: "file_too_large" | "files_full",
+    message: string,
+  ) {
+    super(message)
+    this.name = "SavedFileLimitError"
+  }
+}
+
 export class SavedFiles {
   constructor(
     private readonly store: Store,
     readonly blobs: BlobStore,
+    readonly limits: SavedFileLimits,
     private readonly now: () => number = Date.now,
   ) {}
 
+  /** The largest single file this runner keeps. */
+  get maxFileBytes() {
+    return this.limits.maxFileBytes
+  }
+
+  /** Throws when `size` bytes would not fit: over the per-file limit, or past the conversation's total. */
+  private checkFits(sessionId: string, size: number, replacing = 0) {
+    if (size > this.limits.maxFileBytes) {
+      throw new SavedFileLimitError("file_too_large", `That file is ${formatBytes(size)}; the most a kept file can be is ${formatBytes(this.limits.maxFileBytes)}.`)
+    }
+    const used = this.store.savedFilesBytes(sessionId) - replacing
+    if (used + size > this.limits.maxSessionBytes) {
+      throw new SavedFileLimitError(
+        "files_full",
+        `This conversation's files are full (${formatBytes(used)} of ${formatBytes(this.limits.maxSessionBytes)}). Delete some to make room.`,
+      )
+    }
+  }
+
   async add(sessionId: string, input: { name: string; mediaType?: string | null; bytes: Uint8Array<ArrayBuffer>; source: SavedFile["source"] }) {
+    this.checkFits(sessionId, input.bytes.byteLength)
     const id = `fl_${randomUUID().replaceAll("-", "")}`
     const name = cleanFileName(input.name)
     const file: SavedFile = {
@@ -97,6 +132,7 @@ export class SavedFiles {
   async replace(sessionId: string, id: string, input: { bytes: Uint8Array<ArrayBuffer>; mediaType?: string | null }) {
     const entry = this.store.getSavedFile(sessionId, id)
     if (!entry) return null
+    this.checkFits(sessionId, input.bytes.byteLength, entry.file.size)
     const mediaType = mediaTypeFor(entry.file.name, input.mediaType ?? entry.file.mediaType)
     await this.deletePreview(entry.storageKey)
     await this.blobs.put(entry.storageKey, input.bytes, mediaType)

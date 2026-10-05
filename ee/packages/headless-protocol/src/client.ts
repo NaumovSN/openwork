@@ -161,18 +161,30 @@ const sessionPath = (sessionId: string) => `/v1/sessions/${encodeURIComponent(se
  */
 export type RunnerRepeatLimits = { maxWaitingMs?: number; maxIdenticalFailures?: number }
 
+/**
+ * What a conversation may use beyond chat: kept files and a Linux computer. Both are off unless asked for, and the
+ * runner must be configured for them too, so a caller that never asks (Slack, Automations) never gets either.
+ */
+export type RunnerCapabilities = { files?: boolean; computer?: boolean }
+
+const capabilityFields = (input: RunnerCapabilities) => ({
+  ...(input.files !== undefined ? { files: input.files } : {}),
+  ...(input.computer !== undefined ? { computer: input.computer } : {}),
+})
+
 export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
   return {
     async createSession(
-      input: { title?: string; instructions?: string; repeats?: RunnerRepeatLimits } = {},
+      input: { title?: string; instructions?: string; repeats?: RunnerRepeatLimits } & RunnerCapabilities = {},
     ): Promise<RunnerResult<{ id: string }>> {
       const base = {
         ...(input.title ? { title: input.title.slice(0, 200) } : {}),
         ...(input.instructions ? { instructions: input.instructions.slice(0, 20_000) } : {}),
       }
-      let { status, payload } = await request(deps, "POST", "/v1/sessions", input.repeats ? { ...base, repeats: input.repeats } : base)
-      // A runner older than per-session repeat limits rejects the field: create the session with its defaults.
-      if (status === 400 && input.repeats) ({ status, payload } = await request(deps, "POST", "/v1/sessions", base))
+      const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
+      let { status, payload } = await request(deps, "POST", "/v1/sessions", { ...base, ...extras })
+      // A runner older than these settings rejects them: create the session with its defaults.
+      if (status === 400 && Object.keys(extras).length) ({ status, payload } = await request(deps, "POST", "/v1/sessions", base))
       const created = z.object({ id: z.string() }).safeParse(payload)
       if (status !== 201 || !created.success) return { ok: false, status, error: errorCode(payload, `headless_create_${status}`) }
       return { ok: true, value: { id: created.data.id } }
@@ -183,11 +195,18 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
      * title and instructions. One durable conversation per person needs no
      * Den-side mapping: the caller derives the id.
      */
-    async putSession(id: string, input: { title?: string; instructions?: string } = {}): Promise<RunnerResult<{ id: string; created: boolean }>> {
-      const { status, payload } = await request(deps, "PUT", sessionPath(id), {
+    async putSession(
+      id: string,
+      input: { title?: string; instructions?: string } & RunnerCapabilities = {},
+    ): Promise<RunnerResult<{ id: string; created: boolean }>> {
+      const base = {
         ...(input.title ? { title: input.title.slice(0, 200) } : {}),
         ...(input.instructions !== undefined ? { instructions: input.instructions.slice(0, 20_000) } : {}),
-      })
+      }
+      const extras = capabilityFields(input)
+      let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
+      // A runner older than per-session capabilities rejects them: keep the conversation, without them.
+      if (status === 400 && Object.keys(extras).length) ({ status, payload } = await request(deps, "PUT", sessionPath(id), base))
       const saved = z.object({ id: z.string() }).safeParse(payload)
       if ((status !== 200 && status !== 201) || !saved.success) return { ok: false, status, error: errorCode(payload, `headless_put_${status}`) }
       return { ok: true, value: { id: saved.data.id, created: status === 201 } }
