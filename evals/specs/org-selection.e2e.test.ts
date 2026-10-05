@@ -11,7 +11,7 @@ const test = spec.world(orgSelection, {
 
 test("an owner can choose an organization after sign-in and return from setup to its dashboard", async ({ world, user, probe, step, evidence }) => {
   const directory = async () => {
-    const result = await probe.api(world.den.admin, "/v1/me/orgs");
+    const result = await probe.api(world.owner, "/v1/me/orgs");
     expect(result.response.ok).toBe(true);
     return organizationDirectory(result.body);
   };

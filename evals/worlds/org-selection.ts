@@ -50,7 +50,21 @@ export async function orgSelection(seed: Seed, { place }: { place: { kind: "loca
   const first = directory.orgs.find((org) => org.name === firstName);
   const second = directory.orgs.find((org) => org.name === secondName);
   if (!first || !second || directory.orgs.length !== 2) throw new Error("Expected exactly two isolated organizations");
-  const selected = await seed.api(den.admin, "/v1/me/active-organization", {
+  // The chooser switches organizations through Better Auth's cookie-authenticated
+  // endpoint. seed.web(signedInAs) supplies only localStorage's bearer token, so
+  // seed both credentials from one real sign-in and observe that same session.
+  const signedIn = await seed.api(den.admin, "/api/auth/sign-in/email", {
+    method: "POST", body: JSON.stringify({ email: den.admin.email, password: den.admin.password }),
+  });
+  if (!signedIn.response.ok || !isRecord(signedIn.body) || typeof signedIn.body.token !== "string") {
+    throw new Error(`Browser sign-in: HTTP ${signedIn.response.status}`);
+  }
+  const owner = { ...den.admin, token: signedIn.body.token };
+  const sessionCookie = signedIn.response.headers.getSetCookie()
+    .find((value) => value.split(";")[0]?.split("=")[0]?.endsWith("session_token"))?.split(";")[0] ?? "";
+  const separator = sessionCookie.indexOf("=");
+  if (separator < 1) throw new Error("Browser sign-in did not return a session cookie");
+  const selected = await seed.api(owner, "/v1/me/active-organization", {
     method: "POST", body: JSON.stringify({ organizationId: first.id }),
   });
   if (!selected.response.ok) throw new Error(`Initial organization: HTTP ${selected.response.status}`);
@@ -59,9 +73,18 @@ export async function orgSelection(seed: Seed, { place }: { place: { kind: "loca
   // An already-active org means the chooser must come from the real auth
   // client's pending-selection handshake, not merely a missing active org.
   // No injected picker state, mocked React hooks, or forced client navigation.
-  const web = await seed.web({ den, signedInAs: den.admin, startPath: "/", headless: true });
+  const web = await seed.web({ den, signedInAs: owner, startPath: "/", headless: true });
+  const applied = await web.client.send("Network.setCookie", {
+    name: sessionCookie.slice(0, separator),
+    value: sessionCookie.slice(separator + 1),
+    url: den.ref.webUrl,
+    path: "/",
+    httpOnly: true,
+    secure: new URL(den.ref.webUrl).protocol === "https:",
+  });
+  if (!isRecord(applied) || applied.success !== true) throw new Error("Could not seed the browser session cookie");
   return {
-    den, web, first, second,
+    den, web, owner, first, second,
     // TODO(primitive): probe has no document identity observer. A read-only
     // timeOrigin witness catches full reloads that would mask hook-order bugs.
     async documentStartedAt(): Promise<number> {
