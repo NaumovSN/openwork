@@ -1051,12 +1051,26 @@ export function useSaveMyMcpApiKey(connectionId: string | null) {
     const outcome = await settleMemberApiKeySave({
       request: async () => {
         const request = memberApiKeyRequest(attemptConnectionId, attemptOrganizationId, apiKey);
-        const { response } = await requestJson(
-          request.path,
-          { ...request.init, signal: controller.signal },
-          15000,
-        );
-        return { ok: response.ok, status: response.status };
+        const timeoutMs = 15000;
+        let deadlineReached = false;
+        const timeout = setTimeout(() => {
+          if (controller.signal.aborted) return;
+          deadlineReached = true;
+          controller.abort();
+        }, timeoutMs);
+        try {
+          const { response } = await requestJson(
+            request.path,
+            { ...request.init, signal: controller.signal },
+            timeoutMs,
+          );
+          return { ok: response.ok, status: response.status };
+        } catch (cause) {
+          if (deadlineReached) throw new DenRequestTimeoutError(timeoutMs, cause);
+          throw cause;
+        } finally {
+          clearTimeout(timeout);
+        }
       },
       refresh: async () => {
         await Promise.all([
