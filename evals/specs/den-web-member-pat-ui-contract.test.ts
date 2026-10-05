@@ -125,7 +125,8 @@ test("Den web routes only individual API-key connections to the token dialog and
   expect(libraryDetail).toContain('connection.authType === "apikey" ? "Organization key ready"');
   expect(yourConnections).toContain('apiKeyStatus === "reconnect_required" ? "Replace key"');
   expect(libraryDetail).toContain('apiKeyStatus === "reconnect_required"');
-  expect(connectorDetail).toContain("personalApiKeyStatusLabel(apiKeyStatus)");
+  expect(libraryDetail).toContain("personalApiKeyStatusLabel(apiKeyStatus)");
+  expect(connectorDetail).not.toContain("connectorAccountStatus");
   expect(toolTester).toContain("personalApiKeyStatusLabel");
   const saveHook = data.slice(data.indexOf("export function useSaveMyMcpApiKey"), data.indexOf("export function useDisconnectMyProviderAccount"));
   const runToolHook = data.slice(data.indexOf("export function useRunMcpConnectionTool"), data.indexOf("function isRecord"));
