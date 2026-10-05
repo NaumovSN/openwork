@@ -12,7 +12,7 @@ import type { Den } from "../../evals/packages/env/src/den.ts";
 import { resolvePlace } from "../../evals/packages/env/src/place.ts";
 import type { Place } from "../../evals/packages/env/src/place.ts";
 import { defaultDaytonaExec } from "../../evals/packages/hosts/src/daytona.ts";
-import { privateSandboxId, privateWebPreview, verifyPrivateWebPreview } from "../../evals/packages/hosts/src/private-web-preview.ts";
+import { privateSandboxId, privateWebPreview } from "../../evals/packages/hosts/src/private-web-preview.ts";
 import { deleteSandboxes, execInSandbox, provisionWebSandbox, startScriptOnSandbox } from "../../evals/packages/hosts/src/provision.ts";
 import { trackResource } from "../../packages/world/src/ledger.ts";
 import { output, secret } from "../../packages/world/src/outputs.ts";
@@ -166,6 +166,29 @@ export async function bootWorkbot(stack: AsyncDisposableStack, preview?: { den: 
   return { den, orgId, workbotUrl, workbotInternal, denWebPublic: preview?.den ?? den.ref.webUrl, runnerUrl, secrets };
 }
 
+/** Daytona interposes a warning page for browsers; scripted requests skip it. */
+const DAYTONA_SKIP_WARNING = { "x-daytona-skip-preview-warning": "true" };
+
+/**
+ * The signed URLs are the only way in: without the token Daytona must refuse Workbot and the runner outright, and
+ * with it Workbot serves its page and the runner answers. Nothing is published until this holds.
+ */
+async function verifyWorkbotPreviews(workbot: { browserOrigin: string; unsignedOrigin: string }, runner: { browserOrigin: string; unsignedOrigin: string }) {
+  const get = (url: string) => fetch(url, { redirect: "manual", headers: DAYTONA_SKIP_WARNING, signal: AbortSignal.timeout(30_000) });
+  for (const url of [`${workbot.unsignedOrigin}/`, `${workbot.unsignedOrigin}/healthz`, `${workbot.unsignedOrigin}/v1/workbot/me`, `${runner.unsignedOrigin}/health`]) {
+    const denied = await get(url);
+    await denied.body?.cancel();
+    if (![401, 403].includes(denied.status)) throw new Error("Security prerequisite: unsigned access to Workbot or the runner was not denied. No URL published.");
+  }
+  const page = await get(`${workbot.browserOrigin}/`);
+  if (!page.ok || !(await page.text()).includes("<div id=\"root\">")) throw new Error(`Workbot's signed URL did not serve the page (HTTP ${page.status}).`);
+  for (const url of [`${workbot.browserOrigin}/healthz`, `${runner.browserOrigin}/health`]) {
+    const healthy = await get(url);
+    await healthy.body?.cancel();
+    if (!healthy.ok) throw new Error(`A signed URL did not answer: HTTP ${healthy.status}`);
+  }
+}
+
 /** Cookie pairs (`name=value`) a response set, merged over earlier ones. */
 function withCookies(jar: Map<string, string>, response: Response) {
   for (const line of response.headers.getSetCookie()) {
@@ -186,7 +209,7 @@ export async function probeWorkbot(world: WorkbotWorld, options: { denInternal?:
   const denInternal = options.denInternal ?? world.den.ref.webUrl;
   const toInternal = (url: string) => url.replace(world.denWebPublic, denInternal).replace(world.workbotUrl, world.workbotInternal);
   const workbotJar = new Map<string, string>();
-  const login = await fetch(`${world.workbotInternal}/auth/login?return=/`, { redirect: "manual", signal: AbortSignal.timeout(30_000) });
+  const login = await fetch(`${world.workbotInternal}/auth/login?return=/`, { redirect: "manual", headers: DAYTONA_SKIP_WARNING, signal: AbortSignal.timeout(30_000) });
   withCookies(workbotJar, login);
   const authorize = login.headers.get("location");
   if (login.status !== 302 || !authorize) throw new Error(`Workbot sign-in did not start: HTTP ${login.status}`);
@@ -194,7 +217,7 @@ export async function probeWorkbot(world: WorkbotWorld, options: { denInternal?:
   const denJar = new Map<string, string>();
   const auth = (path: string, body: unknown) => fetch(`${world.den.ref.apiUrl}${path}`, {
     method: "POST", redirect: "manual", signal: AbortSignal.timeout(30_000),
-    headers: { "content-type": "application/json", origin: world.denWebPublic, cookie: cookieHeader(denJar) },
+    headers: { ...DAYTONA_SKIP_WARNING, "content-type": "application/json", origin: world.denWebPublic, cookie: cookieHeader(denJar) },
     body: JSON.stringify(body),
   });
   const signedIn = await auth("/api/auth/sign-in/email", { email: world.den.admin.email, password: world.den.admin.password });
@@ -207,19 +230,19 @@ export async function probeWorkbot(world: WorkbotWorld, options: { denInternal?:
 
   const granted = await fetch(toInternal(authorize), {
     redirect: "manual", signal: AbortSignal.timeout(30_000),
-    headers: { cookie: cookieHeader(denJar), origin: world.denWebPublic },
+    headers: { ...DAYTONA_SKIP_WARNING, cookie: cookieHeader(denJar), origin: world.denWebPublic },
   });
   const callback = granted.headers.get("location") ?? "";
   if (granted.status !== 302 || !callback.startsWith(`${world.workbotUrl}/auth/callback?`)) {
     throw new Error(`Den did not return to Workbot: HTTP ${granted.status} ${callback.slice(0, 160)}`);
   }
-  const returned = await fetch(toInternal(callback), { redirect: "manual", signal: AbortSignal.timeout(30_000), headers: { cookie: cookieHeader(workbotJar) } });
+  const returned = await fetch(toInternal(callback), { redirect: "manual", signal: AbortSignal.timeout(30_000), headers: { ...DAYTONA_SKIP_WARNING, cookie: cookieHeader(workbotJar) } });
   withCookies(workbotJar, returned);
   if (returned.status !== 302) throw new Error(`Workbot did not finish signing in: HTTP ${returned.status} ${(await returned.text()).slice(0, 200)}`);
 
   const call = (path: string, init: RequestInit = {}) => fetch(`${world.workbotInternal}${path}`, {
     ...init, signal: AbortSignal.timeout(30_000),
-    headers: { cookie: cookieHeader(workbotJar), origin: world.workbotUrl, accept: "application/json", ...(init.body ? { "content-type": "application/json" } : {}) },
+    headers: { ...DAYTONA_SKIP_WARNING, cookie: cookieHeader(workbotJar), origin: world.workbotUrl, accept: "application/json", ...(init.body ? { "content-type": "application/json" } : {}) },
   });
   const me = await call("/v1/workbot/me");
   const who: unknown = await me.json().catch(() => null);
@@ -328,7 +351,7 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
     log: (line) => console.error(`[preview-workbot] ${line}`),
   });
   stack.defer(() => workbot.stop().catch(() => undefined));
-  await verifyPrivateWebPreview(workbotPreview);
+  await verifyWorkbotPreviews(workbotPreview, runnerPreview);
   const orgId = await enableWorkbot(den);
   const world: WorkbotWorld = {
     den, orgId, workbotUrl: workbotPreview.browserOrigin, workbotInternal: workbotPreview.browserOrigin,
