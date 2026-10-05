@@ -245,7 +245,6 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const lifecycle = resolveLifecycle(part.toolCallId, isToolPartInFlight(part))
   const connectionCardParts = React.useContext(ConnectionCardPartsContext)
   const appCreationParts = React.useContext(AppCreationPartsContext)
-  if (appCreationParts.has(part.toolCallId)) return null
   if (part.toolCallId === connectionQuestionToolCallId || isReservedConnectionQuestionPart(part)) return null
 
   // The card owns the decision, not the whole Code Mode execution. Keep the
@@ -259,6 +258,9 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
       <ConnectionCard part={part} allowDiscovery={Boolean(decision)} />
     </>
   }
+
+  // App progress can replace tool activity, but never a connection decision.
+  if (appCreationParts.has(part.toolCallId)) return null
 
   // Delegated work has its own lifecycle, even after a parent follow-up/error.
   if (isTaskToolPart(part)) return <SubagentRunLine part={part} parentActive={parentActive} />
