@@ -4,7 +4,6 @@
 @source "./**/*.{ts,tsx}";
 @source "../components/**/*.{ts,tsx}";
 @source "../../../../packages/ui/src/**/*.{ts,tsx}";
-@source "../../../packages/workbot-ui/src/**/*.{ts,tsx}";
 
 /* Keep the v3 base defaults; unlayered Den styles below still win over utilities. */
 @layer base {

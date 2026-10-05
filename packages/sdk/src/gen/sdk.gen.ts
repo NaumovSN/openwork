@@ -29,6 +29,8 @@ import type {
   CreateMicrosoft365ReplyDraftErrors,
   CreateMicrosoft365ReplyDraftResponses,
   CreateOrganizationApiKeyRequest,
+  CreateWorkbotRunTokenErrors,
+  CreateWorkbotRunTokenResponses,
   DashboardElement,
   DeactivateAutomationErrors,
   DeactivateAutomationResponses,
@@ -120,11 +122,7 @@ import type {
   DeleteV1WorkersByIdResponses,
   DeleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContentErrors,
   DeleteV1WorkflowsByConfigObjectIdSnapshotsByReceiptIdContentResponses,
-  DeleteWorkbotFileErrors,
-  DeleteWorkbotFileResponses,
   DenDesktopPolicyDocumentWrite,
-  DownloadWorkbotFileErrors,
-  DownloadWorkbotFileResponses,
   ExternalMcpConnectionAccessInput,
   ExternalMcpConnectionByKeyUpsertInput,
   ExternalMcpConnectionToolPolicyInput,
@@ -494,8 +492,8 @@ import type {
   GetWellKnownOauthProtectedResourceResponses,
   GetWellKnownOpenidConfigurationApiAuthResponses,
   GetWellKnownOpenidConfigurationResponses,
-  GetWorkbotThreadErrors,
-  GetWorkbotThreadResponses,
+  GetWorkbotSessionErrors,
+  GetWorkbotSessionResponses,
   GoogleWorkspaceCreateCalendarEventBody,
   GoogleWorkspaceShareDriveFileBody,
   GoogleWorkspaceUpdateCalendarEventBody,
@@ -509,8 +507,6 @@ import type {
   ListGmailDraftsResponses,
   ListGmailLabelsErrors,
   ListGmailLabelsResponses,
-  ListWorkbotFilesErrors,
-  ListWorkbotFilesResponses,
   Microsoft365CalendarCancelBody,
   Microsoft365CalendarDeleteBody,
   Microsoft365CalendarEventBody,
@@ -867,10 +863,6 @@ import type {
   PostV1WorkflowsByConfigObjectIdVersionsResponses,
   PostV1WorkflowsTestErrors,
   PostV1WorkflowsTestResponses,
-  PreviewWorkbotFileErrors,
-  PreviewWorkbotFilePageErrors,
-  PreviewWorkbotFilePageResponses,
-  PreviewWorkbotFileResponses,
   PutApiAuthScimV2GroupsByGroupIdErrors,
   PutApiAuthScimV2GroupsByGroupIdResponses,
   PutApiAuthScimV2UsersByUserIdErrors,
@@ -913,13 +905,6 @@ import type {
   SendGmailDraftResponses,
   SendMicrosoft365MailDraftErrors,
   SendMicrosoft365MailDraftResponses,
-  SendWorkbotMessageErrors,
-  SendWorkbotMessageResponses,
-  StopWorkbotErrors,
-  StopWorkbotResponses,
-  StreamWorkbotEventsErrors,
-  StreamWorkbotEventsResponse,
-  StreamWorkbotEventsResponses,
   TrashGmailMessageErrors,
   TrashGmailMessageResponses,
   UntrashGmailMessageErrors,
@@ -946,8 +931,6 @@ import type {
   UpdateMicrosoft365DriveItemResponses,
   UpdateMicrosoft365MailMessageErrors,
   UpdateMicrosoft365MailMessageResponses,
-  UploadWorkbotFileErrors,
-  UploadWorkbotFileResponses,
 } from "./types.gen.js";
 
 export type Options<
@@ -14238,53 +14221,35 @@ export class DenClient extends HeyApiClient {
   }
 
   /**
-   * Read my Workbot conversation
+   * Who is signed in to Workbot
    *
-   * The signed-in member's one Workbot conversation: the newest turns (30 unless `turns` asks for more), their messages and answers.
+   * For the Workbot app only. With the access token a person got by signing in to Workbot through Den, returns who they are, the workspace they chose, and whether Workbot is on for it.
    */
-  public getWorkbotThread<ThrowOnError extends boolean = false>(
-    parameters?: {
-      turns?: number;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "query", key: "turns" }] }]);
-    return (options?.client ?? this.client).get<GetWorkbotThreadResponses, GetWorkbotThreadErrors, ThrowOnError>({
-      url: "/v1/workbot",
+  public getWorkbotSession<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+    return (options?.client ?? this.client).get<GetWorkbotSessionResponses, GetWorkbotSessionErrors, ThrowOnError>({
+      url: "/v1/workbot/session",
       ...options,
-      ...params,
     });
   }
 
   /**
-   * Send a message to Workbot
+   * A short-lived token for one Workbot turn
    *
-   * Adds a message to the member's conversation. Messages sent while Workbot is working are answered in order.
+   * For the Workbot app only. Mints the member-scoped MCP token a Workbot turn uses to reach the person's connected apps on the headless runner, for at most an hour. Refused when Workbot is off for the workspace.
    */
-  public sendWorkbotMessage<ThrowOnError extends boolean = false>(
-    parameters: {
-      id: string;
-      text: string;
-      timeZone?: string;
-      attachments?: Array<string>;
+  public createWorkbotRunToken<ThrowOnError extends boolean = false>(
+    parameters?: {
+      ttlMs?: number;
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "body", key: "id" },
-            { in: "body", key: "text" },
-            { in: "body", key: "timeZone" },
-            { in: "body", key: "attachments" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<SendWorkbotMessageResponses, SendWorkbotMessageErrors, ThrowOnError>({
-      url: "/v1/workbot/messages",
+    const params = buildClientParams([parameters], [{ args: [{ in: "body", key: "ttlMs" }] }]);
+    return (options?.client ?? this.client).post<
+      CreateWorkbotRunTokenResponses,
+      CreateWorkbotRunTokenErrors,
+      ThrowOnError
+    >({
+      url: "/v1/workbot/run-token",
       ...options,
       ...params,
       headers: {
@@ -14292,166 +14257,6 @@ export class DenClient extends HeyApiClient {
         ...options?.headers,
         ...params.headers,
       },
-    });
-  }
-
-  /**
-   * Stop Workbot
-   *
-   * Stops the answer in progress and any messages waiting behind it.
-   */
-  public stopWorkbot<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).post<StopWorkbotResponses, StopWorkbotErrors, ThrowOnError>({
-      url: "/v1/workbot/stop",
-      ...options,
-    });
-  }
-
-  /**
-   * Watch my Workbot conversation
-   *
-   * Server-sent events while the page is open: `changed` when the conversation changed (read it again), `text` with the reply as it is written, and `working` when Workbot starts a step (`on: computer` for its computer).
-   */
-  public streamWorkbotEvents<ThrowOnError extends boolean = false>(
-    options?: Options<never, ThrowOnError, StreamWorkbotEventsResponse>,
-  ) {
-    return (options?.client ?? this.client).sse.get<
-      StreamWorkbotEventsResponses,
-      StreamWorkbotEventsErrors,
-      ThrowOnError
-    >({ url: "/v1/workbot/events", ...options });
-  }
-
-  /**
-   * List my Workbot files
-   *
-   * Files the member sent to Workbot and files Workbot saved for them, newest first.
-   */
-  public listWorkbotFiles<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
-    return (options?.client ?? this.client).get<ListWorkbotFilesResponses, ListWorkbotFilesErrors, ThrowOnError>({
-      url: "/v1/workbot/files",
-      ...options,
-    });
-  }
-
-  /**
-   * Add a file to my Workbot conversation
-   *
-   * Keeps a file (the raw request body, typed by Content-Type) in the member's Workbot files. Send its id with a message to show it to Workbot.
-   */
-  public uploadWorkbotFile<ThrowOnError extends boolean = false>(
-    parameters: {
-      name: string;
-      timeZone?: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "query", key: "name" },
-            { in: "query", key: "timeZone" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).post<UploadWorkbotFileResponses, UploadWorkbotFileErrors, ThrowOnError>({
-      url: "/v1/workbot/files",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Preview a Workbot file
-   *
-   * How a slide deck or document looks: the number of page images and their size. 404 when the file has no preview.
-   */
-  public previewWorkbotFile<ThrowOnError extends boolean = false>(
-    parameters: {
-      fileId: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "fileId" }] }]);
-    return (options?.client ?? this.client).get<PreviewWorkbotFileResponses, PreviewWorkbotFileErrors, ThrowOnError>({
-      url: "/v1/workbot/files/{fileId}/preview",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Preview page of a Workbot file
-   *
-   * One page of a slide deck or document as a PNG image.
-   */
-  public previewWorkbotFilePage<ThrowOnError extends boolean = false>(
-    parameters: {
-      fileId: string;
-      page: number;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams(
-      [parameters],
-      [
-        {
-          args: [
-            { in: "path", key: "fileId" },
-            { in: "path", key: "page" },
-          ],
-        },
-      ],
-    );
-    return (options?.client ?? this.client).get<
-      PreviewWorkbotFilePageResponses,
-      PreviewWorkbotFilePageErrors,
-      ThrowOnError
-    >({
-      url: "/v1/workbot/files/{fileId}/preview/{page}",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Delete a Workbot file
-   *
-   * Deletes the file and its stored bytes. Messages that sent it keep its name.
-   */
-  public deleteWorkbotFile<ThrowOnError extends boolean = false>(
-    parameters: {
-      fileId: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "fileId" }] }]);
-    return (options?.client ?? this.client).delete<DeleteWorkbotFileResponses, DeleteWorkbotFileErrors, ThrowOnError>({
-      url: "/v1/workbot/files/{fileId}",
-      ...options,
-      ...params,
-    });
-  }
-
-  /**
-   * Download a Workbot file
-   *
-   * The file's bytes. Images can be shown inline with `inline=1`; every other type downloads.
-   */
-  public downloadWorkbotFile<ThrowOnError extends boolean = false>(
-    parameters: {
-      fileId: string;
-    },
-    options?: Options<never, ThrowOnError>,
-  ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "fileId" }] }]);
-    return (options?.client ?? this.client).get<DownloadWorkbotFileResponses, DownloadWorkbotFileErrors, ThrowOnError>({
-      url: "/v1/workbot/files/{fileId}",
-      ...options,
-      ...params,
     });
   }
 

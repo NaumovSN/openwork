@@ -10,8 +10,8 @@ import { buildWorkbotTurns, interruptedTurnId, threadBusy, WORKBOT_MESSAGE_PREFI
  * memory as files under memory/ in that conversation, which the runner shows
  * the model every turn. Nothing is configured here.
  *
- * The host (Den today) signs the member in, decides whether Workbot is on for their organization, and passes in
- * the runner client; everything else about Workbot lives in this package.
+ * The host (the Workbot app, ee/apps/workbot) signs the member in through Den, which decides whether Workbot is on
+ * for their organization; the host passes in the runner client. Everything else about Workbot lives here.
  */
 
 export type WorkbotActor = {
@@ -130,6 +130,9 @@ async function ensureSession(actor: WorkbotActor, timeZone: string, deps: Workbo
       timeZone,
       canSchedule,
     }),
+    // Workbot keeps the person's files and works on its own computer; the runner offers them only on request.
+    files: true,
+    computer: true,
   })
   if (!saved.ok) throw new WorkbotUnavailableError("workbot_runner_unavailable")
   return saved.value.id

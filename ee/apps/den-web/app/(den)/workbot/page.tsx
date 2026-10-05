@@ -1,8 +1,8 @@
-"use client";
+import { redirect } from "next/navigation";
 
-import { WorkbotScreen } from "@openwork-ee/workbot-ui";
-import { useDenWorkbotHost } from "./workbot-host";
+export const dynamic = "force-dynamic";
 
+/** Workbot is its own app; Den is where people sign in to it. The dashboard's Workbot entry and old links land here. */
 export default function WorkbotPage() {
-  return <WorkbotScreen host={useDenWorkbotHost()} />;
+  redirect(process.env.DEN_WORKBOT_URL?.trim() || "https://chat.openworklabs.com");
 }

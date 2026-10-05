@@ -118,6 +118,8 @@ import {
   stageDeviceSessionOrganization,
   takeDeviceSessionOrganization,
 } from "./device-authorization.js";
+import { WORKBOT_OAUTH_CLIENT_ID } from "./workbot/config.js";
+import { ensureWorkbotOAuthClient } from "./workbot/oauth-client.js";
 
 const logger = appLogger.child({ component: "auth" });
 
@@ -812,6 +814,10 @@ export const auth = betterAuth({
 
       if (ctx.path === "/oauth2/authorize") {
         const clientId = maybeString(ctx.query?.client_id);
+        // Workbot's first-party client follows DEN_WORKBOT_URL; created on its first sign-in.
+        if (clientId === WORKBOT_OAUTH_CLIENT_ID) {
+          await ensureWorkbotOAuthClient(ctx.context.adapter);
+        }
         const requestedScopes = maybeString(ctx.query?.scope)?.split(/\s+/).filter(Boolean) ?? [];
 
         if (clientId) {

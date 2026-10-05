@@ -4524,70 +4524,25 @@ export type WebOriginNotFoundError = {
 
 export type RemoveWebOriginNotFound = WebOriginNotFoundError | WebOriginOrganizationNotFoundError;
 
-export type WorkbotTurn = {
-  id: string;
-  text: string;
-  sentAt: number | null;
-  finishedAt: number | null;
-  status: "queued" | "working" | "done" | "failed" | "stopped";
-  attachments: Array<{
+export type WorkbotSession = {
+  user: {
+    id: string;
+    name: string | null;
+    email: string;
+  };
+  organization: {
     id: string;
     name: string;
-    mediaType: string;
-    size: number;
-  }>;
-  outputs: Array<{
-    id: string;
-    name: string;
-    mediaType: string;
-    size: number;
-    updatedAt?: number;
-  }>;
-  parts: Array<
-    | {
-        kind: "text";
-        text: string;
-      }
-    | {
-        kind: "steps";
-        steps: Array<{
-          label: string;
-          icon: "app" | "file" | "dot" | "computer";
-          status: "running" | "done" | "error";
-          app: string | null;
-          startedAt: number | null;
-          finishedAt: number | null;
-          updates: Array<string>;
-        }>;
-      }
-  >;
-  modelSteps: number;
-  error: string | null;
+    brandAppName: string | null;
+  };
+  memberId: string;
+  enabled: boolean;
+  canSchedule: boolean;
 };
 
-export type WorkbotThread =
-  | {
-      available: false;
-      reason: "workbot_not_enabled" | "workbot_runner_unavailable";
-    }
-  | {
-      available: true;
-      name: string;
-      organizationName: string;
-      status: "idle" | "busy";
-      turns: Array<WorkbotTurn>;
-      hasEarlier: boolean;
-      filesEnabled: boolean;
-    };
-
-export type WorkbotFile = {
-  id: string;
-  name: string;
-  mediaType: string;
-  size: number;
-  source: "user" | "agent";
-  createdAt: number;
-  updatedAt?: number;
+export type WorkbotRunToken = {
+  token: string;
+  expiresAt: number;
 };
 
 export type DenAppVersionResponse = {
@@ -27230,350 +27185,71 @@ export type PostV1IntegrationsSlackByConnectionIdInteractionsResponses = {
 export type PostV1IntegrationsSlackByConnectionIdInteractionsResponse =
   PostV1IntegrationsSlackByConnectionIdInteractionsResponses[keyof PostV1IntegrationsSlackByConnectionIdInteractionsResponses];
 
-export type GetWorkbotThreadData = {
+export type GetWorkbotSessionData = {
   body?: never;
   path?: never;
-  query?: {
-    turns?: number;
-  };
-  url: "/v1/workbot";
+  query?: never;
+  url: "/v1/workbot/session";
 };
 
-export type GetWorkbotThreadErrors = {
+export type GetWorkbotSessionErrors = {
   /**
-   * Sign-in required.
+   * The token is missing, expired or revoked, or the membership ended.
    */
   401: UnauthorizedError;
 };
 
-export type GetWorkbotThreadError = GetWorkbotThreadErrors[keyof GetWorkbotThreadErrors];
+export type GetWorkbotSessionError = GetWorkbotSessionErrors[keyof GetWorkbotSessionErrors];
 
-export type GetWorkbotThreadResponses = {
+export type GetWorkbotSessionResponses = {
   /**
-   * The conversation, or why Workbot is unavailable.
+   * The signed-in person and their workspace.
    */
-  200: WorkbotThread;
+  200: WorkbotSession;
 };
 
-export type GetWorkbotThreadResponse = GetWorkbotThreadResponses[keyof GetWorkbotThreadResponses];
+export type GetWorkbotSessionResponse = GetWorkbotSessionResponses[keyof GetWorkbotSessionResponses];
 
-export type SendWorkbotMessageData = {
+export type CreateWorkbotRunTokenData = {
   body: {
-    id: string;
-    text: string;
-    timeZone?: string;
-    attachments?: Array<string>;
+    ttlMs?: number;
   };
   path?: never;
   query?: never;
-  url: "/v1/workbot/messages";
+  url: "/v1/workbot/run-token";
 };
 
-export type SendWorkbotMessageErrors = {
+export type CreateWorkbotRunTokenErrors = {
   /**
-   * Invalid message.
-   */
-  400: InvalidRequestError;
-  /**
-   * Sign-in required.
+   * The token is missing, expired or revoked, or the membership ended.
    */
   401: UnauthorizedError;
   /**
-   * Workbot is unavailable.
+   * Workbot is off for this workspace.
    */
-  409: {
+  403: {
     error: string;
+    message?: string;
   };
   /**
-   * Too many messages are waiting, or sent too quickly.
+   * Too many tokens requested.
    */
   429: {
-    error: "too_many_queued" | "rate_limited";
-    retryAfter?: number;
+    error: "rate_limited";
+    retryAfter: number;
   };
 };
 
-export type SendWorkbotMessageError = SendWorkbotMessageErrors[keyof SendWorkbotMessageErrors];
+export type CreateWorkbotRunTokenError = CreateWorkbotRunTokenErrors[keyof CreateWorkbotRunTokenErrors];
 
-export type SendWorkbotMessageResponses = {
+export type CreateWorkbotRunTokenResponses = {
   /**
-   * Accepted.
+   * The token.
    */
-  202: {
-    ok: true;
-  };
+  200: WorkbotRunToken;
 };
 
-export type SendWorkbotMessageResponse = SendWorkbotMessageResponses[keyof SendWorkbotMessageResponses];
-
-export type StopWorkbotData = {
-  body?: never;
-  path?: never;
-  query?: never;
-  url: "/v1/workbot/stop";
-};
-
-export type StopWorkbotErrors = {
-  /**
-   * Sign-in required.
-   */
-  401: UnauthorizedError;
-  /**
-   * Workbot is unavailable.
-   */
-  409: {
-    error: string;
-  };
-};
-
-export type StopWorkbotError = StopWorkbotErrors[keyof StopWorkbotErrors];
-
-export type StopWorkbotResponses = {
-  /**
-   * Stopped.
-   */
-  200: {
-    stopped: boolean;
-  };
-};
-
-export type StopWorkbotResponse = StopWorkbotResponses[keyof StopWorkbotResponses];
-
-export type StreamWorkbotEventsData = {
-  body?: never;
-  path?: never;
-  query?: never;
-  url: "/v1/workbot/events";
-};
-
-export type StreamWorkbotEventsErrors = {
-  /**
-   * Sign-in required.
-   */
-  401: UnauthorizedError;
-  /**
-   * Workbot is unavailable.
-   */
-  409: {
-    error: string;
-  };
-};
-
-export type StreamWorkbotEventsError = StreamWorkbotEventsErrors[keyof StreamWorkbotEventsErrors];
-
-export type StreamWorkbotEventsResponses = {
-  /**
-   * An event stream.
-   */
-  200: string;
-};
-
-export type StreamWorkbotEventsResponse = StreamWorkbotEventsResponses[keyof StreamWorkbotEventsResponses];
-
-export type ListWorkbotFilesData = {
-  body?: never;
-  path?: never;
-  query?: never;
-  url: "/v1/workbot/files";
-};
-
-export type ListWorkbotFilesErrors = {
-  /**
-   * Sign-in required.
-   */
-  401: UnauthorizedError;
-  /**
-   * Workbot is unavailable.
-   */
-  409: {
-    error: string;
-  };
-};
-
-export type ListWorkbotFilesError = ListWorkbotFilesErrors[keyof ListWorkbotFilesErrors];
-
-export type ListWorkbotFilesResponses = {
-  /**
-   * The files.
-   */
-  200: {
-    enabled: boolean;
-    files: Array<WorkbotFile>;
-  };
-};
-
-export type ListWorkbotFilesResponse = ListWorkbotFilesResponses[keyof ListWorkbotFilesResponses];
-
-export type UploadWorkbotFileData = {
-  body?: never;
-  path?: never;
-  query: {
-    name: string;
-    timeZone?: string;
-  };
-  url: "/v1/workbot/files";
-};
-
-export type UploadWorkbotFileErrors = {
-  /**
-   * Invalid request.
-   */
-  400: InvalidRequestError;
-  /**
-   * Sign-in required.
-   */
-  401: UnauthorizedError;
-  /**
-   * Workbot or its files are unavailable.
-   */
-  409: {
-    error: string;
-  };
-};
-
-export type UploadWorkbotFileError = UploadWorkbotFileErrors[keyof UploadWorkbotFileErrors];
-
-export type UploadWorkbotFileResponses = {
-  /**
-   * The kept file.
-   */
-  201: WorkbotFile;
-};
-
-export type UploadWorkbotFileResponse = UploadWorkbotFileResponses[keyof UploadWorkbotFileResponses];
-
-export type PreviewWorkbotFileData = {
-  body?: never;
-  path: {
-    fileId: string;
-  };
-  query?: never;
-  url: "/v1/workbot/files/{fileId}/preview";
-};
-
-export type PreviewWorkbotFileErrors = {
-  /**
-   * Sign-in required.
-   */
-  401: UnauthorizedError;
-  /**
-   * No preview for this file.
-   */
-  404: {
-    error: string;
-  };
-};
-
-export type PreviewWorkbotFileError = PreviewWorkbotFileErrors[keyof PreviewWorkbotFileErrors];
-
-export type PreviewWorkbotFileResponses = {
-  /**
-   * The preview.
-   */
-  200: {
-    pages: number;
-    width: number;
-    height: number;
-  };
-};
-
-export type PreviewWorkbotFileResponse = PreviewWorkbotFileResponses[keyof PreviewWorkbotFileResponses];
-
-export type PreviewWorkbotFilePageData = {
-  body?: never;
-  path: {
-    fileId: string;
-    page: number;
-  };
-  query?: never;
-  url: "/v1/workbot/files/{fileId}/preview/{page}";
-};
-
-export type PreviewWorkbotFilePageErrors = {
-  /**
-   * Sign-in required.
-   */
-  401: UnauthorizedError;
-  /**
-   * No such page.
-   */
-  404: {
-    error: string;
-  };
-};
-
-export type PreviewWorkbotFilePageError = PreviewWorkbotFilePageErrors[keyof PreviewWorkbotFilePageErrors];
-
-export type PreviewWorkbotFilePageResponses = {
-  /**
-   * The page image.
-   */
-  200: unknown;
-};
-
-export type DeleteWorkbotFileData = {
-  body?: never;
-  path: {
-    fileId: string;
-  };
-  query?: never;
-  url: "/v1/workbot/files/{fileId}";
-};
-
-export type DeleteWorkbotFileErrors = {
-  /**
-   * Sign-in required.
-   */
-  401: UnauthorizedError;
-  /**
-   * No such file.
-   */
-  404: {
-    error: string;
-  };
-};
-
-export type DeleteWorkbotFileError = DeleteWorkbotFileErrors[keyof DeleteWorkbotFileErrors];
-
-export type DeleteWorkbotFileResponses = {
-  /**
-   * Deleted.
-   */
-  204: void;
-};
-
-export type DeleteWorkbotFileResponse = DeleteWorkbotFileResponses[keyof DeleteWorkbotFileResponses];
-
-export type DownloadWorkbotFileData = {
-  body?: never;
-  path: {
-    fileId: string;
-  };
-  query?: never;
-  url: "/v1/workbot/files/{fileId}";
-};
-
-export type DownloadWorkbotFileErrors = {
-  /**
-   * Sign-in required.
-   */
-  401: UnauthorizedError;
-  /**
-   * No such file.
-   */
-  404: {
-    error: string;
-  };
-};
-
-export type DownloadWorkbotFileError = DownloadWorkbotFileErrors[keyof DownloadWorkbotFileErrors];
-
-export type DownloadWorkbotFileResponses = {
-  /**
-   * The file.
-   */
-  200: unknown;
-};
+export type CreateWorkbotRunTokenResponse = CreateWorkbotRunTokenResponses[keyof CreateWorkbotRunTokenResponses];
 
 export type GetV1AppVersionData = {
   body?: never;
